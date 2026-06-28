@@ -12,7 +12,10 @@ on:
 
 jobs:
   build:
-    runs-on: windows-latest
+    # Pinned to windows-2022 (Visual Studio 2022 = v17). The windows-latest image moved to
+    # Visual Studio 18, which the bundled node-gyp (@electron/node-gyp 10.2) cannot recognize
+    # ("unsupported version: 18"), so the native drivelist build fails there.
+    runs-on: windows-2022
 
     steps:
       - name: Checkout
