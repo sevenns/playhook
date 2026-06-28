@@ -134,16 +134,9 @@ function render(state: AppState): void {
   }
 }
 
-const gamepad = createGamepadController({
-  onA: () => {
-    if (currentState.kind === 'ready') window.api.requestLaunch();
-  },
-  onB: () => window.api.requestClose(),
+const gamepad = createGamepadController(() => {
+  if (currentState.kind === 'ready') window.api.requestLaunch();
 });
-
-// Exit button lives outside #app so render() (which clears #app) never removes it.
-const exitButton = document.getElementById('exit-button');
-exitButton?.addEventListener('click', () => window.api.requestClose());
 
 window.api.onStateUpdate((state) => {
   currentState = state;

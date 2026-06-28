@@ -66,8 +66,6 @@ export class GameController {
 
     ipcMain.handle(IPC.stateRequest, (): AppState => state.get());
     ipcMain.on(IPC.actionLaunch, () => void this.onLaunchRequested());
-    // Exit button / gamepad B: hide the frameless window to the tray (full quit lives in the tray menu).
-    ipcMain.on(IPC.actionClose, () => this.deps.window.hide());
   }
 
   /** Stops the process waits and the watcher (on application exit). */
