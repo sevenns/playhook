@@ -43,7 +43,7 @@ jobs:
         run: npx electron-builder --win --publish never
 
       - name: Upload installers
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: microsd-game-launcher-windows
           path: |
