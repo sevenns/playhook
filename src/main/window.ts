@@ -1,8 +1,9 @@
 // Game window (stage 5). Created hidden; shown/force-focused when a card is inserted
 // and after exiting a game (R5: so that "press A" via the Gamepad API works in Electron).
 // When summoned over a running game, Windows blocks the foreground grab and would otherwise
-// leave the taskbar/Start visible and flash our taskbar icon — so we keep the window topmost
-// while visible (covers the taskbar), raise it to the top of the z-order, and cancel the flash.
+// leave the taskbar/Start visible and flash our taskbar icon — so we raise the window to the top
+// of the z-order and cancel the flash. Topmost is bound to focus (focus/blur handlers below):
+// on top only while active, released when the user switches away (e.g. to Steam).
 import path from 'node:path';
 import { BrowserWindow } from 'electron';
 
@@ -35,6 +36,15 @@ export class GameWindow {
         event.preventDefault();
         window.hide();
       }
+    });
+
+    // Stay topmost ONLY while focused/active. Otherwise switching away (e.g. double-tap Xbox →
+    // Steam) would be blocked: Steam gets focus but our permanently-topmost window covers it.
+    window.on('focus', () => {
+      if (!window.isDestroyed()) window.setAlwaysOnTop(true);
+    });
+    window.on('blur', () => {
+      if (!window.isDestroyed()) window.setAlwaysOnTop(false);
     });
 
     void window.loadFile(path.join(__dirname, '../renderer/index.html'));
