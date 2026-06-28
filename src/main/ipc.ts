@@ -4,7 +4,7 @@
 // and replicates AppState to the window. All FS/process work happens only here (in main).
 import path from 'node:path';
 import fse from 'fs-extra';
-import { ipcMain } from 'electron';
+import { app, ipcMain } from 'electron';
 import {
   IPC,
   type AppState,
@@ -17,7 +17,7 @@ import { type GameWindow } from './window';
 import { type PcStore } from './pc-store';
 import { type StatsService } from './stats';
 import { type DriveWatcher } from './drive-watcher';
-import { readManifest } from './manifest';
+import { readManifest, type ManifestEnv } from './manifest';
 import { syncDir } from './save-sync';
 import { launchGame, waitForExit, waitForStart, LaunchAbortedError } from './game-launcher';
 
@@ -66,6 +66,8 @@ export class GameController {
 
     ipcMain.handle(IPC.stateRequest, (): AppState => state.get());
     ipcMain.on(IPC.actionLaunch, () => void this.onLaunchRequested());
+    // Exit button / gamepad B: hide the frameless window to the tray (full quit lives in the tray menu).
+    ipcMain.on(IPC.actionClose, () => this.deps.window.hide());
   }
 
   /** Stops the process waits and the watcher (on application exit). */
@@ -78,7 +80,11 @@ export class GameController {
 
   private async onInsert(root: string): Promise<void> {
     this.cardPresent = true;
-    const result = await readManifest(root);
+    // Documents is resolved via the system Known Folder API (the same one the game uses),
+    // so %DOCUMENTS% in the manifest maps to the real save folder regardless of UI
+    // language or OneDrive redirection. Safe to read here — app is ready by now.
+    const env: ManifestEnv = { documents: app.getPath('documents') };
+    const result = await readManifest(root, env);
     if (!result.ok) {
       this.current = null;
       this.deps.state.set({ kind: 'error', message: result.message });

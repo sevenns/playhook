@@ -1,7 +1,9 @@
 // Reading and validating the `game.json` manifest from the card (plan stage 3).
 // The card is UNTRUSTED input (R7/P6): beyond the zod schema we validate path SEMANTICS —
 // executable/heroImage/saveOnCard must live inside the card root (forbidding `..`
-// and absolute paths), pcSavePath — only from the env-prefix whitelist.
+// and absolute paths), pcSavePath — only from an allowlist of prefixes:
+// the %DOCUMENTS% known folder (resolved via the system Known Folder API, so it is
+// language- and OneDrive-independent) plus the %APPDATA%/%LOCALAPPDATA%/%USERPROFILE% env vars.
 import path from 'node:path';
 import fse from 'fs-extra';
 import { z } from 'zod';
@@ -33,7 +35,18 @@ export type ManifestResult =
   | { readonly ok: true; readonly manifest: ResolvedManifest }
   | { readonly ok: false; readonly message: string };
 
-const ENV_WHITELIST = ['APPDATA', 'LOCALAPPDATA', 'USERPROFILE'] as const;
+/** External path bases the manifest may resolve that are not plain env vars. */
+export interface ManifestEnv {
+  /**
+   * The user's Documents known folder, resolved in main via app.getPath('documents').
+   * This goes through the system Known Folder API — the same one the game uses — so it
+   * matches the game's real save location regardless of UI language or OneDrive redirection.
+   */
+  readonly documents: string;
+}
+
+// Env-var prefixes allowed in pcSavePath (resolved from process.env).
+const ENV_PREFIXES = ['APPDATA', 'LOCALAPPDATA', 'USERPROFILE'] as const;
 
 /** Resolves a card-relative path strictly inside its root. null = rejected. */
 function resolveInside(root: string, relative: string): string | null {
@@ -50,22 +63,29 @@ type ExpandResult =
   | { readonly ok: true; readonly value: string }
   | { readonly ok: false; readonly message: string };
 
-/** Expands pcSavePath only from the env-prefix whitelist, without traversal. */
-function expandPcSavePath(input: string): ExpandResult {
+/** Expands pcSavePath only from the allowed prefixes (%DOCUMENTS% + env vars), without traversal. */
+function expandPcSavePath(input: string, env: ManifestEnv): ExpandResult {
   const match = /^%([A-Za-z]+)%[\\/]?(.*)$/.exec(input);
   if (match === null) {
     return {
       ok: false,
-      message: 'pcSavePath must start with %APPDATA%, %LOCALAPPDATA% or %USERPROFILE%',
+      message: 'pcSavePath must start with %DOCUMENTS%, %APPDATA%, %LOCALAPPDATA% or %USERPROFILE%',
     };
   }
-  const envName = (match[1] ?? '').toUpperCase();
-  if (!(ENV_WHITELIST as readonly string[]).includes(envName)) {
-    return { ok: false, message: `pcSavePath env %${envName}% is not allowed` };
+  const prefix = (match[1] ?? '').toUpperCase();
+  let base: string | undefined;
+  if (prefix === 'DOCUMENTS') {
+    base = env.documents;
+  } else if ((ENV_PREFIXES as readonly string[]).includes(prefix)) {
+    base = process.env[prefix];
+  } else {
+    return {
+      ok: false,
+      message: `pcSavePath prefix %${prefix}% is not allowed (use %DOCUMENTS%, %APPDATA%, %LOCALAPPDATA% or %USERPROFILE%)`,
+    };
   }
-  const base = process.env[envName];
   if (base === undefined || base === '') {
-    return { ok: false, message: `environment variable %${envName}% is not set` };
+    return { ok: false, message: `pcSavePath prefix %${prefix}% is not available on this system` };
   }
   const rest = match[2] ?? '';
   const segments = rest.split(/[\\/]+/).filter((s) => s.length > 0);
@@ -89,9 +109,10 @@ function formatZodError(error: z.ZodError): string {
 
 /**
  * Reads and fully validates the manifest at the card root.
+ * `env` carries known-folder bases resolved in main (e.g. Documents) for pcSavePath.
  * Also checks that the executable exists (an edge case from the plan).
  */
-export async function readManifest(root: string): Promise<ManifestResult> {
+export async function readManifest(root: string, env: ManifestEnv): Promise<ManifestResult> {
   const manifestPath = path.join(root, MANIFEST_FILENAME);
 
   let parsedJson: unknown;
@@ -135,7 +156,7 @@ export async function readManifest(root: string): Promise<ManifestResult> {
 
   let pcSavePath: string | undefined;
   if (raw.pcSavePath !== undefined) {
-    const expanded = expandPcSavePath(raw.pcSavePath);
+    const expanded = expandPcSavePath(raw.pcSavePath, env);
     if (!expanded.ok) {
       return { ok: false, message: expanded.message };
     }

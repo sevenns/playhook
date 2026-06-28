@@ -78,8 +78,10 @@ export const IPC = {
   stateUpdate: 'state:update',
   /** renderer → main: request the current state (on window startup). */
   stateRequest: 'state:request',
-  /** renderer → main: the user pressed A / clicked "Launch". */
+  /** renderer → main: the user pressed A / clicked "Play". */
   actionLaunch: 'action:launch',
+  /** renderer → main: the user pressed B / clicked "Exit" — hide the window to the tray. */
+  actionClose: 'action:close',
 } as const;
 
 /** API that preload exposes on `window.api`. */
@@ -87,6 +89,7 @@ export interface RendererApi {
   onStateUpdate(callback: (state: AppState) => void): void;
   requestState(): Promise<AppState>;
   requestLaunch(): void;
+  requestClose(): void;
 }
 
 declare global {

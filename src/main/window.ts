@@ -11,10 +11,15 @@ export class GameWindow {
 
   create(): BrowserWindow {
     const window = new BrowserWindow({
+      // width/height act as the windowed fallback if fullscreen is ever toggled off.
       width: 960,
       height: 600,
       show: false,
-      frame: true,
+      // Frameless: no native title bar / window chrome. Closing is done via the in-app
+      // Exit button or gamepad B (hides to tray); full quit is in the tray menu.
+      frame: false,
+      // Fullscreen launcher: the window covers the whole screen (incl. taskbar) when shown.
+      fullscreen: true,
       backgroundColor: '#101014',
       webPreferences: {
         preload: path.join(__dirname, '../preload/preload.js'),

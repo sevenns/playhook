@@ -107,7 +107,7 @@ To disable autostart: "Settings → Apps → Startup" in Windows.
 
 Placed in the **root** of the card. One game per card. The paths
 `executable`/`heroImage`/`saveOnCard` are **relative to the card root**;
-`pcSavePath` is absolute with an env prefix.
+`pcSavePath` is absolute and starts with one of the allowed prefixes (see below).
 
 ```jsonc
 {
@@ -139,8 +139,14 @@ E:\
 
 - After resolution, `executable`/`heroImage`/`saveOnCard` **must lie inside the card
   root** — `..` and absolute paths are forbidden (otherwise the game won't launch and an error is shown).
-- `pcSavePath` — only from a whitelist of env prefixes: `%APPDATA%`, `%LOCALAPPDATA%`,
-  `%USERPROFILE%`, with no traversal. Otherwise — rejected.
+- `pcSavePath` — only from an allowlist of prefixes, with no traversal (`..`). Otherwise rejected:
+  - `%DOCUMENTS%` — the user's Documents folder, resolved via the system **Known Folder API**
+    (`app.getPath('documents')`). **Language- and OneDrive-independent**: it returns the same
+    physical path the game itself uses, so `%DOCUMENTS%/My Games/...` works on any machine
+    without caring whether the folder is named `Documents`, `Документы`, or sits under OneDrive.
+    Prefer this for games that save under Documents (most Bethesda titles, e.g. Fallout/Skyrim).
+  - `%APPDATA%`, `%LOCALAPPDATA%`, `%USERPROFILE%` — resolved from the corresponding
+    environment variables (good for games that save under AppData).
 - `id` — only `[A-Za-z0-9._-]` (used as a folder name on the PC).
 - `saveOnCard` and `pcSavePath` are set **together** or **both omitted**. If both are
   omitted, the game writes its saves next to its exe on the card and syncing is fully disabled.

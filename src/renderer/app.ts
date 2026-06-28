@@ -9,7 +9,6 @@ if (root === null) throw new Error('#app root element not found');
 const mount: HTMLElement = root;
 
 let currentState: AppState = { kind: 'idle' };
-let gamepadConnected = false;
 
 function formatPlaytime(totalSeconds: number): string {
   const hours = Math.floor(totalSeconds / 3600);
@@ -65,17 +64,11 @@ function renderReady(game: GameInfo): void {
   setHeroBackground(game);
   const panel = renderInfoBlock(game);
 
-  const button = el('button', 'launch-button', 'Launch');
+  const button = el('button', 'launch-button', 'Play');
   button.type = 'button';
   button.addEventListener('click', () => window.api.requestLaunch());
   panel.appendChild(button);
 
-  const hint = el(
-    'div',
-    'hint',
-    gamepadConnected ? 'Press A on the gamepad or click "Launch"' : 'Click "Launch" (no gamepad detected — press any button)',
-  );
-  panel.appendChild(hint);
   mount.appendChild(panel);
 }
 
@@ -141,18 +134,16 @@ function render(state: AppState): void {
   }
 }
 
-const gamepad = createGamepadController(() => {
-  if (currentState.kind === 'ready') window.api.requestLaunch();
+const gamepad = createGamepadController({
+  onA: () => {
+    if (currentState.kind === 'ready') window.api.requestLaunch();
+  },
+  onB: () => window.api.requestClose(),
 });
 
-window.addEventListener('gamepadconnected', () => {
-  gamepadConnected = true;
-  if (currentState.kind === 'ready') render(currentState);
-});
-window.addEventListener('gamepaddisconnected', () => {
-  gamepadConnected = navigator.getGamepads().some((pad) => pad !== null);
-  if (currentState.kind === 'ready') render(currentState);
-});
+// Exit button lives outside #app so render() (which clears #app) never removes it.
+const exitButton = document.getElementById('exit-button');
+exitButton?.addEventListener('click', () => window.api.requestClose());
 
 window.api.onStateUpdate((state) => {
   currentState = state;

@@ -9,6 +9,7 @@ const CHANNELS = {
   stateUpdate: 'state:update',
   stateRequest: 'state:request',
   actionLaunch: 'action:launch',
+  actionClose: 'action:close',
 } as const;
 
 const api: RendererApi = {
@@ -22,6 +23,9 @@ const api: RendererApi = {
   },
   requestLaunch(): void {
     ipcRenderer.send(CHANNELS.actionLaunch);
+  },
+  requestClose(): void {
+    ipcRenderer.send(CHANNELS.actionClose);
   },
 };
 

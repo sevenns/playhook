@@ -1,7 +1,7 @@
 // Application bootstrap (stage 1): single-instance, tray, lifecycle, auto-launch.
 // Background app: the window is shown when a card is inserted or manually via the tray;
 // closing the window hides it to the tray instead of quitting the program.
-import { app, type Tray } from 'electron';
+import { app, Menu, type Tray } from 'electron';
 import { StateManager } from './state';
 import { GameWindow } from './window';
 import { PcStore } from './pc-store';
@@ -33,6 +33,9 @@ function quit(): void {
 }
 
 async function bootstrap(): Promise<void> {
+  // No application menu (removes the File/Edit/View… bar entirely).
+  Menu.setApplicationMenu(null);
+
   const store = new PcStore(app.getPath('userData'));
   await store.init();
 
