@@ -1,9 +1,9 @@
 // Game window (stage 5). Created hidden; shown/force-focused when a card is inserted
 // and after exiting a game (R5: so that "press A" via the Gamepad API works in Electron).
-// When summoned over a running game, Windows blocks the foreground grab and would otherwise
-// leave the taskbar/Start visible and flash our taskbar icon — so we raise the window to the top
-// of the z-order and cancel the flash. Topmost is bound to focus (focus/blur handlers below):
-// on top only while active, released when the user switches away (e.g. to Steam).
+// When summoned over a running game (Start+Back), Windows blocks a plain focus() grab; a
+// minimize→restore is treated by the OS as a legitimate activation and reliably foregrounds us.
+// We deliberately do NOT hold alwaysOnTop — a persistent topmost window traps focus and prevents
+// switching back to the game/Steam. A focused fullscreen window already hides the taskbar.
 import path from 'node:path';
 import { BrowserWindow } from 'electron';
 
@@ -38,15 +38,6 @@ export class GameWindow {
       }
     });
 
-    // Stay topmost ONLY while focused/active. Otherwise switching away (e.g. double-tap Xbox →
-    // Steam) would be blocked: Steam gets focus but our permanently-topmost window covers it.
-    window.on('focus', () => {
-      if (!window.isDestroyed()) window.setAlwaysOnTop(true);
-    });
-    window.on('blur', () => {
-      if (!window.isDestroyed()) window.setAlwaysOnTop(false);
-    });
-
     void window.loadFile(path.join(__dirname, '../renderer/index.html'));
     this.window = window;
     return window;
@@ -59,27 +50,26 @@ export class GameWindow {
   }
 
   /**
-   * Brings the launcher to the foreground (even over a running game) and focuses it so the
-   * gamepad is read. Stays topmost while visible so the Windows taskbar/Start doesn't show
-   * through; the attention flash (raised when Windows deflects the foreground grab) is cancelled.
+   * Shows and focuses the launcher. With `forceForeground` (the Start+Back hotkey, summoning over
+   * a running game) it does a minimize→restore to reliably grab the foreground — at the cost of a
+   * brief blink. We never hold alwaysOnTop, so focus is never trapped: switching back to the game
+   * or to Steam works normally. A focused fullscreen window already hides the taskbar.
    */
-  showAndFocus(): void {
+  showAndFocus(forceForeground = false): void {
     const window = this.window;
     if (window === null) return;
-    if (window.isMinimized()) window.restore();
     if (!window.isVisible()) window.show();
+    if (forceForeground) {
+      window.minimize();
+      window.restore();
+    }
     if (!window.isFullScreen()) window.setFullScreen(true);
-    window.setAlwaysOnTop(true);
-    window.moveTop();
     window.focus();
     window.flashFrame(false);
   }
 
   hide(): void {
-    const window = this.window;
-    if (window === null) return;
-    window.setAlwaysOnTop(false);
-    window.hide();
+    this.window?.hide();
   }
 
   /** Allows the window to actually close (when quitting the app). */

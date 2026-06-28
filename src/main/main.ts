@@ -62,9 +62,10 @@ async function bootstrap(): Promise<void> {
   });
 
   // Global Start+Back hotkey: bring the launcher window back even from inside a running game.
+  // forceForeground=true: reliably steal the foreground from the game (minimize→restore).
   const globalGamepad = new GlobalGamepad();
   globalGamepadRef = globalGamepad;
-  globalGamepad.onChord(() => window.showAndFocus());
+  globalGamepad.onChord(() => window.showAndFocus(true));
   globalGamepad.start();
 
   watcher.start();
