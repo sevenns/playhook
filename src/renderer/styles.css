@@ -76,16 +76,18 @@ body {
   padding: 16px 48px;
   font-size: 22px;
   font-weight: 600;
-  color: #0c0c0f;
-  background: var(--accent);
+  /* --btn-bg/--btn-fg are set from the hero background's dominant color; fall back to the
+     default accent when there's no background or color extraction fails. */
+  color: var(--btn-fg, #0c0c0f);
+  background: var(--btn-bg, var(--accent));
   border: none;
   border-radius: 10px;
   cursor: pointer;
-  transition: background 0.15s ease, transform 0.05s ease;
+  transition: filter 0.15s ease, transform 0.05s ease;
 }
 
 .launch-button:hover {
-  background: var(--accent-hover);
+  filter: brightness(1.1);
 }
 
 .launch-button:active {

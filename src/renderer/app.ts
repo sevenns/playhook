@@ -3,12 +3,16 @@
 // textContent / style, without innerHTML, to rule out injections.
 import type { AppState, GameInfo } from '../shared/types';
 import { createGamepadController } from './gamepad.js';
+import { computeButtonColors, type ButtonColors } from './dominant-color.js';
 
 const root = document.getElementById('app');
 if (root === null) throw new Error('#app root element not found');
 const mount: HTMLElement = root;
 
 let currentState: AppState = { kind: 'idle' };
+
+// Cache the derived button color per game id so we don't recompute on every re-render.
+const buttonColorCache = new Map<string, ButtonColors | null>();
 
 function formatPlaytime(totalSeconds: number): string {
   const hours = Math.floor(totalSeconds / 3600);
@@ -60,6 +64,28 @@ function renderInfoBlock(game: GameInfo): HTMLElement {
   return panel;
 }
 
+function setButtonColors(button: HTMLButtonElement, colors: ButtonColors): void {
+  button.style.setProperty('--btn-bg', colors.bg);
+  button.style.setProperty('--btn-fg', colors.fg);
+}
+
+// Derives the button color from the hero background. If there's no background or it fails to
+// load/decode, nothing is set and the button keeps its default color via the CSS fallback.
+function applyButtonColor(button: HTMLButtonElement, game: GameInfo): void {
+  const dataUrl = game.heroImageDataUrl;
+  if (dataUrl === undefined) return;
+
+  const cached = buttonColorCache.get(game.id);
+  if (cached !== undefined) {
+    if (cached !== null) setButtonColors(button, cached);
+    return;
+  }
+  void computeButtonColors(dataUrl).then((colors) => {
+    buttonColorCache.set(game.id, colors);
+    if (colors !== null) setButtonColors(button, colors);
+  });
+}
+
 function renderReady(game: GameInfo): void {
   setHeroBackground(game);
   const panel = renderInfoBlock(game);
@@ -67,6 +93,7 @@ function renderReady(game: GameInfo): void {
   const button = el('button', 'launch-button', 'Play');
   button.type = 'button';
   button.addEventListener('click', () => window.api.requestLaunch());
+  applyButtonColor(button, game);
   panel.appendChild(button);
 
   mount.appendChild(panel);
