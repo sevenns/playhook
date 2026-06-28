@@ -20,8 +20,12 @@ for (const name of dirs) {
   await cp(resolve(srcRenderer, name), resolve(outRenderer, name), { recursive: true });
 }
 
-// App icon: copied into dist so it ships inside the asar and is usable at runtime
-// (BrowserWindow + Tray). electron-builder also references icon.ico for the exe/installer.
-await cp(resolve(root, 'icon.ico'), resolve(outDist, 'icon.ico'));
+// App icons: copied into dist so they ship inside the asar and are usable at runtime.
+// icon.ico — main app icon (BrowserWindow; also referenced by electron-builder for exe/installer).
+// icon-tray.ico — smaller/simpler icon for the tray, so it doesn't turn to mush at tray size.
+const icons = ['icon.ico', 'icon-tray.ico'];
+for (const name of icons) {
+  await cp(resolve(root, name), resolve(outDist, name));
+}
 
-console.log(`Copied ${files.length} file(s), ${dirs.length} dir(s) and icon.ico to dist`);
+console.log(`Copied ${files.length} file(s), ${dirs.length} dir(s) and ${icons.length} icon(s) to dist`);

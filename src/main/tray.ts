@@ -10,8 +10,9 @@ export interface TrayCallbacks {
 }
 
 export function createTray(callbacks: TrayCallbacks): Tray {
-  // App icon, copied into dist by copy-assets. Falls back to an empty image if missing.
-  const iconPath = path.join(__dirname, '../icon.ico');
+  // Dedicated tray icon (simpler than the main app icon so it stays legible at tray size),
+  // copied into dist by copy-assets. Falls back to an empty image if missing.
+  const iconPath = path.join(__dirname, '../icon-tray.ico');
   const image = nativeImage.createFromPath(iconPath);
   const tray = new Tray(image.isEmpty() ? nativeImage.createEmpty() : image);
 
