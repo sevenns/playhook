@@ -10,8 +10,8 @@ export interface TrayCallbacks {
 }
 
 export function createTray(callbacks: TrayCallbacks): Tray {
-  // The icon is optional: if the file is missing — an empty nativeImage (Windows shows a default).
-  const iconPath = path.join(__dirname, '../../build/tray.png');
+  // App icon, copied into dist by copy-assets. Falls back to an empty image if missing.
+  const iconPath = path.join(__dirname, '../icon.ico');
   const image = nativeImage.createFromPath(iconPath);
   const tray = new Tray(image.isEmpty() ? nativeImage.createEmpty() : image);
 

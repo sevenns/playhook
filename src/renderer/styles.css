@@ -1,3 +1,26 @@
+/* Bundled UI font: M PLUS Rounded 1c (files in ./fonts, copied to dist by copy-assets). */
+@font-face {
+  font-family: 'M PLUS Rounded 1c';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('./fonts/MPLUSRounded1c-Regular.ttf') format('truetype');
+}
+@font-face {
+  font-family: 'M PLUS Rounded 1c';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('./fonts/MPLUSRounded1c-Medium.ttf') format('truetype');
+}
+@font-face {
+  font-family: 'M PLUS Rounded 1c';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('./fonts/MPLUSRounded1c-Bold.ttf') format('truetype');
+}
+
 :root {
   --bg: #101014;
   --fg: #f2f2f5;
@@ -24,7 +47,7 @@ body {
 }
 
 body {
-  font-family: 'Segoe UI', system-ui, sans-serif;
+  font-family: 'M PLUS Rounded 1c', 'Segoe UI', system-ui, sans-serif;
   color: var(--fg);
   background: var(--bg);
 }

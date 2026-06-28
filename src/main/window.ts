@@ -21,6 +21,7 @@ export class GameWindow {
       frame: false,
       // Fullscreen launcher: the window covers the whole screen (incl. taskbar) when shown.
       fullscreen: true,
+      icon: path.join(__dirname, '../icon.ico'),
       backgroundColor: '#101014',
       webPreferences: {
         preload: path.join(__dirname, '../preload/preload.js'),
