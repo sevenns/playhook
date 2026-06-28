@@ -8,6 +8,7 @@ import { PcStore } from './pc-store';
 import { StatsService } from './stats';
 import { DriveWatcher } from './drive-watcher';
 import { GameController } from './ipc';
+import { GlobalGamepad } from './gamepad-global';
 import { createTray } from './tray';
 
 // Hidden start (auto-launch): `openAsHidden` is macOS-only and is ignored on Windows (R6),
@@ -17,6 +18,7 @@ const startedHidden = process.argv.includes('--hidden');
 let trayRef: Tray | null = null;
 let controllerRef: GameController | null = null;
 let windowRef: GameWindow | null = null;
+let globalGamepadRef: GlobalGamepad | null = null;
 let quitting = false;
 
 function configureAutoLaunch(): void {
@@ -28,6 +30,7 @@ function configureAutoLaunch(): void {
 function quit(): void {
   quitting = true;
   controllerRef?.shutdown();
+  globalGamepadRef?.stop();
   windowRef?.allowClose();
   app.quit();
 }
@@ -58,6 +61,12 @@ async function bootstrap(): Promise<void> {
     onQuit: () => quit(),
   });
 
+  // Global Start+Back hotkey: bring the launcher window back even from inside a running game.
+  const globalGamepad = new GlobalGamepad();
+  globalGamepadRef = globalGamepad;
+  globalGamepad.onChord(() => window.showAndFocus());
+  globalGamepad.start();
+
   watcher.start();
   configureAutoLaunch();
 }
@@ -80,6 +89,7 @@ if (!gotSingleInstanceLock) {
   app.on('before-quit', () => {
     quitting = true;
     controllerRef?.shutdown();
+    globalGamepadRef?.stop();
     windowRef?.allowClose();
   });
 
