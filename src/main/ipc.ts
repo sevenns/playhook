@@ -209,12 +209,14 @@ export class GameController {
     if (this.deps.state.get().kind !== 'running') return;
     const pid = this.runningPid;
     log.info(`[resume] requested (pid=${pid ?? 'null'})`);
-    // Prefer activating the game's own window so gamepad input returns to the game. Only if that
-    // isn't possible (no window found / non-Windows) do we fall back to hiding the launcher.
+    // Activate the game's own window so gamepad input returns to it (AttachThreadInput inside).
+    // On success we leave the launcher as-is (the game's window covers it) — do NOT hide it.
     if (pid !== null && focusWindowByPid(pid)) {
       log.info('[resume] game window focused');
       return;
     }
+    // Only if focusing failed (no window found / non-Windows): hide the launcher so the game
+    // underneath can regain the foreground.
     log.warn('[resume] could not focus game window — hiding launcher as fallback');
     this.deps.window.hide();
   }

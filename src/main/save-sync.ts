@@ -62,7 +62,12 @@ export async function syncDir(src: string, dest: string): Promise<void> {
 /** Atomic (within a volume) write of a single file: temp → rename. Best-effort on the card. */
 export async function writeFileAtomic(targetPath: string, data: string): Promise<void> {
   const tmp = `${targetPath}.tmp`;
-  await fse.ensureDir(path.dirname(targetPath));
+  const dir = path.dirname(targetPath);
+  // Only create the directory when it's genuinely missing. On Windows, mkdir of a DRIVE ROOT
+  // (e.g. "E:\", the card root for stats.json) throws EPERM even though it already exists — so an
+  // unconditional ensureDir would make every card-root write fail. The parent is always present
+  // for our targets (card root / existing save dir); create it only for nested paths that need it.
+  if (!(await fse.pathExists(dir))) await fse.ensureDir(dir);
   await fse.writeFile(tmp, data, 'utf8');
   await withRetry(() => fse.move(tmp, targetPath, { overwrite: true }));
 }
