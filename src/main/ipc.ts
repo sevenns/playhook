@@ -21,7 +21,13 @@ import { type StatsService } from './stats';
 import { type DriveWatcher } from './drive-watcher';
 import { readManifest, type ManifestEnv } from './manifest';
 import { syncDir } from './save-sync';
-import { launchGame, waitForExit, waitForStart, LaunchAbortedError } from './game-launcher';
+import {
+  launchGame,
+  waitForExit,
+  waitForStart,
+  LaunchAbortedError,
+  type GameProcess,
+} from './game-launcher';
 import { log } from './logger';
 
 export interface ControllerDeps {
@@ -217,6 +223,8 @@ export class GameController {
     this.launchInFlight = true;
     const abort = new AbortController();
     this.abort = abort;
+    // Declared before the try so `finally` can dispose the kept HANDLE (elevated path).
+    let proc: GameProcess | null = null;
     try {
       // 1. SD→PC (if sync is configured)
       state.set({ kind: 'syncing-in', game: info });
@@ -224,18 +232,17 @@ export class GameController {
         await syncDir(manifest.saveOnCardPath, manifest.pcSavePath);
       }
 
-      // 2. spawn → pid
+      // 2. launch → GameProcess (spawn, or elevated ShellExecuteEx per manifest.runAsAdmin)
       state.set({ kind: 'launching', game: info });
-      let pid: number;
       try {
-        pid = await launchGame(manifest);
+        proc = await launchGame(manifest);
       } catch (cause) {
         this.failLaunch(info, `failed to launch the game: ${describe(cause)}`);
         return;
       }
 
       // 3. wait for the process to appear within launchTimeoutSec
-      const started = await waitForStart(pid, manifest.raw.launchTimeoutSec, abort.signal);
+      const started = await waitForStart(proc, manifest.raw.launchTimeoutSec, abort.signal);
       if (!started) {
         this.failLaunch(info, 'the game did not start (process wait timed out)');
         return;
@@ -247,9 +254,9 @@ export class GameController {
       // Start+Back hotkey is intentionally a no-op while running, so there's nothing to re-summon.
       const since = Date.now();
       state.set({ kind: 'running', game: info, since });
-      log.info(`[launch] running id=${manifest.raw.id} pid=${pid}`);
-      await waitForExit(pid, abort.signal);
-      log.info(`[launch] exited id=${manifest.raw.id} pid=${pid}`);
+      log.info(`[launch] running id=${manifest.raw.id} pid=${proc.pid}`);
+      await waitForExit(proc, abort.signal);
+      log.info(`[launch] exited id=${manifest.raw.id} pid=${proc.pid}`);
 
       // 5. game closed → write stats to the PC (source of truth)
       const playSeconds = (Date.now() - since) / 1000;
@@ -269,6 +276,8 @@ export class GameController {
       if (cause instanceof LaunchAbortedError) return; // application is shutting down
       this.failLaunch(info, describe(cause));
     } finally {
+      // Release the elevated HANDLE (no-op for the normal spawn path).
+      proc?.dispose();
       this.launchInFlight = false;
       this.abort = null;
     }

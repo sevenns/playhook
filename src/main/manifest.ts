@@ -26,6 +26,8 @@ const manifestSchema = z.object({
   title: z.string().min(1),
   executable: z.string().min(1),
   args: z.array(z.string()).default([]),
+  // Opt-in elevation: for .exe whose embedded manifest requires administrator (spawn would EACCES).
+  runAsAdmin: z.boolean().default(false),
   heroImage: z.string().min(1).optional(),
   saveOnCard: z.string().min(1).optional(),
   pcSavePath: z.string().min(1).optional(),
