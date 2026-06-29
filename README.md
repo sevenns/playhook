@@ -98,6 +98,7 @@ absolute and must start with one of the allowed prefixes (see below).
   "saveOnCard": "saves",                    // copy folder for saves on the card (relative to the root)
   "pcSavePath": "%APPDATA%/Team Cherry/Hollow Knight", // where the game actually writes saves on the PC
   "launchTimeoutSec": 30,                   // how long to wait for the process to appear (optional, default 30)
+  "watchProcesses": ["Game-Win64-Shipping.exe"], // for launcher/wrapper games: track THESE process names, not the spawned launcher (optional)
   "sounds": {                               // per-game UI sounds (all optional; omitted slots use a bundled default)
     "play": "audio/play.ogg",               // pressing "Play"
     "navigate": "audio/move.ogg",           // moving focus between controls
@@ -139,6 +140,22 @@ E:\
   elevated via a UAC prompt (`ShellExecuteEx` `runas`) and monitors it by process HANDLE instead of
   `tasklist` (a non-elevated app can't see an elevated process). Opt-in on purpose — Playhook never
   silently escalates an untrusted card's exe. Windows-only: `true` on other platforms is an error.
+- `watchProcesses` — for **launcher / wrapper** games, where `executable` spawns a launcher that
+  starts the game in a **separate process** and then exits (so watching the spawned pid would wrongly
+  report "closed" the instant the launcher quits). List the **game's own** process image names here:
+  Playhook still spawns `executable`, but tracks the session by the **presence** of these names in
+  `tasklist`. Playtime starts when a watched process appears and ends when all of them are gone. When
+  omitted, behaviour is unchanged (the spawned pid is tracked directly — the default for a
+  self-contained `.exe`). Each entry is a bare `*.exe` name (no quotes, no path separators), matched
+  case-insensitively; 1–16 names. **Caveats:**
+  - **anticheat / elevation** — Steam / EAC / BattlEye often launch the game **elevated or as a
+    service**, which a non-elevated `tasklist` can't see (R4) → Playhook reports "didn't start" and
+    quietly returns without recording a session. This is a **common** case for launcher games, not a
+    rare edge.
+  - **generic names** — don't use names like `game.exe` or a shared `UnityPlayer`-style binary: they
+    can match an unrelated process. Use the game's specific shipping name.
+  - **already-running instance** — don't open the game manually before pressing Play: presence
+    matching would latch onto that pre-existing process.
 - `saveOnCard` and `pcSavePath` are set **together** or **both omitted**. If both are omitted,
   the game writes its saves next to its exe on the card and syncing is fully disabled.
 - `sounds.*` and `backgroundMusic` — card-relative like `heroImage`, **must lie inside the card
@@ -269,9 +286,12 @@ silently fails.
 - **UAC / elevation:** from a non-elevated app, `tasklist` cannot see an elevated process — a
   game that requires administrator rights will produce a false "didn't launch" timeout. Designed
   for a direct, self-contained `.exe` without UAC.
-- **Launchers / wrappers:** exit detection relies on the pid from `spawn`. A wrapper game
-  (Steam / launcher) that immediately terminates its own process will produce a false "exit" —
-  out of scope.
+- **Launchers / wrappers:** by default exit detection relies on the pid from `spawn`, so a wrapper
+  game (Steam / launcher) that immediately terminates its own process would produce a false "exit".
+  This is now **supported** via [`watchProcesses`](#rules-and-security-the-card-is-untrusted-input):
+  list the game's own process image names and Playhook tracks those instead of the launcher pid.
+  Caveat: if the launcher runs the game **elevated or as a service** (common with Steam / EAC /
+  BattlEye), a non-elevated `tasklist` can't see it — the session won't be tracked.
 - **Removing the card during play** is handled gracefully (statistics on the PC, PC → SD deferred
   to `pending-flush`), but **the game itself will most likely crash** — the exe is on the card.
   The UI warns "do not remove the card during play".

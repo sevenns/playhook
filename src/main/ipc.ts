@@ -25,6 +25,8 @@ import {
   launchGame,
   waitForExit,
   waitForStart,
+  waitForWatchedExit,
+  waitForWatchedStart,
   LaunchAbortedError,
   type GameProcess,
 } from './game-launcher';
@@ -241,22 +243,48 @@ export class GameController {
         return;
       }
 
-      // 3. wait for the process to appear within launchTimeoutSec
-      const started = await waitForStart(proc, manifest.raw.launchTimeoutSec, abort.signal);
-      if (!started) {
-        this.failLaunch(info, 'the game did not start (process wait timed out)');
-        return;
+      // 3/4. wait for the game to appear, then for it to exit. Two paths:
+      //  - watched (launcher/wrapper, manifest.watchProcesses): the game is a SEPARATE process; we wait
+      //    for one of the watched image names to appear (HANDOFF — the launcher may live on in its menu),
+      //    then track that process's presence for exit.
+      //  - normal: the spawned pid IS the game; wait for that pid to appear, then disappear.
+      // Running-phase note (both paths): gamepad input is ignored (outside ready). The window stays put —
+      // the game takes the foreground on its own and simply covers the launcher, which avoids the jerky
+      // hide/show flash. We grab the foreground back in step 6 once the game exits. The global Start+Back
+      // hotkey is intentionally a no-op while running, so there's nothing to re-summon.
+      const watchProcesses = manifest.raw.watchProcesses;
+      let since: number;
+      if (watchProcesses !== undefined && watchProcesses.length > 0) {
+        const { started } = await waitForWatchedStart(
+          proc.pid,
+          watchProcesses,
+          manifest.raw.launchTimeoutSec,
+          abort.signal,
+        );
+        if (!started) {
+          // The user closed the launcher without playing, or the game never became visible (often an
+          // elevated/anticheat launcher — see README). Neither a failure nor a play session.
+          this.abandonWatchedLaunch(info);
+          return;
+        }
+        // The watched game is up: start the clock now (more accurate than the launcher's spawn time).
+        since = Date.now();
+        state.set({ kind: 'running', game: info, since });
+        log.info(`[launch] running (watched) id=${manifest.raw.id} watch=${watchProcesses.join(',')}`);
+        await waitForWatchedExit(watchProcesses, abort.signal);
+        log.info(`[launch] exited (watched) id=${manifest.raw.id}`);
+      } else {
+        const started = await waitForStart(proc, manifest.raw.launchTimeoutSec, abort.signal);
+        if (!started) {
+          this.failLaunch(info, 'the game did not start (process wait timed out)');
+          return;
+        }
+        since = Date.now();
+        state.set({ kind: 'running', game: info, since });
+        log.info(`[launch] running id=${manifest.raw.id} pid=${proc.pid}`);
+        await waitForExit(proc, abort.signal);
+        log.info(`[launch] exited id=${manifest.raw.id} pid=${proc.pid}`);
       }
-
-      // 4. running: count time, gamepad input is ignored (outside ready). The window stays put —
-      // the game takes the foreground on its own and simply covers the launcher, which avoids the
-      // jerky hide/show flash. We grab the foreground back in step 6 once the game exits. The global
-      // Start+Back hotkey is intentionally a no-op while running, so there's nothing to re-summon.
-      const since = Date.now();
-      state.set({ kind: 'running', game: info, since });
-      log.info(`[launch] running id=${manifest.raw.id} pid=${proc.pid}`);
-      await waitForExit(proc, abort.signal);
-      log.info(`[launch] exited id=${manifest.raw.id} pid=${proc.pid}`);
 
       // 5. game closed → write stats to the PC (source of truth)
       const playSeconds = (Date.now() - since) / 1000;
@@ -292,6 +320,26 @@ export class GameController {
     this.deps.state.set({ kind: 'ready', game });
     this.deps.window.showAndFocus();
     this.sendError(message);
+  }
+
+  /**
+   * The watched-launcher path ended without the game ever becoming visible: the user closed the launcher
+   * without playing, or the game runs elevated / as a service and `tasklist` can't see it (R4). This is
+   * neither a failure nor a play session — we do NOT call stats.recordPlay (it would bump launchCount and
+   * lastPlayedAt for a 0s session) and we do NOT surface an error popup. Back to the normal screen; if the
+   * card is already gone, go idle and hide, mirroring onRemove's cleanup.
+   */
+  private abandonWatchedLaunch(game: GameInfo): void {
+    log.info('[launch] watched game never appeared — returning without recording a session');
+    if (!this.cardPresent) {
+      this.current = null;
+      this.setAudio(null);
+      this.deps.state.set({ kind: 'idle' });
+      this.deps.window.hide();
+      return;
+    }
+    this.deps.state.set({ kind: 'ready', game });
+    this.deps.window.showAndFocus();
   }
 
   private async performSyncOut(manifest: ResolvedManifest, stats: Stats): Promise<void> {

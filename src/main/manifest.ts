@@ -28,6 +28,16 @@ const manifestSchema = z.object({
   args: z.array(z.string()).default([]),
   // Opt-in elevation: for .exe whose embedded manifest requires administrator (spawn would EACCES).
   runAsAdmin: z.boolean().default(false),
+  // Optional game process image names for launcher/wrapper setups (see GameManifest.watchProcesses).
+  // Each name is a bare `*.exe` file: no quotes, no path separators — both a hard constraint against
+  // injection into the `tasklist` argv (execFile is shell-less, but we validate strictly anyway) and a
+  // guard against accidental generic names. `.min(1)` rejects an empty array (defense in depth vs the
+  // `?.length` branch in ipc). Names are compared case-insensitively (lower-cased) at match time.
+  watchProcesses: z
+    .array(z.string().regex(/^[A-Za-z0-9._ -]+\.exe$/i, 'watchProcesses entries must be a bare *.exe name'))
+    .min(1)
+    .max(16)
+    .optional(),
   heroImage: z.string().min(1).optional(),
   saveOnCard: z.string().min(1).optional(),
   pcSavePath: z.string().min(1).optional(),

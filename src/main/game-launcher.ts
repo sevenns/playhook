@@ -52,6 +52,26 @@ function throwIfAborted(signal: AbortSignal | undefined): void {
   if (signal?.aborted === true) throw new LaunchAbortedError();
 }
 
+/**
+ * Single unfiltered `tasklist /NH /FO CSV` snapshot, lower-cased. One process spawn per poll iteration
+ * (vs N for per-name filters) and an atomic view of all visible processes. Watched-image presence is a
+ * substring check against this stdout — no CSV column parsing, exactly like `isProcessAlive` does for a
+ * pid. Any error → empty string (everything reads as absent), matching the "error = dead" convention.
+ */
+async function snapshotProcesses(): Promise<string> {
+  try {
+    const { stdout } = await execFileAsync('tasklist', ['/NH', '/FO', 'CSV'], { windowsHide: true });
+    return stdout.toLowerCase();
+  } catch {
+    return '';
+  }
+}
+
+/** True if any watched image name (already lower-cased) is present in the snapshot. */
+function anyVisible(snapshot: string, watchNames: readonly string[]): boolean {
+  return watchNames.some((name) => snapshot.includes(name));
+}
+
 /** Checks whether the process with the given pid is alive, via `tasklist`. Any error → treated as dead. */
 async function isProcessAlive(pid: number): Promise<boolean> {
   try {
@@ -314,6 +334,70 @@ export async function waitForExit(proc: GameProcess, signal?: AbortSignal): Prom
     throwIfAborted(signal);
     const alive = await proc.isAlive();
     if (alive) {
+      missedReads = 0;
+    } else {
+      missedReads += 1;
+      if (missedReads >= EXIT_DEBOUNCE_READS) return;
+    }
+    await delay(EXIT_POLL_INTERVAL_MS);
+  }
+}
+
+// ── Watched-process path (launcher/wrapper games, manifest.watchProcesses) ───
+// The launcher is spawned as usual; the GAME runs in a separate process named by watchProcesses. Each
+// poll reads ONE snapshot and derives two signals: gameVisible (any watched image present) and
+// launcherAlive (the spawned launcher's pid present). We track the game by presence and use the
+// launcher's liveness only to avoid a false timeout while the user sits in the launcher menu/config.
+
+/** HANDOFF phase: wait for a watched game process to appear after the launcher was spawned. */
+export async function waitForWatchedStart(
+  launcherPid: number,
+  watchNames: readonly string[],
+  graceSec: number,
+  signal?: AbortSignal,
+): Promise<{ readonly started: boolean }> {
+  const lowered = watchNames.map((name) => name.toLowerCase());
+  const startedAt = Date.now();
+  // Deadline for "the launcher never even appeared" (tasklist lag right after spawn — see below).
+  const initialDeadline = startedAt + graceSec * 1000;
+  // Grace deadline once the launcher was alive and then died without the game showing up; null until then.
+  let graceDeadline: number | null = null;
+  let launcherSeenAlive = false;
+
+  for (;;) {
+    throwIfAborted(signal);
+    const snapshot = await snapshotProcesses();
+    const gameVisible = anyVisible(snapshot, lowered);
+    if (gameVisible) return { started: true };
+
+    const launcherAlive = snapshot.includes(`"${launcherPid}"`);
+    if (launcherAlive) {
+      // The user may sit in the launcher (Steam sync, config, resolution picker) indefinitely — no timeout.
+      launcherSeenAlive = true;
+    } else if (launcherSeenAlive) {
+      // The launcher was alive and is now gone, but the game never appeared → start a grace deadline.
+      graceDeadline ??= Date.now() + graceSec * 1000;
+      if (Date.now() >= graceDeadline) return { started: false };
+    } else if (Date.now() >= initialDeadline) {
+      // Never seen alive: this is tasklist lag right after spawn — NOT a death. We keep polling within the
+      // initial window; only once it elapses do we conclude the launcher never showed up.
+      return { started: false };
+    }
+    await delay(START_POLL_INTERVAL_MS);
+  }
+}
+
+/** RUNNING phase: resolves after N=3 consecutive reads with no watched process present (debounce). */
+export async function waitForWatchedExit(
+  watchNames: readonly string[],
+  signal?: AbortSignal,
+): Promise<void> {
+  const lowered = watchNames.map((name) => name.toLowerCase());
+  let missedReads = 0;
+  for (;;) {
+    throwIfAborted(signal);
+    const snapshot = await snapshotProcesses();
+    if (anyVisible(snapshot, lowered)) {
       missedReads = 0;
     } else {
       missedReads += 1;

@@ -25,6 +25,14 @@ export interface GameManifest {
   readonly args: readonly string[];
   /** Launch the .exe elevated (UAC "runas") for executables whose manifest requires administrator. */
   readonly runAsAdmin: boolean;
+  /**
+   * Image names of the GAME's own processes (e.g. ["Game-Win64-Shipping.exe"]) for launcher/wrapper
+   * setups where `executable` spawns a launcher that starts the game in a separate process and exits.
+   * When set, liveness is tracked by these names (presence in `tasklist`), not (only) by the spawned
+   * launcher's pid. When omitted, behaviour is unchanged — the pid path stays the default for
+   * self-contained .exe games.
+   */
+  readonly watchProcesses?: readonly string[];
   readonly heroImage?: string;
   readonly saveOnCard?: string;
   readonly pcSavePath?: string;
