@@ -29,3 +29,11 @@ nsis:
   oneClick: false
   perMachine: false
   allowToChangeInstallationDirectory: true
+
+# Auto-update channel (electron-updater): the app reads `latest.yml` + the installer from this repo's
+# GitHub Releases. Public repo → no token on the client. Update `owner`/`repo` if the GitHub repo is
+# renamed. Only the `nsis` target self-updates; the `portable` exe does not.
+publish:
+  provider: github
+  owner: sevenns
+  repo: playhook

@@ -89,6 +89,29 @@ The configuration lives in [`electron-builder.yml`](electron-builder.yml). For `
 > asar and the card is detected (this is spike risk R3 from the plan). If not, make sure
 > `node_modules/drivelist/**` is included in `asarUnpack`.
 
+### Delivering updates (auto-update)
+
+Installed apps update themselves via **electron-updater + GitHub Releases** (public repo, so the
+client needs no token). Only the **NSIS** build self-updates — the portable `.exe` does not.
+
+Release flow:
+
+1. Bump `version` in [`package.json`](package.json) (e.g. `0.1.0` → `0.1.1`).
+2. Commit, then push a matching tag: `git tag v0.1.1 && git push origin v0.1.1`.
+3. The [Build Windows](.github/workflows/build-windows.yml) workflow builds and uploads the installer
+   + `latest.yml` to a **draft** GitHub Release `v0.1.1`.
+4. **Publish the draft release** on GitHub to make it live.
+5. Each running app checks on startup and every 6h, downloads the update silently, and installs it on
+   the **next quit** (it never interrupts a running game). See `[updater]` lines in the log.
+
+Notes:
+
+- The tag must be `v{version}` and the version must be higher than the installed one.
+- The publish target (`owner`/`repo`) is set in [`electron-builder.yml`](electron-builder.yml) — update
+  it if the GitHub repo is renamed.
+- No code signing: the very first install shows a Windows SmartScreen warning, but updates still apply
+  (unlike macOS, Windows auto-update works unsigned).
+
 ---
 
 ## 5. Autostart

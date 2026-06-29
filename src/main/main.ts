@@ -12,6 +12,7 @@ import { DriveWatcher } from './drive-watcher';
 import { GameController } from './ipc';
 import { GlobalGamepad } from './gamepad-global';
 import { createTray } from './tray';
+import { initAutoUpdater } from './updater';
 
 // Hidden start (auto-launch): `openAsHidden` is macOS-only and is ignored on Windows (R6),
 // so we implement it ourselves via the `--hidden` arg + a manual process.argv check.
@@ -79,6 +80,7 @@ async function bootstrap(): Promise<void> {
 
   watcher.start();
   configureAutoLaunch();
+  initAutoUpdater();
 }
 
 const gotSingleInstanceLock = app.requestSingleInstanceLock();

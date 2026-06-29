@@ -16,6 +16,9 @@ jobs:
     # Visual Studio 18, which the bundled node-gyp (@electron/node-gyp 10.2) cannot recognize
     # ("unsupported version: 18"), so the native drivelist build fails there.
     runs-on: windows-2022
+    # Needed so electron-builder can create/upload the GitHub Release with the default token.
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout
@@ -38,9 +41,13 @@ jobs:
       - name: Compile TypeScript + assets
         run: npm run build
 
-      # --publish never: only build the artifacts, publish nothing.
-      - name: Package (nsis + portable)
-        run: npx electron-builder --win --publish never
+      # --publish always: build the artifacts AND upload them (+ latest.yml for auto-update) to a
+      # GitHub Release tagged v{version} (created as a draft — publish it manually to go live).
+      # GH_TOKEN = the default workflow token, scoped to this repo by the `permissions` block above.
+      - name: Package (nsis + portable) and publish
+        run: npx electron-builder --win --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload installers
         uses: actions/upload-artifact@v7
