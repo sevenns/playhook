@@ -22,7 +22,6 @@ import { type DriveWatcher } from './drive-watcher';
 import { readManifest, type ManifestEnv } from './manifest';
 import { syncDir } from './save-sync';
 import { launchGame, waitForExit, waitForStart, LaunchAbortedError } from './game-launcher';
-import { focusWindowByPid } from './foreground';
 import { log } from './logger';
 
 export interface ControllerDeps {
@@ -80,8 +79,6 @@ export class GameController {
   private abort: AbortController | null = null;
   // Audio for the current card, sent on its own channel (not on every AppState) — see AudioAssets.
   private currentAudio: AudioAssets | null = null;
-  // pid of the currently running game (for "resume" — bringing the game's window back to front).
-  private runningPid: number | null = null;
 
   constructor(private readonly deps: ControllerDeps) {}
 
@@ -103,7 +100,6 @@ export class GameController {
     ipcMain.handle(IPC.stateRequest, (): AppState => state.get());
     ipcMain.handle(IPC.audioRequest, (): AudioAssets | null => this.currentAudio);
     ipcMain.on(IPC.actionLaunch, () => void this.onLaunchRequested());
-    ipcMain.on(IPC.actionResume, () => this.onResumeRequested());
   }
 
   /** Stops the process waits and the watcher (on application exit). */
@@ -199,28 +195,6 @@ export class GameController {
     void this.runLaunchSequence(manifest, snapshot.game);
   }
 
-  /**
-   * "Resume" while a game is running (the Start+Back hotkey summoned the launcher over the game,
-   * and the user pressed Play / A again). We re-activate the game's own window by pid so gamepad
-   * input goes back to the game; hiding the launcher is only a fallback. On game exit the normal
-   * sync-out flow brings the launcher back. Ignored outside 'running'.
-   */
-  private onResumeRequested(): void {
-    if (this.deps.state.get().kind !== 'running') return;
-    const pid = this.runningPid;
-    log.info(`[resume] requested (pid=${pid ?? 'null'})`);
-    // Activate the game's own window so gamepad input returns to it (AttachThreadInput inside).
-    // On success we leave the launcher as-is (the game's window covers it) — do NOT hide it.
-    if (pid !== null && focusWindowByPid(pid)) {
-      log.info('[resume] game window focused');
-      return;
-    }
-    // Only if focusing failed (no window found / non-Windows): hide the launcher so the game
-    // underneath can regain the foreground.
-    log.warn('[resume] could not focus game window — hiding launcher as fallback');
-    this.deps.window.hide();
-  }
-
   private async runLaunchSequence(manifest: ResolvedManifest, info: GameInfo): Promise<void> {
     const { state, window, stats } = this.deps;
     this.launchInFlight = true;
@@ -254,14 +228,12 @@ export class GameController {
 
       // 4. running: count time, gamepad input is ignored (outside ready). The window stays put —
       // the game takes the foreground on its own and simply covers the launcher, which avoids the
-      // jerky hide/show flash. We grab the foreground back in step 6 once the game exits.
-      // Remember the pid so "resume" (Start+Back → Play) can re-activate the game's window.
+      // jerky hide/show flash. We grab the foreground back in step 6 once the game exits. The global
+      // Start+Back hotkey is intentionally a no-op while running, so there's nothing to re-summon.
       const since = Date.now();
-      this.runningPid = pid;
       state.set({ kind: 'running', game: info, since });
       log.info(`[launch] running id=${manifest.raw.id} pid=${pid}`);
       await waitForExit(pid, abort.signal);
-      this.runningPid = null;
       log.info(`[launch] exited id=${manifest.raw.id} pid=${pid}`);
 
       // 5. game closed → write stats to the PC (source of truth)
@@ -285,7 +257,6 @@ export class GameController {
     } finally {
       this.launchInFlight = false;
       this.abort = null;
-      this.runningPid = null;
     }
   }
 

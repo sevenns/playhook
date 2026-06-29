@@ -66,11 +66,15 @@ async function bootstrap(): Promise<void> {
     onQuit: () => quit(),
   });
 
-  // Global Start+Back hotkey: bring the launcher window back even from inside a running game.
-  // forceForeground=true: reliably steal the foreground from the game (minimize→restore).
+  // Global Start+Back hotkey: re-summon the launcher when it's hidden (e.g. minimized to the tray
+  // while a card is ready). Deliberately a NO-OP while a game is running: pulling the launcher over
+  // a running game only causes focus trouble, and there's nothing to do mid-game.
   const globalGamepad = new GlobalGamepad();
   globalGamepadRef = globalGamepad;
-  globalGamepad.onChord(() => window.showAndFocus(true));
+  globalGamepad.onChord(() => {
+    if (state.get().kind === 'running') return;
+    window.showAndFocus(true);
+  });
   globalGamepad.start();
 
   watcher.start();

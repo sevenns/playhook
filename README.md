@@ -192,8 +192,9 @@ Other PC state under `%APPDATA%\microsd-game-launcher\`:
 5. Close the game — the app counts the time, updates the statistics, syncs the
    saves PC→card, and shows the "Play" window again.
 
-While a game is running you can **hold Start+Back** on the gamepad to summon the launcher over the game;
-pressing **A / Play** again **resumes** the game (re-activates its window, so gamepad control returns to it).
+When the launcher is hidden (e.g. minimized to the tray) you can **hold Start+Back** on the gamepad to
+re-summon it. This hotkey is intentionally ignored **while a game is running** — there's nothing to do
+mid-game, and pulling the launcher over a running game only causes focus trouble.
 
 Tray: **Show** — bring back the window, **Open logs** — open the log folder, **Quit** — close the app
 completely.
@@ -202,7 +203,7 @@ completely.
 
 The main process writes a timestamped log to `%APPDATA%\microsd-game-launcher\logs\main.log` (open it via the
 tray **Open logs** item). It records card insertions, manifest validation, the stats reconcile/card-copy
-result, launch/exit, and resume — useful when a save or stats copy to the card silently fails.
+result, and launch/exit — useful when a save or stats copy to the card silently fails.
 
 ---
 
