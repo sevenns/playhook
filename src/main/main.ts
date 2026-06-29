@@ -1,7 +1,9 @@
 // Application bootstrap (stage 1): single-instance, tray, lifecycle, auto-launch.
 // Background app: the window is shown when a card is inserted or manually via the tray;
 // closing the window hides it to the tray instead of quitting the program.
-import { app, Menu, type Tray } from 'electron';
+import path from 'node:path';
+import { app, Menu, shell, type Tray } from 'electron';
+import { log, logFilePath } from './logger';
 import { StateManager } from './state';
 import { GameWindow } from './window';
 import { PcStore } from './pc-store';
@@ -39,6 +41,8 @@ async function bootstrap(): Promise<void> {
   // No application menu (removes the File/Edit/View… bar entirely).
   Menu.setApplicationMenu(null);
 
+  log.info(`[main] starting v${app.getVersion()} — log file: "${logFilePath()}"`);
+
   const store = new PcStore(app.getPath('userData'));
   await store.init();
 
@@ -58,6 +62,7 @@ async function bootstrap(): Promise<void> {
 
   trayRef = createTray({
     onShow: () => window.showAndFocus(),
+    onOpenLogs: () => void shell.openPath(path.dirname(logFilePath())),
     onQuit: () => quit(),
   });
 
@@ -95,7 +100,7 @@ if (!gotSingleInstanceLock) {
   });
 
   app.whenReady().then(bootstrap).catch((cause: unknown) => {
-    console.error('[main] bootstrap failed:', cause);
+    log.error('[main] bootstrap failed:', cause);
     app.quit();
   });
 }

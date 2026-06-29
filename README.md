@@ -187,12 +187,22 @@ Other PC state under `%APPDATA%\microsd-game-launcher\`:
 1. Launch the app (or let it start with the system) — it sits in the tray.
 2. Insert a card with a `game.json` — a window appears with the background, the title, the date of the last
    launch, and the hours played.
-3. Press **A** on the gamepad (the window is force-focused) **or** click "Launch".
-4. The app syncs the saves card→PC, launches the game, and hides the window.
+3. Press **A** on the gamepad (the window is force-focused) **or** click "Play".
+4. The app syncs the saves card→PC and launches the game; the game takes the foreground over the launcher.
 5. Close the game — the app counts the time, updates the statistics, syncs the
-   saves PC→card, and shows the "Launch" window again.
+   saves PC→card, and shows the "Play" window again.
 
-Tray: **Show** — bring back the window, **Quit** — close the app completely.
+While a game is running you can **hold Start+Back** on the gamepad to summon the launcher over the game;
+pressing **A / Play** again **resumes** the game (re-activates its window, so gamepad control returns to it).
+
+Tray: **Show** — bring back the window, **Open logs** — open the log folder, **Quit** — close the app
+completely.
+
+### Logs
+
+The main process writes a timestamped log to `%APPDATA%\microsd-game-launcher\logs\main.log` (open it via the
+tray **Open logs** item). It records card insertions, manifest validation, the stats reconcile/card-copy
+result, launch/exit, and resume — useful when a save or stats copy to the card silently fails.
 
 ---
 

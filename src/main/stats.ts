@@ -8,6 +8,7 @@ import fse from 'fs-extra';
 import { CARD_STATS_FILENAME, type Stats } from '../shared/types';
 import { parseStats, type PcStore } from './pc-store';
 import { writeFileAtomic } from './save-sync';
+import { log } from './logger';
 
 /** Returns the later of two ISO timestamps (null = "never", loses to any real date). */
 function latestDate(a: string | null, b: string | null): string | null {
@@ -56,6 +57,10 @@ export class StatsService {
   async reconcileWithCard(id: string, cardRoot: string): Promise<Stats> {
     const pc = await this.store.readStats(id);
     const card = await this.readCardStats(cardRoot);
+    log.info(
+      `[stats] reconcile id=${id} pc=${pc.totalPlaySeconds}s/${pc.launchCount} ` +
+        `card=${card === null ? 'none' : `${card.totalPlaySeconds}s/${card.launchCount}`}`,
+    );
     if (card === null) return pc;
     const merged = mergeStats(pc, card);
     await this.store.writeStats(id, merged);
@@ -81,8 +86,9 @@ export class StatsService {
     const target = path.join(cardRoot, CARD_STATS_FILENAME);
     try {
       await writeFileAtomic(target, JSON.stringify(stats, null, 2));
+      log.info(`[stats] wrote card copy → "${target}"`);
     } catch (cause) {
-      console.warn('[stats] failed to copy stats to card (best-effort):', cause);
+      log.error(`[stats] FAILED to write card copy → "${target}":`, cause);
     }
   }
 }

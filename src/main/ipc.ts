@@ -22,6 +22,8 @@ import { type DriveWatcher } from './drive-watcher';
 import { readManifest, type ManifestEnv } from './manifest';
 import { syncDir } from './save-sync';
 import { launchGame, waitForExit, waitForStart, LaunchAbortedError } from './game-launcher';
+import { focusWindowByPid } from './foreground';
+import { log } from './logger';
 
 export interface ControllerDeps {
   readonly state: StateManager;
@@ -78,6 +80,8 @@ export class GameController {
   private abort: AbortController | null = null;
   // Audio for the current card, sent on its own channel (not on every AppState) — see AudioAssets.
   private currentAudio: AudioAssets | null = null;
+  // pid of the currently running game (for "resume" — bringing the game's window back to front).
+  private runningPid: number | null = null;
 
   constructor(private readonly deps: ControllerDeps) {}
 
@@ -94,7 +98,7 @@ export class GameController {
 
     watcher.onInsert((root) => void this.onInsert(root));
     watcher.onRemove(() => this.onRemove());
-    watcher.onError((error) => console.error('[drive-watcher]', error));
+    watcher.onError((error) => log.error('[drive-watcher]', error));
 
     ipcMain.handle(IPC.stateRequest, (): AppState => state.get());
     ipcMain.handle(IPC.audioRequest, (): AudioAssets | null => this.currentAudio);
@@ -112,12 +116,14 @@ export class GameController {
 
   private async onInsert(root: string): Promise<void> {
     this.cardPresent = true;
+    log.info(`[insert] card detected at root="${root}"`);
     // Documents is resolved via the system Known Folder API (the same one the game uses),
     // so %DOCUMENTS% in the manifest maps to the real save folder regardless of UI
     // language or OneDrive redirection. Safe to read here — app is ready by now.
     const env: ManifestEnv = { documents: app.getPath('documents') };
     const result = await readManifest(root, env);
     if (!result.ok) {
+      log.warn(`[insert] manifest rejected: ${result.message}`);
       this.current = null;
       this.setAudio(null);
       this.deps.state.set({ kind: 'error', message: result.message });
@@ -126,6 +132,7 @@ export class GameController {
     }
     const manifest = result.manifest;
     this.current = manifest;
+    log.info(`[insert] manifest ok id=${manifest.raw.id} root="${manifest.root}"`);
     this.setAudio(await this.readAudioAssets(manifest));
 
     // Reconcile the card's traveling stats with this PC's mirror (the "one card, many PCs"
@@ -140,7 +147,7 @@ export class GameController {
     try {
       await this.flushPendingIfAny(manifest);
     } catch (cause) {
-      console.warn('[pending-flush] failed on insert:', describe(cause));
+      log.warn('[pending-flush] failed on insert:', describe(cause));
     }
 
     const info = await this.buildGameInfo(manifest, stats);
@@ -194,12 +201,21 @@ export class GameController {
 
   /**
    * "Resume" while a game is running (the Start+Back hotkey summoned the launcher over the game,
-   * and the user pressed Play / A again). Hiding the launcher hands the foreground back to the
-   * game underneath — the symmetric inverse of how showAndFocus covered it. On game exit the
-   * normal sync-out flow brings the launcher back. Ignored outside 'running'.
+   * and the user pressed Play / A again). We re-activate the game's own window by pid so gamepad
+   * input goes back to the game; hiding the launcher is only a fallback. On game exit the normal
+   * sync-out flow brings the launcher back. Ignored outside 'running'.
    */
   private onResumeRequested(): void {
     if (this.deps.state.get().kind !== 'running') return;
+    const pid = this.runningPid;
+    log.info(`[resume] requested (pid=${pid ?? 'null'})`);
+    // Prefer activating the game's own window so gamepad input returns to the game. Only if that
+    // isn't possible (no window found / non-Windows) do we fall back to hiding the launcher.
+    if (pid !== null && focusWindowByPid(pid)) {
+      log.info('[resume] game window focused');
+      return;
+    }
+    log.warn('[resume] could not focus game window — hiding launcher as fallback');
     this.deps.window.hide();
   }
 
@@ -237,9 +253,14 @@ export class GameController {
       // 4. running: count time, gamepad input is ignored (outside ready). The window stays put —
       // the game takes the foreground on its own and simply covers the launcher, which avoids the
       // jerky hide/show flash. We grab the foreground back in step 6 once the game exits.
+      // Remember the pid so "resume" (Start+Back → Play) can re-activate the game's window.
       const since = Date.now();
+      this.runningPid = pid;
       state.set({ kind: 'running', game: info, since });
+      log.info(`[launch] running id=${manifest.raw.id} pid=${pid}`);
       await waitForExit(pid, abort.signal);
+      this.runningPid = null;
+      log.info(`[launch] exited id=${manifest.raw.id} pid=${pid}`);
 
       // 5. game closed → write stats to the PC (source of truth)
       const playSeconds = (Date.now() - since) / 1000;
@@ -262,6 +283,7 @@ export class GameController {
     } finally {
       this.launchInFlight = false;
       this.abort = null;
+      this.runningPid = null;
     }
   }
 
@@ -279,7 +301,7 @@ export class GameController {
         await syncDir(manifest.pcSavePath, manifest.saveOnCardPath);
       } catch (cause) {
         // The card may have been yanked during the sync → saves.bak is intact, we'll finish on insertion.
-        console.warn('[sync-out] failed, deferring to pending-flush:', describe(cause));
+        log.warn('[sync-out] failed, deferring to pending-flush:', describe(cause));
         await this.deps.store.enqueuePcToSd(id, manifest.pcSavePath);
         return;
       }
@@ -308,7 +330,7 @@ export class GameController {
       const buffer = await fse.readFile(heroImagePath);
       return `data:${mime};base64,${buffer.toString('base64')}`;
     } catch (cause) {
-      console.warn('[hero-image] failed to read, skipping:', describe(cause));
+      log.warn('[hero-image] failed to read, skipping:', describe(cause));
       return undefined;
     }
   }
@@ -348,7 +370,7 @@ export class GameController {
       const buffer = await fse.readFile(filePath);
       return `data:${mime};base64,${buffer.toString('base64')}`;
     } catch (cause) {
-      console.warn('[audio] failed to read, skipping:', describe(cause));
+      log.warn('[audio] failed to read, skipping:', describe(cause));
       return undefined;
     }
   }

@@ -7,6 +7,7 @@
 // no node-gyp/native-compile step (unlike drivelist). We use the documented XInputGetState
 // (Start/Back are normal buttons — no XInputGetStateEx hack, no Game Bar conflict).
 import koffi from 'koffi';
+import { log } from './logger';
 
 const START_BUTTON = 0x0010; // XINPUT_GAMEPAD_START (the right central "Menu ☰" button)
 const BACK_BUTTON = 0x0020; // XINPUT_GAMEPAD_BACK (the left central "View ⧉" button)
@@ -53,7 +54,7 @@ function loadXInput(): XInputGetStateFn | null {
       // try the next DLL name
     }
   }
-  console.warn('[gamepad-global] XInput not available — Start+Back hotkey disabled');
+  log.warn('[gamepad-global] XInput not available — Start+Back hotkey disabled');
   return null;
 }
 
