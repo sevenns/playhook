@@ -70,67 +70,25 @@ body {
   overflow: hidden;
 }
 
-/* ── Idle / error centered message ──────────────────────────────────────── */
+/* ── Per-screen bottom-bar controls ────────────────────────────────────────
+   The bottom bar is the same on every screen. Game screens (ready / busy) show Play + title +
+   Info. The empty screen (idle, and the no-game error) shows no Play, "Insert a game card" as the
+   title, and the Hide (X) button in place of Info. */
 
-.message {
-  position: absolute;
-  inset: 0;
+#hide-button {
   display: none;
-  align-items: center;
-  justify-content: center;
-  padding: calc(80 * var(--px));
-  text-align: center;
-  font-weight: 500;
-  font-size: calc(28 * var(--px));
-  line-height: 1.4;
-  color: var(--fg);
 }
 
-#app[data-phase='idle'] .message,
-#app[data-phase='error'] .message {
+#app[data-phase='idle'] #play-button,
+#app[data-phase='error'] #play-button,
+#app[data-phase='idle'] #info-button,
+#app[data-phase='error'] #info-button {
+  display: none;
+}
+
+#app[data-phase='idle'] #hide-button,
+#app[data-phase='error'] #hide-button {
   display: flex;
-}
-
-#app[data-phase='idle'] #bottom-bar,
-#app[data-phase='error'] #bottom-bar {
-  opacity: 0;
-  pointer-events: none;
-}
-
-/* ── Hide button (only on the idle / error message screen) ──────────────── */
-
-.hide-button {
-  position: absolute;
-  bottom: calc(60 * var(--px));
-  left: 50%;
-  transform: translateX(-50%);
-  display: none;
-  padding: calc(14 * var(--px)) calc(44 * var(--px));
-  border: calc(2 * var(--px)) solid color-mix(in srgb, var(--fg) 35%, transparent);
-  border-radius: calc(999 * var(--px));
-  background: transparent;
-  color: var(--fg);
-  font-family: inherit;
-  font-weight: 500;
-  font-size: calc(24 * var(--px));
-  cursor: pointer;
-  transition: background 0.2s ease, border-color 0.2s ease, transform 0.12s ease;
-}
-
-#app[data-phase='idle'] .hide-button,
-#app[data-phase='error'] .hide-button {
-  display: block;
-}
-
-.hide-button:hover,
-.hide-button:focus-visible {
-  background: color-mix(in srgb, var(--fg) 12%, transparent);
-  border-color: color-mix(in srgb, var(--fg) 60%, transparent);
-}
-
-/* Keep the horizontal centering while adding the press scale. */
-.hide-button:active {
-  transform: translateX(-50%) scale(0.95);
 }
 
 /* ── Bottom bar ──────────────────────────────────────────────────────────── */
@@ -230,6 +188,7 @@ body {
    global `* { cursor: default }` would override the button's pointer cursor over the icon). */
 .icon-play,
 .icon-info,
+.icon-hide,
 .loader {
   pointer-events: none;
 }
@@ -261,7 +220,8 @@ body {
   color: var(--d1);
 }
 
-.icon-info {
+.icon-info,
+.icon-hide {
   width: calc(40 * var(--px));
   height: calc(40 * var(--px));
   fill: currentColor;
@@ -339,15 +299,16 @@ body {
   transition-delay: 0.35s;
 }
 
-/* ── Info popup ──────────────────────────────────────────────────────────── */
+/* ── Popups (Info / Error) ──────────────────────────────────────────────────
+   Shared component: a right-side frosted veil + a right-aligned panel, toggled with .is-open. */
 
-#info-popup {
+.popup {
   position: absolute;
   inset: 0;
   pointer-events: none;
 }
 
-.info-veil {
+.popup-veil {
   position: absolute;
   inset: 0;
   /* Horizontal gradient: transparent on the left (hero visible) → solid d1 on the right. */
@@ -360,7 +321,7 @@ body {
   transition: opacity 0.35s ease;
 }
 
-.info-panel {
+.popup-panel {
   position: absolute;
   top: calc(400 * var(--px));
   right: calc(32 * var(--px));
@@ -373,13 +334,13 @@ body {
   transition: transform 0.35s ease, opacity 0.35s ease;
 }
 
-#app[data-info='open'] #info-popup {
+.popup.is-open {
   pointer-events: auto;
 }
-#app[data-info='open'] .info-veil {
+.popup.is-open .popup-veil {
   opacity: 1;
 }
-#app[data-info='open'] .info-panel {
+.popup.is-open .popup-panel {
   transform: none;
   opacity: 1;
 }
@@ -401,4 +362,9 @@ body {
   font-size: calc(24 * var(--px));
   line-height: calc(36 * var(--px));
   color: var(--fg);
+}
+
+/* The error message can be long; cap its width so it wraps (matches the mockup's column). */
+#error-message {
+  max-width: calc(448 * var(--px));
 }

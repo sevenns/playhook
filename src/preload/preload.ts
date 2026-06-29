@@ -10,8 +10,10 @@ const CHANNELS = {
   stateRequest: 'state:request',
   actionLaunch: 'action:launch',
   actionHide: 'action:hide',
+  errorShow: 'error:show',
   audioUpdate: 'audio:update',
   audioRequest: 'audio:request',
+  wallpaperRequest: 'wallpaper:request',
 } as const;
 
 const api: RendererApi = {
@@ -29,6 +31,11 @@ const api: RendererApi = {
   requestHide(): void {
     ipcRenderer.send(CHANNELS.actionHide);
   },
+  onError(callback: (message: string) => void): void {
+    ipcRenderer.on(CHANNELS.errorShow, (_event: IpcRendererEvent, message: string) => {
+      callback(message);
+    });
+  },
   onAudioUpdate(callback: (assets: AudioAssets | null) => void): void {
     ipcRenderer.on(CHANNELS.audioUpdate, (_event: IpcRendererEvent, assets: AudioAssets | null) => {
       callback(assets);
@@ -36,6 +43,9 @@ const api: RendererApi = {
   },
   requestAudio(): Promise<AudioAssets | null> {
     return ipcRenderer.invoke(CHANNELS.audioRequest) as Promise<AudioAssets | null>;
+  },
+  requestWallpaper(): Promise<string | null> {
+    return ipcRenderer.invoke(CHANNELS.wallpaperRequest) as Promise<string | null>;
   },
 };
 

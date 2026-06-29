@@ -40,6 +40,9 @@ const IMAGE_MIME: Readonly<Record<string, string>> = {
   '.gif': 'image/gif',
 };
 
+// Fallback hero background (bundled by copy-assets into dist/wallpaper.png). __dirname is dist/main.
+const WALLPAPER_PATH = path.join(__dirname, '../wallpaper.png');
+
 const AUDIO_MIME: Readonly<Record<string, string>> = {
   '.mp3': 'audio/mpeg',
   '.ogg': 'audio/ogg',
@@ -79,6 +82,8 @@ export class GameController {
   private abort: AbortController | null = null;
   // Audio for the current card, sent on its own channel (not on every AppState) — see AudioAssets.
   private currentAudio: AudioAssets | null = null;
+  // Bundled fallback wallpaper as a data URL: undefined = not read yet, null = unavailable.
+  private wallpaperDataUrl: string | null | undefined;
 
   constructor(private readonly deps: ControllerDeps) {}
 
@@ -99,8 +104,17 @@ export class GameController {
 
     ipcMain.handle(IPC.stateRequest, (): AppState => state.get());
     ipcMain.handle(IPC.audioRequest, (): AudioAssets | null => this.currentAudio);
+    ipcMain.handle(IPC.wallpaperRequest, (): Promise<string | null> => this.readWallpaperDataUrl());
     ipcMain.on(IPC.actionLaunch, () => void this.onLaunchRequested());
     ipcMain.on(IPC.actionHide, () => this.deps.window.hide());
+  }
+
+  /** Sends a transient error to the renderer to surface in the error popup. */
+  private sendError(message: string): void {
+    const browserWindow = this.deps.window.browserWindow;
+    if (browserWindow !== null && !browserWindow.isDestroyed()) {
+      browserWindow.webContents.send(IPC.errorShow, message);
+    }
   }
 
   /** Stops the process waits and the watcher (on application exit). */
@@ -216,16 +230,14 @@ export class GameController {
       try {
         pid = await launchGame(manifest);
       } catch (cause) {
-        state.set({ kind: 'error', game: info, message: `failed to launch the game: ${describe(cause)}` });
-        window.showAndFocus();
+        this.failLaunch(info, `failed to launch the game: ${describe(cause)}`);
         return;
       }
 
       // 3. wait for the process to appear within launchTimeoutSec
       const started = await waitForStart(pid, manifest.raw.launchTimeoutSec, abort.signal);
       if (!started) {
-        state.set({ kind: 'error', game: info, message: 'the game did not start (process wait timed out)' });
-        window.showAndFocus();
+        this.failLaunch(info, 'the game did not start (process wait timed out)');
         return;
       }
 
@@ -255,12 +267,22 @@ export class GameController {
       window.showAndFocus();
     } catch (cause) {
       if (cause instanceof LaunchAbortedError) return; // application is shutting down
-      state.set({ kind: 'error', game: info, message: describe(cause) });
-      window.showAndFocus();
+      this.failLaunch(info, describe(cause));
     } finally {
       this.launchInFlight = false;
       this.abort = null;
     }
+  }
+
+  /**
+   * A launch attempt failed: return to the normal 'ready' screen (the game is still on the card)
+   * and surface the reason in the error popup. The user can read it, close it (B / veil) and retry.
+   */
+  private failLaunch(game: GameInfo, message: string): void {
+    log.warn(`[launch] failed: ${message}`);
+    this.deps.state.set({ kind: 'ready', game });
+    this.deps.window.showAndFocus();
+    this.sendError(message);
   }
 
   private async performSyncOut(manifest: ResolvedManifest, stats: Stats): Promise<void> {
@@ -299,16 +321,33 @@ export class GameController {
     };
   }
 
+  /** Game hero, or the fallback wallpaper when the manifest has no heroImage (or it fails to read). */
   private async readHeroDataUrl(heroImagePath: string | undefined): Promise<string | undefined> {
-    if (heroImagePath === undefined) return undefined;
+    if (heroImagePath !== undefined) {
+      const url = await this.readImageDataUrl(heroImagePath);
+      if (url !== undefined) return url;
+      log.warn('[hero-image] failed to read, using wallpaper fallback');
+    }
+    return (await this.readWallpaperDataUrl()) ?? undefined;
+  }
+
+  private async readImageDataUrl(filePath: string): Promise<string | undefined> {
     try {
-      const mime = IMAGE_MIME[path.extname(heroImagePath).toLowerCase()] ?? 'application/octet-stream';
-      const buffer = await fse.readFile(heroImagePath);
+      const mime = IMAGE_MIME[path.extname(filePath).toLowerCase()] ?? 'application/octet-stream';
+      const buffer = await fse.readFile(filePath);
       return `data:${mime};base64,${buffer.toString('base64')}`;
     } catch (cause) {
-      log.warn('[hero-image] failed to read, skipping:', describe(cause));
+      log.warn(`[image] failed to read "${filePath}":`, describe(cause));
       return undefined;
     }
+  }
+
+  /** Bundled fallback wallpaper as a data URL (read once and cached). null if it can't be read. */
+  private async readWallpaperDataUrl(): Promise<string | null> {
+    if (this.wallpaperDataUrl !== undefined) return this.wallpaperDataUrl;
+    const url = await this.readImageDataUrl(WALLPAPER_PATH);
+    this.wallpaperDataUrl = url ?? null;
+    return this.wallpaperDataUrl;
   }
 
   // ── Audio assets (sounds + background music) ─────────────────────────────

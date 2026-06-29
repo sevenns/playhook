@@ -19,7 +19,6 @@ function reqQuery<T extends HTMLElement>(selector: string): T {
 }
 
 const app = req('app');
-const message = req('message');
 const hideButton = req<HTMLButtonElement>('hide-button');
 const playButton = req<HTMLButtonElement>('play-button');
 const infoButton = req<HTMLButtonElement>('info-button');
@@ -27,13 +26,22 @@ const titleEl = req('title');
 const statusEl = req('status');
 const infoPanel = req('info-panel');
 const infoPopup = req('info-popup');
+const infoVeil = reqQuery<HTMLElement>('#info-popup .popup-veil');
+const errorPopup = req('error-popup');
+const errorMessageEl = req('error-message');
+const errorVeil = reqQuery<HTMLElement>('#error-popup .popup-veil');
 const barContent = reqQuery<HTMLElement>('.bar-content');
-const infoVeil = reqQuery<HTMLElement>('.info-veil');
 
 type Phase = 'idle' | 'ready' | 'busy' | 'error';
 
+const EMPTY_TITLE = 'Insert a game card';
+
 let currentState: AppState = { kind: 'idle' };
 let infoOpen = false;
+let errorOpen = false;
+// Fallback wallpaper (data URL from main) for the empty / idle screen, and its cached palette.
+let wallpaperUrl: string | null = null;
+let wallpaperPalette: Palette | null | undefined;
 const paletteCache = new Map<string, Palette | null>();
 const audio = createAudioController();
 
@@ -124,12 +132,32 @@ function updatePalette(game: GameInfo): void {
 
 // ── Hero background ─────────────────────────────────────────────────────────
 
-function setHero(game: GameInfo | undefined): void {
-  if (game?.heroImageDataUrl !== undefined) {
+function setHero(game: GameInfo): void {
+  if (game.heroImageDataUrl !== undefined) {
     app.style.backgroundImage = `url("${game.heroImageDataUrl}")`;
   } else {
     app.style.backgroundImage = 'none';
   }
+}
+
+// The empty / idle screen (no game): the fallback wallpaper as background, its dominant colors as
+// the palette, and "Insert a game card" as the title. Reuses the main screen's bottom bar layout.
+function applyEmptyScreen(): void {
+  titleEl.textContent = EMPTY_TITLE;
+  if (wallpaperUrl === null) {
+    app.style.backgroundImage = 'none';
+    applyPalette(null);
+    return;
+  }
+  app.style.backgroundImage = `url("${wallpaperUrl}")`;
+  if (wallpaperPalette !== undefined) {
+    applyPalette(wallpaperPalette);
+    return;
+  }
+  void computePalette(wallpaperUrl).then((palette) => {
+    wallpaperPalette = palette;
+    if (gameOf(currentState) === undefined) applyPalette(palette);
+  });
 }
 
 // ── Info panel ──────────────────────────────────────────────────────────────
@@ -170,12 +198,15 @@ function applyTitleSlide(toRight: boolean): void {
   });
 }
 
-// ── Info popup ──────────────────────────────────────────────────────────────
+// ── Popups (Info / Error) ─────────────────────────────────────────────────────
+// Both share the same component (.popup): a right-side frosted veil + a right-aligned panel,
+// toggled with the .is-open class. They are mutually exclusive.
 
 function openInfo(): void {
   if (infoOpen || phaseOf(currentState) !== 'ready') return;
+  closeError();
   infoOpen = true;
-  app.dataset['info'] = 'open';
+  infoPopup.classList.add('is-open');
   infoPopup.setAttribute('aria-hidden', 'false');
   applyFocus();
 }
@@ -183,8 +214,25 @@ function openInfo(): void {
 function closeInfo(): void {
   if (!infoOpen) return;
   infoOpen = false;
-  delete app.dataset['info'];
+  infoPopup.classList.remove('is-open');
   infoPopup.setAttribute('aria-hidden', 'true');
+  applyFocus();
+}
+
+function openError(messageText: string): void {
+  closeInfo();
+  errorMessageEl.textContent = messageText;
+  errorOpen = true;
+  errorPopup.classList.add('is-open');
+  errorPopup.setAttribute('aria-hidden', 'false');
+  applyFocus();
+}
+
+function closeError(): void {
+  if (!errorOpen) return;
+  errorOpen = false;
+  errorPopup.classList.remove('is-open');
+  errorPopup.setAttribute('aria-hidden', 'true');
   applyFocus();
 }
 
@@ -206,25 +254,26 @@ function render(state: AppState): void {
   const game = gameOf(state);
 
   app.dataset['phase'] = phase;
-  setHero(game);
 
   if (game !== undefined) {
+    setHero(game);
     updatePalette(game);
     titleEl.textContent = game.title;
     buildInfoPanel(game);
-  }
-
-  if (phase === 'idle') {
-    message.textContent = 'Insert a game card';
-  } else if (phase === 'error' && state.kind === 'error') {
-    message.textContent = state.message;
+  } else {
+    // idle / no-game error → the empty "Insert a game card" screen (wallpaper background).
+    applyEmptyScreen();
   }
 
   statusEl.textContent = statusOf(state);
   applyTitleSlide(phase === 'busy');
 
-  // Info popup is only valid in ready; force-close on any other state.
-  if (phase !== 'ready') closeInfo();
+  // Popups only make sense on the ready screen; force-close them on any other state. (A failed
+  // launch returns to 'ready' first, then opens the error popup — so it survives this.)
+  if (phase !== 'ready') {
+    closeInfo();
+    closeError();
+  }
   applyFocus();
   syncMusic();
 }
@@ -235,9 +284,9 @@ function render(state: AppState): void {
 const focusables: readonly HTMLButtonElement[] = [playButton, infoButton];
 let focusIndex = 0;
 
-// Focus is only meaningful on the ready screen with the popup closed.
+// Focus is only meaningful on the ready screen with no popup open.
 function focusActive(): boolean {
-  return phaseOf(currentState) === 'ready' && !infoOpen;
+  return phaseOf(currentState) === 'ready' && !infoOpen && !errorOpen;
 }
 
 function applyFocus(): void {
@@ -282,13 +331,18 @@ function triggerInfo(): void {
   openInfo();
 }
 
-function triggerCloseInfo(): void {
-  if (!infoOpen) return; // nothing to hide → no "back" sound
-  audio.play('back');
-  closeInfo();
+// Gamepad B / veil click closes whichever popup is open (Info or Error).
+function triggerClosePopup(): void {
+  if (infoOpen) {
+    audio.play('back');
+    closeInfo();
+  } else if (errorOpen) {
+    audio.play('back');
+    closeError();
+  }
 }
 
-// The idle / error message screen, where the only action is "Hide" (back to tray).
+// The empty / idle screen, where the only action is "Hide" (back to tray).
 function onMessageScreen(): boolean {
   const phase = phaseOf(currentState);
   return phase === 'idle' || phase === 'error';
@@ -298,7 +352,8 @@ function onMessageScreen(): boolean {
 
 playButton.addEventListener('click', () => triggerPlay());
 infoButton.addEventListener('click', () => triggerInfo());
-infoVeil.addEventListener('click', () => triggerCloseInfo());
+infoVeil.addEventListener('click', () => triggerClosePopup());
+errorVeil.addEventListener('click', () => triggerClosePopup());
 hideButton.addEventListener('click', () => window.api.requestHide());
 
 // Mouse hover moves the gamepad focus too, so A always activates what's highlighted.
@@ -313,13 +368,22 @@ focusables.forEach((btn, i) => {
 const gamepad = createGamepadController({
   onLeft: () => moveFocus(-1),
   onRight: () => moveFocus(1),
-  // On the idle / error screen the only action is Hide; otherwise A activates the focused button.
+  // On the empty / idle screen the only action is Hide; otherwise A activates the focused button.
   onA: () => (onMessageScreen() ? window.api.requestHide() : activateFocused()),
-  onB: () => (onMessageScreen() ? window.api.requestHide() : triggerCloseInfo()),
+  onB: () => (onMessageScreen() ? window.api.requestHide() : triggerClosePopup()),
 });
 
 window.api.onStateUpdate(render);
 void window.api.requestState().then(render);
+
+// A failed launch returns to 'ready' and sends the reason here to open the error popup.
+window.api.onError((messageText) => openError(messageText));
+
+// Fallback wallpaper for the empty screen (data URL from main); apply if we're on it already.
+void window.api.requestWallpaper().then((url) => {
+  wallpaperUrl = url;
+  if (gameOf(currentState) === undefined) applyEmptyScreen();
+});
 
 // Audio assets are delivered on their own channel (not in AppState); load them and keep music in sync.
 window.api.onAudioUpdate((assets) => {

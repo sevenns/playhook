@@ -12,13 +12,8 @@
   </head>
   <body>
     <main id="app" data-phase="idle">
-      <!-- Centered message for idle / error states -->
-      <div id="message" class="message"></div>
-
-      <!-- Hide the window back to the tray; only shown on the idle / error message screen -->
-      <button id="hide-button" class="hide-button" type="button">Hide</button>
-
-      <!-- Bottom bar: gradient of d1, holds play / title / status / info -->
+      <!-- Bottom bar (same layout for every screen): play / title / status, and on the right either
+           the Info button (game screens) or the Hide button (empty / idle screen). -->
       <footer id="bottom-bar">
         <div class="bar-content">
           <button id="play-button" class="circle-button" type="button" aria-label="Play">
@@ -43,13 +38,35 @@
               />
             </svg>
           </button>
+
+          <!-- Hide button: same rect-button component as Info, but a disc with an X cut out
+               (fill-rule evenodd). Shown only on the empty / idle screen; hides the window. -->
+          <button id="hide-button" class="rect-button" type="button" aria-label="Hide">
+            <svg class="icon-hide" viewBox="0 0 40 40" aria-hidden="true">
+              <path
+                fill-rule="evenodd"
+                d="M20 0C31.0457 0 40 8.9543 40 20C40 31.0457 31.0457 40 20 40C8.9543 40 0 31.0457 0 20C0 8.9543 8.9543 0 20 0ZM28.707 9.29297C28.316 8.90225 27.6829 8.90206 27.293 9.29297L20 16.5859L12.707 9.29297C12.5116 9.09766 12.2558 9 12 9C11.7442 9.00007 11.4879 9.09754 11.293 9.29297L9.29297 11.293C8.90206 11.6839 8.90225 12.317 9.29297 12.707L16.5859 20L9.29297 27.293C8.90206 27.6839 8.90225 28.317 9.29297 28.707L11.293 30.707C11.684 31.098 12.317 31.098 12.707 30.707L20 23.4141L27.293 30.707C27.683 31.098 28.317 31.098 28.707 30.707L30.707 28.707C31.098 28.316 31.098 27.683 30.707 27.293L23.4141 20L30.707 12.707C31.098 12.317 31.098 11.683 30.707 11.293L28.707 9.29297Z"
+              />
+            </svg>
+          </button>
         </div>
       </footer>
 
-      <!-- Info popup: full-screen veil (horizontal d1 gradient) + right-aligned info column -->
-      <section id="info-popup" aria-hidden="true">
-        <div class="info-veil"></div>
-        <div class="info-panel" id="info-panel"></div>
+      <!-- Info popup: right-side frosted veil + right-aligned column of game stats. -->
+      <section id="info-popup" class="popup" aria-hidden="true">
+        <div class="popup-veil"></div>
+        <div class="popup-panel" id="info-panel"></div>
+      </section>
+
+      <!-- Error popup: same component, shown when a launch fails (over the ready screen). -->
+      <section id="error-popup" class="popup" aria-hidden="true">
+        <div class="popup-veil"></div>
+        <div class="popup-panel">
+          <div class="info-item">
+            <div class="info-label">Error</div>
+            <div class="info-value" id="error-message"></div>
+          </div>
+        </div>
       </section>
     </main>
     <script type="module" src="./app.js"></script>

@@ -116,12 +116,16 @@ export const IPC = {
   stateRequest: 'state:request',
   /** renderer → main: the user pressed A / clicked "Play". */
   actionLaunch: 'action:launch',
-  /** renderer → main: hide the launcher window to the tray (the "Hide" button on the message screen). */
+  /** renderer → main: hide the launcher window to the tray (the "Hide" button on the empty screen). */
   actionHide: 'action:hide',
+  /** main → renderer: a transient error to surface in the error popup (e.g. a failed launch). */
+  errorShow: 'error:show',
   /** main → renderer: audio assets for the current game (or null when no card). */
   audioUpdate: 'audio:update',
   /** renderer → main: request the current audio assets (on window startup). */
   audioRequest: 'audio:request',
+  /** renderer → main: request the fallback wallpaper data URL (for the idle / empty screen). */
+  wallpaperRequest: 'wallpaper:request',
 } as const;
 
 /** API that preload exposes on `window.api`. */
@@ -130,8 +134,10 @@ export interface RendererApi {
   requestState(): Promise<AppState>;
   requestLaunch(): void;
   requestHide(): void;
+  onError(callback: (message: string) => void): void;
   onAudioUpdate(callback: (assets: AudioAssets | null) => void): void;
   requestAudio(): Promise<AudioAssets | null>;
+  requestWallpaper(): Promise<string | null>;
 }
 
 declare global {

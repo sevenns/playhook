@@ -32,6 +32,10 @@ for (const name of icons) {
 // asar (plain fs reads work through Electron's asar shim) and read at runtime from dist/audio.
 await cp(resolve(root, 'audio'), resolve(outDist, 'audio'), { recursive: true });
 
+// Fallback hero wallpaper: used as the background when a game has no heroImage and on the idle
+// "Insert a game card" screen. Main reads it and hands it to the renderer as a data URL.
+await cp(resolve(root, 'assets/playhook-wallpaper.png'), resolve(outDist, 'wallpaper.png'));
+
 console.log(
-  `Copied ${files.length} file(s), ${dirs.length} dir(s), ${icons.length} icon(s) and default audio to dist`,
+  `Copied ${files.length} file(s), ${dirs.length} dir(s), ${icons.length} icon(s), default audio and wallpaper to dist`,
 );

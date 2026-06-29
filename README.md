@@ -57,11 +57,19 @@ A couple of things to expect on first run:
 
 1. Playhook starts hidden in the tray. With no game card inserted, there is no window.
 2. Insert a card with a valid `game.json` and a window appears showing the background art, the
-   title, the last launch date, and the hours played (state `ready`).
+   title, the last launch date, and the hours played (state `ready`). If the manifest has no
+   `heroImage`, a bundled wallpaper is used as the background.
 3. Press **A** on the gamepad (the window is force-focused) **or** click **Play**.
 4. Saves are synced card → PC and the game launches; it takes the foreground over the launcher.
 5. When the game closes, Playhook counts the play time, updates the statistics, and syncs the
    saves PC → card. The game card window returns.
+
+If a launch fails, the window stays on the normal game screen and the reason is shown in a small
+**error popup** on the right (close it with **B** / a click, then retry). Press the **Info** (ⓘ)
+button to see playtime stats in the same kind of popup.
+
+The empty screen (summoned with no card) reuses the same layout over the wallpaper: "Insert a game
+card" and a **Hide** (✕) button on the right to send the window back to the tray.
 
 When the launcher is hidden you can **hold Start + Back** on the gamepad to re-summon it. This
 hotkey is intentionally ignored **while a game is running** — pulling the launcher over a running
@@ -85,7 +93,7 @@ absolute and must start with one of the allowed prefixes (see below).
   "title": "Hollow Knight",
   "executable": "game/hollow_knight.exe",   // relative path to the .exe from the card root
   "args": [],                               // launch arguments (optional)
-  "heroImage": "assets/hero.jpg",           // window background (optional)
+  "heroImage": "assets/hero.jpg",           // window background (optional; falls back to a bundled wallpaper)
   "saveOnCard": "saves",                    // copy folder for saves on the card (relative to the root)
   "pcSavePath": "%APPDATA%/Team Cherry/Hollow Knight", // where the game actually writes saves on the PC
   "launchTimeoutSec": 30,                   // how long to wait for the process to appear (optional, default 30)
