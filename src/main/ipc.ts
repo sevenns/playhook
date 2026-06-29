@@ -179,10 +179,11 @@ export class GameController {
         return;
       }
 
-      // 4. running: count time, hide the window, gamepad input is ignored (outside ready)
+      // 4. running: count time, gamepad input is ignored (outside ready). The window stays put —
+      // the game takes the foreground on its own and simply covers the launcher, which avoids the
+      // jerky hide/show flash. We grab the foreground back in step 6 once the game exits.
       const since = Date.now();
       state.set({ kind: 'running', game: info, since });
-      window.hide();
       await waitForExit(pid, abort.signal);
 
       // 5. game closed → write stats to the PC (source of truth)
@@ -190,9 +191,10 @@ export class GameController {
       const updatedStats = await stats.recordPlay(manifest.raw.id, playSeconds);
       const updatedInfo = await this.buildGameInfo(manifest, updatedStats);
 
-      // 6. PC→SD + stats copy (or pending-flush, if the card is already gone)
+      // 6. PC→SD + stats copy (or pending-flush, if the card is already gone). The game just exited,
+      // so reclaim the foreground (forceForeground) to surface the launcher over Steam/desktop.
       state.set({ kind: 'syncing-out', game: updatedInfo });
-      window.showAndFocus();
+      window.showAndFocus(true);
       await this.performSyncOut(manifest, updatedStats);
 
       // 7. done
