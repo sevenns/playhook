@@ -2,8 +2,9 @@
 // Types only — the file compiles to empty JS and creates no runtime dependencies,
 // so the renderer can import from here via `import type` without require.
 
-/** Application name — the root of the state directory under %APPDATA%. */
-export const APP_NAME = 'microsd-game-launcher' as const;
+/** Display name (window title / tray tooltip). The %APPDATA% data folder is derived separately by
+ * Electron from package.json `name` (currently "playhook"). */
+export const APP_NAME = 'Playhook' as const;
 
 /** Manifest file name in the card root. */
 export const MANIFEST_FILENAME = 'game.json' as const;

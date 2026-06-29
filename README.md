@@ -1,9 +1,12 @@
-# microSD Game Launcher
+# Playhook
+
+**Background launcher that detects installed game on external device, syncs saves and tracks
+playtime. Bring console vibes to your PC.**
 
 A background Windows application (Electron + TypeScript): it lives in the tray, detects
-insertion of a microSD card containing a game, shows a window with information about the
+insertion of an external device containing a game, shows a window with information about the
 game, and when **A** is pressed on an Xbox gamepad it syncs the saves, launches the game,
-waits for it to close, copies the saves back to the card, and tracks the play time.
+waits for it to close, copies the saves back to the device, and tracks the play time.
 
 > **Platform: Windows 10/11 (x64) only.** The app uses `tasklist` and the native
 > `drivelist` module; it does not work on macOS/Linux by design.
@@ -20,7 +23,7 @@ waits for it to close, copies the saves back to the card, and tracks the play ti
     (or `npm i -g windows-build-tools` on older systems),
   - Python 3.x in `PATH`.
 - **Xbox gamepad** (optional — there is a mouse fallback).
-- **microSD card + card reader** with a prepared `game.json` manifest (see §6).
+- **A removable storage device (USB drive, SD card, etc.) + reader** with a prepared `game.json` manifest (see §6).
 
 ---
 
@@ -168,14 +171,14 @@ Statistics (hours / last played / launch count) are **unified across machines** 
 carrier:
 
 - `stats.json` in the **card root** is the **traveling canonical** record. It moves with the card.
-- `%APPDATA%\microsd-game-launcher\stats\<id>.json` on each PC is a **working mirror**.
+- `%APPDATA%\playhook\stats\<id>.json` on each PC is a **working mirror**.
 
 On every insertion the two are **reconciled** (field-wise: `max` of the cumulative totals, the later
 `lastPlayedAt`) and the merged result is written back to both. Because the card is physically a single
 device used sequentially, this never loses progress and never double-counts. A fresh card with no
 `stats.json` simply adopts the local PC value (and starts carrying it from then on).
 
-Other PC state under `%APPDATA%\microsd-game-launcher\`:
+Other PC state under `%APPDATA%\playhook\`:
 
 - `pending-flush\<id>\` — a deferred PC→SD sync with a snapshot of the saves, if the card was removed
   during play; it is applied on the next insertion of this card (matched by `id`).
@@ -201,7 +204,7 @@ completely.
 
 ### Logs
 
-The main process writes a timestamped log to `%APPDATA%\microsd-game-launcher\logs\main.log` (open it via the
+The main process writes a timestamped log to `%APPDATA%\playhook\logs\main.log` (open it via the
 tray **Open logs** item). It records card insertions, manifest validation, the stats reconcile/card-copy
 result, and launch/exit — useful when a save or stats copy to the card silently fails.
 

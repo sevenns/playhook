@@ -1,7 +1,7 @@
 {
-  "name": "microsd-game-launcher",
+  "name": "playhook",
   "version": "0.1.0",
-  "description": "Background Windows launcher that detects a microSD game card, syncs saves and tracks playtime, controllable by an Xbox gamepad.",
+  "description": "Background launcher that detects installed game on external device, syncs saves and tracks playtime. Bring console vibes to your PC.",
   "private": true,
   "main": "dist/main/main.js",
   "author": "",
