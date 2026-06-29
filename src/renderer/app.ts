@@ -1,18 +1,40 @@
-// Renderer UI logic (stage 5): renders the state machine replicated from main.
-// IMPORTANT: title/data come from the card (untrusted input) — we render via
-// textContent / style, without innerHTML, to rule out injections.
+// Renderer UI logic. Drives a persistent DOM (built once in index.html) by toggling classes
+// and data-attributes per AppState, so CSS transitions animate smoothly between states.
+// IMPORTANT: title/data come from the card (untrusted) — rendered via textContent, never innerHTML.
 import type { AppState, GameInfo } from '../shared/types';
 import { createGamepadController } from './gamepad.js';
-import { computeButtonColors, type ButtonColors } from './dominant-color.js';
+import { computePalette, type Palette } from './dominant-color.js';
 
-const root = document.getElementById('app');
-if (root === null) throw new Error('#app root element not found');
-const mount: HTMLElement = root;
+function req<T extends HTMLElement>(id: string): T {
+  const el = document.getElementById(id);
+  if (el === null) throw new Error(`#${id} not found`);
+  return el as T;
+}
+
+function reqQuery<T extends HTMLElement>(selector: string): T {
+  const el = document.querySelector<T>(selector);
+  if (el === null) throw new Error(`${selector} not found`);
+  return el;
+}
+
+const app = req('app');
+const message = req('message');
+const playButton = req<HTMLButtonElement>('play-button');
+const infoButton = req<HTMLButtonElement>('info-button');
+const titleEl = req('title');
+const statusEl = req('status');
+const infoPanel = req('info-panel');
+const infoPopup = req('info-popup');
+const barContent = reqQuery<HTMLElement>('.bar-content');
+const infoVeil = reqQuery<HTMLElement>('.info-veil');
+
+type Phase = 'idle' | 'ready' | 'busy' | 'error';
 
 let currentState: AppState = { kind: 'idle' };
+let infoOpen = false;
+const paletteCache = new Map<string, Palette | null>();
 
-// Cache the derived button color per game id so we don't recompute on every re-render.
-const buttonColorCache = new Map<string, ButtonColors | null>();
+// ── Formatting ────────────────────────────────────────────────────────────
 
 function formatPlaytime(totalSeconds: number): string {
   const hours = Math.floor(totalSeconds / 3600);
@@ -23,156 +45,196 @@ function formatPlaytime(totalSeconds: number): string {
 }
 
 function formatDate(iso: string | null): string {
-  if (iso === null) return 'never launched';
+  if (iso === null) return 'never';
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return 'unknown';
-  return date.toLocaleString('en-US');
+  return date.toLocaleString('en-GB');
 }
 
-function clear(): void {
-  while (mount.firstChild !== null) mount.removeChild(mount.firstChild);
-}
+// ── State → phase/status mapping ────────────────────────────────────────────
 
-function el<K extends keyof HTMLElementTagNameMap>(
-  tag: K,
-  className?: string,
-  text?: string,
-): HTMLElementTagNameMap[K] {
-  const node = document.createElement(tag);
-  if (className !== undefined) node.className = className;
-  if (text !== undefined) node.textContent = text;
-  return node;
-}
-
-function setHeroBackground(game: GameInfo): void {
-  if (game.heroImageDataUrl !== undefined) {
-    mount.style.backgroundImage = `url("${game.heroImageDataUrl}")`;
-  } else {
-    mount.style.backgroundImage = 'none';
+function phaseOf(state: AppState): Phase {
+  switch (state.kind) {
+    case 'idle':
+      return 'idle';
+    case 'ready':
+      return 'ready';
+    case 'error':
+      return 'error';
+    case 'syncing-in':
+    case 'launching':
+    case 'running':
+    case 'syncing-out':
+      return 'busy';
   }
 }
 
-function renderInfoBlock(game: GameInfo): HTMLElement {
-  const panel = el('div', 'panel');
-  panel.appendChild(el('h1', 'title', game.title));
-
-  const meta = el('div', 'meta');
-  meta.appendChild(el('div', 'meta-row', `Last played: ${formatDate(game.lastPlayedAt)}`));
-  meta.appendChild(el('div', 'meta-row', `Playtime: ${formatPlaytime(game.totalPlaySeconds)}`));
-  meta.appendChild(el('div', 'meta-row', `Launches: ${String(game.launchCount)}`));
-  panel.appendChild(meta);
-  return panel;
+function statusOf(state: AppState): string {
+  // Plain "..." instead of the "…" glyph: in M PLUS Rounded 1c (a CJK font) the ellipsis
+  // glyph is centered vertically (Japanese convention), which looks misaligned in a Latin UI.
+  switch (state.kind) {
+    case 'syncing-in':
+      return 'Syncing saves...';
+    case 'launching':
+      return 'Launching...';
+    case 'running':
+      return 'Running...';
+    case 'syncing-out':
+      return 'Saving progress...';
+    default:
+      return '';
+  }
 }
 
-function setButtonColors(button: HTMLButtonElement, colors: ButtonColors): void {
-  button.style.setProperty('--btn-bg', colors.bg);
-  button.style.setProperty('--btn-fg', colors.fg);
+function gameOf(state: AppState): GameInfo | undefined {
+  return 'game' in state ? state.game : undefined;
 }
 
-// Derives the button color from the hero background. If there's no background or it fails to
-// load/decode, nothing is set and the button keeps its default color via the CSS fallback.
-function applyButtonColor(button: HTMLButtonElement, game: GameInfo): void {
-  const dataUrl = game.heroImageDataUrl;
-  if (dataUrl === undefined) return;
+// ── Palette (two dominant colors) ───────────────────────────────────────────
 
-  const cached = buttonColorCache.get(game.id);
-  if (cached !== undefined) {
-    if (cached !== null) setButtonColors(button, cached);
+function applyPalette(palette: Palette | null): void {
+  if (palette === null) {
+    app.style.removeProperty('--d1');
+    app.style.removeProperty('--d2');
     return;
   }
-  void computeButtonColors(dataUrl).then((colors) => {
-    buttonColorCache.set(game.id, colors);
-    if (colors !== null) setButtonColors(button, colors);
+  app.style.setProperty('--d1', palette.d1);
+  app.style.setProperty('--d2', palette.d2);
+}
+
+function updatePalette(game: GameInfo): void {
+  const dataUrl = game.heroImageDataUrl;
+  if (dataUrl === undefined) {
+    applyPalette(null);
+    return;
+  }
+  const cached = paletteCache.get(game.id);
+  if (cached !== undefined) {
+    applyPalette(cached);
+    return;
+  }
+  void computePalette(dataUrl).then((palette) => {
+    paletteCache.set(game.id, palette);
+    if (currentState.kind !== 'idle') applyPalette(palette);
   });
 }
 
-function renderReady(game: GameInfo): void {
-  setHeroBackground(game);
-  const panel = renderInfoBlock(game);
+// ── Hero background ─────────────────────────────────────────────────────────
 
-  const button = el('button', 'launch-button', 'Play');
-  button.type = 'button';
-  button.addEventListener('click', () => window.api.requestLaunch());
-  applyButtonColor(button, game);
-  panel.appendChild(button);
-
-  mount.appendChild(panel);
-}
-
-function renderBusy(game: GameInfo, message: string): void {
-  setHeroBackground(game);
-  const panel = renderInfoBlock(game);
-  panel.appendChild(el('div', 'spinner'));
-  panel.appendChild(el('div', 'status', message));
-  mount.appendChild(panel);
-}
-
-function renderRunning(game: GameInfo): void {
-  setHeroBackground(game);
-  const panel = renderInfoBlock(game);
-  panel.appendChild(el('div', 'status', 'Game running'));
-  panel.appendChild(el('div', 'warning', '⚠ Do not remove the card while the game is running'));
-  mount.appendChild(panel);
-}
-
-function renderError(game: GameInfo | undefined, message: string): void {
-  if (game !== undefined) setHeroBackground(game);
-  else mount.style.backgroundImage = 'none';
-  const panel = el('div', 'panel');
-  if (game !== undefined) panel.appendChild(el('h1', 'title', game.title));
-  panel.appendChild(el('div', 'error-badge', 'Error'));
-  panel.appendChild(el('div', 'status', message));
-  mount.appendChild(panel);
-}
-
-function renderIdle(): void {
-  mount.style.backgroundImage = 'none';
-  const panel = el('div', 'panel');
-  panel.appendChild(el('h1', 'title', 'microSD Game Launcher'));
-  panel.appendChild(el('div', 'status', 'Insert a game card'));
-  mount.appendChild(panel);
-}
-
-function render(state: AppState): void {
-  clear();
-  mount.dataset['kind'] = state.kind;
-  switch (state.kind) {
-    case 'idle':
-      renderIdle();
-      return;
-    case 'ready':
-      renderReady(state.game);
-      return;
-    case 'syncing-in':
-      renderBusy(state.game, 'Syncing saves…');
-      return;
-    case 'launching':
-      renderBusy(state.game, 'Launching game…');
-      return;
-    case 'running':
-      renderRunning(state.game);
-      return;
-    case 'syncing-out':
-      renderBusy(state.game, 'Saving progress to card…');
-      return;
-    case 'error':
-      renderError(state.game, state.message);
-      return;
+function setHero(game: GameInfo | undefined): void {
+  if (game?.heroImageDataUrl !== undefined) {
+    app.style.backgroundImage = `url("${game.heroImageDataUrl}")`;
+  } else {
+    app.style.backgroundImage = 'none';
   }
 }
 
-const gamepad = createGamepadController(() => {
-  if (currentState.kind === 'ready') window.api.requestLaunch();
-});
+// ── Info panel ──────────────────────────────────────────────────────────────
 
-window.api.onStateUpdate((state) => {
+function infoItem(label: string, value: string): HTMLElement {
+  const item = document.createElement('div');
+  item.className = 'info-item';
+  const labelEl = document.createElement('div');
+  labelEl.className = 'info-label';
+  labelEl.textContent = label;
+  const valueEl = document.createElement('div');
+  valueEl.className = 'info-value';
+  valueEl.textContent = value;
+  item.append(labelEl, valueEl);
+  return item;
+}
+
+function buildInfoPanel(game: GameInfo): void {
+  while (infoPanel.firstChild !== null) infoPanel.removeChild(infoPanel.firstChild);
+  infoPanel.append(
+    infoItem('Last Played', formatDate(game.lastPlayedAt)),
+    infoItem('Playtime', formatPlaytime(game.totalPlaySeconds)),
+    infoItem('Launches', String(game.launchCount)),
+  );
+}
+
+// ── Title slide (left → right while busy) ───────────────────────────────────
+
+function applyTitleSlide(toRight: boolean): void {
+  if (!toRight) {
+    titleEl.style.setProperty('--title-x', '0px');
+    return;
+  }
+  // Measure after layout so scrollWidth/offsetLeft are correct.
+  requestAnimationFrame(() => {
+    const shift = barContent.clientWidth - titleEl.scrollWidth - titleEl.offsetLeft;
+    titleEl.style.setProperty('--title-x', `${Math.max(0, Math.round(shift))}px`);
+  });
+}
+
+// ── Info popup ──────────────────────────────────────────────────────────────
+
+function openInfo(): void {
+  if (infoOpen || phaseOf(currentState) !== 'ready') return;
+  infoOpen = true;
+  app.dataset['info'] = 'open';
+  infoPopup.setAttribute('aria-hidden', 'false');
+}
+
+function closeInfo(): void {
+  if (!infoOpen) return;
+  infoOpen = false;
+  delete app.dataset['info'];
+  infoPopup.setAttribute('aria-hidden', 'true');
+}
+
+// ── Render ──────────────────────────────────────────────────────────────────
+
+function render(state: AppState): void {
   currentState = state;
-  render(state);
+  const phase = phaseOf(state);
+  const game = gameOf(state);
+
+  app.dataset['phase'] = phase;
+  setHero(game);
+
+  if (game !== undefined) {
+    updatePalette(game);
+    titleEl.textContent = game.title;
+    buildInfoPanel(game);
+  }
+
+  if (phase === 'idle') {
+    message.textContent = 'Insert a game card';
+  } else if (phase === 'error' && state.kind === 'error') {
+    message.textContent = state.message;
+  }
+
+  statusEl.textContent = statusOf(state);
+  applyTitleSlide(phase === 'busy');
+
+  // Info popup is only valid in ready; force-close on any other state.
+  if (phase !== 'ready') closeInfo();
+}
+
+// ── Wiring ──────────────────────────────────────────────────────────────────
+
+playButton.addEventListener('click', () => {
+  if (phaseOf(currentState) === 'ready' && !infoOpen) window.api.requestLaunch();
+});
+infoButton.addEventListener('click', () => openInfo());
+infoVeil.addEventListener('click', () => closeInfo());
+
+const gamepad = createGamepadController({
+  onA: () => {
+    if (phaseOf(currentState) === 'ready' && !infoOpen) window.api.requestLaunch();
+  },
+  onB: () => closeInfo(),
+  onY: () => {
+    if (gameOf(currentState) !== undefined) openInfo();
+  },
 });
 
-void window.api.requestState().then((state) => {
-  currentState = state;
-  render(state);
-});
-
+window.api.onStateUpdate(render);
+void window.api.requestState().then(render);
 gamepad.start();
+
+// Re-measure the title slide on resize while busy (keeps right-alignment correct).
+window.addEventListener('resize', () => {
+  if (phaseOf(currentState) === 'busy') applyTitleSlide(true);
+});

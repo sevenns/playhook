@@ -11,7 +11,38 @@
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
-    <main id="app" data-kind="idle"></main>
+    <main id="app" data-phase="idle">
+      <!-- Centered message for idle / error states -->
+      <div id="message" class="message"></div>
+
+      <!-- Bottom bar: gradient of d1, holds play / title / status / info -->
+      <footer id="bottom-bar">
+        <div class="bar-content">
+          <button id="play-button" class="circle-button" type="button" aria-label="Play">
+            <svg class="icon-play" viewBox="0 0 36 48" aria-hidden="true">
+              <path d="M2 2 L34 24 L2 46 Z" />
+            </svg>
+            <span class="loader" aria-hidden="true"></span>
+          </button>
+
+          <div id="status" class="status"></div>
+          <div id="title" class="title"></div>
+
+          <button id="info-button" class="rect-button" type="button" aria-label="Info">
+            <svg class="icon-info" viewBox="0 0 40 40" aria-hidden="true">
+              <circle cx="20" cy="7" r="4.5" />
+              <rect x="15.5" y="16" width="9" height="22" rx="4.5" />
+            </svg>
+          </button>
+        </div>
+      </footer>
+
+      <!-- Info popup: full-screen veil (horizontal d1 gradient) + right-aligned info column -->
+      <section id="info-popup" aria-hidden="true">
+        <div class="info-veil"></div>
+        <div class="info-panel" id="info-panel"></div>
+      </section>
+    </main>
     <script type="module" src="./app.js"></script>
   </body>
 </html>

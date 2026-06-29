@@ -1,24 +1,31 @@
 // Gamepad polling in the renderer (stage 9, R5).
-// HTML5 Gamepad API + requestAnimationFrame loop, standard mapping (A = buttons[0]).
+// HTML5 Gamepad API + requestAnimationFrame loop, standard mapping.
+// A = buttons[0] (Play), B = buttons[1] (Back / close Info popup), Y = buttons[3] (open Info).
 // We detect the press EDGE (false→true transition) so one hold = one action.
-// Input is ignored while the game is running on the main side (the request is only handled in ready).
+// Gating (only act in the right state) is done by the caller / main.
 
 export interface GamepadController {
   start(): void;
   stop(): void;
 }
 
-const A_BUTTON_INDEX = 0;
+export interface GamepadHandlers {
+  readonly onA: () => void;
+  readonly onB: () => void;
+  readonly onY: () => void;
+}
 
-export function createGamepadController(onPressA: () => void): GamepadController {
+const BUTTONS = { a: 0, b: 1, y: 3 } as const;
+
+export function createGamepadController(handlers: GamepadHandlers): GamepadController {
   let rafId = 0;
   let running = false;
-  let previousADown = false;
+  const previous = { a: false, b: false, y: false };
 
-  const isADown = (): boolean => {
+  const isDown = (index: number): boolean => {
     for (const pad of navigator.getGamepads()) {
       if (pad === null) continue;
-      const button = pad.buttons[A_BUTTON_INDEX];
+      const button = pad.buttons[index];
       if (button !== undefined && button.pressed) return true;
     }
     return false;
@@ -26,9 +33,15 @@ export function createGamepadController(onPressA: () => void): GamepadController
 
   const poll = (): void => {
     if (!running) return;
-    const aDown = isADown();
-    if (aDown && !previousADown) onPressA();
-    previousADown = aDown;
+    const a = isDown(BUTTONS.a);
+    const b = isDown(BUTTONS.b);
+    const y = isDown(BUTTONS.y);
+    if (a && !previous.a) handlers.onA();
+    if (b && !previous.b) handlers.onB();
+    if (y && !previous.y) handlers.onY();
+    previous.a = a;
+    previous.b = b;
+    previous.y = y;
     rafId = requestAnimationFrame(poll);
   };
 
