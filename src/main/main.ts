@@ -1,6 +1,6 @@
 // Application bootstrap (stage 1): single-instance, tray, lifecycle, auto-launch.
-// Background app: the window is shown when a card is inserted or manually via the tray;
-// closing the window hides it to the tray instead of quitting the program.
+// Background app: the window is shown ONLY when a valid game card is detected (state 'ready'); with
+// no game it stays hidden in the tray. Closing the window hides it to the tray, not quits.
 import path from 'node:path';
 import { app, Menu, shell, type Tray } from 'electron';
 import { log, logFilePath } from './logger';
@@ -14,10 +14,6 @@ import { GlobalGamepad } from './gamepad-global';
 import { createTray } from './tray';
 import { initAutoUpdater } from './updater';
 
-// Hidden start (auto-launch): `openAsHidden` is macOS-only and is ignored on Windows (R6),
-// so we implement it ourselves via the `--hidden` arg + a manual process.argv check.
-const startedHidden = process.argv.includes('--hidden');
-
 let trayRef: Tray | null = null;
 let controllerRef: GameController | null = null;
 let windowRef: GameWindow | null = null;
@@ -26,8 +22,9 @@ let quitting = false;
 
 function configureAutoLaunch(): void {
   // openAtLogin is reliable for an NSIS install; portable is best-effort (R6).
+  // No `--hidden` arg needed: the app always starts hidden and only shows on a valid card.
   if (process.platform !== 'win32') return;
-  app.setLoginItemSettings({ openAtLogin: true, args: ['--hidden'] });
+  app.setLoginItemSettings({ openAtLogin: true });
 }
 
 function quit(): void {
@@ -58,8 +55,8 @@ async function bootstrap(): Promise<void> {
   controller.init();
 
   window.create();
-  // A manual launch shows the window (provides feedback); auto-launch (--hidden) goes to the tray.
-  if (!startedHidden) window.showAndFocus();
+  // Always start hidden in the tray — the window appears only when a valid game card is detected
+  // (GameController shows it on the 'ready' state). No black "Insert a game card" screen on launch.
 
   trayRef = createTray({
     onShow: () => window.showAndFocus(),

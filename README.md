@@ -60,8 +60,8 @@ The output goes to `dist/` (`dist/main`, `dist/preload`, `dist/renderer`,
 npm start
 ```
 
-`start` runs `build` and launches Electron. By default (manual launch) the window
-is shown immediately; on autostart with the `--hidden` flag the app starts into the tray.
+`start` runs `build` and launches Electron. The app always starts hidden in the tray — the window
+appears only when a valid game card is detected (state `ready`). There is no window on launch.
 
 Type checking without emit (strict mode, as the project code style requires):
 
@@ -117,11 +117,10 @@ Notes:
 ## 5. Autostart
 
 The app registers itself for autostart via
-`app.setLoginItemSettings({ openAtLogin: true, args: ['--hidden'] })`.
+`app.setLoginItemSettings({ openAtLogin: true })`.
 
-- `--hidden` → starts straight into the tray with no window (the window appears when a card is inserted).
-- `openAsHidden` is not used: it is macOS-only and ignored on Windows — hidden
-  startup is implemented via a manual `process.argv` check.
+- The app always starts hidden in the tray (no flag needed): the window appears only when a valid
+  game card is detected. With no card it stays in the tray.
 - Guaranteed for **NSIS installation**; for **portable** it is best-effort (the path to the exe
   may change).
 

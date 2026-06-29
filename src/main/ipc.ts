@@ -119,11 +119,13 @@ export class GameController {
     const env: ManifestEnv = { documents: app.getPath('documents') };
     const result = await readManifest(root, env);
     if (!result.ok) {
+      // No valid game determined → keep the window hidden (the reason is in the log). We still set
+      // the error state so a manually-summoned window can show it, but we never auto-surface it.
       log.warn(`[insert] manifest rejected: ${result.message}`);
       this.current = null;
       this.setAudio(null);
       this.deps.state.set({ kind: 'error', message: result.message });
-      this.deps.window.showAndFocus();
+      this.deps.window.hide();
       return;
     }
     const manifest = result.manifest;
