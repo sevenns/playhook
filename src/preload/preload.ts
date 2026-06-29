@@ -9,6 +9,7 @@ const CHANNELS = {
   stateUpdate: 'state:update',
   stateRequest: 'state:request',
   actionLaunch: 'action:launch',
+  actionHide: 'action:hide',
   audioUpdate: 'audio:update',
   audioRequest: 'audio:request',
 } as const;
@@ -24,6 +25,9 @@ const api: RendererApi = {
   },
   requestLaunch(): void {
     ipcRenderer.send(CHANNELS.actionLaunch);
+  },
+  requestHide(): void {
+    ipcRenderer.send(CHANNELS.actionHide);
   },
   onAudioUpdate(callback: (assets: AudioAssets | null) => void): void {
     ipcRenderer.on(CHANNELS.audioUpdate, (_event: IpcRendererEvent, assets: AudioAssets | null) => {

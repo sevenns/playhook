@@ -97,6 +97,42 @@ body {
   pointer-events: none;
 }
 
+/* ── Hide button (only on the idle / error message screen) ──────────────── */
+
+.hide-button {
+  position: absolute;
+  bottom: calc(60 * var(--px));
+  left: 50%;
+  transform: translateX(-50%);
+  display: none;
+  padding: calc(14 * var(--px)) calc(44 * var(--px));
+  border: calc(2 * var(--px)) solid color-mix(in srgb, var(--fg) 35%, transparent);
+  border-radius: calc(999 * var(--px));
+  background: transparent;
+  color: var(--fg);
+  font-family: inherit;
+  font-weight: 500;
+  font-size: calc(24 * var(--px));
+  cursor: pointer;
+  transition: background 0.2s ease, border-color 0.2s ease, transform 0.12s ease;
+}
+
+#app[data-phase='idle'] .hide-button,
+#app[data-phase='error'] .hide-button {
+  display: block;
+}
+
+.hide-button:hover,
+.hide-button:focus-visible {
+  background: color-mix(in srgb, var(--fg) 12%, transparent);
+  border-color: color-mix(in srgb, var(--fg) 60%, transparent);
+}
+
+/* Keep the horizontal centering while adding the press scale. */
+.hide-button:active {
+  transform: translateX(-50%) scale(0.95);
+}
+
 /* ── Bottom bar ──────────────────────────────────────────────────────────── */
 
 #bottom-bar {

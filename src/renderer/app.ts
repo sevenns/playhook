@@ -20,6 +20,7 @@ function reqQuery<T extends HTMLElement>(selector: string): T {
 
 const app = req('app');
 const message = req('message');
+const hideButton = req<HTMLButtonElement>('hide-button');
 const playButton = req<HTMLButtonElement>('play-button');
 const infoButton = req<HTMLButtonElement>('info-button');
 const titleEl = req('title');
@@ -287,11 +288,18 @@ function triggerCloseInfo(): void {
   closeInfo();
 }
 
+// The idle / error message screen, where the only action is "Hide" (back to tray).
+function onMessageScreen(): boolean {
+  const phase = phaseOf(currentState);
+  return phase === 'idle' || phase === 'error';
+}
+
 // ── Wiring ──────────────────────────────────────────────────────────────────
 
 playButton.addEventListener('click', () => triggerPlay());
 infoButton.addEventListener('click', () => triggerInfo());
 infoVeil.addEventListener('click', () => triggerCloseInfo());
+hideButton.addEventListener('click', () => window.api.requestHide());
 
 // Mouse hover moves the gamepad focus too, so A always activates what's highlighted.
 focusables.forEach((btn, i) => {
@@ -305,8 +313,9 @@ focusables.forEach((btn, i) => {
 const gamepad = createGamepadController({
   onLeft: () => moveFocus(-1),
   onRight: () => moveFocus(1),
-  onA: () => activateFocused(),
-  onB: () => triggerCloseInfo(),
+  // On the idle / error screen the only action is Hide; otherwise A activates the focused button.
+  onA: () => (onMessageScreen() ? window.api.requestHide() : activateFocused()),
+  onB: () => (onMessageScreen() ? window.api.requestHide() : triggerCloseInfo()),
 });
 
 window.api.onStateUpdate(render);

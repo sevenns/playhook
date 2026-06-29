@@ -100,6 +100,7 @@ export class GameController {
     ipcMain.handle(IPC.stateRequest, (): AppState => state.get());
     ipcMain.handle(IPC.audioRequest, (): AudioAssets | null => this.currentAudio);
     ipcMain.on(IPC.actionLaunch, () => void this.onLaunchRequested());
+    ipcMain.on(IPC.actionHide, () => this.deps.window.hide());
   }
 
   /** Stops the process waits and the watcher (on application exit). */
