@@ -29,9 +29,15 @@
           <div id="title" class="title"></div>
 
           <button id="info-button" class="rect-button" type="button" aria-label="Info">
+            <!-- Filled ⓘ disc with the "i" cut OUT (fill-rule evenodd) so the button background
+                 shows through the hole — which makes the hover color inversion automatic. -->
             <svg class="icon-info" viewBox="0 0 40 40" aria-hidden="true">
-              <circle cx="20" cy="7" r="4.5" />
-              <rect x="15.5" y="16" width="9" height="22" rx="4.5" />
+              <path
+                fill-rule="evenodd"
+                d="M0,20 a20,20 0 1,0 40,0 a20,20 0 1,0 -40,0 Z
+                   M16.3,11.5 a3.7,3.7 0 1,0 7.4,0 a3.7,3.7 0 1,0 -7.4,0 Z
+                   M16.5,18 a3.5,3.5 0 0,1 7,0 L23.5,30 a3.5,3.5 0 0,1 -7,0 L16.5,18 Z"
+              />
             </svg>
           </button>
         </div>

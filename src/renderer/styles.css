@@ -175,6 +175,17 @@ body {
   width: calc(36 * var(--px));
   height: calc(48 * var(--px));
   fill: currentColor;
+  /* Optical centering: a triangle looks off-center when geometrically centered; nudge right
+     (+4px in the mockup, where the triangle's center sits 4px right of the button's center). */
+  transform: translateX(calc(4 * var(--px)));
+}
+
+/* Icons don't intercept pointer events, so hover/click target the button itself (otherwise the
+   global `* { cursor: default }` would override the button's pointer cursor over the icon). */
+.icon-play,
+.icon-info,
+.loader {
+  pointer-events: none;
 }
 
 /* ── Rect (Info) button — normal: bg d1, content d2; inverts on hover/focus ── */
