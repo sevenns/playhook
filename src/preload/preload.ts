@@ -3,12 +3,14 @@
 // stays sandbox-compatible (a sandboxed preload cannot require arbitrary files).
 // The literals must match the IPC channels in shared/types.ts.
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
-import type { AppState, RendererApi } from '../shared/types';
+import type { AppState, AudioAssets, RendererApi } from '../shared/types';
 
 const CHANNELS = {
   stateUpdate: 'state:update',
   stateRequest: 'state:request',
   actionLaunch: 'action:launch',
+  audioUpdate: 'audio:update',
+  audioRequest: 'audio:request',
 } as const;
 
 const api: RendererApi = {
@@ -22,6 +24,14 @@ const api: RendererApi = {
   },
   requestLaunch(): void {
     ipcRenderer.send(CHANNELS.actionLaunch);
+  },
+  onAudioUpdate(callback: (assets: AudioAssets | null) => void): void {
+    ipcRenderer.on(CHANNELS.audioUpdate, (_event: IpcRendererEvent, assets: AudioAssets | null) => {
+      callback(assets);
+    });
+  },
+  requestAudio(): Promise<AudioAssets | null> {
+    return ipcRenderer.invoke(CHANNELS.audioRequest) as Promise<AudioAssets | null>;
   },
 };
 

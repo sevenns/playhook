@@ -11,6 +11,7 @@ import {
   MANIFEST_FILENAME,
   type GameManifest,
   type ResolvedManifest,
+  type SfxName,
 } from '../shared/types';
 
 const manifestSchema = z.object({
@@ -29,7 +30,19 @@ const manifestSchema = z.object({
   saveOnCard: z.string().min(1).optional(),
   pcSavePath: z.string().min(1).optional(),
   launchTimeoutSec: z.number().int().positive().default(30),
+  sounds: z
+    .object({
+      play: z.string().min(1).optional(),
+      navigate: z.string().min(1).optional(),
+      button: z.string().min(1).optional(),
+      back: z.string().min(1).optional(),
+    })
+    .optional(),
+  backgroundMusic: z.string().min(1).optional(),
 });
+
+/** The sound slots resolved inside the card root (order is stable for iteration). */
+const SFX_NAMES: readonly SfxName[] = ['play', 'navigate', 'button', 'back'];
 
 export type ManifestResult =
   | { readonly ok: true; readonly manifest: ResolvedManifest }
@@ -163,6 +176,30 @@ export async function readManifest(root: string, env: ManifestEnv): Promise<Mani
     pcSavePath = expanded.value;
   }
 
+  let soundPaths: Record<string, string> | undefined;
+  if (raw.sounds !== undefined) {
+    const resolvedSounds: Record<string, string> = {};
+    for (const name of SFX_NAMES) {
+      const rel = raw.sounds[name];
+      if (rel === undefined) continue;
+      const resolved = resolveInside(root, rel);
+      if (resolved === null) {
+        return { ok: false, message: `sound "${name}" path escapes card root: ${rel}` };
+      }
+      resolvedSounds[name] = resolved;
+    }
+    if (Object.keys(resolvedSounds).length > 0) soundPaths = resolvedSounds;
+  }
+
+  let backgroundMusicPath: string | undefined;
+  if (raw.backgroundMusic !== undefined) {
+    const resolved = resolveInside(root, raw.backgroundMusic);
+    if (resolved === null) {
+      return { ok: false, message: `backgroundMusic path escapes card root: ${raw.backgroundMusic}` };
+    }
+    backgroundMusicPath = resolved;
+  }
+
   // Sync only makes sense if BOTH sides are set (section 3): the copy on the card and
   // the write location on the PC. If only one is set, the card was prepared incorrectly.
   if ((pcSavePath === undefined) !== (saveOnCardPath === undefined)) {
@@ -180,6 +217,8 @@ export async function readManifest(root: string, env: ManifestEnv): Promise<Mani
     ...(heroImagePath !== undefined ? { heroImagePath } : {}),
     ...(saveOnCardPath !== undefined ? { saveOnCardPath } : {}),
     ...(pcSavePath !== undefined ? { pcSavePath } : {}),
+    ...(soundPaths !== undefined ? { soundPaths } : {}),
+    ...(backgroundMusicPath !== undefined ? { backgroundMusicPath } : {}),
   };
   return { ok: true, manifest };
 }

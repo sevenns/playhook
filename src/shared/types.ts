@@ -26,6 +26,25 @@ export interface GameManifest {
   readonly saveOnCard?: string;
   readonly pcSavePath?: string;
   readonly launchTimeoutSec: number;
+  /** Optional per-game UI sound effects (card-relative paths). Missing slots are silent. */
+  readonly sounds?: SoundManifest;
+  /** Optional looping background music (card-relative path), played while the window is visible. */
+  readonly backgroundMusic?: string;
+}
+
+/** UI sound-effect slots. Each maps to a file in game.json (all optional). */
+export type SfxName = 'play' | 'navigate' | 'button' | 'back';
+
+/** The `sounds` block in game.json — a file per UI sound slot. */
+export interface SoundManifest {
+  /** Pressing the "Play" button. */
+  readonly play?: string;
+  /** Moving focus between UI controls. */
+  readonly navigate?: string;
+  /** Pressing an ordinary button (e.g. "Info"). */
+  readonly button?: string;
+  /** Hiding something — gamepad B closing the info popup. */
+  readonly back?: string;
 }
 
 /**
@@ -41,6 +60,22 @@ export interface ResolvedManifest {
   readonly heroImagePath?: string;
   readonly saveOnCardPath?: string;
   readonly pcSavePath?: string;
+  /** Resolved, card-relative sound-effect file paths (any subset present). */
+  readonly soundPaths?: Partial<Record<SfxName, string>>;
+  /** Resolved background-music file path. */
+  readonly backgroundMusicPath?: string;
+}
+
+/**
+ * Per-game audio for the renderer, delivered as data URLs.
+ * Kept OUT of GameInfo/AppState on purpose: AppState is re-sent on every transition, and these
+ * payloads (especially music) can be large — so audio is delivered once per card on its own channel.
+ */
+export interface AudioAssets {
+  /** UI sound effects (data URLs); any subset of slots present. */
+  readonly sounds: Partial<Record<SfxName, string>>;
+  /** Looping background music (data URL), if the manifest provides it. */
+  readonly music?: string;
 }
 
 /** Game statistics. The source of truth is on the PC; the card copy is best-effort. */
@@ -80,6 +115,10 @@ export const IPC = {
   stateRequest: 'state:request',
   /** renderer → main: the user pressed A / clicked "Play". */
   actionLaunch: 'action:launch',
+  /** main → renderer: audio assets for the current game (or null when no card). */
+  audioUpdate: 'audio:update',
+  /** renderer → main: request the current audio assets (on window startup). */
+  audioRequest: 'audio:request',
 } as const;
 
 /** API that preload exposes on `window.api`. */
@@ -87,6 +126,8 @@ export interface RendererApi {
   onStateUpdate(callback: (state: AppState) => void): void;
   requestState(): Promise<AppState>;
   requestLaunch(): void;
+  onAudioUpdate(callback: (assets: AudioAssets | null) => void): void;
+  requestAudio(): Promise<AudioAssets | null>;
 }
 
 declare global {

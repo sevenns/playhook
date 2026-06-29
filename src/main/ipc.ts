@@ -8,8 +8,10 @@ import { app, ipcMain } from 'electron';
 import {
   IPC,
   type AppState,
+  type AudioAssets,
   type GameInfo,
   type ResolvedManifest,
+  type SfxName,
   type Stats,
 } from '../shared/types';
 import { type StateManager } from './state';
@@ -37,6 +39,20 @@ const IMAGE_MIME: Readonly<Record<string, string>> = {
   '.gif': 'image/gif',
 };
 
+const AUDIO_MIME: Readonly<Record<string, string>> = {
+  '.mp3': 'audio/mpeg',
+  '.ogg': 'audio/ogg',
+  '.oga': 'audio/ogg',
+  '.opus': 'audio/ogg',
+  '.wav': 'audio/wav',
+  '.m4a': 'audio/mp4',
+  '.aac': 'audio/aac',
+  '.flac': 'audio/flac',
+  '.webm': 'audio/webm',
+};
+
+const SFX_NAMES: readonly SfxName[] = ['play', 'navigate', 'button', 'back'];
+
 function describe(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
 }
@@ -46,6 +62,8 @@ export class GameController {
   private cardPresent = false;
   private launchInFlight = false;
   private abort: AbortController | null = null;
+  // Audio for the current card, sent on its own channel (not on every AppState) — see AudioAssets.
+  private currentAudio: AudioAssets | null = null;
 
   constructor(private readonly deps: ControllerDeps) {}
 
@@ -65,6 +83,7 @@ export class GameController {
     watcher.onError((error) => console.error('[drive-watcher]', error));
 
     ipcMain.handle(IPC.stateRequest, (): AppState => state.get());
+    ipcMain.handle(IPC.audioRequest, (): AudioAssets | null => this.currentAudio);
     ipcMain.on(IPC.actionLaunch, () => void this.onLaunchRequested());
   }
 
@@ -85,12 +104,14 @@ export class GameController {
     const result = await readManifest(root, env);
     if (!result.ok) {
       this.current = null;
+      this.setAudio(null);
       this.deps.state.set({ kind: 'error', message: result.message });
       this.deps.window.showAndFocus();
       return;
     }
     const manifest = result.manifest;
     this.current = manifest;
+    this.setAudio(await this.readAudioAssets(manifest));
 
     // If the card was yanked mid-game last time — top up the deferred PC→SD.
     try {
@@ -132,6 +153,7 @@ export class GameController {
     }
     // ready / error / idle → no card, hide the window.
     this.current = null;
+    this.setAudio(null);
     this.deps.state.set({ kind: 'idle' });
     this.deps.window.hide();
   }
@@ -254,6 +276,48 @@ export class GameController {
       return `data:${mime};base64,${buffer.toString('base64')}`;
     } catch (cause) {
       console.warn('[hero-image] failed to read, skipping:', describe(cause));
+      return undefined;
+    }
+  }
+
+  // ── Audio assets (sounds + background music) ─────────────────────────────
+
+  /** Stores the current audio and pushes it to the window (null when no card / on error). */
+  private setAudio(assets: AudioAssets | null): void {
+    this.currentAudio = assets;
+    const browserWindow = this.deps.window.browserWindow;
+    if (browserWindow !== null && !browserWindow.isDestroyed()) {
+      browserWindow.webContents.send(IPC.audioUpdate, assets);
+    }
+  }
+
+  /** Reads the manifest's sounds + music into data URLs. Returns null when nothing is configured. */
+  private async readAudioAssets(manifest: ResolvedManifest): Promise<AudioAssets | null> {
+    const sounds: Record<string, string> = {};
+    if (manifest.soundPaths !== undefined) {
+      for (const name of SFX_NAMES) {
+        const filePath = manifest.soundPaths[name];
+        if (filePath === undefined) continue;
+        const url = await this.readAudioDataUrl(filePath);
+        if (url !== undefined) sounds[name] = url;
+      }
+    }
+    const music =
+      manifest.backgroundMusicPath !== undefined
+        ? await this.readAudioDataUrl(manifest.backgroundMusicPath)
+        : undefined;
+
+    if (Object.keys(sounds).length === 0 && music === undefined) return null;
+    return { sounds, ...(music !== undefined ? { music } : {}) };
+  }
+
+  private async readAudioDataUrl(filePath: string): Promise<string | undefined> {
+    try {
+      const mime = AUDIO_MIME[path.extname(filePath).toLowerCase()] ?? 'application/octet-stream';
+      const buffer = await fse.readFile(filePath);
+      return `data:${mime};base64,${buffer.toString('base64')}`;
+    } catch (cause) {
+      console.warn('[audio] failed to read, skipping:', describe(cause));
       return undefined;
     }
   }

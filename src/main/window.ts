@@ -28,6 +28,9 @@ export class GameWindow {
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: true,
+        // Kiosk launcher: let background music / UI sounds start without a prior user gesture
+        // (Chromium otherwise blocks audible autoplay until the first interaction).
+        autoplayPolicy: 'no-user-gesture-required',
       },
     });
 

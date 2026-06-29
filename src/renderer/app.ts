@@ -3,6 +3,7 @@
 // IMPORTANT: title/data come from the card (untrusted) — rendered via textContent, never innerHTML.
 import type { AppState, GameInfo } from '../shared/types';
 import { createGamepadController } from './gamepad.js';
+import { createAudioController } from './audio.js';
 import { computePalette, type Palette } from './dominant-color.js';
 
 function req<T extends HTMLElement>(id: string): T {
@@ -33,6 +34,7 @@ type Phase = 'idle' | 'ready' | 'busy' | 'error';
 let currentState: AppState = { kind: 'idle' };
 let infoOpen = false;
 const paletteCache = new Map<string, Palette | null>();
+const audio = createAudioController();
 
 // ── Formatting ────────────────────────────────────────────────────────────
 
@@ -185,6 +187,16 @@ function closeInfo(): void {
   applyFocus();
 }
 
+// ── Background music gating ──────────────────────────────────────────────────
+
+// Music plays only while the launcher is actually on screen: the window must be visible
+// (not hidden to tray / minimized) and no game running (the game covers the launcher).
+function syncMusic(): void {
+  const visible = document.visibilityState === 'visible';
+  const running = currentState.kind === 'running';
+  audio.setMusicPlaying(visible && !running);
+}
+
 // ── Render ──────────────────────────────────────────────────────────────────
 
 function render(state: AppState): void {
@@ -213,6 +225,7 @@ function render(state: AppState): void {
   // Info popup is only valid in ready; force-close on any other state.
   if (phase !== 'ready') closeInfo();
   applyFocus();
+  syncMusic();
 }
 
 // ── Focus navigation (gamepad / mouse) ──────────────────────────────────────
@@ -233,7 +246,10 @@ function applyFocus(): void {
 
 function moveFocus(delta: number): void {
   if (!focusActive()) return;
-  focusIndex = Math.min(focusables.length - 1, Math.max(0, focusIndex + delta));
+  const next = Math.min(focusables.length - 1, Math.max(0, focusIndex + delta));
+  if (next === focusIndex) return; // already at the edge — no move, no sound
+  focusIndex = next;
+  audio.play('navigate');
   applyFocus();
 }
 
@@ -249,17 +265,33 @@ function activateFocused(): void {
   const btn = focusables[focusIndex];
   if (btn === undefined) return;
   pressFlash(btn);
-  if (btn === infoButton) openInfo();
-  else window.api.requestLaunch();
+  if (btn === infoButton) triggerInfo();
+  else triggerPlay();
+}
+
+// User-initiated actions (shared by mouse clicks and gamepad A/B) — each plays its sound.
+function triggerPlay(): void {
+  if (!focusActive()) return;
+  audio.play('play');
+  window.api.requestLaunch();
+}
+
+function triggerInfo(): void {
+  audio.play('button');
+  openInfo();
+}
+
+function triggerCloseInfo(): void {
+  if (!infoOpen) return; // nothing to hide → no "back" sound
+  audio.play('back');
+  closeInfo();
 }
 
 // ── Wiring ──────────────────────────────────────────────────────────────────
 
-playButton.addEventListener('click', () => {
-  if (focusActive()) window.api.requestLaunch();
-});
-infoButton.addEventListener('click', () => openInfo());
-infoVeil.addEventListener('click', () => closeInfo());
+playButton.addEventListener('click', () => triggerPlay());
+infoButton.addEventListener('click', () => triggerInfo());
+infoVeil.addEventListener('click', () => triggerCloseInfo());
 
 // Mouse hover moves the gamepad focus too, so A always activates what's highlighted.
 focusables.forEach((btn, i) => {
@@ -274,11 +306,25 @@ const gamepad = createGamepadController({
   onLeft: () => moveFocus(-1),
   onRight: () => moveFocus(1),
   onA: () => activateFocused(),
-  onB: () => closeInfo(),
+  onB: () => triggerCloseInfo(),
 });
 
 window.api.onStateUpdate(render);
 void window.api.requestState().then(render);
+
+// Audio assets are delivered on their own channel (not in AppState); load them and keep music in sync.
+window.api.onAudioUpdate((assets) => {
+  audio.setAssets(assets);
+  syncMusic();
+});
+void window.api.requestAudio().then((assets) => {
+  audio.setAssets(assets);
+  syncMusic();
+});
+
+// Pause/resume music when the window is hidden to tray or restored.
+document.addEventListener('visibilitychange', () => syncMusic());
+
 gamepad.start();
 
 // Re-measure the title slide on resize while busy (keeps right-alignment correct).
