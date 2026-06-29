@@ -1,138 +1,81 @@
+<img src="icon.png" align="right" width="120" height="120" alt="Playhook icon">
+
 # Playhook
 
-**Background launcher that detects installed game on external device, syncs saves and tracks
-playtime. Bring console vibes to your PC.**
+**Bring console vibes to your PC.**
 
-A background Windows application (Electron + TypeScript): it lives in the tray, detects
-insertion of an external device containing a game, shows a window with information about the
-game, and when **A** is pressed on an Xbox gamepad it syncs the saves, launches the game,
-waits for it to close, copies the saves back to the device, and tracks the play time.
+[![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11%20x64-0078D6?logo=windows&logoColor=white)](#building-from-source-for-developers)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![Build Windows](https://github.com/sevenns/playhook/actions/workflows/build-windows.yml/badge.svg)](https://github.com/sevenns/playhook/actions/workflows/build-windows.yml)
 
-> **Platform: Windows 10/11 (x64) only.** The app uses `tasklist` and the native
-> `drivelist` module; it does not work on macOS/Linux by design.
+Playhook is a background Windows app that turns a removable drive into a console-style game
+cartridge. It lives in the tray, detects when you insert a card carrying a game (a `game.json`
+manifest), and pops up a game card. Press **A** on an Xbox gamepad (or click **Play**) and it
+syncs your saves onto the PC, launches the game, tracks the playtime, then copies the saves
+back to the card when you quit — so your progress travels with the card across machines.
 
----
+> **Windows-only by design.** The app uses `tasklist` and the native `drivelist` module; it
+> does not work on macOS/Linux.
 
-## 1. Requirements
+> **Security note.** The card is untrusted input — every path in the manifest is validated
+> against directory traversal and an allowlist before anything is read or written. See
+> [Preparing a card](#preparing-a-card-gamejson) for the exact rules.
 
-- **Windows 10/11 x64.**
-- **Node.js 18+** and npm (for building from source).
-- **Native module build tools** — required to rebuild `drivelist` for
-  Electron:
-  - Visual Studio Build Tools with the "Desktop development with C++" component
-    (or `npm i -g windows-build-tools` on older systems),
-  - Python 3.x in `PATH`.
-- **Xbox gamepad** (optional — there is a mouse fallback).
-- **A removable storage device (USB drive, SD card, etc.) + reader** with a prepared `game.json` manifest (see §6).
+<!-- TODO: add a screenshot / GIF of the game card window here once UI assets exist. -->
 
 ---
 
-## 2. Install and build
+## Download (for users)
 
-```powershell
-# from the project root
-npm install
-```
+Grab the latest installer from the [**Releases**](https://github.com/sevenns/playhook/releases/latest)
+page. Two builds are published:
 
-`npm install` will run `electron-builder install-app-deps` on its own via `postinstall` —
-this rebuilds the native `drivelist` for the Electron version in use. If that step
-fails (no C++ toolchain), install the dependencies without scripts and rebuild manually:
+- **NSIS installer** (`.exe`, recommended) — installs the app, configures autostart reliably,
+  and **updates itself** automatically.
+- **portable** (`.exe`) — runs without installation; no auto-update, autostart is best-effort.
 
-```powershell
-npm install --ignore-scripts
-npm run rebuild        # electron-rebuild -f -w drivelist
-```
+A couple of things to expect on first run:
 
-Compile the TypeScript (main + preload + renderer) and copy the assets:
+- **SmartScreen warning.** The builds are not code-signed, so Windows SmartScreen will warn you
+  the first time. This is expected — choose *More info → Run anyway*.
+- **Visual C++ Redistributable.** If the app fails to start on a clean Windows install, install
+  the latest [Visual C++ Redistributable (x64)](https://aka.ms/vs/17/release/vc_redist.x64.exe).
+  (`.NET` is **not** required.)
 
-```powershell
-npm run build
-```
+### Quick start
 
-The output goes to `dist/` (`dist/main`, `dist/preload`, `dist/renderer`,
-`dist/shared`).
-
----
-
-## 3. Running in development mode
-
-```powershell
-npm start
-```
-
-`start` runs `build` and launches Electron. The app always starts hidden in the tray — the window
-appears only when a valid game card is detected (state `ready`). There is no window on launch.
-
-Type checking without emit (strict mode, as the project code style requires):
-
-```powershell
-npm run typecheck      # tsc --noEmit
-```
+1. **Install** (or unzip the portable build) and run it — it sits quietly in the tray.
+2. **Insert a card** that has a `game.json` in its root (see below).
+3. A **game card window** appears with the title, last-played date, and hours played.
+4. Press **A** on the gamepad (or click **Play**) — saves sync and the game launches.
+5. **Close the game** — Playhook counts the time, updates stats, and syncs saves back to the card.
 
 ---
 
-## 4. Building the distributable (NSIS + portable)
+## How it works
 
-```powershell
-npm run dist           # build + electron-builder
-```
+1. Playhook starts hidden in the tray. With no game card inserted, there is no window.
+2. Insert a card with a valid `game.json` and a window appears showing the background art, the
+   title, the last launch date, and the hours played (state `ready`).
+3. Press **A** on the gamepad (the window is force-focused) **or** click **Play**.
+4. Saves are synced card → PC and the game launches; it takes the foreground over the launcher.
+5. When the game closes, Playhook counts the play time, updates the statistics, and syncs the
+   saves PC → card. The game card window returns.
 
-The artifacts will appear in `release/`:
+When the launcher is hidden you can **hold Start + Back** on the gamepad to re-summon it. This
+hotkey is intentionally ignored **while a game is running** — pulling the launcher over a running
+game only causes focus trouble.
 
-- **NSIS installer** — installs the app and reliably configures autostart.
-- **portable .exe** — runs without installation; autostart is best-effort.
-
-The configuration lives in [`electron-builder.yml`](electron-builder.yml). For `drivelist`,
-`asarUnpack` is set so that the native `.node` binary is available in the packaged build.
-
-> ⚠️ **Verify on a real packaged build** that `drivelist` was unpacked from
-> asar and the card is detected (this is spike risk R3 from the plan). If not, make sure
-> `node_modules/drivelist/**` is included in `asarUnpack`.
-
-### Delivering updates (auto-update)
-
-Installed apps update themselves via **electron-updater + GitHub Releases** (public repo, so the
-client needs no token). Only the **NSIS** build self-updates — the portable `.exe` does not.
-
-Release flow:
-
-1. Bump `version` in [`package.json`](package.json) (e.g. `0.1.0` → `0.1.1`).
-2. Commit, then push a matching tag: `git tag v0.1.1 && git push origin v0.1.1`.
-3. The [Build Windows](.github/workflows/build-windows.yml) workflow builds and uploads the installer
-   + `latest.yml` to a **draft** GitHub Release `v0.1.1`.
-4. **Publish the draft release** on GitHub to make it live.
-5. Each running app checks on startup and every 6h, downloads the update silently, and installs it on
-   the **next quit** (it never interrupts a running game). See `[updater]` lines in the log.
-
-Notes:
-
-- The tag must be `v{version}` and the version must be higher than the installed one.
-- The publish target (`owner`/`repo`) is set in [`electron-builder.yml`](electron-builder.yml) — update
-  it if the GitHub repo is renamed.
-- No code signing: the very first install shows a Windows SmartScreen warning, but updates still apply
-  (unlike macOS, Windows auto-update works unsigned).
+Tray menu: **Show** (bring back the window), **Open logs** (open the log folder), **Quit**
+(close the app completely).
 
 ---
 
-## 5. Autostart
+## Preparing a card: `game.json`
 
-The app registers itself for autostart via
-`app.setLoginItemSettings({ openAtLogin: true })`.
-
-- The app always starts hidden in the tray (no flag needed): the window appears only when a valid
-  game card is detected. With no card it stays in the tray.
-- Guaranteed for **NSIS installation**; for **portable** it is best-effort (the path to the exe
-  may change).
-
-To disable autostart: "Settings → Apps → Startup" in Windows.
-
----
-
-## 6. Preparing the card: the `game.json` manifest
-
-Placed in the **root** of the card. One game per card. The paths
-`executable`/`heroImage`/`saveOnCard` are **relative to the card root**;
-`pcSavePath` is absolute and starts with one of the allowed prefixes (see below).
+Place a `game.json` in the **root** of the card. One game per card. The paths
+`executable` / `heroImage` / `saveOnCard` are **relative to the card root**; `pcSavePath` is
+absolute and must start with one of the allowed prefixes (see below).
 
 ```jsonc
 {
@@ -169,8 +112,9 @@ E:\
 
 ### Rules and security (the card is untrusted input)
 
-- After resolution, `executable`/`heroImage`/`saveOnCard` **must lie inside the card
-  root** — `..` and absolute paths are forbidden (otherwise the game won't launch and an error is shown).
+- After resolution, `executable` / `heroImage` / `saveOnCard` **must lie inside the card
+  root** — `..` and absolute paths are forbidden (otherwise the game won't launch and an error
+  is shown). The `executable` must also **exist on the card**, or launch is rejected.
 - `pcSavePath` — only from an allowlist of prefixes, with no traversal (`..`). Otherwise rejected:
   - `%DOCUMENTS%` — the user's Documents folder, resolved via the system **Known Folder API**
     (`app.getPath('documents')`). **Language- and OneDrive-independent**: it returns the same
@@ -180,74 +124,147 @@ E:\
   - `%APPDATA%`, `%LOCALAPPDATA%`, `%USERPROFILE%` — resolved from the corresponding
     environment variables (good for games that save under AppData).
 - `id` — only `[A-Za-z0-9._-]` (used as a folder name on the PC).
-- `saveOnCard` and `pcSavePath` are set **together** or **both omitted**. If both are
-  omitted, the game writes its saves next to its exe on the card and syncing is fully disabled.
-- `sounds.*` and `backgroundMusic` — card-relative like `heroImage`, **must lie inside the card root**.
-  Any omitted sound slot falls back to a **bundled default** sound, so every game has UI sounds out of
-  the box; `backgroundMusic` is off unless set, loops at 0.5 volume and pauses while a game is running
-  or the window is hidden. Use a web-playable codec (ogg / mp3 / wav / m4a / opus).
+- `saveOnCard` and `pcSavePath` are set **together** or **both omitted**. If both are omitted,
+  the game writes its saves next to its exe on the card and syncing is fully disabled.
+- `sounds.*` and `backgroundMusic` — card-relative like `heroImage`, **must lie inside the card
+  root**. Any omitted sound slot falls back to a **bundled default** sound, so every game has UI
+  sounds out of the box; `backgroundMusic` is off unless set, loops at 0.5 volume and pauses
+  while a game is running or the window is hidden. Use a common web-playable audio format
+  (mp3, ogg/oga, opus, wav, m4a, aac, flac, webm).
 
 ### Statistics: one card, many PCs
 
-Statistics (hours / last played / launch count) are **unified across machines** with the card as the
-carrier:
+Statistics (hours / last played / launch count) are **unified across machines** with the card as
+the carrier:
 
 - `stats.json` in the **card root** is the **traveling canonical** record. It moves with the card.
 - `%APPDATA%\playhook\stats\<id>.json` on each PC is a **working mirror**.
 
-On every insertion the two are **reconciled** (field-wise: `max` of the cumulative totals, the later
-`lastPlayedAt`) and the merged result is written back to both. Because the card is physically a single
-device used sequentially, this never loses progress and never double-counts. A fresh card with no
-`stats.json` simply adopts the local PC value (and starts carrying it from then on).
+On every insertion the two are **reconciled** (field-wise: `max` of the cumulative totals, the
+later `lastPlayedAt`) and the merged result is written back to both. Because the card is
+physically a single device used sequentially, this never loses progress and never double-counts.
+A fresh card with no `stats.json` simply adopts the local PC value (and starts carrying it from
+then on).
 
 Other PC state under `%APPDATA%\playhook\`:
 
-- `pending-flush\<id>\` — a deferred PC→SD sync with a snapshot of the saves, if the card was removed
-  during play; it is applied on the next insertion of this card (matched by `id`).
+- `pending-flush\<id>\` — a deferred PC → SD sync with a snapshot of the saves, if the card was
+  removed during play; it is applied on the next insertion of this card (matched by `id`).
 
 ---
 
-## 7. How to use
+## Building from source (for developers)
 
-1. Launch the app (or let it start with the system) — it sits in the tray.
-2. Insert a card with a `game.json` — a window appears with the background, the title, the date of the last
-   launch, and the hours played.
-3. Press **A** on the gamepad (the window is force-focused) **or** click "Play".
-4. The app syncs the saves card→PC and launches the game; the game takes the foreground over the launcher.
-5. Close the game — the app counts the time, updates the statistics, syncs the
-   saves PC→card, and shows the "Play" window again.
+### Requirements
 
-When the launcher is hidden (e.g. minimized to the tray) you can **hold Start+Back** on the gamepad to
-re-summon it. This hotkey is intentionally ignored **while a game is running** — there's nothing to do
-mid-game, and pulling the launcher over a running game only causes focus trouble.
+- **Windows 10/11 x64.**
+- **Node.js 18+** and npm.
+- **Native module build tools** — required to rebuild `drivelist` for Electron:
+  - Visual Studio Build Tools with the "Desktop development with C++" component,
+  - Python 3.x in `PATH`.
 
-Tray: **Show** — bring back the window, **Open logs** — open the log folder, **Quit** — close the app
-completely.
+  (`koffi` ships prebuilt, so the C++ toolchain is needed only for `drivelist`.)
+- **Xbox gamepad** (optional — there is a mouse fallback).
+- A removable storage device (USB drive, SD card, etc.) with a prepared `game.json` manifest.
 
-### Logs
+### Install, build, run
+
+```powershell
+# from the project root
+npm install
+```
+
+`npm install` runs `electron-builder install-app-deps` on its own via `postinstall` — this
+rebuilds the native `drivelist` for the Electron version in use. If that step fails (no C++
+toolchain), install without scripts and rebuild manually:
+
+```powershell
+npm install --ignore-scripts
+npm run rebuild        # electron-rebuild -f -w drivelist
+```
+
+Compile the TypeScript (main + preload + renderer) and copy assets, then run in dev mode:
+
+```powershell
+npm run build          # output goes to dist/ (main, preload, renderer, shared)
+npm start              # builds and launches Electron (always starts hidden in the tray)
+npm run typecheck      # tsc --noEmit (strict)
+```
+
+### Building the distributable
+
+```powershell
+npm run dist           # build + electron-builder → release/ (NSIS + portable)
+```
+
+The configuration lives in [`electron-builder.yml`](electron-builder.yml). For `drivelist`,
+`asarUnpack` is set so the native `.node` binary is available in the packaged build.
+
+> ⚠️ Verify on a real packaged build that `drivelist` was unpacked from asar and the card is
+> detected. If not, make sure `node_modules/drivelist/**` is included in `asarUnpack`.
+
+---
+
+## Releasing & auto-update
+
+Installed apps update themselves via **electron-updater + GitHub Releases** (public repo, so the
+client needs no token). Only the **NSIS** build self-updates — the portable `.exe` does not.
+
+Release flow:
+
+1. Bump `version` in [`package.json`](package.json) (e.g. `0.1.1` → `0.1.2`).
+2. Commit, then push a matching tag: `git tag v0.1.2 && git push origin v0.1.2`.
+3. The [Build Windows](.github/workflows/build-windows.yml) workflow builds and uploads the
+   installer + `latest.yml` to a **draft** GitHub Release `v0.1.2`.
+4. **Publish the draft release** on GitHub to make it live (and visible on the Releases page).
+5. Each running app checks on startup and every 6h, downloads the update silently, and installs
+   it on the **next quit** (it never interrupts a running game). See `[updater]` lines in the log.
+
+Notes:
+
+- The tag must be `v{version}` and the version must be higher than the installed one.
+- The publish target (`owner` / `repo`) is set in [`electron-builder.yml`](electron-builder.yml) —
+  update it if the GitHub repo is renamed.
+- No code signing: the very first install shows a Windows SmartScreen warning, but updates still
+  apply (unlike macOS, Windows auto-update works unsigned).
+
+### Autostart
+
+The app registers itself for autostart via `app.setLoginItemSettings({ openAtLogin: true })`.
+
+- It always starts hidden in the tray (no flag needed): the window appears only when a valid game
+  card is detected.
+- Guaranteed for the **NSIS installation**; for **portable** it is best-effort (the path to the
+  exe may change).
+- To disable: *Settings → Apps → Startup* in Windows.
+
+---
+
+## Logs
 
 The main process writes a timestamped log to `%APPDATA%\playhook\logs\main.log` (open it via the
-tray **Open logs** item). It records card insertions, manifest validation, the stats reconcile/card-copy
-result, and launch/exit — useful when a save or stats copy to the card silently fails.
+tray **Open logs** item). It records card insertions, manifest validation, the stats
+reconcile / card-copy result, and launch/exit — useful when a save or stats copy to the card
+silently fails.
 
 ---
 
-## 8. Known limitations
+## Known limitations
 
-- **UAC/elevation (R4):** from a non-elevated app, `tasklist` cannot see an
-  elevated process — a game that requires administrator rights will produce a false "didn't
-  launch" timeout. Designed for a direct, self-contained `.exe` without UAC.
-- **Launchers/wrappers (A2):** exit detection relies on the pid from `spawn`. A wrapper game
-  (Steam/launcher) that immediately terminates its own process will produce a false "exit" — out of
-  scope.
-- **Removing the card during play** is handled gracefully (statistics on the PC,
-  PC→SD is deferred to `pending-flush`), but **the game itself will most likely crash** —
-  the exe is on the card. The UI warns "do not remove the card during play".
-- **FAT/exFAT:** syncing goes "by direction", `mtime` is not used for decisions.
+- **UAC / elevation:** from a non-elevated app, `tasklist` cannot see an elevated process — a
+  game that requires administrator rights will produce a false "didn't launch" timeout. Designed
+  for a direct, self-contained `.exe` without UAC.
+- **Launchers / wrappers:** exit detection relies on the pid from `spawn`. A wrapper game
+  (Steam / launcher) that immediately terminates its own process will produce a false "exit" —
+  out of scope.
+- **Removing the card during play** is handled gracefully (statistics on the PC, PC → SD deferred
+  to `pending-flush`), but **the game itself will most likely crash** — the exe is on the card.
+  The UI warns "do not remove the card during play".
+- **FAT/exFAT:** syncing goes "by direction"; `mtime` is not used for decisions.
 
 ---
 
-## 9. Project structure
+## Project structure
 
 ```
 src/
@@ -258,3 +275,29 @@ src/
 ```
 
 npm scripts: `typecheck`, `build`, `start`, `rebuild`, `dist`.
+
+---
+
+## Contributing
+
+PRs welcome. The codebase is **strict TypeScript** (no `any`, explicit return types,
+functional style). Please run `npm run typecheck` before opening a PR.
+
+---
+
+## FAQ
+
+- **Is the SmartScreen warning normal?** Yes. The builds aren't code-signed, so Windows warns on
+  first run. Choose *More info → Run anyway*. Auto-update still works without signing.
+- **Why Windows-only?** Process detection uses `tasklist` and device detection uses the native
+  `drivelist` module — both Windows-specific.
+- **Does it work without a gamepad?** Yes. Every gamepad action has a mouse fallback (click
+  **Play**, etc.).
+- **Can I use it with Steam games?** No. Wrapper/launcher games break exit detection — see
+  [Known limitations](#known-limitations). Point it at a direct, self-contained `.exe`.
+
+---
+
+## License
+
+MIT — see [LICENSE](LICENSE).
