@@ -24,6 +24,7 @@ interface User32 {
   readonly getWindow: (hwnd: Handle, uCmd: number) => Handle;
   readonly getForegroundWindow: () => Handle;
   readonly attachThreadInput: (idAttach: number, idAttachTo: number, fAttach: boolean) => boolean;
+  readonly switchToThisWindow: (hwnd: Handle, fAltTab: boolean) => void;
   readonly showWindow: (hwnd: Handle, nCmdShow: number) => boolean;
   readonly bringWindowToTop: (hwnd: Handle) => boolean;
   readonly setForegroundWindow: (hwnd: Handle) => boolean;
@@ -55,6 +56,9 @@ function loadUser32(): User32 | null {
       attachThreadInput: lib.func(
         'bool __stdcall AttachThreadInput(uint32 idAttach, uint32 idAttachTo, bool fAttach)',
       ) as User32['attachThreadInput'],
+      switchToThisWindow: lib.func(
+        'void __stdcall SwitchToThisWindow(void *hwnd, bool fAltTab)',
+      ) as User32['switchToThisWindow'],
       showWindow: lib.func(
         'bool __stdcall ShowWindow(void *hwnd, int nCmdShow)',
       ) as User32['showWindow'],
@@ -112,22 +116,28 @@ export function focusWindowByPid(pid: number): boolean {
     return false;
   }
 
-  // SetForegroundWindow alone often only raises the window in Z-order without giving it input
-  // focus (the foreground lock — gamepad input doesn't reset it like a key/mouse press would), so
-  // the game looks active but ignores the controller until clicked. Attaching the current
-  // foreground thread's input queue to the game's thread for the duration of the call makes the
-  // activation (and keyboard/input focus) actually transfer. This is the canonical Win32 fix.
+  // Getting a game to actually resume reading input is more than raising it in Z-order. From a
+  // non-GUI caller thread (Node), SetForegroundWindow can return true yet NOT deliver the
+  // WM_ACTIVATE/WM_SETFOCUS that make an Unreal/DirectInput game start polling again — so the window
+  // looks focused but ignores the gamepad until clicked. We layer three mechanisms:
+  //  1. AttachThreadInput — share the input queue of the current foreground thread with the game's.
+  //  2. SwitchToThisWindow — an Alt-Tab-style activation that delivers real activation + input focus
+  //     (thread-independent); this is the piece SetForegroundWindow was missing.
+  //  3. SetForegroundWindow/BringWindowToTop — belt-and-suspenders for Z-order/foreground.
   u.showWindow(hwnd, SW_RESTORE);
   const foregroundHwnd = u.getForegroundWindow();
   const fgThread = foregroundHwnd === null ? 0 : u.getWindowThreadProcessId(foregroundHwnd, [0]);
   const targetThread = u.getWindowThreadProcessId(hwnd, [0]);
   const attach = fgThread !== 0 && fgThread !== targetThread;
   if (attach) u.attachThreadInput(fgThread, targetThread, true);
+  u.switchToThisWindow(hwnd, true);
   u.bringWindowToTop(hwnd);
   const ok = u.setForegroundWindow(hwnd);
   if (attach) u.attachThreadInput(fgThread, targetThread, false);
   log.info(
-    `[foreground] focus pid ${pid}: setForegroundWindow=${ok} (attachThreadInput=${attach})`,
+    `[foreground] focus pid ${pid}: switchToThisWindow + setForegroundWindow=${ok} (attach=${attach})`,
   );
-  return ok;
+  // We found and activated the window — report success regardless of SetForegroundWindow's bool
+  // (SwitchToThisWindow returns void and does the real activation), so resume won't hide as fallback.
+  return true;
 }
