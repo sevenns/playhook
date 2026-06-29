@@ -161,11 +161,21 @@ E:\
   Any missing sound slot is simply silent; `backgroundMusic` loops at 0.5 volume and pauses while a
   game is running or the window is hidden. Use a web-playable codec (ogg / mp3 / wav / m4a / opus).
 
-### Where the app stores data on the PC
+### Statistics: one card, many PCs
 
-`%APPDATA%\microsd-game-launcher\`:
+Statistics (hours / last played / launch count) are **unified across machines** with the card as the
+carrier:
 
-- `stats\<id>.json` — the **source of truth** for statistics (hours/date/launch count).
+- `stats.json` in the **card root** is the **traveling canonical** record. It moves with the card.
+- `%APPDATA%\microsd-game-launcher\stats\<id>.json` on each PC is a **working mirror**.
+
+On every insertion the two are **reconciled** (field-wise: `max` of the cumulative totals, the later
+`lastPlayedAt`) and the merged result is written back to both. Because the card is physically a single
+device used sequentially, this never loses progress and never double-counts. A fresh card with no
+`stats.json` simply adopts the local PC value (and starts carrying it from then on).
+
+Other PC state under `%APPDATA%\microsd-game-launcher\`:
+
 - `pending-flush\<id>\` — a deferred PC→SD sync with a snapshot of the saves, if the card was removed
   during play; it is applied on the next insertion of this card (matched by `id`).
 

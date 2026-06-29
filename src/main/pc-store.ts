@@ -23,6 +23,12 @@ export const DEFAULT_STATS: Stats = {
   launchCount: 0,
 };
 
+/** Validates an untrusted stats payload (PC file or the card copy). null = absent/corrupted. */
+export function parseStats(raw: unknown): Stats | null {
+  const parsed = statsSchema.safeParse(raw);
+  return parsed.success ? parsed.data : null;
+}
+
 const pendingMetaSchema = z.object({
   schemaVersion: z.literal(1),
   id: z.string(),

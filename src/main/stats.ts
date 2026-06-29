@@ -1,16 +1,65 @@
 // Playtime tracking (stage 7, section 3).
-// The source of truth is on the PC (PcStore). The copy to the card is best-effort: the card may
-// be yanked, so losing the copy isn't critical and must not crash the flow.
+// "One card, many PCs": the card's stats.json is the TRAVELING canonical record, and the per-PC
+// PcStore is a working mirror. On insertion the two are reconciled (merged) so the card carries a
+// single unified total across machines. The card write stays best-effort: the card may be yanked,
+// so losing a write isn't critical and must not crash the flow.
 import path from 'node:path';
+import fse from 'fs-extra';
 import { CARD_STATS_FILENAME, type Stats } from '../shared/types';
-import { type PcStore } from './pc-store';
+import { parseStats, type PcStore } from './pc-store';
 import { writeFileAtomic } from './save-sync';
+
+/** Returns the later of two ISO timestamps (null = "never", loses to any real date). */
+function latestDate(a: string | null, b: string | null): string | null {
+  if (a === null) return b;
+  if (b === null) return a;
+  return Date.parse(a) >= Date.parse(b) ? a : b;
+}
+
+/**
+ * Field-wise merge of two stats records (pure). The card is physically a single device used
+ * sequentially across PCs, so it always carries the latest cumulative totals — taking the max
+ * per field never loses progress and never double-counts (the PC mirror already equals the card
+ * baseline plus the current session). lastPlayedAt = the more recent timestamp.
+ */
+export function mergeStats(a: Stats, b: Stats): Stats {
+  return {
+    schemaVersion: 1,
+    totalPlaySeconds: Math.max(a.totalPlaySeconds, b.totalPlaySeconds),
+    launchCount: Math.max(a.launchCount, b.launchCount),
+    lastPlayedAt: latestDate(a.lastPlayedAt, b.lastPlayedAt),
+  };
+}
 
 export class StatsService {
   constructor(private readonly store: PcStore) {}
 
   async read(id: string): Promise<Stats> {
     return this.store.readStats(id);
+  }
+
+  /** Reads the (untrusted) stats copy from the card root; null if absent or corrupted. */
+  async readCardStats(cardRoot: string): Promise<Stats | null> {
+    try {
+      const raw: unknown = await fse.readJson(path.join(cardRoot, CARD_STATS_FILENAME));
+      return parseStats(raw);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Reconciles the card's traveling stats with the local PC mirror on insertion: merges them,
+   * persists the result to the PC store (the working baseline for this session) and returns it.
+   * If the card has no stats yet (fresh card), the local PC value is kept as-is (bootstrap).
+   */
+  async reconcileWithCard(id: string, cardRoot: string): Promise<Stats> {
+    const pc = await this.store.readStats(id);
+    const card = await this.readCardStats(cardRoot);
+    if (card === null) return pc;
+    const merged = mergeStats(pc, card);
+    await this.store.writeStats(id, merged);
+    return merged;
   }
 
   /** Records a finished session: += time, ++launches, lastPlayedAt = now. Writes to the PC. */

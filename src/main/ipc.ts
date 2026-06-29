@@ -113,14 +113,21 @@ export class GameController {
     this.current = manifest;
     this.setAudio(await this.readAudioAssets(manifest));
 
-    // If the card was yanked mid-game last time — top up the deferred PC→SD.
+    // Reconcile the card's traveling stats with this PC's mirror (the "one card, many PCs"
+    // unified total) FIRST, so the PC mirror holds the merged value before anything else copies
+    // stats to the card. Then write the merged result back to the card so it stays current.
+    const stats = await this.deps.stats.reconcileWithCard(manifest.raw.id, manifest.root);
+    await this.deps.stats.copyToCard(manifest.root, stats);
+
+    // If the card was yanked mid-game last time — top up the deferred PC→SD (saves snapshot).
+    // Runs after reconcile so its own stats copy uses the already-merged value, never clobbering
+    // a higher total the card picked up on another PC.
     try {
       await this.flushPendingIfAny(manifest);
     } catch (cause) {
       console.warn('[pending-flush] failed on insert:', describe(cause));
     }
 
-    const stats = await this.deps.stats.read(manifest.raw.id);
     const info = await this.buildGameInfo(manifest, stats);
     this.deps.state.set({ kind: 'ready', game: info });
     this.deps.window.showAndFocus();
