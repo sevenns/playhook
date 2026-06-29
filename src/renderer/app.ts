@@ -174,6 +174,7 @@ function openInfo(): void {
   infoOpen = true;
   app.dataset['info'] = 'open';
   infoPopup.setAttribute('aria-hidden', 'false');
+  applyFocus();
 }
 
 function closeInfo(): void {
@@ -181,6 +182,7 @@ function closeInfo(): void {
   infoOpen = false;
   delete app.dataset['info'];
   infoPopup.setAttribute('aria-hidden', 'true');
+  applyFocus();
 }
 
 // ── Render ──────────────────────────────────────────────────────────────────
@@ -210,24 +212,69 @@ function render(state: AppState): void {
 
   // Info popup is only valid in ready; force-close on any other state.
   if (phase !== 'ready') closeInfo();
+  applyFocus();
+}
+
+// ── Focus navigation (gamepad / mouse) ──────────────────────────────────────
+
+// Navigation order across the on-screen controls (left → right).
+const focusables: readonly HTMLButtonElement[] = [playButton, infoButton];
+let focusIndex = 0;
+
+// Focus is only meaningful on the ready screen with the popup closed.
+function focusActive(): boolean {
+  return phaseOf(currentState) === 'ready' && !infoOpen;
+}
+
+function applyFocus(): void {
+  const active = focusActive();
+  focusables.forEach((btn, i) => btn.classList.toggle('is-focused', active && i === focusIndex));
+}
+
+function moveFocus(delta: number): void {
+  if (!focusActive()) return;
+  focusIndex = Math.min(focusables.length - 1, Math.max(0, focusIndex + delta));
+  applyFocus();
+}
+
+// Gamepad A doesn't trigger :active, so flash a press class to play the scale-down animation.
+const PRESS_MS = 130;
+function pressFlash(btn: HTMLElement): void {
+  btn.classList.add('is-pressed');
+  window.setTimeout(() => btn.classList.remove('is-pressed'), PRESS_MS);
+}
+
+function activateFocused(): void {
+  if (!focusActive()) return;
+  const btn = focusables[focusIndex];
+  if (btn === undefined) return;
+  pressFlash(btn);
+  if (btn === infoButton) openInfo();
+  else window.api.requestLaunch();
 }
 
 // ── Wiring ──────────────────────────────────────────────────────────────────
 
 playButton.addEventListener('click', () => {
-  if (phaseOf(currentState) === 'ready' && !infoOpen) window.api.requestLaunch();
+  if (focusActive()) window.api.requestLaunch();
 });
 infoButton.addEventListener('click', () => openInfo());
 infoVeil.addEventListener('click', () => closeInfo());
 
+// Mouse hover moves the gamepad focus too, so A always activates what's highlighted.
+focusables.forEach((btn, i) => {
+  btn.addEventListener('mouseenter', () => {
+    if (!focusActive()) return;
+    focusIndex = i;
+    applyFocus();
+  });
+});
+
 const gamepad = createGamepadController({
-  onA: () => {
-    if (phaseOf(currentState) === 'ready' && !infoOpen) window.api.requestLaunch();
-  },
+  onLeft: () => moveFocus(-1),
+  onRight: () => moveFocus(1),
+  onA: () => activateFocused(),
   onB: () => closeInfo(),
-  onY: () => {
-    if (gameOf(currentState) !== undefined) openInfo();
-  },
 });
 
 window.api.onStateUpdate(render);
