@@ -22,6 +22,8 @@ interface User32 {
   readonly getWindowThreadProcessId: (hwnd: Handle, pidOut: number[]) => number;
   readonly isWindowVisible: (hwnd: Handle) => boolean;
   readonly getWindow: (hwnd: Handle, uCmd: number) => Handle;
+  readonly getForegroundWindow: () => Handle;
+  readonly attachThreadInput: (idAttach: number, idAttachTo: number, fAttach: boolean) => boolean;
   readonly showWindow: (hwnd: Handle, nCmdShow: number) => boolean;
   readonly bringWindowToTop: (hwnd: Handle) => boolean;
   readonly setForegroundWindow: (hwnd: Handle) => boolean;
@@ -47,6 +49,12 @@ function loadUser32(): User32 | null {
         'bool __stdcall IsWindowVisible(void *hwnd)',
       ) as User32['isWindowVisible'],
       getWindow: lib.func('void* __stdcall GetWindow(void *hwnd, uint32 uCmd)') as User32['getWindow'],
+      getForegroundWindow: lib.func(
+        'void* __stdcall GetForegroundWindow()',
+      ) as User32['getForegroundWindow'],
+      attachThreadInput: lib.func(
+        'bool __stdcall AttachThreadInput(uint32 idAttach, uint32 idAttachTo, bool fAttach)',
+      ) as User32['attachThreadInput'],
       showWindow: lib.func(
         'bool __stdcall ShowWindow(void *hwnd, int nCmdShow)',
       ) as User32['showWindow'],
@@ -103,9 +111,23 @@ export function focusWindowByPid(pid: number): boolean {
     log.warn(`[foreground] no top-level window found for pid ${pid}`);
     return false;
   }
+
+  // SetForegroundWindow alone often only raises the window in Z-order without giving it input
+  // focus (the foreground lock — gamepad input doesn't reset it like a key/mouse press would), so
+  // the game looks active but ignores the controller until clicked. Attaching the current
+  // foreground thread's input queue to the game's thread for the duration of the call makes the
+  // activation (and keyboard/input focus) actually transfer. This is the canonical Win32 fix.
   u.showWindow(hwnd, SW_RESTORE);
+  const foregroundHwnd = u.getForegroundWindow();
+  const fgThread = foregroundHwnd === null ? 0 : u.getWindowThreadProcessId(foregroundHwnd, [0]);
+  const targetThread = u.getWindowThreadProcessId(hwnd, [0]);
+  const attach = fgThread !== 0 && fgThread !== targetThread;
+  if (attach) u.attachThreadInput(fgThread, targetThread, true);
   u.bringWindowToTop(hwnd);
   const ok = u.setForegroundWindow(hwnd);
-  log.info(`[foreground] focus pid ${pid}: setForegroundWindow=${ok}`);
+  if (attach) u.attachThreadInput(fgThread, targetThread, false);
+  log.info(
+    `[foreground] focus pid ${pid}: setForegroundWindow=${ok} (attachThreadInput=${attach})`,
+  );
   return ok;
 }
