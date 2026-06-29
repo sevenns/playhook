@@ -28,4 +28,10 @@ for (const name of icons) {
   await cp(resolve(root, name), resolve(outDist, name));
 }
 
-console.log(`Copied ${files.length} file(s), ${dirs.length} dir(s) and ${icons.length} icon(s) to dist`);
+// Bundled default UI sounds: used by main when a game.json omits a sound slot. Shipped inside the
+// asar (plain fs reads work through Electron's asar shim) and read at runtime from dist/audio.
+await cp(resolve(root, 'audio'), resolve(outDist, 'audio'), { recursive: true });
+
+console.log(
+  `Copied ${files.length} file(s), ${dirs.length} dir(s), ${icons.length} icon(s) and default audio to dist`,
+);

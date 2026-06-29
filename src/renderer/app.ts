@@ -261,6 +261,11 @@ function pressFlash(btn: HTMLElement): void {
 }
 
 function activateFocused(): void {
+  // While a game runs, the launcher is summoned over it (Start+Back); A resumes the game.
+  if (canResume()) {
+    resumeGame();
+    return;
+  }
   if (!focusActive()) return;
   const btn = focusables[focusIndex];
   if (btn === undefined) return;
@@ -270,6 +275,15 @@ function activateFocused(): void {
 }
 
 // User-initiated actions (shared by mouse clicks and gamepad A/B) — each plays its sound.
+function canResume(): boolean {
+  return currentState.kind === 'running';
+}
+
+function resumeGame(): void {
+  audio.play('play');
+  window.api.requestResume();
+}
+
 function triggerPlay(): void {
   if (!focusActive()) return;
   audio.play('play');
@@ -289,7 +303,10 @@ function triggerCloseInfo(): void {
 
 // ── Wiring ──────────────────────────────────────────────────────────────────
 
-playButton.addEventListener('click', () => triggerPlay());
+playButton.addEventListener('click', () => {
+  if (canResume()) resumeGame();
+  else triggerPlay();
+});
 infoButton.addEventListener('click', () => triggerInfo());
 infoVeil.addEventListener('click', () => triggerCloseInfo());
 

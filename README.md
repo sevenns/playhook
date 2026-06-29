@@ -120,7 +120,7 @@ Placed in the **root** of the card. One game per card. The paths
   "saveOnCard": "saves",                    // copy folder for saves on the card (relative to the root)
   "pcSavePath": "%APPDATA%/Team Cherry/Hollow Knight", // where the game actually writes saves on the PC
   "launchTimeoutSec": 30,                   // how long to wait for the process to appear (optional, default 30)
-  "sounds": {                               // per-game UI sounds (all optional, card-relative paths)
+  "sounds": {                               // per-game UI sounds (all optional; omitted slots use a bundled default)
     "play": "audio/play.ogg",               // pressing "Play"
     "navigate": "audio/move.ogg",           // moving focus between controls
     "button": "audio/button.ogg",           // pressing an ordinary button (e.g. "Info")
@@ -158,8 +158,9 @@ E:\
 - `saveOnCard` and `pcSavePath` are set **together** or **both omitted**. If both are
   omitted, the game writes its saves next to its exe on the card and syncing is fully disabled.
 - `sounds.*` and `backgroundMusic` — card-relative like `heroImage`, **must lie inside the card root**.
-  Any missing sound slot is simply silent; `backgroundMusic` loops at 0.5 volume and pauses while a
-  game is running or the window is hidden. Use a web-playable codec (ogg / mp3 / wav / m4a / opus).
+  Any omitted sound slot falls back to a **bundled default** sound, so every game has UI sounds out of
+  the box; `backgroundMusic` is off unless set, loops at 0.5 volume and pauses while a game is running
+  or the window is hidden. Use a web-playable codec (ogg / mp3 / wav / m4a / opus).
 
 ### Statistics: one card, many PCs
 

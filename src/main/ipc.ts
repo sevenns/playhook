@@ -53,6 +53,20 @@ const AUDIO_MIME: Readonly<Record<string, string>> = {
 
 const SFX_NAMES: readonly SfxName[] = ['play', 'navigate', 'button', 'back'];
 
+// Bundled default UI sounds (in dist/audio, copied by copy-assets). Used per slot when a game.json
+// doesn't provide its own sound, so every game has interface sounds out of the box.
+const DEFAULT_SFX_FILES: Readonly<Record<SfxName, string>> = {
+  play: 'default-play.wav',
+  navigate: 'default-move.wav',
+  button: 'default-button.wav',
+  back: 'default-back.wav',
+};
+
+function defaultSfxPath(name: SfxName): string {
+  // __dirname at runtime is dist/main; the bundled sounds live in dist/audio.
+  return path.join(__dirname, '../audio', DEFAULT_SFX_FILES[name]);
+}
+
 function describe(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
 }
@@ -85,6 +99,7 @@ export class GameController {
     ipcMain.handle(IPC.stateRequest, (): AppState => state.get());
     ipcMain.handle(IPC.audioRequest, (): AudioAssets | null => this.currentAudio);
     ipcMain.on(IPC.actionLaunch, () => void this.onLaunchRequested());
+    ipcMain.on(IPC.actionResume, () => this.onResumeRequested());
   }
 
   /** Stops the process waits and the watcher (on application exit). */
@@ -175,6 +190,17 @@ export class GameController {
     const manifest = this.current;
     if (manifest === null) return;
     void this.runLaunchSequence(manifest, snapshot.game);
+  }
+
+  /**
+   * "Resume" while a game is running (the Start+Back hotkey summoned the launcher over the game,
+   * and the user pressed Play / A again). Hiding the launcher hands the foreground back to the
+   * game underneath — the symmetric inverse of how showAndFocus covered it. On game exit the
+   * normal sync-out flow brings the launcher back. Ignored outside 'running'.
+   */
+  private onResumeRequested(): void {
+    if (this.deps.state.get().kind !== 'running') return;
+    this.deps.window.hide();
   }
 
   private async runLaunchSequence(manifest: ResolvedManifest, info: GameInfo): Promise<void> {
@@ -301,13 +327,11 @@ export class GameController {
   /** Reads the manifest's sounds + music into data URLs. Returns null when nothing is configured. */
   private async readAudioAssets(manifest: ResolvedManifest): Promise<AudioAssets | null> {
     const sounds: Record<string, string> = {};
-    if (manifest.soundPaths !== undefined) {
-      for (const name of SFX_NAMES) {
-        const filePath = manifest.soundPaths[name];
-        if (filePath === undefined) continue;
-        const url = await this.readAudioDataUrl(filePath);
-        if (url !== undefined) sounds[name] = url;
-      }
+    for (const name of SFX_NAMES) {
+      // Per slot: the game's own sound if set, otherwise the bundled default.
+      const filePath = manifest.soundPaths?.[name] ?? defaultSfxPath(name);
+      const url = await this.readAudioDataUrl(filePath);
+      if (url !== undefined) sounds[name] = url;
     }
     const music =
       manifest.backgroundMusicPath !== undefined

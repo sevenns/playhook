@@ -115,6 +115,8 @@ export const IPC = {
   stateRequest: 'state:request',
   /** renderer → main: the user pressed A / clicked "Play". */
   actionLaunch: 'action:launch',
+  /** renderer → main: while a game is running, bring it back to the foreground (resume). */
+  actionResume: 'action:resume',
   /** main → renderer: audio assets for the current game (or null when no card). */
   audioUpdate: 'audio:update',
   /** renderer → main: request the current audio assets (on window startup). */
@@ -126,6 +128,7 @@ export interface RendererApi {
   onStateUpdate(callback: (state: AppState) => void): void;
   requestState(): Promise<AppState>;
   requestLaunch(): void;
+  requestResume(): void;
   onAudioUpdate(callback: (assets: AudioAssets | null) => void): void;
   requestAudio(): Promise<AudioAssets | null>;
 }
