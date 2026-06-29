@@ -23,6 +23,8 @@ export interface GameManifest {
   readonly title: string;
   readonly executable: string;
   readonly args: readonly string[];
+  /** Launch the .exe elevated (UAC "runas") for executables whose manifest requires administrator. */
+  readonly runAsAdmin: boolean;
   readonly heroImage?: string;
   readonly saveOnCard?: string;
   readonly pcSavePath?: string;

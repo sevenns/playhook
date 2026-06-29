@@ -93,6 +93,7 @@ absolute and must start with one of the allowed prefixes (see below).
   "title": "Hollow Knight",
   "executable": "game/hollow_knight.exe",   // relative path to the .exe from the card root
   "args": [],                               // launch arguments (optional)
+  "runAsAdmin": false,                      // launch elevated via UAC for .exe requiring admin (optional, default false)
   "heroImage": "assets/hero.jpg",           // window background (optional; falls back to a bundled wallpaper)
   "saveOnCard": "saves",                    // copy folder for saves on the card (relative to the root)
   "pcSavePath": "%APPDATA%/Team Cherry/Hollow Knight", // where the game actually writes saves on the PC
@@ -133,6 +134,11 @@ E:\
   - `%APPDATA%`, `%LOCALAPPDATA%`, `%USERPROFILE%` — resolved from the corresponding
     environment variables (good for games that save under AppData).
 - `id` — only `[A-Za-z0-9._-]` (used as a folder name on the PC).
+- `runAsAdmin` — set `true` **only** for an `.exe` whose embedded manifest requires administrator
+  (a plain launch fails with `EACCES` / `ERROR_ELEVATION_REQUIRED`). Playhook then launches it
+  elevated via a UAC prompt (`ShellExecuteEx` `runas`) and monitors it by process HANDLE instead of
+  `tasklist` (a non-elevated app can't see an elevated process). Opt-in on purpose — Playhook never
+  silently escalates an untrusted card's exe. Windows-only: `true` on other platforms is an error.
 - `saveOnCard` and `pcSavePath` are set **together** or **both omitted**. If both are omitted,
   the game writes its saves next to its exe on the card and syncing is fully disabled.
 - `sounds.*` and `backgroundMusic` — card-relative like `heroImage`, **must lie inside the card
