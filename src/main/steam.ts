@@ -19,13 +19,13 @@ const STATE_FULLY_INSTALLED = 4;
 /**
  * Where a Steam app stands locally, derived from its `.acf`:
  * - `installed`   — fully installed (StateFlags bit 4), ready to launch.
- * - `downloading` — an `.acf` exists but not fully installed (downloading/updating). `progress` is the
- *   0..1 fraction when Steam reports byte counts, or `null` when it hasn't yet.
+ * - `downloading` — an `.acf` exists but not fully installed (downloading/updating). No live percent is
+ *   available from the files (see AcfState) — the UI shows a plain "Installing…".
  * - `absent`      — no `.acf` (nothing started), Steam not found, or any error.
  */
 export type SteamInstallStatus =
   | { readonly state: 'installed' }
-  | { readonly state: 'downloading'; readonly progress: number | null }
+  | { readonly state: 'downloading' }
   | { readonly state: 'absent' };
 
 /**
@@ -62,26 +62,15 @@ function readAcfNumber(content: string, key: string): number | null {
   return Number.isNaN(value) ? null : value;
 }
 
-/** Reads a string `"<key>" "<value>"` from .acf content. null if missing. */
-function readAcfString(content: string, key: string): string | null {
-  const match = new RegExp(`"${key}"\\s+"([^"]*)"`).exec(content);
-  return match?.[1] ?? null;
-}
-
 /**
- * Per-library .acf reading. We deliberately do NOT use BytesDownloaded/BytesToDownload for progress:
- * Steam flushes those to the .acf only on state changes (pause/stop/finish), not live — so the percent
- * would freeze mid-download. Instead we carry `installdir`/`sizeOnDisk` and compute progress from the
- * actual install folder size (see downloadProgress). null if the .acf is absent.
+ * Per-library .acf reading: just whether the app is fully installed. We do NOT report a download
+ * percent: Steam has no reliable real-time progress in the files we can read — BytesDownloaded in the
+ * .acf is flushed only on state changes (so it freezes mid-download), and the on-disk `downloading`
+ * folder is PREALLOCATED to ~full size up front (so its size reads ~100% from the first second). The
+ * accurate live percent lives only in the Steam client / Steamworks SDK. So the UI shows a plain
+ * "Installing…" with a spinner. null here means the .acf is absent.
  */
-type AcfState = {
-  readonly fullyInstalled: boolean;
-  readonly installdir: string | null;
-  // Candidate target sizes (any may be 0/absent during a download — we pick the first positive one).
-  readonly sizeOnDisk: number | null;
-  readonly bytesToStage: number | null;
-  readonly bytesToDownload: number | null;
-};
+type AcfState = { readonly fullyInstalled: boolean };
 
 async function readAcfState(acfPath: string): Promise<AcfState | null> {
   let content: string;
@@ -92,68 +81,7 @@ async function readAcfState(acfPath: string): Promise<AcfState | null> {
   }
   const flags = readAcfNumber(content, 'StateFlags');
   if (flags === null) return null;
-  const fullyInstalled = (flags & STATE_FULLY_INSTALLED) === STATE_FULLY_INSTALLED;
-  return {
-    fullyInstalled,
-    installdir: readAcfString(content, 'installdir'),
-    sizeOnDisk: readAcfNumber(content, 'SizeOnDisk'),
-    bytesToStage: readAcfNumber(content, 'BytesToStage'),
-    bytesToDownload: readAcfNumber(content, 'BytesToDownload'),
-  };
-}
-
-/** First strictly-positive value, or null. */
-function firstPositive(...values: ReadonlyArray<number | null>): number | null {
-  for (const v of values) if (v !== null && v > 0) return v;
-  return null;
-}
-
-/** Recursively sums file sizes under `dir`. Unreadable entries are skipped; a missing dir → 0. */
-async function dirSize(dir: string): Promise<number> {
-  let entries: import('node:fs').Dirent[];
-  try {
-    entries = await fse.readdir(dir, { withFileTypes: true });
-  } catch {
-    return 0;
-  }
-  let total = 0;
-  for (const entry of entries) {
-    const full = path.join(dir, entry.name);
-    try {
-      if (entry.isDirectory()) total += await dirSize(full);
-      else if (entry.isFile()) total += (await fse.stat(full)).size;
-    } catch {
-      // skip an entry that vanished / is locked mid-walk
-    }
-  }
-  return total;
-}
-
-/**
- * Live download fraction from the actual install-folder size vs SizeOnDisk (Steam's own target). Unlike
- * the .acf byte counters, the folder grows in real time as chunks are committed, so the percent advances
- * smoothly. Clamped to [0, 0.99] — 100%/Play is owned by the StateFullyInstalled flip. null if we can't
- * compute it (missing installdir/SizeOnDisk, or empty folder). NOTE: for an UPDATE (folder already full)
- * this reads ~99% immediately, and if Steam preallocates files it can overshoot — accepted trade-off.
- */
-async function downloadProgress(lib: string, appid: number, acf: AcfState): Promise<number | null> {
-  if (acf.installdir === null) return null;
-  // Live bytes-on-disk = what's already committed (common/<installdir>) PLUS what's still in the
-  // download staging area (downloading/<appid>). Steam moves data between the two as it commits chunks,
-  // so summing both gives a smooth, live numerator regardless of which holds the data right now.
-  const commonSize = await dirSize(path.join(lib, 'steamapps', 'common', acf.installdir));
-  const downloadingSize = await dirSize(path.join(lib, 'steamapps', 'downloading', String(appid)));
-  const have = commonSize + downloadingSize;
-  // Target: SizeOnDisk is the final installed size, but it can be 0 mid-install — fall back to the
-  // staging/network totals, which are populated while downloading.
-  const target = firstPositive(acf.sizeOnDisk, acf.bytesToStage, acf.bytesToDownload);
-  // Diagnostic dump (calibration): surfaces the real .acf values + folder sizes so we can verify the math.
-  log.info(
-    `[steam-progress] appid=${appid} have=${have} (common=${commonSize} downloading=${downloadingSize}) ` +
-      `sizeOnDisk=${acf.sizeOnDisk} bytesToStage=${acf.bytesToStage} bytesToDownload=${acf.bytesToDownload}`,
-  );
-  if (target === null || have <= 0) return null;
-  return Math.max(0, Math.min(0.99, have / target));
+  return { fullyInstalled: (flags & STATE_FULLY_INSTALLED) === STATE_FULLY_INSTALLED };
 }
 
 /**
@@ -172,9 +100,8 @@ export async function steamInstallStatus(appid: number): Promise<SteamInstallSta
       const acf = await readAcfState(acfPath);
       if (acf === null) continue;
       if (acf.fullyInstalled) return { state: 'installed' };
-      // .acf exists but not fully installed → downloading/updating in this library. Compute a live
-      // percent from the install folder size (the byte counters in .acf are not real-time).
-      downloading = { state: 'downloading', progress: await downloadProgress(lib, appid, acf) };
+      // .acf exists but not fully installed → downloading/updating in this library.
+      downloading = { state: 'downloading' };
     }
     return downloading ?? { state: 'absent' };
   } catch (cause) {

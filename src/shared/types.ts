@@ -218,13 +218,12 @@ export interface GameInfo {
    */
   readonly installVia?: 'steam';
   /**
-   * Steam mode only: a download/update is in progress. Present (with `requiresInstall` still true) ONLY
-   * while Steam is downloading — the value is the fraction 0..1 when Steam reports byte counts, or
-   * `null` when it hasn't reported them yet. Undefined means NOT downloading: either nothing started
-   * (→ "Install") or fully installed (→ "Play"). Drives a non-blocking "Installing… X%" indicator,
-   * NOT a blocking `installing` state (a Steam download can run for hours — the window stays usable).
+   * Steam mode only: a download/update is in progress (the `.acf` exists but isn't fully installed).
+   * Drives a non-blocking "Installing…" indicator — NOT a blocking `installing` state (a Steam download
+   * can run for hours; the window stays usable). No percent: Steam exposes no reliable real-time
+   * progress in the files we can read (see steam.ts AcfState). Undefined when not downloading.
    */
-  readonly steamDownloadProgress?: number | null;
+  readonly steamInstalling?: boolean;
   /**
    * Steam mode only: a Steam uninstall we requested is in progress. Drives a non-blocking
    * "Uninstalling…" indicator (no percentage — removal isn't a download). Set optimistically right

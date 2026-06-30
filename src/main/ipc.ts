@@ -286,6 +286,10 @@ export class GameController {
   // Steam-mode background re-detect timer (recursive setTimeout, no overlap). Non-null only while a
   // Steam game is on the ready screen with the card present (managed by enterReady).
   private steamInstallWatch: ReturnType<typeof setTimeout> | null = null;
+  // True while a tick is mid-flight (between nulling the timer and finishing). Prevents a concurrent
+  // startSteamInstallWatch (e.g. an Install/Uninstall action landing during the tick's await) from
+  // spinning up a SECOND poller. The tick re-arms itself in its finally.
+  private steamTickInFlight = false;
   // A steam://uninstall we requested (appid + when), driving the optimistic "Uninstalling…" indicator
   // until the .acf disappears or STEAM_UNINSTALL_TIMEOUT_MS elapses (assumed cancel). Null = none.
   private steamUninstallRequest: { readonly appid: number; readonly since: number } | null = null;
@@ -353,9 +357,9 @@ export class GameController {
     }
   }
 
-  /** (Re)starts the recursive Steam re-detect timer. No-op if already running (no overlap). */
+  /** (Re)starts the recursive Steam re-detect timer. No-op if already running or a tick is in flight. */
   private startSteamInstallWatch(): void {
-    if (this.steamInstallWatch !== null) return;
+    if (this.steamInstallWatch !== null || this.steamTickInFlight) return;
     this.steamInstallWatch = setTimeout(() => void this.steamInstallTick(), STEAM_INSTALL_WATCH_INTERVAL_MS);
   }
 
@@ -374,86 +378,78 @@ export class GameController {
    * an uninstall done in Steam directly), live download progress, and the uninstall-cancel timeout.
    */
   private async steamInstallTick(): Promise<void> {
-    this.steamInstallWatch = null; // this firing consumed the timer; we reschedule below if still needed
+    this.steamInstallWatch = null; // consumed; the finally re-arms it if we should still be polling
     const manifest = this.current;
     const appid = manifest?.steam?.appid;
-    if (manifest === undefined || manifest === null || appid === undefined) return;
-
-    let status: SteamInstallStatus = { state: 'absent' };
+    if (manifest === undefined || manifest === null || appid === undefined) return; // not steam → stop
+    this.steamTickInFlight = true;
     try {
-      status = await steamInstallStatus(appid);
-    } catch (cause) {
-      log.warn('[steam-watch] detect failed:', describe(cause));
-    }
-
-    // Re-validate everything that could have changed during the await (card swap, launch in flight).
-    const snapshot = this.deps.state.get();
-    if (
-      this.launchInFlight ||
-      this.current !== manifest ||
-      snapshot.kind !== 'ready' ||
-      snapshot.game.installVia !== 'steam'
-    ) {
-      return; // stale — drop this result; enterReady already (re)set the poller for the new state
-    }
-    const prev = snapshot.game;
-
-    // Reconcile the UI flags with Steam's fresh .acf state. All changing fields are derived here; the
-    // rest of GameInfo (title/hero/stats) is unaffected by install/uninstall, so we patch `prev` in
-    // place — no hero re-read. enterReady re-arms the poller (steam + card present).
-    let requiresInstall = status.state !== 'installed';
-    let canUninstall = status.state === 'installed';
-    let steamUninstalling = false;
-
-    // Download percent: keep it MONOTONIC (the folder size only grows) and resilient — on a transient
-    // folder-read failure (null) keep the last shown value instead of dropping to a number-less label.
-    let steamDownloadProgress: number | null | undefined;
-    if (status.state === 'downloading') {
-      const prevProgress = prev.steamDownloadProgress;
-      if (status.progress === null) {
-        steamDownloadProgress = typeof prevProgress === 'number' ? prevProgress : null;
-      } else {
-        steamDownloadProgress =
-          typeof prevProgress === 'number' ? Math.max(status.progress, prevProgress) : status.progress;
+      let status: SteamInstallStatus = { state: 'absent' };
+      try {
+        status = await steamInstallStatus(appid);
+      } catch (cause) {
+        log.warn('[steam-watch] detect failed:', describe(cause));
       }
-    } else {
-      steamDownloadProgress = undefined;
-    }
 
-    // A requested steam://uninstall is in flight for this game.
-    const req = this.steamUninstallRequest;
-    if (req !== null && req.appid === appid) {
-      if (status.state === 'installed') {
-        // .acf still present: either Steam is removing files, or the user is still on / cancelled the
-        // dialog. Keep "Uninstalling…" until the timeout, then assume cancel and restore Play/Uninstall.
-        if (Date.now() - req.since > STEAM_UNINSTALL_TIMEOUT_MS) {
-          log.info(`[steam-uninstall] appid=${appid} still installed after timeout — assuming cancel`);
-          this.steamUninstallRequest = null;
+      // Re-validate everything that could have changed during the await (card swap, launch in flight).
+      const snapshot = this.deps.state.get();
+      if (
+        this.launchInFlight ||
+        this.current !== manifest ||
+        snapshot.kind !== 'ready' ||
+        snapshot.game.installVia !== 'steam'
+      ) {
+        return; // stale — drop this result (the finally re-arms iff still a steam card on ready)
+      }
+      const prev = snapshot.game;
+
+      // Reconcile the UI flags with Steam's fresh .acf state. Only these flags change on install/uninstall;
+      // the rest of GameInfo (title/hero/stats) is unaffected, so we patch `prev` in place — no hero re-read.
+      let requiresInstall = status.state !== 'installed';
+      let canUninstall = status.state === 'installed';
+      const steamInstalling = status.state === 'downloading';
+      let steamUninstalling = false;
+
+      // A requested steam://uninstall is in flight for this game.
+      const req = this.steamUninstallRequest;
+      if (req !== null && req.appid === appid) {
+        if (status.state === 'installed') {
+          // .acf still present: either Steam is removing files, or the user is still on / cancelled the
+          // dialog. Keep "Uninstalling…" until the timeout, then assume cancel and restore Play/Uninstall.
+          if (Date.now() - req.since > STEAM_UNINSTALL_TIMEOUT_MS) {
+            log.info(`[steam-uninstall] appid=${appid} still installed after timeout — assuming cancel`);
+            this.steamUninstallRequest = null;
+          } else {
+            steamUninstalling = true;
+            canUninstall = false; // hide Uninstall while the indicator is up
+          }
         } else {
-          steamUninstalling = true;
-          canUninstall = false; // hide Uninstall while the indicator is up
+          // .acf gone (absent/downloading) → Steam removed the game; finish the uninstall.
+          log.info(`[steam-uninstall] appid=${appid} removed — flipping to Install`);
+          this.steamUninstallRequest = null;
         }
-      } else {
-        // .acf gone (absent/downloading) → Steam removed the game; finish the uninstall.
-        log.info(`[steam-uninstall] appid=${appid} removed — flipping to Install`);
-        this.steamUninstallRequest = null;
       }
-    }
 
-    const changed =
-      prev.requiresInstall !== requiresInstall ||
-      prev.canUninstall !== canUninstall ||
-      prev.steamDownloadProgress !== steamDownloadProgress ||
-      (prev.steamUninstalling ?? false) !== steamUninstalling;
-    if (changed) {
-      if (!steamUninstalling) {
-        log.info(
-          `[steam-watch] appid=${appid} state=${status.state} → requiresInstall=${requiresInstall} canUninstall=${canUninstall}`,
-        );
+      const changed =
+        prev.requiresInstall !== requiresInstall ||
+        prev.canUninstall !== canUninstall ||
+        (prev.steamInstalling ?? false) !== steamInstalling ||
+        (prev.steamUninstalling ?? false) !== steamUninstalling;
+      if (changed) {
+        if (!steamUninstalling) {
+          log.info(
+            `[steam-watch] appid=${appid} state=${status.state} → requiresInstall=${requiresInstall} canUninstall=${canUninstall}`,
+          );
+        }
+        this.enterReady({ ...prev, requiresInstall, canUninstall, steamInstalling, steamUninstalling });
       }
-      this.enterReady({ ...prev, requiresInstall, canUninstall, steamDownloadProgress, steamUninstalling });
-    } else {
-      this.startSteamInstallWatch();
+    } finally {
+      this.steamTickInFlight = false;
+      // Re-arm iff we should still be watching this steam card (mirrors enterReady's start condition).
+      const s = this.deps.state.get();
+      if (s.kind === 'ready' && s.game.installVia === 'steam' && this.cardPresent) {
+        this.startSteamInstallWatch();
+      }
     }
   }
 
@@ -1037,7 +1033,7 @@ export class GameController {
     let requiresInstall: boolean;
     let canUninstall: boolean;
     let installVia: 'steam' | undefined;
-    let steamDownloadProgress: number | null | undefined;
+    let steamInstalling = false;
     if (manifest.steam !== undefined) {
       // Steam mode: "installed" is Steam's own .acf state; uninstall is managed in Steam (never here).
       const status = await steamInstallStatus(manifest.steam.appid);
@@ -1045,8 +1041,8 @@ export class GameController {
       // Steam uninstall is delegated to Steam (steam://uninstall) — available once installed.
       canUninstall = status.state === 'installed';
       installVia = 'steam';
-      // Non-blocking "Installing… X%": carry the download fraction (or null) only while downloading.
-      steamDownloadProgress = status.state === 'downloading' ? status.progress : undefined;
+      // Non-blocking "Installing…" indicator while Steam is downloading (no percent — see types.ts).
+      steamInstalling = status.state === 'downloading';
     } else if (manifest.install !== undefined) {
       // Card-install mode: installed ⇔ the resolved executable exists; that also enables Uninstall.
       const installed = await fse.pathExists(manifest.executablePath);
@@ -1069,7 +1065,7 @@ export class GameController {
       canUninstall,
       ...(manifest.install !== undefined ? { installDir: manifest.install.dir } : {}),
       ...(installVia !== undefined ? { installVia } : {}),
-      ...(steamDownloadProgress !== undefined ? { steamDownloadProgress } : {}),
+      ...(steamInstalling ? { steamInstalling: true } : {}),
       ...(heroImageDataUrl !== undefined ? { heroImageDataUrl } : {}),
     };
   }

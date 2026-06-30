@@ -118,10 +118,10 @@ function statusOf(state: AppState): string {
       return 'Saving progress...';
     case 'ready': {
       // Steam non-blocking install/uninstall indicators on the ready screen (the window stays usable).
+      // No install percent: Steam exposes no reliable live progress in the files we read (see main).
       if (state.game.steamUninstalling === true) return 'Uninstalling...';
-      const progress = state.game.steamDownloadProgress;
-      if (progress === undefined) return '';
-      return progress === null ? 'Installing...' : `Installing... ${Math.round(progress * 100)}%`;
+      if (state.game.steamInstalling === true) return 'Installing...';
+      return '';
     }
     default:
       return '';
@@ -133,7 +133,7 @@ function statusOf(state: AppState): string {
 // #app[data-steam-busy], NOT the busy phase.
 function steamBusy(state: AppState): boolean {
   if (state.kind !== 'ready') return false;
-  return state.game.steamDownloadProgress !== undefined || state.game.steamUninstalling === true;
+  return state.game.steamInstalling === true || state.game.steamUninstalling === true;
 }
 
 function gameOf(state: AppState): GameInfo | undefined {
@@ -525,7 +525,7 @@ function triggerPlay(): void {
   if (!focusActive()) return;
   const game = gameOf(currentState);
   // Steam install/uninstall already running (button shows the loader) → ignore re-presses.
-  if (game?.steamDownloadProgress !== undefined || game?.steamUninstalling === true) return;
+  if (game?.steamInstalling === true || game?.steamUninstalling === true) return;
   // Install mode (button reads "Install"): confirm first and show the destination path. main still
   // decides install vs launch from requiresInstall, so the confirmed request goes through requestLaunch.
   if (game?.requiresInstall === true) {
