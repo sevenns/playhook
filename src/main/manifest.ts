@@ -3,7 +3,8 @@
 // executable/heroImage/saveOnCard must live inside the card root (forbidding `..`
 // and absolute paths), pcSavePath — only from an allowlist of prefixes:
 // the %DOCUMENTS% known folder (resolved via the system Known Folder API, so it is
-// language- and OneDrive-independent) plus the %APPDATA%/%LOCALAPPDATA%/%USERPROFILE% env vars.
+// language- and OneDrive-independent), %LOCALLOW% (AppData\LocalLow, derived from %USERPROFILE% —
+// common for Unity/Steam saves), plus the %APPDATA%/%LOCALAPPDATA%/%USERPROFILE% env vars.
 import path from 'node:path';
 import fse from 'fs-extra';
 import { z } from 'zod';
@@ -145,25 +146,35 @@ type ExpandResult =
   | { readonly ok: true; readonly value: string }
   | { readonly ok: false; readonly message: string };
 
-/** Expands pcSavePath only from the allowed prefixes (%DOCUMENTS% + env vars), without traversal. */
+// Human-readable list of accepted prefixes (kept in sync with the resolution below) for error messages.
+const ALLOWED_PREFIXES_HELP = '%DOCUMENTS%, %APPDATA%, %LOCALAPPDATA%, %LOCALLOW% or %USERPROFILE%';
+
+/** Expands pcSavePath only from the allowed prefixes (%DOCUMENTS%/%LOCALLOW% + env vars), without traversal. */
 function expandPcSavePath(input: string, env: ManifestEnv): ExpandResult {
   const match = /^%([A-Za-z]+)%[\\/]?(.*)$/.exec(input);
   if (match === null) {
     return {
       ok: false,
-      message: 'pcSavePath must start with %DOCUMENTS%, %APPDATA%, %LOCALAPPDATA% or %USERPROFILE%',
+      message: `pcSavePath must start with ${ALLOWED_PREFIXES_HELP}`,
     };
   }
   const prefix = (match[1] ?? '').toUpperCase();
   let base: string | undefined;
   if (prefix === 'DOCUMENTS') {
     base = env.documents;
+  } else if (prefix === 'LOCALLOW') {
+    // AppData\LocalLow has no env var (it's the FOLDERID_LocalAppDataLow known folder) — derive it from
+    // %USERPROFILE%. Very common for Unity/Steam games (Valheim, Cities: Skylines, …) whose saves live
+    // there. Without this, the only way to reach LocalLow was %USERPROFILE%\AppData\LocalLow\… — and
+    // %APPDATA% (which is AppData\Roaming) does NOT cover it.
+    const home = process.env['USERPROFILE'];
+    base = home !== undefined && home !== '' ? path.join(home, 'AppData', 'LocalLow') : undefined;
   } else if ((ENV_PREFIXES as readonly string[]).includes(prefix)) {
     base = process.env[prefix];
   } else {
     return {
       ok: false,
-      message: `pcSavePath prefix %${prefix}% is not allowed (use %DOCUMENTS%, %APPDATA%, %LOCALAPPDATA% or %USERPROFILE%)`,
+      message: `pcSavePath prefix %${prefix}% is not allowed (use ${ALLOWED_PREFIXES_HELP})`,
     };
   }
   if (base === undefined || base === '') {

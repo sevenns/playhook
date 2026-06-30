@@ -99,6 +99,12 @@ const INSTALL_POLL_INTERVAL_MS = 1000;
 // finishes. Non-blocking — no `installing` state is entered (see runSteamInstall).
 const STEAM_INSTALL_WATCH_INTERVAL_MS = 5000;
 
+// How long to keep showing "Uninstalling…" after we open steam://uninstall before giving up. Steam's
+// uninstall is fire-and-forget: we can't tell "user is reading the dialog / cancelled" from "removing".
+// If the .acf is still present after this window, we assume a cancel and return to "Play"/"Uninstall".
+// Safe either way — the poller keeps running and will flip to "Install" if removal completes later.
+const STEAM_UNINSTALL_TIMEOUT_MS = 60_000;
+
 // Directory removal retries (I5/R-UNINST-SELFCOPY): an Inno uninstaller forks a copy of itself into
 // temp and exits early, so right after waitForExit it may still hold `unins000.*` for a moment — a
 // few backed-off retries let the lock clear before fse.remove succeeds.
@@ -278,8 +284,11 @@ export class GameController {
   // Audio for the current card, sent on its own channel (not on every AppState) — see AudioAssets.
   private currentAudio: AudioAssets | null = null;
   // Steam-mode background re-detect timer (recursive setTimeout, no overlap). Non-null only while a
-  // Steam game shows "Install" on the ready screen with the card present (managed by enterReady).
+  // Steam game is on the ready screen with the card present (managed by enterReady).
   private steamInstallWatch: ReturnType<typeof setTimeout> | null = null;
+  // A steam://uninstall we requested (appid + when), driving the optimistic "Uninstalling…" indicator
+  // until the .acf disappears or STEAM_UNINSTALL_TIMEOUT_MS elapses (assumed cancel). Null = none.
+  private steamUninstallRequest: { readonly appid: number; readonly since: number } | null = null;
   // Bundled fallback wallpaper as a data URL: undefined = not read yet, null = unavailable.
   private wallpaperDataUrl: string | null | undefined;
 
@@ -320,6 +329,7 @@ export class GameController {
   shutdown(): void {
     this.abort?.abort();
     this.stopSteamInstallWatch();
+    this.steamUninstallRequest = null;
     this.deps.watcher.stop();
   }
 
@@ -333,7 +343,10 @@ export class GameController {
    */
   private enterReady(info: GameInfo): void {
     this.deps.state.set({ kind: 'ready', game: info });
-    if (info.installVia === 'steam' && info.requiresInstall && this.cardPresent) {
+    // Poll for ANY steam game while the card is present: it catches install completion (Install→Play),
+    // uninstall completion (Play→Install) — incl. an uninstall the user triggers in Steam directly — and
+    // download progress. The .acf read is cheap, so a perpetual 5s poll for an inserted steam card is fine.
+    if (info.installVia === 'steam' && this.cardPresent) {
       this.startSteamInstallWatch();
     } else {
       this.stopSteamInstallWatch();
@@ -373,31 +386,58 @@ export class GameController {
       log.warn('[steam-watch] detect failed:', describe(cause));
     }
 
-    // Re-validate everything that could have changed during the await.
+    // Re-validate everything that could have changed during the await (card swap, launch in flight).
     const snapshot = this.deps.state.get();
     if (
       this.launchInFlight ||
       this.current !== manifest ||
       snapshot.kind !== 'ready' ||
-      !snapshot.game.requiresInstall ||
       snapshot.game.installVia !== 'steam'
     ) {
       return; // stale — drop this result; enterReady already (re)set the poller for the new state
     }
+    const prev = snapshot.game;
 
-    if (status.state === 'installed') {
-      const stats = await this.deps.stats.read(manifest.raw.id);
-      const info = await this.buildGameInfo(manifest, stats);
-      log.info(`[steam-watch] appid=${appid} now installed — flipping to Play`);
-      this.enterReady(info); // requiresInstall now false → poller stops inside enterReady
-      return;
+    // Reconcile the UI flags with Steam's fresh .acf state. All changing fields are derived here; the
+    // rest of GameInfo (title/hero/stats) is unaffected by install/uninstall, so we patch `prev` in
+    // place — no hero re-read. enterReady re-arms the poller (steam + card present).
+    let requiresInstall = status.state !== 'installed';
+    let canUninstall = status.state === 'installed';
+    let steamDownloadProgress = status.state === 'downloading' ? status.progress : undefined;
+    let steamUninstalling = false;
+
+    // A requested steam://uninstall is in flight for this game.
+    const req = this.steamUninstallRequest;
+    if (req !== null && req.appid === appid) {
+      if (status.state === 'installed') {
+        // .acf still present: either Steam is removing files, or the user is still on / cancelled the
+        // dialog. Keep "Uninstalling…" until the timeout, then assume cancel and restore Play/Uninstall.
+        if (Date.now() - req.since > STEAM_UNINSTALL_TIMEOUT_MS) {
+          log.info(`[steam-uninstall] appid=${appid} still installed after timeout — assuming cancel`);
+          this.steamUninstallRequest = null;
+        } else {
+          steamUninstalling = true;
+          canUninstall = false; // hide Uninstall while the indicator is up
+        }
+      } else {
+        // .acf gone (absent/downloading) → Steam removed the game; finish the uninstall.
+        log.info(`[steam-uninstall] appid=${appid} removed — flipping to Install`);
+        this.steamUninstallRequest = null;
+      }
     }
 
-    // Still installing (downloading) or not started (absent) → refresh the progress indicator on the
-    // same info without re-reading the hero image. Only push a state update when it actually changed.
-    const nextProgress = status.state === 'downloading' ? status.progress : undefined;
-    if (snapshot.game.steamDownloadProgress !== nextProgress) {
-      this.enterReady({ ...snapshot.game, steamDownloadProgress: nextProgress });
+    const changed =
+      prev.requiresInstall !== requiresInstall ||
+      prev.canUninstall !== canUninstall ||
+      prev.steamDownloadProgress !== steamDownloadProgress ||
+      (prev.steamUninstalling ?? false) !== steamUninstalling;
+    if (changed) {
+      if (!steamUninstalling) {
+        log.info(
+          `[steam-watch] appid=${appid} state=${status.state} → requiresInstall=${requiresInstall} canUninstall=${canUninstall}`,
+        );
+      }
+      this.enterReady({ ...prev, requiresInstall, canUninstall, steamDownloadProgress, steamUninstalling });
     } else {
       this.startSteamInstallWatch();
     }
@@ -490,6 +530,7 @@ export class GameController {
     // ready / error / idle → no card, hide the window. Stop any Steam re-detect poller (the card is gone;
     // a Steam game in `ready` reaches here since its kind is never running/installing).
     this.stopSteamInstallWatch();
+    this.steamUninstallRequest = null;
     this.current = null;
     this.setAudio(null);
     this.deps.state.set({ kind: 'idle' });
@@ -529,8 +570,14 @@ export class GameController {
     const snapshot = this.deps.state.get();
     if (snapshot.kind !== 'ready' || this.launchInFlight) return;
     const manifest = this.current;
-    if (manifest === null || manifest.install === undefined) return;
+    if (manifest === null) return;
     if (!snapshot.game.canUninstall) return; // nothing installed to remove
+    // Steam: delegate removal to Steam (steam://uninstall) — fire-and-forget, the poller flips to Install.
+    if (manifest.steam !== undefined) {
+      void this.runSteamUninstall(manifest, snapshot.game);
+      return;
+    }
+    if (manifest.install === undefined) return;
     void this.runUninstallSequence(manifest, snapshot.game);
   }
 
@@ -563,6 +610,33 @@ export class GameController {
     }
   }
 
+  /**
+   * Steam uninstall action: fire-and-forget, mirroring runSteamInstall. Opens `steam://uninstall/<appid>`
+   * (Steam shows its own confirmation/removal UI) and returns WITHOUT a blocking `uninstalling` state. We
+   * stay on the `ready` ("Play"/"Uninstall") screen; the background poller flips the button back to
+   * "Install" once Steam removes the .acf. Pre-checks getSteamPath (I8).
+   */
+  private async runSteamUninstall(manifest: ResolvedManifest, info: GameInfo): Promise<void> {
+    const appid = manifest.steam?.appid;
+    if (appid === undefined) return; // defensive: onUninstallRequested only calls this in steam mode
+    if ((await getSteamPath()) === null) {
+      this.sendError('Steam is not installed');
+      return;
+    }
+    try {
+      await openSteamUri(`steam://uninstall/${appid}`);
+      log.info(`[steam-uninstall] opened steam://uninstall/${appid} id=${manifest.raw.id}`);
+    } catch (cause) {
+      this.sendError(`failed to open Steam uninstall: ${describe(cause)}`);
+      return;
+    }
+    // Optimistically show "Uninstalling…": record the request and flip the UI. The poller clears it when
+    // the .acf is gone (→ Install) or on timeout (assumed cancel → back to Play/Uninstall). enterReady
+    // (re)arms the poller for the inserted steam card.
+    this.steamUninstallRequest = { appid, since: Date.now() };
+    this.enterReady({ ...info, steamUninstalling: true, canUninstall: false });
+  }
+
   private async runLaunchSequence(manifest: ResolvedManifest, info: GameInfo): Promise<void> {
     const { state, window, stats } = this.deps;
     this.launchInFlight = true;
@@ -571,9 +645,11 @@ export class GameController {
     // Declared before the try so `finally` can dispose the kept HANDLE (elevated path).
     let proc: GameProcess | null = null;
     try {
-      // 1. SD→PC (if sync is configured)
+      // 1. SD→PC (if sync is configured). A missing card source is normal on first run (no saves yet),
+      // so this direction only logs the attempt — no warning.
       state.set({ kind: 'syncing-in', game: info });
       if (manifest.pcSavePath !== undefined && manifest.saveOnCardPath !== undefined) {
+        log.info(`[sync-in] copying saves card→PC "${manifest.saveOnCardPath}" → "${manifest.pcSavePath}"`);
         await syncDir(manifest.saveOnCardPath, manifest.pcSavePath);
       }
 
@@ -914,13 +990,23 @@ export class GameController {
       return;
     }
     if (manifest.pcSavePath !== undefined && manifest.saveOnCardPath !== undefined) {
-      try {
-        await syncDir(manifest.pcSavePath, manifest.saveOnCardPath);
-      } catch (cause) {
-        // The card may have been yanked during the sync → saves.bak is intact, we'll finish on insertion.
-        log.warn('[sync-out] failed, deferring to pending-flush:', describe(cause));
-        await this.deps.store.enqueuePcToSd(id, manifest.pcSavePath);
-        return;
+      // Diagnostic (silent-failure guard): syncDir no-ops when the source is missing. If the PC save
+      // folder doesn't exist after a play session, pcSavePath is almost certainly wrong in game.json
+      // (e.g. %APPDATA% used for an AppData\LocalLow path) — warn instead of failing silently.
+      if (!(await fse.pathExists(manifest.pcSavePath))) {
+        log.warn(
+          `[sync-out] pcSavePath does not exist — nothing copied to the card. Check the manifest path: "${manifest.pcSavePath}"`,
+        );
+      } else {
+        try {
+          log.info(`[sync-out] copying saves PC→card "${manifest.pcSavePath}" → "${manifest.saveOnCardPath}"`);
+          await syncDir(manifest.pcSavePath, manifest.saveOnCardPath);
+        } catch (cause) {
+          // The card may have been yanked during the sync → saves.bak is intact, we'll finish on insertion.
+          log.warn('[sync-out] failed, deferring to pending-flush:', describe(cause));
+          await this.deps.store.enqueuePcToSd(id, manifest.pcSavePath);
+          return;
+        }
       }
     }
     await this.deps.stats.copyToCard(manifest.root, stats);
@@ -942,7 +1028,8 @@ export class GameController {
       // Steam mode: "installed" is Steam's own .acf state; uninstall is managed in Steam (never here).
       const status = await steamInstallStatus(manifest.steam.appid);
       requiresInstall = status.state !== 'installed';
-      canUninstall = false;
+      // Steam uninstall is delegated to Steam (steam://uninstall) — available once installed.
+      canUninstall = status.state === 'installed';
       installVia = 'steam';
       // Non-blocking "Installing… X%": carry the download fraction (or null) only while downloading.
       steamDownloadProgress = status.state === 'downloading' ? status.progress : undefined;

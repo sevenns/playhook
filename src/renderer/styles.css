@@ -325,12 +325,12 @@ body {
    after the data-action swap so it wins at equal specificity. */
 #app[data-phase='busy'] .icon-play,
 #app[data-phase='busy'] .icon-install,
-#app[data-installing='steam'] .icon-play,
-#app[data-installing='steam'] .icon-install {
+#app[data-steam-busy='true'] .icon-play,
+#app[data-steam-busy='true'] .icon-install {
   display: none;
 }
 #app[data-phase='busy'] .loader,
-#app[data-installing='steam'] .loader {
+#app[data-steam-busy='true'] .loader {
   display: block;
 }
 
@@ -369,9 +369,9 @@ body {
 }
 
 /* Status fades in only after the title has slid to the right (busy flow, and the Steam non-blocking
-   "Installing… X%" indicator which stays on the ready screen). */
+   "Installing… X%" / "Uninstalling…" indicators which stay on the ready screen). */
 #app[data-phase='busy'] .status,
-#app[data-installing='steam'] .status {
+#app[data-steam-busy='true'] .status {
   opacity: 1;
   transition-delay: 0.35s;
 }

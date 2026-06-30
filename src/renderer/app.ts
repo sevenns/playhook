@@ -54,8 +54,9 @@ const CONFIRM_TEXT: Readonly<Record<ConfirmMode, string>> = {
   install: 'Do you want to install game?',
   uninstall: 'Do you want to uninstall game from your PC?',
 };
-// Steam-mode install confirm: the action opens Steam (no card path / silent-mode note applies).
+// Steam-mode confirm copy: the action opens Steam (no card path / silent-mode note applies).
 const STEAM_INSTALL_TEXT = 'Open Steam to install this game?';
+const STEAM_UNINSTALL_TEXT = 'Open Steam to uninstall this game?';
 // Fallback wallpaper (data URL from main) for the empty / idle screen, and its cached palette.
 let wallpaperUrl: string | null = null;
 let wallpaperPalette: Palette | null | undefined;
@@ -116,7 +117,8 @@ function statusOf(state: AppState): string {
     case 'syncing-out':
       return 'Saving progress...';
     case 'ready': {
-      // Steam non-blocking install: show "Installing… X%" on the ready screen (the window stays usable).
+      // Steam non-blocking install/uninstall indicators on the ready screen (the window stays usable).
+      if (state.game.steamUninstalling === true) return 'Uninstalling...';
       const progress = state.game.steamDownloadProgress;
       if (progress === undefined) return '';
       return progress === null ? 'Installing...' : `Installing... ${Math.round(progress * 100)}%`;
@@ -126,10 +128,12 @@ function statusOf(state: AppState): string {
   }
 }
 
-// True while a Steam game is downloading: a non-blocking indicator on the (still) ready screen — the
-// busy visuals (loader + status + slid title) are reused via #app[data-installing], NOT the busy phase.
-function steamInstalling(state: AppState): boolean {
-  return state.kind === 'ready' && state.game.steamDownloadProgress !== undefined;
+// True while a Steam install (download) or uninstall is in progress: a non-blocking indicator on the
+// (still) ready screen — the busy visuals (loader + status + slid title) are reused via
+// #app[data-steam-busy], NOT the busy phase.
+function steamBusy(state: AppState): boolean {
+  if (state.kind !== 'ready') return false;
+  return state.game.steamDownloadProgress !== undefined || state.game.steamUninstalling === true;
 }
 
 function gameOf(state: AppState): GameInfo | undefined {
@@ -227,10 +231,10 @@ function buildInfoPanel(game: GameInfo): void {
 
 // ── Title slide (left → right while busy) ───────────────────────────────────
 
-// The title slides right (making room for the status) while busy OR while a Steam download is showing
-// its non-blocking "Installing…" indicator on the ready screen.
+// The title slides right (making room for the status) while busy OR while a Steam install/uninstall
+// shows its non-blocking indicator on the ready screen.
 function shouldSlideTitle(): boolean {
-  return phaseOf(currentState) === 'busy' || steamInstalling(currentState);
+  return phaseOf(currentState) === 'busy' || steamBusy(currentState);
 }
 
 let titleSlideRaf = 0;
@@ -308,14 +312,19 @@ function openConfirm(mode: ConfirmMode): void {
   confirmMode = mode;
   confirmPopup.dataset['mode'] = mode; // drives the description's visibility (install only)
   // Steam install has no card path and no silent-mode note: a more specific CSS selector
-  // (data-install-via='steam') hides the description, and the copy differs.
-  const isSteamInstall = mode === 'install' && game.installVia === 'steam';
+  // (data-install-via='steam') hides the description, and the copy differs (both install & uninstall).
+  const isSteam = game.installVia === 'steam';
+  const isSteamInstall = mode === 'install' && isSteam;
   if (isSteamInstall) {
     confirmPopup.dataset['installVia'] = 'steam';
   } else {
     delete confirmPopup.dataset['installVia'];
   }
-  confirmMessage.textContent = isSteamInstall ? STEAM_INSTALL_TEXT : CONFIRM_TEXT[mode];
+  if (isSteam) {
+    confirmMessage.textContent = mode === 'install' ? STEAM_INSTALL_TEXT : STEAM_UNINSTALL_TEXT;
+  } else {
+    confirmMessage.textContent = CONFIRM_TEXT[mode];
+  }
   // Card path only for a card-installer game (empty for steam — there is no install dir).
   if (mode === 'install') confirmPath.textContent = isSteamInstall ? '' : (game.installDir ?? '');
   confirmOpen = true;
@@ -388,14 +397,14 @@ function render(state: AppState): void {
     infoButton.classList.remove('has-uninstall-sibling');
   }
 
-  // Steam non-blocking install indicator: reuse the busy visuals (loader/status/slid title) via a
-  // dedicated attribute, while the logical phase stays 'ready' (window hideable, card pullable).
-  const installing = steamInstalling(state);
-  if (installing) app.dataset['installing'] = 'steam';
-  else delete app.dataset['installing'];
+  // Steam non-blocking install/uninstall indicator: reuse the busy visuals (loader/status/slid title)
+  // via a dedicated attribute, while the logical phase stays 'ready' (window hideable, card pullable).
+  const busySteam = steamBusy(state);
+  if (busySteam) app.dataset['steamBusy'] = 'true';
+  else delete app.dataset['steamBusy'];
 
   statusEl.textContent = statusOf(state);
-  applyTitleSlide(phase === 'busy' || installing);
+  applyTitleSlide(phase === 'busy' || busySteam);
 
   // Popups only make sense on the ready screen; force-close them on any other state. (A failed
   // launch returns to 'ready' first, then opens the error popup — so it survives this.) closeConfirm
@@ -507,8 +516,8 @@ function activateConfirm(): void {
 function triggerPlay(): void {
   if (!focusActive()) return;
   const game = gameOf(currentState);
-  // Steam download already running (button shows the loader / "Installing…") → ignore re-presses.
-  if (game?.steamDownloadProgress !== undefined) return;
+  // Steam install/uninstall already running (button shows the loader) → ignore re-presses.
+  if (game?.steamDownloadProgress !== undefined || game?.steamUninstalling === true) return;
   // Install mode (button reads "Install"): confirm first and show the destination path. main still
   // decides install vs launch from requiresInstall, so the confirmed request goes through requestLaunch.
   if (game?.requiresInstall === true) {

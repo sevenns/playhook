@@ -225,6 +225,13 @@ export interface GameInfo {
    * NOT a blocking `installing` state (a Steam download can run for hours — the window stays usable).
    */
   readonly steamDownloadProgress?: number | null;
+  /**
+   * Steam mode only: a Steam uninstall we requested is in progress. Drives a non-blocking
+   * "Uninstalling…" indicator (no percentage — removal isn't a download). Set optimistically right
+   * after opening `steam://uninstall`; cleared when Steam drops the `.acf` (→ "Install") or, if the
+   * user cancelled Steam's dialog, by a timeout in the background poller (→ back to "Play"/"Uninstall").
+   */
+  readonly steamUninstalling?: boolean;
 }
 
 /** The flow state machine (discriminated union, section 4). */
