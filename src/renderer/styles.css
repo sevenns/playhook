@@ -65,9 +65,34 @@ body {
   width: 100vw;
   height: 100vh;
   background-color: var(--bg);
+  overflow: hidden;
+}
+
+/* Hero background lives on a ::before layer (driven by --hero-image from JS) so it can be
+   transform-panned independently of the UI, which stays put. Sits behind all UI via z-index.
+   GTA-style: the hero is never a static frame — it slowly drifts to one side and back (ping-pong),
+   always. The direction (--pan-x) is randomized per image (set from JS when the background changes),
+   echoing GTA's alternating loading screens. scale(1.1) gives headroom so the pan never shows edges. */
+#app::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background-image: var(--hero-image, none);
   background-size: cover;
   background-position: center;
-  overflow: hidden;
+  transform-origin: center;
+  will-change: transform;
+  animation: bg-pan 18s ease-in-out infinite alternate;
+}
+
+@keyframes bg-pan {
+  from {
+    transform: scale(1.1) translateX(0);
+  }
+  to {
+    transform: scale(1.1) translateX(var(--pan-x, 3%));
+  }
 }
 
 /* ── Per-screen bottom-bar controls ────────────────────────────────────────

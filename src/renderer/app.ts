@@ -153,12 +153,18 @@ function updatePalette(game: GameInfo): void {
 
 // ── Hero background ─────────────────────────────────────────────────────────
 
+// The hero is rendered by the #app::before layer via --hero-image (so it can be transform-panned).
+let currentBackground: string | null = null;
+function setBackgroundImage(value: string): void {
+  if (value === currentBackground) return; // unchanged → keep the pan running, don't re-randomize
+  currentBackground = value;
+  app.style.setProperty('--hero-image', value);
+  // GTA-style: each new image gets a random pan direction (drift left vs right).
+  app.style.setProperty('--pan-x', Math.random() < 0.5 ? '3%' : '-3%');
+}
+
 function setHero(game: GameInfo): void {
-  if (game.heroImageDataUrl !== undefined) {
-    app.style.backgroundImage = `url("${game.heroImageDataUrl}")`;
-  } else {
-    app.style.backgroundImage = 'none';
-  }
+  setBackgroundImage(game.heroImageDataUrl !== undefined ? `url("${game.heroImageDataUrl}")` : 'none');
 }
 
 // The empty / idle screen (no game): the fallback wallpaper as background, its dominant colors as
@@ -166,11 +172,11 @@ function setHero(game: GameInfo): void {
 function applyEmptyScreen(): void {
   titleEl.textContent = EMPTY_TITLE;
   if (wallpaperUrl === null) {
-    app.style.backgroundImage = 'none';
+    setBackgroundImage('none');
     applyPalette(null);
     return;
   }
-  app.style.backgroundImage = `url("${wallpaperUrl}")`;
+  setBackgroundImage(`url("${wallpaperUrl}")`);
   if (wallpaperPalette !== undefined) {
     applyPalette(wallpaperPalette);
     return;
@@ -570,6 +576,15 @@ const gamepad = createGamepadController({
     else if (onMessageScreen()) window.api.requestHide();
     else triggerClosePopup();
   },
+});
+
+// Keyboard Esc: close an open popup first (no hide), otherwise hide the launcher to tray from any
+// screen — mirrors the Hide button. Intentionally keyboard-only; the gamepad routing is left as is.
+window.addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape') return;
+  if (confirmOpen) cancelConfirm();
+  else if (infoOpen || errorOpen) triggerClosePopup();
+  else window.api.requestHide();
 });
 
 window.api.onStateUpdate(render);
