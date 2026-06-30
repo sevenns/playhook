@@ -89,6 +89,13 @@ body {
   display: flex;
 }
 
+/* When Uninstall is present it takes the rightmost slot (right:0 from .rect-button); Info shifts left
+   to sit next to it (92px button + 32px gap). Without Uninstall, Info stays rightmost. The class is
+   toggled from JS in sync with .is-available. */
+#info-button.has-uninstall-sibling {
+  right: calc(124 * var(--px));
+}
+
 #app[data-phase='idle'] #play-button,
 #app[data-phase='error'] #play-button,
 #app[data-phase='idle'] #info-button,

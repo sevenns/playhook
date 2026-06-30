@@ -307,6 +307,8 @@ function applyPlayButton(game: GameInfo): void {
 // class (visibility is a game property, not a phase). In busy it stays in layout but fades out like Info.
 function applyUninstallButton(game: GameInfo): void {
   uninstallButton.classList.toggle('is-available', game.canUninstall);
+  // Info shifts left to make room for the rightmost Uninstall button (see styles.css).
+  infoButton.classList.toggle('has-uninstall-sibling', game.canUninstall);
 }
 
 // ── Render ──────────────────────────────────────────────────────────────────
@@ -331,6 +333,7 @@ function render(state: AppState): void {
     // This branch doesn't touch the Uninstall button, so clear a stale .is-available from a prior
     // ready state explicitly (don't rely on CSS specificity alone, I5).
     uninstallButton.classList.remove('is-available');
+    infoButton.classList.remove('has-uninstall-sibling');
   }
 
   statusEl.textContent = statusOf(state);
