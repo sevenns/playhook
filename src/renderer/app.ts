@@ -436,7 +436,15 @@ function mainFocusables(): readonly HTMLButtonElement[] {
 // with confirmOpen this returns false, so triggerPlay/triggerInfo/moveFocus/activateFocused/mouseenter
 // (all guarded by focusActive) go quiet naturally while the modal is up (B1).
 function focusActive(): boolean {
-  return phaseOf(currentState) === 'ready' && !infoOpen && !errorOpen && !confirmOpen;
+  // Steam install/uninstall hides the right-side buttons and shows a loader on Play, so the main focus
+  // group goes quiet too (mirrors how the busy phase disables it).
+  return (
+    phaseOf(currentState) === 'ready' &&
+    !steamBusy(currentState) &&
+    !infoOpen &&
+    !errorOpen &&
+    !confirmOpen
+  );
 }
 
 function applyFocus(): void {

@@ -296,8 +296,10 @@ body {
   fill: currentColor;
 }
 
-/* Info button disappears while busy (launch flow). */
-#app[data-phase='busy'] .rect-button {
+/* Info / Uninstall buttons disappear while busy (launch flow) and while a Steam install/uninstall
+   indicator is up (which stays on the ready screen, hence the separate data-steam-busy selector). */
+#app[data-phase='busy'] .rect-button,
+#app[data-steam-busy='true'] .rect-button {
   opacity: 0;
   transform: translateX(calc(20 * var(--px)));
   pointer-events: none;

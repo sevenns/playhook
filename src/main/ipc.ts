@@ -367,11 +367,11 @@ export class GameController {
   }
 
   /**
-   * One Steam re-detect tick: captures the current manifest's appid, reads Steam's .acf state, and —
-   * only if nothing changed across the await (same card, still ready+requiresInstall+steam, no launch in
-   * flight) — reflects it. On `installed` it flips the button to "Play" (full rebuild). While
-   * `downloading` it refreshes the "Installing… X%" progress on the SAME GameInfo (cheap — no hero
-   * re-read). The post-await re-check guards against a card swap (pendingRoot) or a user action.
+   * One Steam re-detect tick: captures the current manifest's appid, reads Steam's .acf state, and — only
+   * if the card/state is still the same after the await (same steam game, ready, no launch in flight) —
+   * reconciles the UI flags (requiresInstall/canUninstall/progress/uninstalling) by PATCHING the current
+   * GameInfo in place (cheap — no hero re-read). Catches install completion, uninstall completion (incl.
+   * an uninstall done in Steam directly), live download progress, and the uninstall-cancel timeout.
    */
   private async steamInstallTick(): Promise<void> {
     this.steamInstallWatch = null; // this firing consumed the timer; we reschedule below if still needed
@@ -403,8 +403,22 @@ export class GameController {
     // place — no hero re-read. enterReady re-arms the poller (steam + card present).
     let requiresInstall = status.state !== 'installed';
     let canUninstall = status.state === 'installed';
-    let steamDownloadProgress = status.state === 'downloading' ? status.progress : undefined;
     let steamUninstalling = false;
+
+    // Download percent: keep it MONOTONIC (the folder size only grows) and resilient — on a transient
+    // folder-read failure (null) keep the last shown value instead of dropping to a number-less label.
+    let steamDownloadProgress: number | null | undefined;
+    if (status.state === 'downloading') {
+      const prevProgress = prev.steamDownloadProgress;
+      if (status.progress === null) {
+        steamDownloadProgress = typeof prevProgress === 'number' ? prevProgress : null;
+      } else {
+        steamDownloadProgress =
+          typeof prevProgress === 'number' ? Math.max(status.progress, prevProgress) : status.progress;
+      }
+    } else {
+      steamDownloadProgress = undefined;
+    }
 
     // A requested steam://uninstall is in flight for this game.
     const req = this.steamUninstallRequest;
