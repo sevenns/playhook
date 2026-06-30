@@ -66,6 +66,9 @@ body {
   height: 100vh;
   background-color: var(--bg);
   overflow: hidden;
+  /* Establish a stacking context so the z-index:-1 hero ::before paints ABOVE #app's own
+     background-color (otherwise the opaque bg covers it → black screen) but below the UI. */
+  isolation: isolate;
 }
 
 /* Hero background lives on a ::before layer (driven by --hero-image from JS) so it can be

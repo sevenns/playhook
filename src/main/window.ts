@@ -5,7 +5,7 @@
 // We deliberately do NOT hold alwaysOnTop — a persistent topmost window traps focus and prevents
 // switching back to the game/Steam. A focused fullscreen window already hides the taskbar.
 import path from 'node:path';
-import { BrowserWindow } from 'electron';
+import { BrowserWindow, Menu } from 'electron';
 
 export class GameWindow {
   private window: BrowserWindow | null = null;
@@ -32,6 +32,15 @@ export class GameWindow {
         // (Chromium otherwise blocks audible autoplay until the first interaction).
         autoplayPolicy: 'no-user-gesture-required',
       },
+    });
+
+    // Right-click on selected text → a minimal "Copy" menu. The UI is non-selectable except the
+    // install path in the confirmation popup, so this only ever appears there (selectionText empty
+    // elsewhere). Electron shows no context menu by default, so we build this one ourselves.
+    window.webContents.on('context-menu', (_event, params) => {
+      if (params.selectionText.trim().length === 0) return;
+      const menu = Menu.buildFromTemplate([{ role: 'copy', enabled: params.editFlags.canCopy }]);
+      menu.popup({ window });
     });
 
     // Closing the window with the X doesn't quit the app — we hide it to the tray.
