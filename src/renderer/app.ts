@@ -160,7 +160,7 @@ function setBackgroundImage(value: string): void {
   currentBackground = value;
   app.style.setProperty('--hero-image', value);
   // GTA-style: each new image gets a random pan direction (drift left vs right).
-  app.style.setProperty('--pan-x', Math.random() < 0.5 ? '3%' : '-3%');
+  app.style.setProperty('--pan-x', Math.random() < 0.5 ? '1.5%' : '-1.5%');
 }
 
 function setHero(game: GameInfo): void {

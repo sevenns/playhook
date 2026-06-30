@@ -5,7 +5,7 @@
 // We deliberately do NOT hold alwaysOnTop — a persistent topmost window traps focus and prevents
 // switching back to the game/Steam. A focused fullscreen window already hides the taskbar.
 import path from 'node:path';
-import { BrowserWindow, Menu } from 'electron';
+import { BrowserWindow, Menu, clipboard } from 'electron';
 
 export class GameWindow {
   private window: BrowserWindow | null = null;
@@ -39,7 +39,18 @@ export class GameWindow {
     // elsewhere). Electron shows no context menu by default, so we build this one ourselves.
     window.webContents.on('context-menu', (_event, params) => {
       if (params.selectionText.trim().length === 0) return;
-      const menu = Menu.buildFromTemplate([{ role: 'copy', enabled: params.editFlags.canCopy }]);
+      const menu = Menu.buildFromTemplate([
+        {
+          label: 'Copy',
+          enabled: params.editFlags.canCopy,
+          click: () => {
+            clipboard.writeText(params.selectionText);
+            // Drop the lingering highlight right after copying (it would otherwise stay selected
+            // until the user clicks the text).
+            void window.webContents.executeJavaScript('window.getSelection()?.removeAllRanges();');
+          },
+        },
+      ]);
       menu.popup({ window });
     });
 

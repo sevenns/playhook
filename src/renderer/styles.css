@@ -86,15 +86,17 @@ body {
   background-position: center;
   transform-origin: center;
   will-change: transform;
-  animation: bg-pan 18s ease-in-out infinite alternate;
+  animation: bg-pan 30s ease-in-out infinite alternate;
 }
 
+/* Ping-pong drift + a gentle zoom in/out, synced over the cycle (Ken Burns). The min scale (1.06)
+   keeps headroom so the small ±1.5% pan never reveals the edges. */
 @keyframes bg-pan {
   from {
-    transform: scale(1.1) translateX(0);
+    transform: scale(1.06) translateX(0);
   }
   to {
-    transform: scale(1.1) translateX(var(--pan-x, 3%));
+    transform: scale(1.12) translateX(var(--pan-x, 1.5%));
   }
 }
 
