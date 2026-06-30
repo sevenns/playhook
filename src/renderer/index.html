@@ -87,17 +87,25 @@
         </div>
       </section>
 
-      <!-- Uninstall confirmation popup: the same .popup component (veil + a question), plus a row of
-           two TextButtons (No / Yes) pinned to the bottom bar. The actions live OUTSIDE .popup-panel
-           (they sit in the bottom strip, not the right column), so they carry their own opacity gate. -->
+      <!-- Confirmation popup: the same .popup component (veil + a question), plus a row of two
+           TextButtons (No / Yes) pinned to the bottom bar. Shared by Install and Uninstall — the
+           question text is set from JS, and the install path description is shown only for Install
+           (data-mode='install'). The actions live OUTSIDE .popup-panel (they sit in the bottom strip,
+           not the right column), so they carry their own opacity gate. -->
       <section id="confirm-popup" class="popup" aria-hidden="true">
         <div class="popup-veil"></div>
         <div class="popup-panel">
-          <div class="info-value confirm-message">You want to uninstall game from your PC?</div>
+          <div class="confirm-message" id="confirm-message"></div>
+          <!-- Install mode only: the destination path (filled from JS), shown in case the installer
+               opens a non-silent folder picker. Selectable so it can be copied. -->
+          <div class="confirm-description" id="confirm-description">
+            Since not all installers support silent mode, during installation you need to specify the
+            following path: <span class="confirm-path" id="confirm-path"></span>
+          </div>
         </div>
         <div class="confirm-actions">
-          <button id="confirm-no" class="text-button" type="button">No</button>
           <button id="confirm-yes" class="text-button" type="button">Yes</button>
+          <button id="confirm-no" class="text-button" type="button">No</button>
         </div>
       </section>
     </main>

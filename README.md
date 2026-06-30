@@ -188,10 +188,11 @@ instead of the game itself:
 
 How it works:
 
-- While the game isn't installed, the **"Play" button becomes "Install"**. Pressing it runs the
-  installer **silently** and shows an **"Installing..."** indicator. When the executable appears the
-  button turns back into **"Play"**, and from then on the game launches **from the install location
-  on the PC**.
+- While the game isn't installed, the **"Play" button becomes "Install"**. Pressing it asks for
+  confirmation (the popup also shows the destination path, handy if the installer isn't fully silent),
+  then runs the installer **silently** and shows an **"Installing..."** indicator. When the executable
+  appears the button turns back into **"Play"**, and from then on the game launches **from the install
+  location on the PC**.
 - The **install location is controlled by the app**, not the card: `%LOCALAPPDATA%\playhook\games\<id>`
   (per-user, non-roaming, no admin needed). In install mode `executable` is resolved **relative to
   that directory**.

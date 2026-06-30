@@ -32,6 +32,8 @@ const errorPopup = req('error-popup');
 const errorMessageEl = req('error-message');
 const errorVeil = reqQuery<HTMLElement>('#error-popup .popup-veil');
 const confirmPopup = req('confirm-popup');
+const confirmMessage = req('confirm-message');
+const confirmPath = req('confirm-path');
 const confirmNo = req<HTMLButtonElement>('confirm-no');
 const confirmYes = req<HTMLButtonElement>('confirm-yes');
 const confirmVeil = reqQuery<HTMLElement>('#confirm-popup .popup-veil');
@@ -45,6 +47,13 @@ let currentState: AppState = { kind: 'idle' };
 let infoOpen = false;
 let errorOpen = false;
 let confirmOpen = false;
+// Which action the confirmation popup is asking about (only meaningful while confirmOpen).
+type ConfirmMode = 'install' | 'uninstall';
+let confirmMode: ConfirmMode = 'uninstall';
+const CONFIRM_TEXT: Readonly<Record<ConfirmMode, string>> = {
+  install: 'Do you want to install game?',
+  uninstall: 'Do you want to uninstall game from your PC?',
+};
 // Fallback wallpaper (data URL from main) for the empty / idle screen, and its cached palette.
 let wallpaperUrl: string | null = null;
 let wallpaperPalette: Palette | null | undefined;
@@ -259,17 +268,25 @@ function closeError(): void {
   applyFocus();
 }
 
-// Uninstall confirmation — same .popup component, but a DESTRUCTIVE confirm with its own No/Yes focus
-// group (confirmIndex). Mutually exclusive with Info/Error (each opener closes the others).
-function openConfirm(): void {
+// Confirmation popup — same .popup component, shared by Install and Uninstall, with its own No/Yes
+// focus group (confirmIndex). Mutually exclusive with Info/Error (each opener closes the others). The
+// install variant also shows the destination path (so it can be copied if the installer isn't silent).
+function openConfirm(mode: ConfirmMode): void {
   if (confirmOpen || phaseOf(currentState) !== 'ready') return;
-  if (gameOf(currentState)?.canUninstall !== true) return; // nothing to uninstall
+  const game = gameOf(currentState);
+  if (game === undefined) return;
+  if (mode === 'install' && !game.requiresInstall) return; // nothing to install
+  if (mode === 'uninstall' && !game.canUninstall) return; // nothing to uninstall
   closeInfo();
   closeError();
+  confirmMode = mode;
+  confirmPopup.dataset['mode'] = mode; // drives the description's visibility (install only)
+  confirmMessage.textContent = CONFIRM_TEXT[mode];
+  if (mode === 'install') confirmPath.textContent = game.installDir ?? '';
   confirmOpen = true;
   confirmPopup.classList.add('is-open');
   confirmPopup.setAttribute('aria-hidden', 'false');
-  confirmIndex = 0; // default focus on "No" (safe default for a destructive action, Q1)
+  confirmIndex = confirmButtons.indexOf(confirmNo); // default focus on "No" (safe default, Q1)
   applyFocus(); // main highlight clears (focusActive becomes false with confirmOpen)
   applyConfirmFocus();
 }
@@ -395,7 +412,9 @@ function moveFocus(delta: number): void {
 
 // Confirm modal focus group — fully separate from the main group (No / Yes), so it can never disturb
 // the main focusIndex (I6). Active only while the confirm modal is open on the ready screen.
-const confirmButtons: readonly HTMLButtonElement[] = [confirmNo, confirmYes];
+// Visual order, left → right: Yes on the left, No on the right (per design). Navigation/default-focus
+// key off button identity, not a fixed index, so this order can change without touching the logic.
+const confirmButtons: readonly HTMLButtonElement[] = [confirmYes, confirmNo];
 let confirmIndex = 0;
 
 function confirmFocusActive(): boolean {
@@ -433,18 +452,26 @@ function activateFocused(): void {
   else triggerPlay();
 }
 
-// Confirm modal: gamepad A activates the focused No/Yes; No cancels, Yes starts the uninstall.
+// Confirm modal: gamepad A activates the focused No/Yes; No cancels, Yes runs the confirmed action.
 function activateConfirm(): void {
   if (!confirmFocusActive()) return;
   const btn = confirmButtons[confirmIndex];
-  if (btn !== undefined) pressFlash(btn);
-  if (confirmIndex === 0) cancelConfirm();
-  else confirmUninstall();
+  if (btn === undefined) return;
+  pressFlash(btn);
+  if (btn === confirmNo) cancelConfirm();
+  else acceptConfirm();
 }
 
 // User-initiated actions (shared by mouse clicks and gamepad A/B) — each plays its sound.
 function triggerPlay(): void {
   if (!focusActive()) return;
+  // Install mode (button reads "Install"): confirm first and show the destination path. main still
+  // decides install vs launch from requiresInstall, so the confirmed request goes through requestLaunch.
+  if (gameOf(currentState)?.requiresInstall === true) {
+    audio.play('button');
+    openConfirm('install');
+    return;
+  }
   audio.play('play');
   window.api.requestLaunch();
 }
@@ -457,7 +484,7 @@ function triggerInfo(): void {
 // Uninstall button → open the destructive confirmation. The actual removal waits for "Yes".
 function triggerUninstall(): void {
   audio.play('button');
-  openConfirm();
+  openConfirm('uninstall');
 }
 
 function cancelConfirm(): void {
@@ -465,10 +492,18 @@ function cancelConfirm(): void {
   closeConfirm();
 }
 
-function confirmUninstall(): void {
-  audio.play('button'); // Q3: neutral button sound for the confirm
+// "Yes" — dispatch by the confirmed mode. Install → run the installer (main still decides install vs
+// launch from requiresInstall); Uninstall → remove the game. Capture the mode before closeConfirm.
+function acceptConfirm(): void {
+  const mode = confirmMode;
   closeConfirm();
-  window.api.requestUninstall();
+  if (mode === 'install') {
+    audio.play('play');
+    window.api.requestLaunch();
+  } else {
+    audio.play('button'); // Q3: neutral button sound for the destructive confirm
+    window.api.requestUninstall();
+  }
 }
 
 // Gamepad B / veil click closes whichever popup is open (Info or Error).
@@ -496,7 +531,7 @@ uninstallButton.addEventListener('click', () => triggerUninstall());
 infoVeil.addEventListener('click', () => triggerClosePopup());
 errorVeil.addEventListener('click', () => triggerClosePopup());
 confirmNo.addEventListener('click', () => cancelConfirm());
-confirmYes.addEventListener('click', () => confirmUninstall());
+confirmYes.addEventListener('click', () => acceptConfirm());
 confirmVeil.addEventListener('click', () => cancelConfirm());
 hideButton.addEventListener('click', () => window.api.requestHide());
 

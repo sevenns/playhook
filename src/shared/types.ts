@@ -176,6 +176,12 @@ export interface GameInfo {
    * from an ordinary game (`requiresInstall=false`).
    */
   readonly canUninstall: boolean;
+  /**
+   * Install mode only: the app-controlled install directory (`%LOCALAPPDATA%\playhook\games\<id>`).
+   * Surfaced to the renderer so the install-confirmation popup can show the destination path — handy
+   * to copy if the installer happens to open a non-silent directory picker. Undefined for normal games.
+   */
+  readonly installDir?: string;
 }
 
 /** The flow state machine (discriminated union, section 4). */

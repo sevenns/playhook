@@ -776,6 +776,7 @@ export class GameController {
       launchCount: stats.launchCount,
       requiresInstall,
       canUninstall,
+      ...(manifest.install !== undefined ? { installDir: manifest.install.dir } : {}),
       ...(heroImageDataUrl !== undefined ? { heroImageDataUrl } : {}),
     };
   }

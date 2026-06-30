@@ -411,9 +411,47 @@ body {
   max-width: calc(448 * var(--px));
 }
 
-/* The uninstall question wraps in a narrower column (matches the mockup). */
+/* Confirmation question (Install / Uninstall) — larger heading per the updated mockup. */
 .confirm-message {
-  max-width: calc(350 * var(--px));
+  max-width: calc(450 * var(--px));
+  font-weight: 500;
+  font-size: calc(32 * var(--px));
+  line-height: calc(44 * var(--px));
+  color: var(--fg);
+}
+
+/* Install-only description with the destination path. Hidden by default; shown for data-mode='install'. */
+.confirm-description {
+  display: none;
+  max-width: calc(450 * var(--px));
+  font-weight: 300;
+  font-size: calc(24 * var(--px));
+  line-height: calc(36 * var(--px));
+  color: var(--fg);
+}
+#confirm-popup[data-mode='install'] .confirm-description {
+  display: block;
+}
+
+/* The path flows inline at the end of the description (same light style as the mockup), but is
+   selectable & copyable (overrides the global no-select) in case the installer needs it typed in. */
+.confirm-path {
+  word-break: break-all;
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
+}
+
+/* The confirmation panel (title + subtitle) is centered vertically on screen — unlike Info/Error,
+   which sit at a fixed top. translateY(-50%) must be kept in BOTH the closed (slid-in) and open
+   transforms, so override them at higher specificity than the shared .popup rules. */
+#confirm-popup .popup-panel {
+  top: 50%;
+  bottom: auto;
+  transform: translateY(-50%) translateX(calc(40 * var(--px)));
+}
+#confirm-popup.is-open .popup-panel {
+  transform: translateY(-50%);
 }
 
 /* ── TextButton (No / Yes) — textual sibling of .rect-button ────────────────
