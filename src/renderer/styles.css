@@ -296,8 +296,10 @@ body {
   fill: currentColor;
 }
 
-/* Info button disappears while busy (launch flow). */
-#app[data-phase='busy'] .rect-button {
+/* Info / Uninstall buttons disappear while busy (launch flow) and while a Steam install/uninstall
+   indicator is up (which stays on the ready screen, hence the separate data-steam-busy selector). */
+#app[data-phase='busy'] .rect-button,
+#app[data-steam-busy='true'] .rect-button {
   opacity: 0;
   transform: translateX(calc(20 * var(--px)));
   pointer-events: none;
@@ -324,10 +326,13 @@ body {
 /* While busy (launch / install flow) neither action icon shows — the loader takes over. Declared
    after the data-action swap so it wins at equal specificity. */
 #app[data-phase='busy'] .icon-play,
-#app[data-phase='busy'] .icon-install {
+#app[data-phase='busy'] .icon-install,
+#app[data-steam-busy='true'] .icon-play,
+#app[data-steam-busy='true'] .icon-install {
   display: none;
 }
-#app[data-phase='busy'] .loader {
+#app[data-phase='busy'] .loader,
+#app[data-steam-busy='true'] .loader {
   display: block;
 }
 
@@ -365,8 +370,10 @@ body {
   transition: opacity 0.3s ease;
 }
 
-/* Status fades in only after the title has slid to the right. */
-#app[data-phase='busy'] .status {
+/* Status fades in only after the title has slid to the right (busy flow, and the Steam non-blocking
+   "Installing… X%" / "Uninstalling…" indicators which stay on the ready screen). */
+#app[data-phase='busy'] .status,
+#app[data-steam-busy='true'] .status {
   opacity: 1;
   transition-delay: 0.35s;
 }
@@ -461,6 +468,11 @@ body {
 }
 #confirm-popup[data-mode='install'] .confirm-description {
   display: block;
+}
+/* Steam install has no card path / silent-mode note. One extra attribute → higher specificity than the
+   rule above, so it wins and hides the description for the steam variant. */
+#confirm-popup[data-mode='install'][data-install-via='steam'] .confirm-description {
+  display: none;
 }
 
 /* The path flows inline at the end of the description (same light style as the mockup), but is

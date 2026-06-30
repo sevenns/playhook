@@ -11,6 +11,7 @@ const CHANNELS = {
   actionLaunch: 'action:launch',
   actionUninstall: 'action:uninstall',
   actionHide: 'action:hide',
+  actionOpenSteamDownloads: 'action:open-steam-downloads',
   errorShow: 'error:show',
   audioUpdate: 'audio:update',
   audioRequest: 'audio:request',
@@ -34,6 +35,9 @@ const api: RendererApi = {
   },
   requestHide(): void {
     ipcRenderer.send(CHANNELS.actionHide);
+  },
+  openSteamDownloads(): void {
+    ipcRenderer.send(CHANNELS.actionOpenSteamDownloads);
   },
   onError(callback: (message: string) => void): void {
     ipcRenderer.on(CHANNELS.errorShow, (_event: IpcRendererEvent, message: string) => {

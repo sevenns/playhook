@@ -135,6 +135,56 @@ function readStringValue(api: Advapi32, hKey: bigint, valueName: string): string
 }
 
 /**
+ * Opens a single registry key (KEY_READ) and reads one string value from it, closing the key after.
+ * Returns null on any failure. Unlike scanBranch (which enumerates Uninstall subkeys), this is a direct
+ * single-key read — the building block for well-known keys like Valve\Steam.
+ */
+function openKeyReadString(
+  api: Advapi32,
+  root: bigint,
+  subKey: string,
+  valueName: string,
+): string | null {
+  const keyBuf = Buffer.alloc(8);
+  if (api.RegOpenKeyExW(root, subKey, 0, KEY_READ, keyBuf) !== ERROR_SUCCESS) return null;
+  const hKey = keyBuf.readBigUInt64LE(0);
+  try {
+    return readStringValue(api, hKey, valueName);
+  } finally {
+    api.RegCloseKey(hKey);
+  }
+}
+
+/**
+ * Reads the Steam install path from the registry, or null. Primary: HKCU\Software\Valve\Steam\SteamPath
+ * (a REG_SZ with FORWARD slashes — Steam's own convention). Fallback: HKLM\SOFTWARE\WOW6432Node\Valve\
+ * Steam\InstallPath (backslashes). Best-effort: any error or non-Windows → null. Used to locate
+ * steamapps/.acf for the "installed in Steam" detection and to gate steam:// launches.
+ */
+export async function getSteamPath(): Promise<string | null> {
+  if (process.platform !== 'win32') return null;
+  // Async signature for a uniform call site (mirrors findUninstallEntry); the work itself is sync FFI.
+  return Promise.resolve().then(() => {
+    try {
+      const api = loadAdvapi32();
+      const hkcu = openKeyReadString(api, HKEY_CURRENT_USER, 'Software\\Valve\\Steam', 'SteamPath');
+      if (hkcu !== null && hkcu.trim() !== '') return hkcu;
+      const hklm = openKeyReadString(
+        api,
+        HKEY_LOCAL_MACHINE,
+        'SOFTWARE\\WOW6432Node\\Valve\\Steam',
+        'InstallPath',
+      );
+      if (hklm !== null && hklm.trim() !== '') return hklm;
+      return null;
+    } catch (cause) {
+      log.warn('[registry] steam-path lookup failed:', cause instanceof Error ? cause.message : String(cause));
+      return null;
+    }
+  });
+}
+
+/**
  * Scans one Uninstall branch for a subkey whose (expanded, normalized) InstallLocation equals
  * `installDirNorm`. Returns the matched entry's uninstall strings, or null. Never throws.
  */

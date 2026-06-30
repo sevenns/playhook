@@ -54,6 +54,9 @@ const CONFIRM_TEXT: Readonly<Record<ConfirmMode, string>> = {
   install: 'Do you want to install game?',
   uninstall: 'Do you want to uninstall game from your PC?',
 };
+// Steam-mode confirm copy: the action opens Steam (no card path / silent-mode note applies).
+const STEAM_INSTALL_TEXT = 'Open Steam to install this game?';
+const STEAM_UNINSTALL_TEXT = 'Open Steam to uninstall this game?';
 // Fallback wallpaper (data URL from main) for the empty / idle screen, and its cached palette.
 let wallpaperUrl: string | null = null;
 let wallpaperPalette: Palette | null | undefined;
@@ -113,9 +116,30 @@ function statusOf(state: AppState): string {
       return 'Running...';
     case 'syncing-out':
       return 'Saving progress...';
+    case 'ready': {
+      // Steam non-blocking install/uninstall indicators on the ready screen (the window stays usable).
+      // No install percent: Steam exposes no reliable live progress in the files we read (see main).
+      if (state.game.steamUninstalling === true) return 'Uninstalling...';
+      if (state.game.steamInstalling === true) {
+        if (state.game.steamPaused !== true) return 'Installing...';
+        const progress = state.game.steamPausedProgress;
+        return progress === undefined
+          ? 'Installing paused...'
+          : `Installing paused on ${Math.round(progress * 100)}%...`;
+      }
+      return '';
+    }
     default:
       return '';
   }
+}
+
+// True while a Steam install (download) or uninstall is in progress: a non-blocking indicator on the
+// (still) ready screen — the busy visuals (loader + status + slid title) are reused via
+// #app[data-steam-busy], NOT the busy phase.
+function steamBusy(state: AppState): boolean {
+  if (state.kind !== 'ready') return false;
+  return state.game.steamInstalling === true || state.game.steamUninstalling === true;
 }
 
 function gameOf(state: AppState): GameInfo | undefined {
@@ -213,6 +237,12 @@ function buildInfoPanel(game: GameInfo): void {
 
 // ── Title slide (left → right while busy) ───────────────────────────────────
 
+// The title slides right (making room for the status) while busy OR while a Steam install/uninstall
+// shows its non-blocking indicator on the ready screen.
+function shouldSlideTitle(): boolean {
+  return phaseOf(currentState) === 'busy' || steamBusy(currentState);
+}
+
 let titleSlideRaf = 0;
 function applyTitleSlide(toRight: boolean): void {
   // Cancel any pending measure: otherwise a busy-state rAF can fire AFTER we've returned to 'ready'
@@ -228,7 +258,7 @@ function applyTitleSlide(toRight: boolean): void {
   // Measure after layout so scrollWidth/offsetLeft are correct.
   titleSlideRaf = requestAnimationFrame(() => {
     titleSlideRaf = 0;
-    if (phaseOf(currentState) !== 'busy') return; // state changed before the frame — don't slide
+    if (!shouldSlideTitle()) return; // state changed before the frame — don't slide
     const shift = barContent.clientWidth - titleEl.scrollWidth - titleEl.offsetLeft;
     titleEl.style.setProperty('--title-x', `${Math.max(0, Math.round(shift))}px`);
   });
@@ -287,8 +317,22 @@ function openConfirm(mode: ConfirmMode): void {
   closeError();
   confirmMode = mode;
   confirmPopup.dataset['mode'] = mode; // drives the description's visibility (install only)
-  confirmMessage.textContent = CONFIRM_TEXT[mode];
-  if (mode === 'install') confirmPath.textContent = game.installDir ?? '';
+  // Steam install has no card path and no silent-mode note: a more specific CSS selector
+  // (data-install-via='steam') hides the description, and the copy differs (both install & uninstall).
+  const isSteam = game.installVia === 'steam';
+  const isSteamInstall = mode === 'install' && isSteam;
+  if (isSteamInstall) {
+    confirmPopup.dataset['installVia'] = 'steam';
+  } else {
+    delete confirmPopup.dataset['installVia'];
+  }
+  if (isSteam) {
+    confirmMessage.textContent = mode === 'install' ? STEAM_INSTALL_TEXT : STEAM_UNINSTALL_TEXT;
+  } else {
+    confirmMessage.textContent = CONFIRM_TEXT[mode];
+  }
+  // Card path only for a card-installer game (empty for steam — there is no install dir).
+  if (mode === 'install') confirmPath.textContent = isSteamInstall ? '' : (game.installDir ?? '');
   confirmOpen = true;
   confirmPopup.classList.add('is-open');
   confirmPopup.setAttribute('aria-hidden', 'false');
@@ -359,8 +403,14 @@ function render(state: AppState): void {
     infoButton.classList.remove('has-uninstall-sibling');
   }
 
+  // Steam non-blocking install/uninstall indicator: reuse the busy visuals (loader/status/slid title)
+  // via a dedicated attribute, while the logical phase stays 'ready' (window hideable, card pullable).
+  const busySteam = steamBusy(state);
+  if (busySteam) app.dataset['steamBusy'] = 'true';
+  else delete app.dataset['steamBusy'];
+
   statusEl.textContent = statusOf(state);
-  applyTitleSlide(phase === 'busy');
+  applyTitleSlide(phase === 'busy' || busySteam);
 
   // Popups only make sense on the ready screen; force-close them on any other state. (A failed
   // launch returns to 'ready' first, then opens the error popup — so it survives this.) closeConfirm
@@ -383,6 +433,9 @@ const ALL_MAIN_BUTTONS: readonly HTMLButtonElement[] = [playButton, infoButton, 
 let focusIndex = 0;
 
 function mainFocusables(): readonly HTMLButtonElement[] {
+  // While a Steam install/uninstall indicator is up, the right-side buttons are hidden — keep only Play
+  // focusable/clickable (during a download its click opens Steam's Downloads page; see triggerPlay).
+  if (steamBusy(currentState)) return [playButton];
   return gameOf(currentState)?.canUninstall === true
     ? [playButton, infoButton, uninstallButton]
     : [playButton, infoButton];
@@ -471,9 +524,19 @@ function activateConfirm(): void {
 // User-initiated actions (shared by mouse clicks and gamepad A/B) — each plays its sound.
 function triggerPlay(): void {
   if (!focusActive()) return;
+  const game = gameOf(currentState);
+  // Steam download in progress: the Play button shows a loader and can't launch — repurpose the click to
+  // open Steam's Downloads page, where the user can pause/resume (we can't control that programmatically).
+  if (game?.steamInstalling === true) {
+    audio.play('button');
+    window.api.openSteamDownloads();
+    return;
+  }
+  // Steam uninstall in progress (loader) → nothing useful to do, ignore the press.
+  if (game?.steamUninstalling === true) return;
   // Install mode (button reads "Install"): confirm first and show the destination path. main still
   // decides install vs launch from requiresInstall, so the confirmed request goes through requestLaunch.
-  if (gameOf(currentState)?.requiresInstall === true) {
+  if (game?.requiresInstall === true) {
     audio.play('button');
     openConfirm('install');
     return;
@@ -614,7 +677,7 @@ document.addEventListener('visibilitychange', () => syncMusic());
 
 gamepad.start();
 
-// Re-measure the title slide on resize while busy (keeps right-alignment correct).
+// Re-measure the title slide on resize while busy / steam-installing (keeps right-alignment correct).
 window.addEventListener('resize', () => {
-  if (phaseOf(currentState) === 'busy') applyTitleSlide(true);
+  if (shouldSlideTitle()) applyTitleSlide(true);
 });
