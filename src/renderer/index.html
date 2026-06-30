@@ -16,9 +16,18 @@
            the Info button (game screens) or the Hide button (empty / idle screen). -->
       <footer id="bottom-bar">
         <div class="bar-content">
-          <button id="play-button" class="circle-button" type="button" aria-label="Play">
+          <button id="play-button" class="circle-button" type="button" aria-label="Play" data-action="play">
             <svg class="icon-play" viewBox="0 0 36 48" aria-hidden="true">
               <path d="M2 2 L34 24 L2 46 Z" />
+            </svg>
+            <!-- Install mode: gear-over-tray icon, shown instead of the play triangle when the game
+                 isn't installed yet (toggled via the button's data-action). -->
+            <svg class="icon-install" viewBox="0 0 48 48" aria-hidden="true">
+              <path d="M7.07715 33.1289V39.2832C7.07723 40.1308 7.76612 40.8212 8.61523 40.8213H39.3848C40.2339 40.8212 40.9228 40.1308 40.9229 39.2832V33.1289H44V39.2832C43.9999 41.8308 41.9323 43.8984 39.3848 43.8984H8.61523C6.06766 43.8984 4.00008 41.8308 4 39.2832V33.1289H7.07715Z" />
+              <path
+                fill-rule="evenodd"
+                d="M25.8799 4L26.6738 8.52441C27.7568 8.79209 28.7769 9.22311 29.7061 9.78613L33.4355 7.10449L36.1367 9.80469L33.4863 13.583C34.0447 14.5122 34.4665 15.5243 34.7373 16.5996L39.2832 17.3418V21.165L34.7354 21.96C34.4677 23.0383 34.0451 24.0523 33.4883 24.9814L36.1787 28.7188L33.4785 31.4219L29.708 28.7734C28.7788 29.3381 27.7601 29.7681 26.6816 30.042L25.8799 34.5664H22.0586L21.3076 30.0527C20.2217 29.7866 19.2019 29.3602 18.2666 28.7988L14.5215 31.4199L11.8203 28.7168L14.4707 25.0107C13.9046 24.0723 13.4739 23.0493 13.2031 21.957L8.7168 21.1631V17.3418L13.208 16.5957C13.4818 15.5036 13.9105 14.4817 14.4766 13.5449L11.8613 9.80469L14.5635 7.10449L18.2812 9.75977C19.2136 9.19977 20.2371 8.7769 21.3232 8.51074L22.0586 4H25.8799ZM24 13.9551C21.057 13.9551 18.6709 16.3417 18.6709 19.2832C18.671 22.2277 21.057 24.6122 24 24.6123C26.943 24.6123 29.3296 22.2278 29.3281 19.2832C29.3281 16.3417 26.9431 13.9551 24 13.9551Z"
+              />
             </svg>
             <span class="loader" aria-hidden="true"></span>
           </button>
@@ -36,6 +45,15 @@
                    M16.3,11.5 a3.7,3.7 0 1,0 7.4,0 a3.7,3.7 0 1,0 -7.4,0 Z
                    M16.5,18 a3.5,3.5 0 0,1 7,0 L23.5,30 a3.5,3.5 0 0,1 -7,0 L16.5,18 Z"
               />
+            </svg>
+          </button>
+
+          <!-- Uninstall button: same rect-button component as Info, a disc with a trash bin cut out
+               (fill-rule nonzero). Shown only for an installed install-mode game (toggled via the
+               .is-available class from JS); opens the uninstall confirmation popup. -->
+          <button id="uninstall-button" class="rect-button" type="button" aria-label="Uninstall">
+            <svg class="icon-uninstall" viewBox="0 0 40 40" aria-hidden="true">
+              <path d="M20 0C31.0457 0 40 8.9543 40 20C40 31.0457 31.0457 40 20 40C8.9543 40 0 31.0457 0 20C0 8.9543 8.9543 0 20 0ZM11.0146 29C11.0147 30.105 11.9097 31 13.0146 31L27.0146 31C28.1195 30.9998 29.0146 30.1049 29.0146 29L29.0146 13L11.0146 13L11.0146 29ZM18.0146 8C17.8822 7.9982 17.7499 8.02282 17.627 8.07227C17.5042 8.12171 17.3921 8.19515 17.2979 8.28809C17.2037 8.38107 17.1292 8.49215 17.0781 8.61426C17.027 8.73646 17.001 8.86755 17.001 9L11.0146 9C10.8821 8.99813 10.7499 9.02285 10.627 9.07227C10.5041 9.12168 10.3921 9.19512 10.2979 9.28809C10.2036 9.38109 10.1283 9.49208 10.0771 9.61426C10.0261 9.73641 10 9.8676 10 10C10 10.1324 10.0261 10.2636 10.0771 10.3857C10.1283 10.5079 10.2036 10.6189 10.2979 10.7119C10.3921 10.8049 10.5041 10.8783 10.627 10.9277C10.7499 10.9771 10.8821 11.0019 11.0146 11L29.0146 11C29.147 11.0018 29.2785 10.9771 29.4014 10.9277C29.5243 10.8783 29.6361 10.8049 29.7305 10.7119C29.8248 10.6189 29.9 10.508 29.9512 10.3857C30.0022 10.2636 30.0283 10.1324 30.0283 10C30.0283 9.86758 30.0022 9.73643 29.9512 9.61426C29.9 9.49204 29.8248 9.38111 29.7305 9.28809C29.6361 9.19508 29.5243 9.12168 29.4014 9.07227C29.2785 9.0229 29.147 8.99818 29.0146 9L23.0283 9C23.0283 8.86753 23.0013 8.73647 22.9502 8.61426C22.8991 8.49212 22.8247 8.38109 22.7305 8.28809C22.6362 8.19511 22.5242 8.12171 22.4014 8.07227C22.2786 8.02287 22.147 7.99826 22.0146 8L18.0146 8Z" />
             </svg>
           </button>
 
@@ -66,6 +84,28 @@
             <div class="info-label">Error</div>
             <div class="info-value" id="error-message"></div>
           </div>
+        </div>
+      </section>
+
+      <!-- Confirmation popup: the same .popup component (veil + a question), plus a row of two
+           TextButtons (No / Yes) pinned to the bottom bar. Shared by Install and Uninstall — the
+           question text is set from JS, and the install path description is shown only for Install
+           (data-mode='install'). The actions live OUTSIDE .popup-panel (they sit in the bottom strip,
+           not the right column), so they carry their own opacity gate. -->
+      <section id="confirm-popup" class="popup" aria-hidden="true">
+        <div class="popup-veil"></div>
+        <div class="popup-panel">
+          <div class="confirm-message" id="confirm-message"></div>
+          <!-- Install mode only: the destination path (filled from JS), shown in case the installer
+               opens a non-silent folder picker. Selectable so it can be copied. -->
+          <div class="confirm-description" id="confirm-description">
+            Since not all installers support silent mode, during installation you need to specify the
+            following path:<br /><span class="confirm-path" id="confirm-path"></span>
+          </div>
+        </div>
+        <div class="confirm-actions">
+          <button id="confirm-yes" class="text-button" type="button">Yes</button>
+          <button id="confirm-no" class="text-button" type="button">No</button>
         </div>
       </section>
     </main>

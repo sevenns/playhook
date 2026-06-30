@@ -65,9 +65,39 @@ body {
   width: 100vw;
   height: 100vh;
   background-color: var(--bg);
+  overflow: hidden;
+  /* Establish a stacking context so the z-index:-1 hero ::before paints ABOVE #app's own
+     background-color (otherwise the opaque bg covers it → black screen) but below the UI. */
+  isolation: isolate;
+}
+
+/* Hero background lives on a ::before layer (driven by --hero-image from JS) so it can be
+   transform-panned independently of the UI, which stays put. Sits behind all UI via z-index.
+   GTA-style: the hero is never a static frame — it slowly drifts to one side and back (ping-pong),
+   always. The direction (--pan-x) is randomized per image (set from JS when the background changes),
+   echoing GTA's alternating loading screens. scale(1.1) gives headroom so the pan never shows edges. */
+#app::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background-image: var(--hero-image, none);
   background-size: cover;
   background-position: center;
-  overflow: hidden;
+  transform-origin: center;
+  will-change: transform;
+  animation: bg-pan 30s ease-in-out infinite alternate;
+}
+
+/* Ping-pong drift + a gentle zoom in/out, synced over the cycle (Ken Burns). The min scale (1.06)
+   keeps headroom so the small ±1.5% pan never reveals the edges. */
+@keyframes bg-pan {
+  from {
+    transform: scale(1.06) translateX(0);
+  }
+  to {
+    transform: scale(1.12) translateX(var(--pan-x, 1.5%));
+  }
 }
 
 /* ── Per-screen bottom-bar controls ────────────────────────────────────────
@@ -79,10 +109,29 @@ body {
   display: none;
 }
 
+/* Uninstall: hidden by default, shown (display:flex) only when JS adds .is-available for an installed
+   install-mode game. In busy it is NOT display-toggled — like Info it only fades via opacity below, so
+   .is-available and the busy opacity-gate don't conflict. */
+#uninstall-button {
+  display: none;
+}
+#uninstall-button.is-available {
+  display: flex;
+}
+
+/* When Uninstall is present it takes the rightmost slot (right:0 from .rect-button); Info shifts left
+   to sit next to it (92px button + 32px gap). Without Uninstall, Info stays rightmost. The class is
+   toggled from JS in sync with .is-available. */
+#info-button.has-uninstall-sibling {
+  right: calc(124 * var(--px));
+}
+
 #app[data-phase='idle'] #play-button,
 #app[data-phase='error'] #play-button,
 #app[data-phase='idle'] #info-button,
-#app[data-phase='error'] #info-button {
+#app[data-phase='error'] #info-button,
+#app[data-phase='idle'] #uninstall-button,
+#app[data-phase='error'] #uninstall-button {
   display: none;
 }
 
@@ -184,11 +233,30 @@ body {
   transform: translateX(calc(4 * var(--px)));
 }
 
+.icon-install {
+  width: calc(40 * var(--px));
+  height: calc(40 * var(--px));
+  fill: currentColor;
+}
+
+/* The circle button shows ONE icon at a time, chosen by its data-action (Play vs Install). */
+.icon-install {
+  display: none;
+}
+#play-button[data-action='install'] .icon-play {
+  display: none;
+}
+#play-button[data-action='install'] .icon-install {
+  display: block;
+}
+
 /* Icons don't intercept pointer events, so hover/click target the button itself (otherwise the
    global `* { cursor: default }` would override the button's pointer cursor over the icon). */
 .icon-play,
+.icon-install,
 .icon-info,
 .icon-hide,
+.icon-uninstall,
 .loader {
   pointer-events: none;
 }
@@ -221,7 +289,8 @@ body {
 }
 
 .icon-info,
-.icon-hide {
+.icon-hide,
+.icon-uninstall {
   width: calc(40 * var(--px));
   height: calc(40 * var(--px));
   fill: currentColor;
@@ -252,7 +321,10 @@ body {
   }
 }
 
-#app[data-phase='busy'] .icon-play {
+/* While busy (launch / install flow) neither action icon shows — the loader takes over. Declared
+   after the data-action swap so it wins at equal specificity. */
+#app[data-phase='busy'] .icon-play,
+#app[data-phase='busy'] .icon-install {
   display: none;
 }
 #app[data-phase='busy'] .loader {
@@ -367,4 +439,100 @@ body {
 /* The error message can be long; cap its width so it wraps (matches the mockup's column). */
 #error-message {
   max-width: calc(448 * var(--px));
+}
+
+/* Confirmation question (Install / Uninstall) — larger heading per the updated mockup. */
+.confirm-message {
+  max-width: calc(450 * var(--px));
+  font-weight: 500;
+  font-size: calc(32 * var(--px));
+  line-height: calc(44 * var(--px));
+  color: var(--fg);
+}
+
+/* Install-only description with the destination path. Hidden by default; shown for data-mode='install'. */
+.confirm-description {
+  display: none;
+  max-width: calc(450 * var(--px));
+  font-weight: 300;
+  font-size: calc(24 * var(--px));
+  line-height: calc(36 * var(--px));
+  color: var(--fg);
+}
+#confirm-popup[data-mode='install'] .confirm-description {
+  display: block;
+}
+
+/* The path flows inline at the end of the description (same light style as the mockup), but is
+   selectable & copyable (overrides the global no-select) in case the installer needs it typed in. */
+.confirm-path {
+  word-break: break-all;
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
+}
+
+/* The confirmation panel (title + subtitle) is centered vertically on screen — unlike Info/Error,
+   which sit at a fixed top. translateY(-50%) must be kept in BOTH the closed (slid-in) and open
+   transforms, so override them at higher specificity than the shared .popup rules. */
+#confirm-popup .popup-panel {
+  top: 50%;
+  bottom: auto;
+  transform: translateY(-50%) translateX(calc(40 * var(--px)));
+}
+#confirm-popup.is-open .popup-panel {
+  transform: translateY(-50%);
+}
+
+/* ── TextButton (No / Yes) — textual sibling of .rect-button ────────────────
+   Transparent with d2 text; inverts to a d2 fill with d1 text on hover/focus. */
+
+.text-button {
+  height: calc(92 * var(--px));
+  min-width: calc(184 * var(--px));
+  padding: 0 calc(32 * var(--px));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: calc(10 * var(--px));
+  background: transparent;
+  color: var(--d2);
+  font-family: inherit;
+  font-weight: 500;
+  font-size: calc(28 * var(--px));
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease, transform 0.12s ease;
+}
+
+.text-button:hover,
+.text-button:focus-visible,
+.text-button.is-focused {
+  background: var(--d2);
+  color: var(--d1);
+}
+
+.text-button:active,
+.text-button.is-pressed {
+  transform: scale(0.9);
+}
+
+/* ── Confirmation actions (No / Yes row) ────────────────────────────────────
+   Pinned to the bottom strip (aligned to .bar-content's 50px inset), so they sit OUTSIDE
+   .popup-panel and need their OWN opacity/pointer-events gate (N5) — without it the buttons would be
+   visible and clickable over the ready screen at all times. Fades in together with the veil/panel. */
+.confirm-actions {
+  position: absolute;
+  right: calc(50 * var(--px));
+  bottom: calc(50 * var(--px));
+  display: flex;
+  gap: calc(32 * var(--px));
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.35s ease;
+}
+
+.popup.is-open .confirm-actions {
+  opacity: 1;
+  pointer-events: auto;
 }
