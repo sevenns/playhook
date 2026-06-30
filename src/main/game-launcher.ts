@@ -230,6 +230,10 @@ interface LaunchMode {
 
 const GAME_MODE: LaunchMode = { verbatim: false, hide: false };
 const INSTALLER_MODE: LaunchMode = { verbatim: true, hide: true };
+// Uninstaller: hidden (silent), but verbatim:FALSE — unlike the installer, the uninstaller target's
+// file/args are LOGICAL tokens (a found .exe path possibly with spaces/Cyrillic, or registry-parsed
+// argv), so Node/CommandLineToArgvW quoting must re-quote them correctly (B1).
+const UNINSTALLER_MODE: LaunchMode = { verbatim: false, hide: true };
 
 /** Normal launch: spawn the file and watch by pid via tasklist. Behaviour for games is 1:1 with the old code. */
 async function launchNormal(target: LaunchTarget, mode: LaunchMode): Promise<GameProcess> {
@@ -378,6 +382,16 @@ export async function launchInstaller(
     runAsAdmin: install.runAsAdmin,
   };
   return launch(target, INSTALLER_MODE);
+}
+
+/**
+ * Launches a game's own uninstaller silently. The target is resolved by the controller
+ * (resolveUninstaller): either an .exe found in the install dir with self-built silent flags, or a
+ * command parsed from the registry. UNINSTALLER_MODE uses verbatim:false so the logical file/args are
+ * re-quoted correctly (paths with spaces / Cyrillic). Returns a GameProcess; throws on failure.
+ */
+export async function launchUninstaller(target: LaunchTarget): Promise<GameProcess> {
+  return launch(target, UNINSTALLER_MODE);
 }
 
 /**

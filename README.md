@@ -210,6 +210,12 @@ How it works:
   the args itself, so elevated is allowed there.
 - **MSI is out of scope** for now (its install-directory property name isn't standardized, so the
   path can't be controlled reliably).
+- Once installed, an **"Uninstall"** button appears next to **"Info"** (only for an installed
+  install-mode game). Pressing it asks for confirmation, then removes the game: Playhook finds the
+  game's **own uninstaller** inside the install folder (Inno's `unins000.exe`, NSIS's `Uninstall.exe`)
+  and runs it **silently** — so it cleans up the registry (Add/Remove Programs) and Start-Menu
+  shortcuts — and then deletes `%LOCALAPPDATA%\playhook\games\<id>`. The button turns back into
+  **"Install"**.
 
 #### How to tell your installer's type
 
@@ -242,9 +248,15 @@ in the target folder with no wizard window:
 Installed silently into the folder → that's your type. A wizard appeared, or it installed elsewhere →
 it's the other type (or neither — use `custom`).
 
-To reinstall or update, delete `%LOCALAPPDATA%\playhook\games\<id>` manually and press Install again.
-Saves still sync to/from the card exactly as for a normal game (the `install` block is orthogonal to
-`saveOnCard`/`pcSavePath`).
+To reinstall or update, use the **Uninstall** button (or, as a fallback, delete
+`%LOCALAPPDATA%\playhook\games\<id>` manually) and press Install again. Saves still sync to/from the
+card exactly as for a normal game (the `install` block is orthogonal to `saveOnCard`/`pcSavePath`).
+
+Cleaning up the **registry and Start-Menu shortcuts is best-effort** — it's done by the game's own
+uninstaller, which Playhook finds in the install folder for typical NSIS/Inno games (with a registry
+lookup as a fallback for a nonstandard NSIS uninstaller name). For `type: "custom"`, or when the
+uninstaller can't be found, only the install folder is removed and a registry/shortcut tail may remain.
+Uninstalling targets the PC, so it's unaffected by the card being removed mid-operation.
 
 ### Statistics: one card, many PCs
 

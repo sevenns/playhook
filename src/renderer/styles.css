@@ -79,10 +79,22 @@ body {
   display: none;
 }
 
+/* Uninstall: hidden by default, shown (display:flex) only when JS adds .is-available for an installed
+   install-mode game. In busy it is NOT display-toggled — like Info it only fades via opacity below, so
+   .is-available and the busy opacity-gate don't conflict. */
+#uninstall-button {
+  display: none;
+}
+#uninstall-button.is-available {
+  display: flex;
+}
+
 #app[data-phase='idle'] #play-button,
 #app[data-phase='error'] #play-button,
 #app[data-phase='idle'] #info-button,
-#app[data-phase='error'] #info-button {
+#app[data-phase='error'] #info-button,
+#app[data-phase='idle'] #uninstall-button,
+#app[data-phase='error'] #uninstall-button {
   display: none;
 }
 
@@ -207,6 +219,7 @@ body {
 .icon-install,
 .icon-info,
 .icon-hide,
+.icon-uninstall,
 .loader {
   pointer-events: none;
 }
@@ -239,7 +252,8 @@ body {
 }
 
 .icon-info,
-.icon-hide {
+.icon-hide,
+.icon-uninstall {
   width: calc(40 * var(--px));
   height: calc(40 * var(--px));
   fill: currentColor;
@@ -388,4 +402,62 @@ body {
 /* The error message can be long; cap its width so it wraps (matches the mockup's column). */
 #error-message {
   max-width: calc(448 * var(--px));
+}
+
+/* The uninstall question wraps in a narrower column (matches the mockup). */
+.confirm-message {
+  max-width: calc(350 * var(--px));
+}
+
+/* ── TextButton (No / Yes) — textual sibling of .rect-button ────────────────
+   Transparent with d2 text; inverts to a d2 fill with d1 text on hover/focus. */
+
+.text-button {
+  height: calc(92 * var(--px));
+  min-width: calc(184 * var(--px));
+  padding: 0 calc(32 * var(--px));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: calc(10 * var(--px));
+  background: transparent;
+  color: var(--d2);
+  font-family: inherit;
+  font-weight: 500;
+  font-size: calc(28 * var(--px));
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease, transform 0.12s ease;
+}
+
+.text-button:hover,
+.text-button:focus-visible,
+.text-button.is-focused {
+  background: var(--d2);
+  color: var(--d1);
+}
+
+.text-button:active,
+.text-button.is-pressed {
+  transform: scale(0.9);
+}
+
+/* ── Confirmation actions (No / Yes row) ────────────────────────────────────
+   Pinned to the bottom strip (aligned to .bar-content's 50px inset), so they sit OUTSIDE
+   .popup-panel and need their OWN opacity/pointer-events gate (N5) — without it the buttons would be
+   visible and clickable over the ready screen at all times. Fades in together with the veil/panel. */
+.confirm-actions {
+  position: absolute;
+  right: calc(50 * var(--px));
+  bottom: calc(50 * var(--px));
+  display: flex;
+  gap: calc(32 * var(--px));
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.35s ease;
+}
+
+.popup.is-open .confirm-actions {
+  opacity: 1;
+  pointer-events: auto;
 }

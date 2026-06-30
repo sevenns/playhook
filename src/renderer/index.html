@@ -48,6 +48,15 @@
             </svg>
           </button>
 
+          <!-- Uninstall button: same rect-button component as Info, a disc with a trash bin cut out
+               (fill-rule nonzero). Shown only for an installed install-mode game (toggled via the
+               .is-available class from JS); opens the uninstall confirmation popup. -->
+          <button id="uninstall-button" class="rect-button" type="button" aria-label="Uninstall">
+            <svg class="icon-uninstall" viewBox="0 0 40 40" aria-hidden="true">
+              <path d="M20 0C31.0457 0 40 8.9543 40 20C40 31.0457 31.0457 40 20 40C8.9543 40 0 31.0457 0 20C0 8.9543 8.9543 0 20 0ZM11.0146 29C11.0147 30.105 11.9097 31 13.0146 31L27.0146 31C28.1195 30.9998 29.0146 30.1049 29.0146 29L29.0146 13L11.0146 13L11.0146 29ZM18.0146 8C17.8822 7.9982 17.7499 8.02282 17.627 8.07227C17.5042 8.12171 17.3921 8.19515 17.2979 8.28809C17.2037 8.38107 17.1292 8.49215 17.0781 8.61426C17.027 8.73646 17.001 8.86755 17.001 9L11.0146 9C10.8821 8.99813 10.7499 9.02285 10.627 9.07227C10.5041 9.12168 10.3921 9.19512 10.2979 9.28809C10.2036 9.38109 10.1283 9.49208 10.0771 9.61426C10.0261 9.73641 10 9.8676 10 10C10 10.1324 10.0261 10.2636 10.0771 10.3857C10.1283 10.5079 10.2036 10.6189 10.2979 10.7119C10.3921 10.8049 10.5041 10.8783 10.627 10.9277C10.7499 10.9771 10.8821 11.0019 11.0146 11L29.0146 11C29.147 11.0018 29.2785 10.9771 29.4014 10.9277C29.5243 10.8783 29.6361 10.8049 29.7305 10.7119C29.8248 10.6189 29.9 10.508 29.9512 10.3857C30.0022 10.2636 30.0283 10.1324 30.0283 10C30.0283 9.86758 30.0022 9.73643 29.9512 9.61426C29.9 9.49204 29.8248 9.38111 29.7305 9.28809C29.6361 9.19508 29.5243 9.12168 29.4014 9.07227C29.2785 9.0229 29.147 8.99818 29.0146 9L23.0283 9C23.0283 8.86753 23.0013 8.73647 22.9502 8.61426C22.8991 8.49212 22.8247 8.38109 22.7305 8.28809C22.6362 8.19511 22.5242 8.12171 22.4014 8.07227C22.2786 8.02287 22.147 7.99826 22.0146 8L18.0146 8Z" />
+            </svg>
+          </button>
+
           <!-- Hide button: same rect-button component as Info, but a disc with an X cut out
                (fill-rule evenodd). Shown only on the empty / idle screen; hides the window. -->
           <button id="hide-button" class="rect-button" type="button" aria-label="Hide">
@@ -75,6 +84,20 @@
             <div class="info-label">Error</div>
             <div class="info-value" id="error-message"></div>
           </div>
+        </div>
+      </section>
+
+      <!-- Uninstall confirmation popup: the same .popup component (veil + a question), plus a row of
+           two TextButtons (No / Yes) pinned to the bottom bar. The actions live OUTSIDE .popup-panel
+           (they sit in the bottom strip, not the right column), so they carry their own opacity gate. -->
+      <section id="confirm-popup" class="popup" aria-hidden="true">
+        <div class="popup-veil"></div>
+        <div class="popup-panel">
+          <div class="info-value confirm-message">You want to uninstall game from your PC?</div>
+        </div>
+        <div class="confirm-actions">
+          <button id="confirm-no" class="text-button" type="button">No</button>
+          <button id="confirm-yes" class="text-button" type="button">Yes</button>
         </div>
       </section>
     </main>

@@ -9,6 +9,7 @@ const CHANNELS = {
   stateUpdate: 'state:update',
   stateRequest: 'state:request',
   actionLaunch: 'action:launch',
+  actionUninstall: 'action:uninstall',
   actionHide: 'action:hide',
   errorShow: 'error:show',
   audioUpdate: 'audio:update',
@@ -27,6 +28,9 @@ const api: RendererApi = {
   },
   requestLaunch(): void {
     ipcRenderer.send(CHANNELS.actionLaunch);
+  },
+  requestUninstall(): void {
+    ipcRenderer.send(CHANNELS.actionUninstall);
   },
   requestHide(): void {
     ipcRenderer.send(CHANNELS.actionHide);

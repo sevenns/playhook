@@ -168,6 +168,14 @@ export interface GameInfo {
    * not exist yet on disk. Drives the "Install" vs "Play" button in the renderer.
    */
   readonly requiresInstall: boolean;
+  /**
+   * Install mode AND the game is installed (the resolved executable exists). Drives the "Uninstall"
+   * button, which is shown only for an installed install-mode game. Mutually exclusive with
+   * `requiresInstall` (both require install mode): a separate field is needed because by
+   * `requiresInstall` alone an installed install-game (`requiresInstall=false`) is indistinguishable
+   * from an ordinary game (`requiresInstall=false`).
+   */
+  readonly canUninstall: boolean;
 }
 
 /** The flow state machine (discriminated union, section 4). */
@@ -175,6 +183,7 @@ export type AppState =
   | { readonly kind: 'idle' }
   | { readonly kind: 'ready'; readonly game: GameInfo }
   | { readonly kind: 'installing'; readonly game: GameInfo }
+  | { readonly kind: 'uninstalling'; readonly game: GameInfo }
   | { readonly kind: 'syncing-in'; readonly game: GameInfo }
   | { readonly kind: 'launching'; readonly game: GameInfo }
   | { readonly kind: 'running'; readonly game: GameInfo; readonly since: number }
@@ -189,6 +198,8 @@ export const IPC = {
   stateRequest: 'state:request',
   /** renderer → main: the user pressed A / clicked "Play". */
   actionLaunch: 'action:launch',
+  /** renderer → main: the user confirmed "Uninstall" — remove the installed install-mode game. */
+  actionUninstall: 'action:uninstall',
   /** renderer → main: hide the launcher window to the tray (the "Hide" button on the empty screen). */
   actionHide: 'action:hide',
   /** main → renderer: a transient error to surface in the error popup (e.g. a failed launch). */
@@ -206,6 +217,7 @@ export interface RendererApi {
   onStateUpdate(callback: (state: AppState) => void): void;
   requestState(): Promise<AppState>;
   requestLaunch(): void;
+  requestUninstall(): void;
   requestHide(): void;
   onError(callback: (message: string) => void): void;
   onAudioUpdate(callback: (assets: AudioAssets | null) => void): void;
