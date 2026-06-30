@@ -15,6 +15,11 @@ manifest), and pops up a game card. Press **A** on an Xbox gamepad (or click **P
 syncs your saves onto the PC, launches the game, tracks the playtime, then copies the saves
 back to the card when you quit — so your progress travels with the card across machines.
 
+The card can carry the game itself, an **installer** for heavy games
+([Install mode](#install-mode-heavy-games-on-slow-media)), or just a **pointer to a Steam app** by
+`appid` that Playhook installs, launches and uninstalls through your local Steam client
+([Steam mode](#steam-mode-launch-and-install-steam-games)).
+
 > **Windows-only by design.** The app uses `tasklist` and the native `drivelist` module; it
 > does not work on macOS/Linux.
 
@@ -134,6 +139,10 @@ E:\
     Prefer this for games that save under Documents (most Bethesda titles, e.g. Fallout/Skyrim).
   - `%APPDATA%`, `%LOCALAPPDATA%`, `%USERPROFILE%` — resolved from the corresponding
     environment variables (good for games that save under AppData).
+  - `%LOCALLOW%` — the `AppData\LocalLow` folder, derived from `%USERPROFILE%` (it has no environment
+    variable of its own). Common for **Unity / Steam** games (e.g. Valheim → `%LOCALLOW%/IronGate/Valheim`).
+    Note: `%APPDATA%` is `AppData\Roaming` and is **not** a parent of `LocalLow` — use `%LOCALLOW%` for
+    LocalLow saves.
 - `id` — only `[A-Za-z0-9._-]` (used as a folder name on the PC).
 - `runAsAdmin` — set `true` **only** for an `.exe` whose embedded manifest requires administrator
   (a plain launch fails with `EACCES` / `ERROR_ELEVATION_REQUIRED`). Playhook then launches it
@@ -258,6 +267,70 @@ uninstaller, which Playhook finds in the install folder for typical NSIS/Inno ga
 lookup as a fallback for a nonstandard NSIS uninstaller name). For `type: "custom"`, or when the
 uninstaller can't be found, only the install folder is removed and a registry/shortcut tail may remain.
 Uninstalling targets the PC, so it's unaffected by the card being removed mid-operation.
+
+### Steam mode (launch and install Steam games)
+
+Instead of carrying the game files, a card can be just a **pointer to a Steam app** by its numeric
+`appid`. Add a `steam` block and Playhook launches, installs and uninstalls the game **through your
+local Steam client** (via `steam://` URIs) — the card only needs the manifest, the cover art, and
+(optionally) the saves.
+
+```jsonc
+{
+  "schemaVersion": 1,
+  "id": "valheim",
+  "title": "Valheim",
+  "steam": { "appid": 892970 },              // the Steam application id (store URL / steamdb.info)
+  "watchProcesses": ["valheim.exe"],         // REQUIRED in steam mode (see below)
+  "launchTimeoutSec": 120,                    // raise it — Steam cold-start / updates take time
+  "heroImage": "assets/hero.jpg",            // optional, card-relative as usual
+  "saveOnCard": "saves",                     // optional save sync, exactly like a normal game
+  "pcSavePath": "%LOCALLOW%/IronGate/Valheim"
+}
+```
+
+There are **no game files on the card** — `executable` / `install` are not used (and are rejected if
+present). `heroImage`, `sounds`, `backgroundMusic`, and `saveOnCard` / `pcSavePath` work exactly as
+for a normal game.
+
+**Rules (enforced by the schema):**
+
+- `steam.appid` — a positive integer. For a base game `rungameid == appid` (read it off the store URL
+  or steamdb.info). DLC / non-base launch ids are out of scope.
+- `watchProcesses` is **required**. `steam://rungameid` returns instantly and the game has no pid of
+  its own, so the only way to track start/exit is by the game's process name(s) — same field and rules
+  as for launcher games.
+- `executable`, `install` and `runAsAdmin` are **forbidden** in steam mode (the launch method is
+  exactly one: Steam).
+- Raise `launchTimeoutSec` (e.g. `120`): a Steam cold start, shader pre-cache, or an auto-update before
+  launch can easily exceed the default 30s window (see [Known limitations](#known-limitations)).
+
+**How it works:**
+
+- **"Installed" is Steam's own truth**, read from the app manifest (`appmanifest_<appid>.acf`) across
+  every Steam library (`libraryfolders.vdf`); the Steam path comes from the registry. The game counts
+  as installed only when Steam marks it *fully installed* (a game that's still downloading reads as
+  "not installed").
+- **Not installed → the "Play" button is "Install".** Pressing it confirms ("Open Steam to install this
+  game?") and opens `steam://install/<appid>` — Steam shows its own install dialog. Playhook does **not**
+  block on a wizard: it stays on the screen, shows a non-blocking **"Installing…"** indicator, and a
+  background poll (~5s) flips the button to **"Play"** once Steam reports the game fully installed. The
+  window stays usable meanwhile — a Steam download can run for hours.
+- **Pause:** if you pause the download in Steam, the indicator becomes **"Installing paused on N%…"**
+  (the percent is only available while paused — see limitations). While a download is in progress the
+  **Play button (showing the loader) opens Steam's Downloads page** so you can pause/resume there —
+  Steam exposes no way to pause/resume a download programmatically.
+- **Launch:** when installed, pressing Play opens `steam://rungameid/<appid>`; the session is tracked by
+  `watchProcesses` (start → running → exit), with saves synced and stats recorded like a normal game.
+- **Uninstall:** an installed Steam game shows an **"Uninstall"** button → confirm → `steam://uninstall/<appid>`
+  (Steam's own removal UI). The background poll flips the button back to **"Install"** once the game is
+  gone (an uninstall you trigger directly in Steam is picked up too).
+- **Saves** sync to/from the card exactly as for a normal game. Steam / Unity games often store saves
+  under `AppData\LocalLow` — use the `%LOCALLOW%` prefix (e.g. Valheim → `%LOCALLOW%/IronGate/Valheim`).
+
+If Steam isn't installed on the PC, Install/Play report **"Steam is not installed"** instead of opening
+a URI. Steam's install and uninstall dialogs **cannot be made silent** — there is no `steam://` flag to
+suppress them (just one confirmation; the rest of the flow is automatic).
 
 ### Statistics: one card, many PCs
 
@@ -404,6 +477,18 @@ silently fails.
   - **Reinstall/update is manual:** delete `%LOCALAPPDATA%\playhook\games\<id>` and press Install again.
   - Progress is a plain "Installing..." indicator (no percentages — unavailable for an arbitrary
     silent `setup.exe`).
+- **Steam mode** (the `steam` block, see [Steam mode](#steam-mode-launch-and-install-steam-games)):
+  - **Steam must be installed** on the PC, otherwise Install/Play report "Steam is not installed".
+  - **Install/uninstall aren't silent** — Steam always shows its own dialog (one confirmation); there is
+    no `steam://` flag to suppress it. After that the flow is automatic.
+  - **No live download percent.** Steam exposes no real-time progress in any file Playhook can read (the
+    `.acf` byte counters freeze mid-download; the on-disk download folder is preallocated). The percent is
+    shown only **while the download is paused** ("Installing paused on N%…").
+  - **Can't pause/resume programmatically** — the Play button just opens Steam's Downloads page so you can
+    do it in Steam itself.
+  - **Cold start / pre-launch update** can exceed `launchTimeoutSec` → the game process never appears in
+    the window and Playhook quietly returns without recording a session. Raise `launchTimeoutSec` for
+    Steam games.
 
 ---
 
@@ -436,8 +521,11 @@ functional style). Please run `npm run typecheck` before opening a PR.
   `drivelist` module — both Windows-specific.
 - **Does it work without a gamepad?** Yes. Every gamepad action has a mouse fallback (click
   **Play**, etc.).
-- **Can I use it with Steam games?** No. Wrapper/launcher games break exit detection — see
-  [Known limitations](#known-limitations). Point it at a direct, self-contained `.exe`.
+- **Can I use it with Steam games?** **Yes** — via [Steam mode](#steam-mode-launch-and-install-steam-games):
+  a `game.json` with a `steam` block launches, installs and uninstalls the game through your local Steam
+  client (the card is just a pointer by `appid`). For a **non-Steam** wrapper/launcher `.exe`, point it at
+  the exe and use [`watchProcesses`](#rules-and-security-the-card-is-untrusted-input) so exit detection
+  works.
 
 ---
 
