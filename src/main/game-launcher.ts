@@ -436,9 +436,15 @@ export async function waitForExit(proc: GameProcess, signal?: AbortSignal): Prom
 // launcherAlive (the spawned launcher's pid present). We track the game by presence and use the
 // launcher's liveness only to avoid a false timeout while the user sits in the launcher menu/config.
 
-/** HANDOFF phase: wait for a watched game process to appear after the launcher was spawned. */
+/**
+ * HANDOFF phase: wait for a watched game process to appear after launch.
+ * `launcherPid` is the spawned launcher's pid (normal/install path), or `null` in Steam mode — there is
+ * no launcher process we own (steam:// returns instantly). When null we skip the launcher-liveness logic
+ * entirely and rely ONLY on `initialDeadline = graceSec`: a sentinel pid (e.g. "0") would falsely match
+ * "System Idle Process" in tasklist and wait forever.
+ */
 export async function waitForWatchedStart(
-  launcherPid: number,
+  launcherPid: number | null,
   watchNames: readonly string[],
   graceSec: number,
   signal?: AbortSignal,
@@ -456,6 +462,14 @@ export async function waitForWatchedStart(
     const snapshot = await snapshotProcesses();
     const gameVisible = anyVisible(snapshot, lowered);
     if (gameVisible) return { started: true };
+
+    if (launcherPid === null) {
+      // Steam mode: no launcher of our own — the only signal is the watched game appearing within the
+      // window. If it doesn't, conclude "not started" (Steam may be cold-starting / auto-updating).
+      if (Date.now() >= initialDeadline) return { started: false };
+      await delay(START_POLL_INTERVAL_MS);
+      continue;
+    }
 
     const launcherAlive = snapshot.includes(`"${launcherPid}"`);
     if (launcherAlive) {

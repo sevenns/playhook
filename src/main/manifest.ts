@@ -42,7 +42,8 @@ const installSchema = z
     },
   );
 
-const manifestSchema = z.object({
+const manifestSchema = z
+  .object({
   schemaVersion: z.literal(1),
   id: z
     .string()
@@ -52,7 +53,9 @@ const manifestSchema = z.object({
     .regex(/^[A-Za-z0-9._-]+$/, 'id must match [A-Za-z0-9._-]')
     .refine((v) => v !== '.' && v !== '..', 'id must not be . or ..'),
   title: z.string().min(1),
-  executable: z.string().min(1),
+  // Optional: present for a normal/install-mode game, absent in Steam mode (the superRefine below
+  // enforces exactly one launch method).
+  executable: z.string().min(1).optional(),
   args: z.array(z.string()).default([]),
   // Opt-in elevation: for .exe whose embedded manifest requires administrator (spawn would EACCES).
   runAsAdmin: z.boolean().default(false),
@@ -80,7 +83,32 @@ const manifestSchema = z.object({
     .optional(),
   backgroundMusic: z.string().min(1).optional(),
   install: installSchema.optional(),
-});
+  // Steam mode: a pointer to a Steam app by appid (no game files on the card). Mutually exclusive with
+  // install/executable and requires watchProcesses — enforced by the superRefine below.
+  steam: z.object({ appid: z.number().int().positive() }).optional(),
+  })
+  // Exactly one launch method, with its invariants. Steam mode is a separate backend from install
+  // mode, so we forbid the card installer/executable/elevation there and require watchProcesses
+  // (steam:// returns instantly with no pid of its own — the game can only be tracked by process name).
+  .superRefine((v, ctx) => {
+    if (v.steam !== undefined) {
+      if (v.install !== undefined) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['install'], message: 'install is not allowed together with steam' });
+      }
+      if (v.executable !== undefined) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['executable'], message: 'executable is not allowed in steam mode' });
+      }
+      if (v.runAsAdmin) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['runAsAdmin'], message: 'runAsAdmin is not allowed in steam mode' });
+      }
+      if (v.watchProcesses === undefined) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['watchProcesses'], message: 'watchProcesses is required in steam mode' });
+      }
+    } else if (v.executable === undefined) {
+      // Non-steam game: an executable is mandatory (its meaning depends on install mode — see readManifest).
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['executable'], message: 'executable is required' });
+    }
+  });
 
 /** The sound slots resolved inside the card root (order is stable for iteration). */
 const SFX_NAMES: readonly SfxName[] = ['play', 'navigate', 'button', 'back'];
@@ -241,12 +269,25 @@ export async function readManifest(root: string, env: ManifestEnv): Promise<Mani
   }
   const raw: GameManifest = parsed.data;
 
-  // E5 (critical branch): the meaning of `executable` depends on install mode. Keep the two paths
+  // E5 (critical branch): the meaning of `executable` depends on the mode. Keep the three paths
   // explicit so the normal flow is provably untouched (G2).
   let executablePath: string;
+  let cwd: string;
   let installResolved: ResolvedManifest['install'];
-  if (raw.install === undefined) {
+  let steamResolved: ResolvedManifest['steam'];
+  if (raw.steam !== undefined) {
+    // Steam mode: there is no card executable to resolve. executablePath/cwd are placeholders ('')
+    // that are NEVER read — every consumer branches on `steam` first (see ResolvedManifest). The
+    // card-relative assets (heroImage/sounds/music/saveOnCard) are resolved below as usual.
+    executablePath = '';
+    cwd = '';
+    steamResolved = { appid: raw.steam.appid };
+  } else if (raw.install === undefined) {
     // Normal game: `executable` is card-relative and MUST exist on the card (unchanged behaviour).
+    // The schema guarantees `executable` is present here (non-steam ⇒ required); guard defensively.
+    if (raw.executable === undefined) {
+      return { ok: false, message: 'executable is required' };
+    }
     const resolved = resolveInside(root, raw.executable);
     if (resolved === null) {
       return { ok: false, message: `executable path escapes card root: ${raw.executable}` };
@@ -255,13 +296,18 @@ export async function readManifest(root: string, env: ManifestEnv): Promise<Mani
       return { ok: false, message: `executable not found: ${raw.executable}` };
     }
     executablePath = resolved;
+    cwd = path.dirname(executablePath);
   } else {
+    if (raw.executable === undefined) {
+      return { ok: false, message: 'executable is required' };
+    }
     const resolvedInstall = await resolveInstall(root, raw.id, raw.executable, raw.install);
     if (!resolvedInstall.ok) {
       return { ok: false, message: resolvedInstall.message };
     }
     installResolved = resolvedInstall.install;
     executablePath = resolvedInstall.executablePath;
+    cwd = path.dirname(executablePath);
   }
 
   let heroImagePath: string | undefined;
@@ -328,13 +374,14 @@ export async function readManifest(root: string, env: ManifestEnv): Promise<Mani
     raw,
     root,
     executablePath,
-    cwd: path.dirname(executablePath),
+    cwd,
     ...(heroImagePath !== undefined ? { heroImagePath } : {}),
     ...(saveOnCardPath !== undefined ? { saveOnCardPath } : {}),
     ...(pcSavePath !== undefined ? { pcSavePath } : {}),
     ...(soundPaths !== undefined ? { soundPaths } : {}),
     ...(backgroundMusicPath !== undefined ? { backgroundMusicPath } : {}),
     ...(installResolved !== undefined ? { install: installResolved } : {}),
+    ...(steamResolved !== undefined ? { steam: steamResolved } : {}),
   };
   return { ok: true, manifest };
 }

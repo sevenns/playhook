@@ -34,7 +34,8 @@ import {
   LaunchAbortedError,
   type GameProcess,
 } from './game-launcher';
-import { findUninstallEntry } from './registry';
+import { findUninstallEntry, getSteamPath } from './registry';
+import { steamGameInstalled, openSteamUri } from './steam';
 import { log } from './logger';
 
 export interface ControllerDeps {
@@ -92,6 +93,11 @@ const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout
 
 // Grace-poll cadence after the installer exits, waiting for the game executable to appear (C1).
 const INSTALL_POLL_INTERVAL_MS = 1000;
+
+// Steam-mode background re-detect cadence: while a Steam game shows "Install" (not yet installed in
+// Steam), poll its .acf state so the button flips to "Play" once the (possibly hours-long) download
+// finishes. Non-blocking — no `installing` state is entered (see runSteamInstall).
+const STEAM_INSTALL_WATCH_INTERVAL_MS = 5000;
 
 // Directory removal retries (I5/R-UNINST-SELFCOPY): an Inno uninstaller forks a copy of itself into
 // temp and exits early, so right after waitForExit it may still hold `unins000.*` for a moment — a
@@ -271,6 +277,9 @@ export class GameController {
   private pendingRoot: string | null = null;
   // Audio for the current card, sent on its own channel (not on every AppState) — see AudioAssets.
   private currentAudio: AudioAssets | null = null;
+  // Steam-mode background re-detect timer (recursive setTimeout, no overlap). Non-null only while a
+  // Steam game shows "Install" on the ready screen with the card present (managed by enterReady).
+  private steamInstallWatch: ReturnType<typeof setTimeout> | null = null;
   // Bundled fallback wallpaper as a data URL: undefined = not read yet, null = unavailable.
   private wallpaperDataUrl: string | null | undefined;
 
@@ -310,7 +319,80 @@ export class GameController {
   /** Stops the process waits and the watcher (on application exit). */
   shutdown(): void {
     this.abort?.abort();
+    this.stopSteamInstallWatch();
     this.deps.watcher.stop();
+  }
+
+  // ── Ready transition + Steam re-detect poller ──────────────────────────────
+
+  /**
+   * The single entry point for the `ready` state. Besides setting the state, it manages the Steam
+   * background re-detect poller: started when the current game is a Steam game still showing "Install"
+   * (and the card is present), stopped otherwise. ALL ready transitions go through here so the poller's
+   * lifecycle is governed in exactly one place (StateManager is not a controller hook).
+   */
+  private enterReady(info: GameInfo): void {
+    this.deps.state.set({ kind: 'ready', game: info });
+    if (info.installVia === 'steam' && info.requiresInstall && this.cardPresent) {
+      this.startSteamInstallWatch();
+    } else {
+      this.stopSteamInstallWatch();
+    }
+  }
+
+  /** (Re)starts the recursive Steam re-detect timer. No-op if already running (no overlap). */
+  private startSteamInstallWatch(): void {
+    if (this.steamInstallWatch !== null) return;
+    this.steamInstallWatch = setTimeout(() => void this.steamInstallTick(), STEAM_INSTALL_WATCH_INTERVAL_MS);
+  }
+
+  /** Stops the Steam re-detect timer. */
+  private stopSteamInstallWatch(): void {
+    if (this.steamInstallWatch === null) return;
+    clearTimeout(this.steamInstallWatch);
+    this.steamInstallWatch = null;
+  }
+
+  /**
+   * One Steam re-detect tick: captures the current manifest's appid, checks Steam's .acf state, and —
+   * only if nothing changed across the await (same card, still ready+requiresInstall, no launch in
+   * flight) — flips the button to "Play" via enterReady(buildGameInfo). The post-await re-check guards
+   * against a card swap (pendingRoot) or a user action that happened while we awaited the FS read.
+   */
+  private async steamInstallTick(): Promise<void> {
+    this.steamInstallWatch = null; // this firing consumed the timer; we reschedule below if still needed
+    const manifest = this.current;
+    const appid = manifest?.steam?.appid;
+    if (manifest === undefined || manifest === null || appid === undefined) return;
+
+    let installed = false;
+    try {
+      installed = await steamGameInstalled(appid);
+    } catch (cause) {
+      log.warn('[steam-watch] detect failed:', describe(cause));
+    }
+
+    // Re-validate everything that could have changed during the await.
+    const snapshot = this.deps.state.get();
+    if (
+      this.launchInFlight ||
+      this.current !== manifest ||
+      snapshot.kind !== 'ready' ||
+      !snapshot.game.requiresInstall ||
+      snapshot.game.installVia !== 'steam'
+    ) {
+      return; // stale — drop this result; enterReady already (re)set the poller for the new state
+    }
+
+    if (installed) {
+      const stats = await this.deps.stats.read(manifest.raw.id);
+      const info = await this.buildGameInfo(manifest, stats);
+      log.info(`[steam-watch] appid=${appid} now installed — flipping to Play`);
+      this.enterReady(info); // requiresInstall now false → poller stops inside enterReady
+      return;
+    }
+    // Still not installed → keep polling.
+    this.startSteamInstallWatch();
   }
 
   // ── Reaction to card insertion ───────────────────────────────────────────
@@ -362,7 +444,7 @@ export class GameController {
     }
 
     const info = await this.buildGameInfo(manifest, stats);
-    this.deps.state.set({ kind: 'ready', game: info });
+    this.enterReady(info);
     this.deps.window.showAndFocus();
   }
 
@@ -397,7 +479,9 @@ export class GameController {
       // = false and goes idle + hide on its own (R-CARDPULL-UNINSTALL).
       return;
     }
-    // ready / error / idle → no card, hide the window.
+    // ready / error / idle → no card, hide the window. Stop any Steam re-detect poller (the card is gone;
+    // a Steam game in `ready` reaches here since its kind is never running/installing).
+    this.stopSteamInstallWatch();
     this.current = null;
     this.setAudio(null);
     this.deps.state.set({ kind: 'idle' });
@@ -413,7 +497,17 @@ export class GameController {
     if (snapshot.kind !== 'ready' || this.launchInFlight) return;
     const manifest = this.current;
     if (manifest === null) return;
-    // Install mode + not yet installed → run the installer; otherwise it's an ordinary launch
+    // Steam mode: not yet installed → open steam://install (fire-and-forget); otherwise launch via
+    // steam://rungameid. Both inside runSteamInstall / runLaunchSequence's steam branch.
+    if (manifest.steam !== undefined) {
+      if (snapshot.game.requiresInstall) {
+        void this.runSteamInstall(manifest, snapshot.game);
+      } else {
+        void this.runLaunchSequence(manifest, snapshot.game);
+      }
+      return;
+    }
+    // Card-install mode + not yet installed → run the installer; otherwise it's an ordinary launch
     // (this includes a fully-installed game, whose executable now exists → requiresInstall=false).
     if (manifest.install !== undefined && snapshot.game.requiresInstall) {
       void this.runInstallSequence(manifest, snapshot.game);
@@ -432,6 +526,35 @@ export class GameController {
     void this.runUninstallSequence(manifest, snapshot.game);
   }
 
+  /**
+   * Steam install action: fire-and-forget. Opens `steam://install/<appid>` (Steam shows its own dialog
+   * and the download — possibly hours/GBs) and returns WITHOUT entering a blocking `installing` state.
+   * We stay on the `ready` ("Install") screen; the background re-detect poller (started by enterReady)
+   * flips the button to "Play" once Steam's .acf reports the game fully installed. Steam itself collapses
+   * repeated `steam://install` calls, so no debounce is needed. Pre-checks getSteamPath (I8): openExternal
+   * doesn't reliably reject when steam:// is unregistered.
+   */
+  private async runSteamInstall(manifest: ResolvedManifest, info: GameInfo): Promise<void> {
+    const appid = manifest.steam?.appid;
+    if (appid === undefined) return; // defensive: onLaunchRequested only calls this in steam mode
+    if ((await getSteamPath()) === null) {
+      this.sendError('Steam is not installed');
+      return;
+    }
+    try {
+      await openSteamUri(`steam://install/${appid}`);
+      log.info(`[steam-install] opened steam://install/${appid} id=${manifest.raw.id}`);
+    } catch (cause) {
+      this.sendError(`failed to open Steam install: ${describe(cause)}`);
+      return;
+    }
+    // Ensure the re-detect poller is running so the button flips to "Play" when the download completes
+    // (no-op if already running; info confirms this is a steam game still requiring install).
+    if (info.installVia === 'steam' && info.requiresInstall && this.cardPresent) {
+      this.startSteamInstallWatch();
+    }
+  }
+
   private async runLaunchSequence(manifest: ResolvedManifest, info: GameInfo): Promise<void> {
     const { state, window, stats } = this.deps;
     this.launchInFlight = true;
@@ -446,56 +569,94 @@ export class GameController {
         await syncDir(manifest.saveOnCardPath, manifest.pcSavePath);
       }
 
-      // 2. launch → GameProcess (spawn, or elevated ShellExecuteEx per manifest.runAsAdmin)
-      state.set({ kind: 'launching', game: info });
-      try {
-        proc = await launchGame(manifest);
-      } catch (cause) {
-        this.failLaunch(info, `failed to launch the game: ${describe(cause)}`);
-        return;
-      }
-
-      // 3/4. wait for the game to appear, then for it to exit. Two paths:
+      // 2/3/4. launch, then wait for the game to appear and to exit. THREE backends:
+      //  - steam: open steam://rungameid (no proc of ours); wait by watched names only (launcherPid=null).
       //  - watched (launcher/wrapper, manifest.watchProcesses): the game is a SEPARATE process; we wait
       //    for one of the watched image names to appear (HANDOFF — the launcher may live on in its menu),
       //    then track that process's presence for exit.
       //  - normal: the spawned pid IS the game; wait for that pid to appear, then disappear.
-      // Running-phase note (both paths): gamepad input is ignored (outside ready). The window stays put —
+      // Running-phase note (all paths): gamepad input is ignored (outside ready). The window stays put —
       // the game takes the foreground on its own and simply covers the launcher, which avoids the jerky
       // hide/show flash. We grab the foreground back in step 6 once the game exits. The global Start+Back
       // hotkey is intentionally a no-op while running, so there's nothing to re-summon.
       const watchProcesses = manifest.raw.watchProcesses;
       let since: number;
-      if (watchProcesses !== undefined && watchProcesses.length > 0) {
+      if (manifest.steam !== undefined) {
+        state.set({ kind: 'launching', game: info });
+        // Pre-check: openExternal doesn't reliably reject when steam:// is unregistered, so gate the
+        // launch on Steam actually being installed (I8) instead of relying on a reject.
+        if ((await getSteamPath()) === null) {
+          this.failLaunch(info, 'Steam is not installed');
+          return;
+        }
+        try {
+          await openSteamUri(`steam://rungameid/${manifest.steam.appid}`);
+        } catch (cause) {
+          this.failLaunch(info, `failed to launch via Steam: ${describe(cause)}`);
+          return;
+        }
+        // No launcher pid → null. watchProcesses is guaranteed non-empty by the schema in steam mode.
         const { started } = await waitForWatchedStart(
-          proc.pid,
-          watchProcesses,
+          null,
+          watchProcesses ?? [],
           manifest.raw.launchTimeoutSec,
           abort.signal,
         );
         if (!started) {
-          // The user closed the launcher without playing, or the game never became visible (often an
-          // elevated/anticheat launcher — see README). Neither a failure nor a play session.
+          // Known MVP limitation: a Steam cold-start or an auto-update before launch may not fit
+          // launchTimeoutSec → the game-process never appears in the window. We can't tell that apart
+          // from "didn't start", so we return quietly (recommend a larger launchTimeoutSec).
+          log.info(
+            `[launch] steam game never appeared within ${manifest.raw.launchTimeoutSec}s id=${manifest.raw.id} (cold-start/update?)`,
+          );
           this.abandonWatchedLaunch(info);
           return;
         }
-        // The watched game is up: start the clock now (more accurate than the launcher's spawn time).
         since = Date.now();
         state.set({ kind: 'running', game: info, since });
-        log.info(`[launch] running (watched) id=${manifest.raw.id} watch=${watchProcesses.join(',')}`);
-        await waitForWatchedExit(watchProcesses, abort.signal);
-        log.info(`[launch] exited (watched) id=${manifest.raw.id}`);
+        log.info(`[launch] running (steam) id=${manifest.raw.id} appid=${manifest.steam.appid}`);
+        await waitForWatchedExit(watchProcesses ?? [], abort.signal);
+        log.info(`[launch] exited (steam) id=${manifest.raw.id}`);
       } else {
-        const started = await waitForStart(proc, manifest.raw.launchTimeoutSec, abort.signal);
-        if (!started) {
-          this.failLaunch(info, 'the game did not start (process wait timed out)');
+        // 2. launch → GameProcess (spawn, or elevated ShellExecuteEx per manifest.runAsAdmin)
+        state.set({ kind: 'launching', game: info });
+        try {
+          proc = await launchGame(manifest);
+        } catch (cause) {
+          this.failLaunch(info, `failed to launch the game: ${describe(cause)}`);
           return;
         }
-        since = Date.now();
-        state.set({ kind: 'running', game: info, since });
-        log.info(`[launch] running id=${manifest.raw.id} pid=${proc.pid}`);
-        await waitForExit(proc, abort.signal);
-        log.info(`[launch] exited id=${manifest.raw.id} pid=${proc.pid}`);
+        if (watchProcesses !== undefined && watchProcesses.length > 0) {
+          const { started } = await waitForWatchedStart(
+            proc.pid,
+            watchProcesses,
+            manifest.raw.launchTimeoutSec,
+            abort.signal,
+          );
+          if (!started) {
+            // The user closed the launcher without playing, or the game never became visible (often an
+            // elevated/anticheat launcher — see README). Neither a failure nor a play session.
+            this.abandonWatchedLaunch(info);
+            return;
+          }
+          // The watched game is up: start the clock now (more accurate than the launcher's spawn time).
+          since = Date.now();
+          state.set({ kind: 'running', game: info, since });
+          log.info(`[launch] running (watched) id=${manifest.raw.id} watch=${watchProcesses.join(',')}`);
+          await waitForWatchedExit(watchProcesses, abort.signal);
+          log.info(`[launch] exited (watched) id=${manifest.raw.id}`);
+        } else {
+          const started = await waitForStart(proc, manifest.raw.launchTimeoutSec, abort.signal);
+          if (!started) {
+            this.failLaunch(info, 'the game did not start (process wait timed out)');
+            return;
+          }
+          since = Date.now();
+          state.set({ kind: 'running', game: info, since });
+          log.info(`[launch] running id=${manifest.raw.id} pid=${proc.pid}`);
+          await waitForExit(proc, abort.signal);
+          log.info(`[launch] exited id=${manifest.raw.id} pid=${proc.pid}`);
+        }
       }
 
       // 5. game closed → write stats to the PC (source of truth)
@@ -510,7 +671,7 @@ export class GameController {
       await this.performSyncOut(manifest, updatedStats);
 
       // 7. done
-      state.set({ kind: 'ready', game: updatedInfo });
+      this.enterReady(updatedInfo);
       window.showAndFocus();
     } catch (cause) {
       if (cause instanceof LaunchAbortedError) return; // application is shutting down
@@ -571,7 +732,7 @@ export class GameController {
       const currentStats = await stats.read(manifest.raw.id);
       const installedInfo = await this.buildGameInfo(manifest, currentStats);
       log.info(`[install] completed id=${manifest.raw.id} dir="${install.dir}"`);
-      state.set({ kind: 'ready', game: installedInfo });
+      this.enterReady(installedInfo);
       window.showAndFocus();
     } catch (cause) {
       if (cause instanceof LaunchAbortedError) return; // aborted by shutdown or a card swap (E1/E2)
@@ -610,7 +771,7 @@ export class GameController {
    */
   private failInstall(game: GameInfo, message: string): void {
     log.warn(`[install] failed: ${message}`);
-    this.deps.state.set({ kind: 'ready', game });
+    this.enterReady(game);
     this.deps.window.showAndFocus();
     this.sendError(message);
   }
@@ -670,7 +831,7 @@ export class GameController {
       const currentStats = await stats.read(manifest.raw.id);
       const updatedInfo = await this.buildGameInfo(manifest, currentStats);
       log.info(`[uninstall] completed id=${manifest.raw.id} dir="${install.dir}"`);
-      state.set({ kind: 'ready', game: updatedInfo });
+      this.enterReady(updatedInfo);
       window.showAndFocus();
     } catch (cause) {
       if (cause instanceof LaunchAbortedError) return; // aborted by shutdown or a card swap (E1/E2)
@@ -690,7 +851,7 @@ export class GameController {
    */
   private failUninstall(game: GameInfo, message: string): void {
     log.warn(`[uninstall] failed: ${message}`);
-    this.deps.state.set({ kind: 'ready', game });
+    this.enterReady(game);
     this.deps.window.showAndFocus();
     this.sendError(message);
   }
@@ -709,7 +870,7 @@ export class GameController {
    */
   private failLaunch(game: GameInfo, message: string): void {
     log.warn(`[launch] failed: ${message}`);
-    this.deps.state.set({ kind: 'ready', game });
+    this.enterReady(game);
     this.deps.window.showAndFocus();
     this.sendError(message);
   }
@@ -724,13 +885,14 @@ export class GameController {
   private abandonWatchedLaunch(game: GameInfo): void {
     log.info('[launch] watched game never appeared — returning without recording a session');
     if (!this.cardPresent) {
+      this.stopSteamInstallWatch();
       this.current = null;
       this.setAudio(null);
       this.deps.state.set({ kind: 'idle' });
       this.deps.window.hide();
       return;
     }
-    this.deps.state.set({ kind: 'ready', game });
+    this.enterReady(game);
     this.deps.window.showAndFocus();
   }
 
@@ -760,14 +922,30 @@ export class GameController {
 
   private async buildGameInfo(manifest: ResolvedManifest, stats: Stats): Promise<GameInfo> {
     const heroImageDataUrl = await this.readHeroDataUrl(manifest.heroImagePath);
-    // E6: requiresInstall/canUninstall are computed here from ONE existence check so every caller
-    // (onInsert, the post-install rebuild, the post-uninstall rebuild) gets consistent values.
-    // `installed` (install mode AND the executable present) splits into requiresInstall = install &&
-    // !installed and canUninstall = installed (installed already implies install mode).
-    const installed =
-      manifest.install !== undefined && (await fse.pathExists(manifest.executablePath));
-    const requiresInstall = manifest.install !== undefined && !installed;
-    const canUninstall = installed;
+    // Three mutually-exclusive modes decide requiresInstall/canUninstall/installVia. Kept as an EXPLICIT
+    // 3-way branch (not the old `install !== undefined && !installed` formula, which gives false for a
+    // steam game and would always show "Play"). executablePath is only read by pathExists in the
+    // install/normal branches, where it is real (in steam mode it is '' and we never reach that read).
+    let requiresInstall: boolean;
+    let canUninstall: boolean;
+    let installVia: 'steam' | undefined;
+    if (manifest.steam !== undefined) {
+      // Steam mode: "installed" is Steam's own .acf state; uninstall is managed in Steam (never here).
+      requiresInstall = !(await steamGameInstalled(manifest.steam.appid));
+      canUninstall = false;
+      installVia = 'steam';
+    } else if (manifest.install !== undefined) {
+      // Card-install mode: installed ⇔ the resolved executable exists; that also enables Uninstall.
+      const installed = await fse.pathExists(manifest.executablePath);
+      requiresInstall = !installed;
+      canUninstall = installed;
+      installVia = undefined;
+    } else {
+      // Normal card game: always ready to play, nothing to uninstall.
+      requiresInstall = false;
+      canUninstall = false;
+      installVia = undefined;
+    }
     return {
       id: manifest.raw.id,
       title: manifest.raw.title,
@@ -777,6 +955,7 @@ export class GameController {
       requiresInstall,
       canUninstall,
       ...(manifest.install !== undefined ? { installDir: manifest.install.dir } : {}),
+      ...(installVia !== undefined ? { installVia } : {}),
       ...(heroImageDataUrl !== undefined ? { heroImageDataUrl } : {}),
     };
   }

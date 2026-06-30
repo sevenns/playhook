@@ -54,6 +54,8 @@ const CONFIRM_TEXT: Readonly<Record<ConfirmMode, string>> = {
   install: 'Do you want to install game?',
   uninstall: 'Do you want to uninstall game from your PC?',
 };
+// Steam-mode install confirm: the action opens Steam (no card path / silent-mode note applies).
+const STEAM_INSTALL_TEXT = 'Open Steam to install this game?';
 // Fallback wallpaper (data URL from main) for the empty / idle screen, and its cached palette.
 let wallpaperUrl: string | null = null;
 let wallpaperPalette: Palette | null | undefined;
@@ -287,8 +289,17 @@ function openConfirm(mode: ConfirmMode): void {
   closeError();
   confirmMode = mode;
   confirmPopup.dataset['mode'] = mode; // drives the description's visibility (install only)
-  confirmMessage.textContent = CONFIRM_TEXT[mode];
-  if (mode === 'install') confirmPath.textContent = game.installDir ?? '';
+  // Steam install has no card path and no silent-mode note: a more specific CSS selector
+  // (data-install-via='steam') hides the description, and the copy differs.
+  const isSteamInstall = mode === 'install' && game.installVia === 'steam';
+  if (isSteamInstall) {
+    confirmPopup.dataset['installVia'] = 'steam';
+  } else {
+    delete confirmPopup.dataset['installVia'];
+  }
+  confirmMessage.textContent = isSteamInstall ? STEAM_INSTALL_TEXT : CONFIRM_TEXT[mode];
+  // Card path only for a card-installer game (empty for steam — there is no install dir).
+  if (mode === 'install') confirmPath.textContent = isSteamInstall ? '' : (game.installDir ?? '');
   confirmOpen = true;
   confirmPopup.classList.add('is-open');
   confirmPopup.setAttribute('aria-hidden', 'false');

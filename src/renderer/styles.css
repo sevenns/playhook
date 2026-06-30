@@ -462,6 +462,11 @@ body {
 #confirm-popup[data-mode='install'] .confirm-description {
   display: block;
 }
+/* Steam install has no card path / silent-mode note. One extra attribute → higher specificity than the
+   rule above, so it wins and hides the description for the steam variant. */
+#confirm-popup[data-mode='install'][data-install-via='steam'] .confirm-description {
+  display: none;
+}
 
 /* The path flows inline at the end of the description (same light style as the mockup), but is
    selectable & copyable (overrides the global no-select) in case the installer needs it typed in. */

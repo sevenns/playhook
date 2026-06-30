@@ -38,6 +38,18 @@ export interface InstallManifest {
 }
 
 /**
+ * Optional `steam` block in `game.json` (Steam mode).
+ * When present, the card is just a POINTER to a Steam app (by appid) — it carries no game files,
+ * only the manifest, cover art and optional saves. Launch/install go through `steam://` URIs
+ * (shell.openExternal), and "installed" is decided by Steam's own `.acf` state — NOT by a file on
+ * the card. A separate backend from install mode (no card installer, no app-controlled dir).
+ */
+export interface SteamManifest {
+  /** The Steam application id. For base games `rungameid == appid`. */
+  readonly appid: number;
+}
+
+/**
  * Raw `game.json` manifest after zod-schema validation (section 3a).
  * The executable/heroImage/saveOnCard paths are relative to the SD root;
  * pcSavePath is absolute with an env prefix from the whitelist.
@@ -46,7 +58,8 @@ export interface GameManifest {
   readonly schemaVersion: 1;
   readonly id: string;
   readonly title: string;
-  readonly executable: string;
+  /** Card-relative path to the game/launcher .exe. Omitted in Steam mode (launch goes via steam://). */
+  readonly executable?: string;
   readonly args: readonly string[];
   /** Launch the .exe elevated (UAC "runas") for executables whose manifest requires administrator. */
   readonly runAsAdmin: boolean;
@@ -67,6 +80,12 @@ export interface GameManifest {
    * relative to the install directory (controlled by the app), not the card root. See InstallManifest.
    */
   readonly install?: InstallManifest;
+  /**
+   * Optional Steam mode: when set, the card is a pointer to a Steam app (by appid) and there are no
+   * game files on the card — launch/install go through `steam://` URIs. Mutually exclusive with
+   * `install`/`executable` and requires `watchProcesses` (enforced by the schema). See SteamManifest.
+   */
+  readonly steam?: SteamManifest;
   /** Optional per-game UI sound effects (card-relative paths). Missing slots are silent. */
   readonly sounds?: SoundManifest;
   /** Optional looping background music (card-relative path), played while the window is visible. */
@@ -100,6 +119,11 @@ export interface ResolvedManifest {
    * The effective launch target. In install mode this is `<installDir>/<executable>` (and `cwd` its
    * dirname) — it may NOT exist yet (that is exactly the "not installed" state). For a normal game it
    * is `<root>/<executable>`, verified to exist at read time.
+   *
+   * In Steam mode there is no card executable, so both are empty strings (`''`). They are NEVER read
+   * in Steam mode: every consumer (launchGame, pollForExecutable, the buildGameInfo existence check)
+   * branches on `steam` first. Kept as required `string` on purpose — making them optional would ripple
+   * type errors into the hot normal/install paths whose only fix is a non-null assertion (banned).
    */
   readonly executablePath: string;
   readonly cwd: string;
@@ -119,6 +143,10 @@ export interface ResolvedManifest {
     readonly args: readonly string[];
     /** The install directory the app controls: `%LOCALAPPDATA%\playhook\games\<id>`. */
     readonly dir: string;
+  };
+  /** Resolved Steam descriptor (Steam mode only). When present, launch/install go through steam://. */
+  readonly steam?: {
+    readonly appid: number;
   };
 }
 
@@ -164,24 +192,31 @@ export interface GameInfo {
   readonly totalPlaySeconds: number;
   readonly launchCount: number;
   /**
-   * Install mode: true when the manifest has an `install` block and the resolved `executable` does
-   * not exist yet on disk. Drives the "Install" vs "Play" button in the renderer.
+   * True when the game is not yet usable and the button should read "Install" instead of "Play":
+   * either an install-mode game whose resolved `executable` doesn't exist yet on disk, OR a Steam-mode
+   * game that isn't fully installed in Steam (`.acf` state). False for an ordinary card game and for an
+   * already-installed install/Steam game. NOTE: this is NO LONGER equivalent to "has an install block".
    */
   readonly requiresInstall: boolean;
   /**
-   * Install mode AND the game is installed (the resolved executable exists). Drives the "Uninstall"
-   * button, which is shown only for an installed install-mode game. Mutually exclusive with
-   * `requiresInstall` (both require install mode): a separate field is needed because by
-   * `requiresInstall` alone an installed install-game (`requiresInstall=false`) is indistinguishable
-   * from an ordinary game (`requiresInstall=false`).
+   * Install-mode (card installer) AND the game is installed (the resolved executable exists). Drives
+   * the "Uninstall" button, shown only for an installed install-mode game. Steam-mode games NEVER set
+   * this (uninstall is managed in Steam itself) — so it is no longer mutually exclusive with
+   * `requiresInstall` across all modes; the relation only holds within card-install mode.
    */
   readonly canUninstall: boolean;
   /**
-   * Install mode only: the app-controlled install directory (`%LOCALAPPDATA%\playhook\games\<id>`).
-   * Surfaced to the renderer so the install-confirmation popup can show the destination path — handy
-   * to copy if the installer happens to open a non-silent directory picker. Undefined for normal games.
+   * Install mode (card installer) only: the app-controlled install directory
+   * (`%LOCALAPPDATA%\playhook\games\<id>`). Surfaced so the install-confirmation popup can show the
+   * destination path — handy to copy if the installer opens a non-silent picker. Undefined otherwise.
    */
   readonly installDir?: string;
+  /**
+   * How the game is installed/launched when `requiresInstall` is true. `'steam'` → the install action
+   * opens `steam://install/<appid>` (no card path, no silent-mode note). Undefined → an ordinary card
+   * game or a card-installer game. Lets the renderer pick the right confirm copy.
+   */
+  readonly installVia?: 'steam';
 }
 
 /** The flow state machine (discriminated union, section 4). */
