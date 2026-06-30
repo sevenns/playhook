@@ -23,6 +23,7 @@ import { readManifest, type ManifestEnv } from './manifest';
 import { syncDir } from './save-sync';
 import {
   launchGame,
+  launchInstaller,
   waitForExit,
   waitForStart,
   waitForWatchedExit,
@@ -83,11 +84,20 @@ function describe(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
 }
 
+const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Grace-poll cadence after the installer exits, waiting for the game executable to appear (C1).
+const INSTALL_POLL_INTERVAL_MS = 1000;
+
 export class GameController {
   private current: ResolvedManifest | null = null;
   private cardPresent = false;
   private launchInFlight = false;
   private abort: AbortController | null = null;
+  // A card swapped in WHILE a launch/install was in flight (E1): DriveWatcher can swap without an
+  // empty tick, so we stash the new root, abort the in-flight sequence, and replay onInsert from its
+  // finally (after launchInFlight clears) — otherwise the aborted sequence could set state over the new card.
+  private pendingRoot: string | null = null;
   // Audio for the current card, sent on its own channel (not on every AppState) — see AudioAssets.
   private currentAudio: AudioAssets | null = null;
   // Bundled fallback wallpaper as a data URL: undefined = not read yet, null = unavailable.
@@ -134,6 +144,14 @@ export class GameController {
   // ── Reaction to card insertion ───────────────────────────────────────────
 
   private async onInsert(root: string): Promise<void> {
+    // E1: a card was swapped in mid-flight (no empty tick). Don't process it now — that would race the
+    // in-flight sequence. Stash it, abort the current flow; its finally replays this once it unwinds.
+    if (this.launchInFlight) {
+      log.info(`[insert] card swapped during launch/install — deferring root="${root}"`);
+      this.pendingRoot = root;
+      this.abort?.abort();
+      return;
+    }
     this.cardPresent = true;
     log.info(`[insert] card detected at root="${root}"`);
     // Documents is resolved via the system Known Folder API (the same one the game uses),
@@ -196,9 +214,12 @@ export class GameController {
     if (
       kind === 'running' ||
       kind === 'launching' ||
+      kind === 'installing' ||
       kind === 'syncing-in' ||
       kind === 'syncing-out'
     ) {
+      // During install, removal is also expected (A5): the installer reads from the card, so yanking
+      // it makes the install fail → <exe> won't appear → we stay on "Install"; next attempt pre-cleans.
       return;
     }
     // ready / error / idle → no card, hide the window.
@@ -217,7 +238,13 @@ export class GameController {
     if (snapshot.kind !== 'ready' || this.launchInFlight) return;
     const manifest = this.current;
     if (manifest === null) return;
-    void this.runLaunchSequence(manifest, snapshot.game);
+    // Install mode + not yet installed → run the installer; otherwise it's an ordinary launch
+    // (this includes a fully-installed game, whose executable now exists → requiresInstall=false).
+    if (manifest.install !== undefined && snapshot.game.requiresInstall) {
+      void this.runInstallSequence(manifest, snapshot.game);
+    } else {
+      void this.runLaunchSequence(manifest, snapshot.game);
+    }
   }
 
   private async runLaunchSequence(manifest: ResolvedManifest, info: GameInfo): Promise<void> {
@@ -308,7 +335,107 @@ export class GameController {
       proc?.dispose();
       this.launchInFlight = false;
       this.abort = null;
+      // Replay a card that was swapped in mid-flight (E1), now that launchInFlight has cleared.
+      this.resumePendingInsert();
     }
+  }
+
+  /**
+   * Runs the installer for an install-mode game that isn't installed yet (mirrors runLaunchSequence's
+   * infrastructure: launchInFlight/abort, the LaunchAbortedError guard, the pendingRoot replay).
+   * Pre-cleans the install dir (C1), runs the installer silently, then grace-polls for the executable —
+   * on success the button becomes "Play"; otherwise we stay on "Install" and surface the reason.
+   */
+  private async runInstallSequence(manifest: ResolvedManifest, info: GameInfo): Promise<void> {
+    const install = manifest.install;
+    if (install === undefined) return; // defensive: onLaunchRequested only calls this in install mode
+    const { state, window, stats } = this.deps;
+    this.launchInFlight = true; // E3: set/cleared explicitly, like runLaunchSequence
+    const abort = new AbortController();
+    this.abort = abort;
+    let proc: GameProcess | null = null;
+    try {
+      state.set({ kind: 'installing', game: info });
+
+      // Pre-clean (C1): a partial install left by a previous failed attempt could carry a stale <exe> →
+      // a bogus "Play". We're (re)installing anyway, so a clean directory is safe.
+      await fse.remove(install.dir);
+
+      try {
+        proc = await launchInstaller(install);
+      } catch (cause) {
+        this.failInstall(info, `failed to start the installer: ${describe(cause)}`);
+        return;
+      }
+
+      // Wait for the installer to exit, then grace-poll for the executable: some installers (often
+      // custom wrappers) fork a child and exit early, so <exe> may appear shortly AFTER waitForExit.
+      await waitForExit(proc, abort.signal);
+      const installed = await this.pollForExecutable(
+        manifest.executablePath,
+        manifest.raw.launchTimeoutSec,
+        abort.signal,
+      );
+      if (!installed) {
+        this.failInstall(info, 'installation did not complete (the game executable did not appear)');
+        return;
+      }
+
+      // Installed: rebuild GameInfo so requiresInstall recomputes to false (the executable now exists),
+      // flipping the button back to "Play". The next press launches normally from the install dir.
+      const currentStats = await stats.read(manifest.raw.id);
+      const installedInfo = await this.buildGameInfo(manifest, currentStats);
+      log.info(`[install] completed id=${manifest.raw.id} dir="${install.dir}"`);
+      state.set({ kind: 'ready', game: installedInfo });
+      window.showAndFocus();
+    } catch (cause) {
+      if (cause instanceof LaunchAbortedError) return; // aborted by shutdown or a card swap (E1/E2)
+      this.failInstall(info, describe(cause));
+    } finally {
+      proc?.dispose();
+      this.launchInFlight = false;
+      this.abort = null;
+      this.resumePendingInsert();
+    }
+  }
+
+  /**
+   * Polls for the game executable to appear within `timeoutSec` (grace window after the installer
+   * exits, C1). Throws LaunchAbortedError if aborted, so a mid-install card swap unwinds WITHOUT
+   * setting state over the new card (E1) — never returns false on abort.
+   */
+  private async pollForExecutable(
+    executablePath: string,
+    timeoutSec: number,
+    signal: AbortSignal,
+  ): Promise<boolean> {
+    const deadline = Date.now() + timeoutSec * 1000;
+    for (;;) {
+      if (signal.aborted) throw new LaunchAbortedError();
+      if (await fse.pathExists(executablePath)) return true;
+      if (Date.now() >= deadline) return false;
+      await delay(INSTALL_POLL_INTERVAL_MS);
+    }
+  }
+
+  /**
+   * An install attempt failed: return to the 'ready' screen with the SAME info (its executable still
+   * doesn't exist → requiresInstall stays true → the button remains "Install") and surface the reason.
+   * Mirrors failLaunch; the next attempt pre-cleans the install dir.
+   */
+  private failInstall(game: GameInfo, message: string): void {
+    log.warn(`[install] failed: ${message}`);
+    this.deps.state.set({ kind: 'ready', game });
+    this.deps.window.showAndFocus();
+    this.sendError(message);
+  }
+
+  /** Replays a card insertion deferred during an in-flight launch/install (E1). No-op if none pending. */
+  private resumePendingInsert(): void {
+    const root = this.pendingRoot;
+    if (root === null) return;
+    this.pendingRoot = null;
+    void this.onInsert(root);
   }
 
   /**
@@ -368,12 +495,17 @@ export class GameController {
 
   private async buildGameInfo(manifest: ResolvedManifest, stats: Stats): Promise<GameInfo> {
     const heroImageDataUrl = await this.readHeroDataUrl(manifest.heroImagePath);
+    // E6: requiresInstall is computed here so every caller (onInsert and the post-install rebuild)
+    // gets a consistent value — install mode AND the resolved executable not present on disk yet.
+    const requiresInstall =
+      manifest.install !== undefined && !(await fse.pathExists(manifest.executablePath));
     return {
       id: manifest.raw.id,
       title: manifest.raw.title,
       lastPlayedAt: stats.lastPlayedAt,
       totalPlaySeconds: stats.totalPlaySeconds,
       launchCount: stats.launchCount,
+      requiresInstall,
       ...(heroImageDataUrl !== undefined ? { heroImageDataUrl } : {}),
     };
   }

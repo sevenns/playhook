@@ -16,9 +16,18 @@
            the Info button (game screens) or the Hide button (empty / idle screen). -->
       <footer id="bottom-bar">
         <div class="bar-content">
-          <button id="play-button" class="circle-button" type="button" aria-label="Play">
+          <button id="play-button" class="circle-button" type="button" aria-label="Play" data-action="play">
             <svg class="icon-play" viewBox="0 0 36 48" aria-hidden="true">
               <path d="M2 2 L34 24 L2 46 Z" />
+            </svg>
+            <!-- Install mode: gear-over-tray icon, shown instead of the play triangle when the game
+                 isn't installed yet (toggled via the button's data-action). -->
+            <svg class="icon-install" viewBox="0 0 48 48" aria-hidden="true">
+              <path d="M7.07715 33.1289V39.2832C7.07723 40.1308 7.76612 40.8212 8.61523 40.8213H39.3848C40.2339 40.8212 40.9228 40.1308 40.9229 39.2832V33.1289H44V39.2832C43.9999 41.8308 41.9323 43.8984 39.3848 43.8984H8.61523C6.06766 43.8984 4.00008 41.8308 4 39.2832V33.1289H7.07715Z" />
+              <path
+                fill-rule="evenodd"
+                d="M25.8799 4L26.6738 8.52441C27.7568 8.79209 28.7769 9.22311 29.7061 9.78613L33.4355 7.10449L36.1367 9.80469L33.4863 13.583C34.0447 14.5122 34.4665 15.5243 34.7373 16.5996L39.2832 17.3418V21.165L34.7354 21.96C34.4677 23.0383 34.0451 24.0523 33.4883 24.9814L36.1787 28.7188L33.4785 31.4219L29.708 28.7734C28.7788 29.3381 27.7601 29.7681 26.6816 30.042L25.8799 34.5664H22.0586L21.3076 30.0527C20.2217 29.7866 19.2019 29.3602 18.2666 28.7988L14.5215 31.4199L11.8203 28.7168L14.4707 25.0107C13.9046 24.0723 13.4739 23.0493 13.2031 21.957L8.7168 21.1631V17.3418L13.208 16.5957C13.4818 15.5036 13.9105 14.4817 14.4766 13.5449L11.8613 9.80469L14.5635 7.10449L18.2812 9.75977C19.2136 9.19977 20.2371 8.7769 21.3232 8.51074L22.0586 4H25.8799ZM24 13.9551C21.057 13.9551 18.6709 16.3417 18.6709 19.2832C18.671 22.2277 21.057 24.6122 24 24.6123C26.943 24.6123 29.3296 22.2278 29.3281 19.2832C29.3281 16.3417 26.9431 13.9551 24 13.9551Z"
+              />
             </svg>
             <span class="loader" aria-hidden="true"></span>
           </button>

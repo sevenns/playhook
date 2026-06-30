@@ -16,10 +16,11 @@
 //
 // Limitation (R4): from a non-elevated app, `tasklist` does NOT see an elevated process — that is exactly
 // why the elevated path watches by HANDLE instead. For a normal direct .exe we assume the rights suffice.
+import path from 'node:path';
 import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import koffi from 'koffi';
-import { type ResolvedManifest } from '../shared/types';
+import { type InstallManifest, type LaunchTarget, type ResolvedManifest } from '../shared/types';
 
 const execFileAsync = promisify(execFile);
 
@@ -216,14 +217,31 @@ function buildParameters(args: readonly string[]): string {
   return args.map(quoteArg).join(' ');
 }
 
-/** Normal launch: spawn the .exe and watch by pid via tasklist. Behaviour is 1:1 with the old code. */
-async function launchNormal(manifest: ResolvedManifest): Promise<GameProcess> {
+/**
+ * How the OS command line is formed — a game and a (pre-quoted, silent) installer differ:
+ * - `verbatim`: the args are FINAL tokens, passed through without Node/CommandLineToArgvW quoting
+ *   (the installer family's quoting is already baked into them by buildInstallerArgs).
+ * - `hide`: hide the spawned process's console window (silent install — there is no window).
+ */
+interface LaunchMode {
+  readonly verbatim: boolean;
+  readonly hide: boolean;
+}
+
+const GAME_MODE: LaunchMode = { verbatim: false, hide: false };
+const INSTALLER_MODE: LaunchMode = { verbatim: true, hide: true };
+
+/** Normal launch: spawn the file and watch by pid via tasklist. Behaviour for games is 1:1 with the old code. */
+async function launchNormal(target: LaunchTarget, mode: LaunchMode): Promise<GameProcess> {
   return new Promise<GameProcess>((resolve, reject) => {
-    const child = spawn(manifest.executablePath, [...manifest.raw.args], {
-      cwd: manifest.cwd,
+    const child = spawn(target.file, [...target.args], {
+      cwd: target.cwd,
       detached: false,
       stdio: 'ignore',
-      windowsHide: false,
+      windowsHide: mode.hide,
+      // For the installer the args are pre-quoted final tokens (e.g. NSIS `/D=` unquoted, Inno
+      // `/DIR="..."` with inner quotes): verbatim stops Node from re-quoting and joins them as-is.
+      windowsVerbatimArguments: mode.verbatim,
     });
     child.once('error', reject);
     child.once('spawn', () => {
@@ -250,22 +268,25 @@ async function launchNormal(manifest: ResolvedManifest): Promise<GameProcess> {
  * .async() is callback-style and GetLastError isn't readable from a worker thread; the UAC dialog is a
  * few seconds and gamepad input is ignored outside `ready`, so the brief block is acceptable.
  */
-function launchElevated(manifest: ResolvedManifest): GameProcess {
+function launchElevated(target: LaunchTarget, mode: LaunchMode): GameProcess {
   if (process.platform !== 'win32') {
     throw new Error('elevated launch (runAsAdmin) is Windows-only');
   }
   const shell = loadShell();
   const kernel = loadKernel();
 
-  const args = manifest.raw.args;
+  const args = target.args;
+  // Game args are logical → CommandLineToArgvW-quoted; installer args are final tokens (already
+  // quoted per the installer family) → joined raw, so we don't double-quote `/DIR="..."` etc.
+  const parameters = mode.verbatim ? args.join(' ') : buildParameters(args);
   const info: ShellExecuteInfo = {
     cbSize: koffi.sizeof('SHELLEXECUTEINFOW'),
     fMask: SEE_MASK_NOCLOSEPROCESS,
     hwnd: null,
     lpVerb: 'runas',
-    lpFile: manifest.executablePath,
-    lpParameters: args.length > 0 ? buildParameters(args) : null,
-    lpDirectory: manifest.cwd,
+    lpFile: target.file,
+    lpParameters: args.length > 0 ? parameters : null,
+    lpDirectory: target.cwd,
     nShow: SW_SHOWNORMAL,
     hInstApp: null,
     lpIDList: null,
@@ -299,12 +320,64 @@ function launchElevated(manifest: ResolvedManifest): GameProcess {
   };
 }
 
-/** Launches the .exe (elevated or normal per the manifest) and returns a GameProcess. Throws on failure. */
-export async function launchGame(manifest: ResolvedManifest): Promise<GameProcess> {
-  if (manifest.raw.runAsAdmin) {
-    return launchElevated(manifest);
+/** Dispatches a LaunchTarget to the elevated (UAC) or normal backend per `target.runAsAdmin`. */
+async function launch(target: LaunchTarget, mode: LaunchMode): Promise<GameProcess> {
+  if (target.runAsAdmin) {
+    return launchElevated(target, mode);
   }
-  return launchNormal(manifest);
+  return launchNormal(target, mode);
+}
+
+/** Launches the game .exe (elevated or normal per the manifest) and returns a GameProcess. Throws on failure. */
+export async function launchGame(manifest: ResolvedManifest): Promise<GameProcess> {
+  const target: LaunchTarget = {
+    file: manifest.executablePath,
+    args: manifest.raw.args,
+    cwd: manifest.cwd,
+    runAsAdmin: manifest.raw.runAsAdmin,
+  };
+  return launch(target, GAME_MODE);
+}
+
+/**
+ * Builds the FINAL installer argument tokens for a silent install into `dir`, with each family's
+ * quoting baked in (so they are passed verbatim, never re-quoted by Node/CommandLineToArgvW):
+ * - `nsis`  → `/S` … `/D=<dir>` — `/D=` MUST be last and UNQUOTED (NSIS reads everything after it,
+ *   to end of line, as the path — even with spaces).
+ * - `inno`  → `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR="<dir>"` … — Inno needs the path quoted.
+ * - `custom`→ the card author's own args, with `{dir}` substituted; they own the quoting/flags.
+ * Extra `customArgs` for nsis/inno are appended (after the silent flags, before the trailing `/D=` for nsis).
+ */
+function buildInstallerArgs(
+  type: InstallManifest['type'],
+  dir: string,
+  customArgs: readonly string[],
+): string[] {
+  switch (type) {
+    case 'nsis':
+      return ['/S', ...customArgs, `/D=${dir}`];
+    case 'inno':
+      return ['/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', `/DIR="${dir}"`, ...customArgs];
+    case 'custom':
+      return customArgs.map((arg) => arg.replaceAll('{dir}', dir));
+  }
+}
+
+/**
+ * Launches the installer silently, feeding it the app-controlled install directory through the
+ * family's dir-key. cwd is the installer's own folder on the card (the install dir may not exist yet —
+ * it was just pre-cleaned, and the installer creates it). Returns a GameProcess; throws on failure.
+ */
+export async function launchInstaller(
+  install: NonNullable<ResolvedManifest['install']>,
+): Promise<GameProcess> {
+  const target: LaunchTarget = {
+    file: install.installerPath,
+    args: buildInstallerArgs(install.type, install.dir, install.args),
+    cwd: path.dirname(install.installerPath),
+    runAsAdmin: install.runAsAdmin,
+  };
+  return launch(target, INSTALLER_MODE);
 }
 
 /**

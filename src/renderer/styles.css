@@ -184,9 +184,27 @@ body {
   transform: translateX(calc(4 * var(--px)));
 }
 
+.icon-install {
+  width: calc(40 * var(--px));
+  height: calc(40 * var(--px));
+  fill: currentColor;
+}
+
+/* The circle button shows ONE icon at a time, chosen by its data-action (Play vs Install). */
+.icon-install {
+  display: none;
+}
+#play-button[data-action='install'] .icon-play {
+  display: none;
+}
+#play-button[data-action='install'] .icon-install {
+  display: block;
+}
+
 /* Icons don't intercept pointer events, so hover/click target the button itself (otherwise the
    global `* { cursor: default }` would override the button's pointer cursor over the icon). */
 .icon-play,
+.icon-install,
 .icon-info,
 .icon-hide,
 .loader {
@@ -252,7 +270,10 @@ body {
   }
 }
 
-#app[data-phase='busy'] .icon-play {
+/* While busy (launch / install flow) neither action icon shows — the loader takes over. Declared
+   after the data-action swap so it wins at equal specificity. */
+#app[data-phase='busy'] .icon-play,
+#app[data-phase='busy'] .icon-install {
   display: none;
 }
 #app[data-phase='busy'] .loader {

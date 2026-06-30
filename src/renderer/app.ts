@@ -72,6 +72,7 @@ function phaseOf(state: AppState): Phase {
       return 'ready';
     case 'error':
       return 'error';
+    case 'installing':
     case 'syncing-in':
     case 'launching':
     case 'running':
@@ -84,6 +85,8 @@ function statusOf(state: AppState): string {
   // Plain "..." instead of the "…" glyph: in M PLUS Rounded 1c (a CJK font) the ellipsis
   // glyph is centered vertically (Japanese convention), which looks misaligned in a Latin UI.
   switch (state.kind) {
+    case 'installing':
+      return 'Installing...';
     case 'syncing-in':
       return 'Syncing saves...';
     case 'launching':
@@ -255,6 +258,16 @@ function syncMusic(): void {
   audio.setMusicPlaying(visible && !running);
 }
 
+// ── Play / Install button ───────────────────────────────────────────────────
+
+// Install mode: an uninstalled game shows "Install" instead of "Play" (the action is the same —
+// main decides install vs launch). The HTML hardcodes aria-label="Play", so we set it from JS here.
+function applyPlayButton(game: GameInfo): void {
+  const install = game.requiresInstall;
+  playButton.dataset['action'] = install ? 'install' : 'play';
+  playButton.setAttribute('aria-label', install ? 'Install' : 'Play');
+}
+
 // ── Render ──────────────────────────────────────────────────────────────────
 
 function render(state: AppState): void {
@@ -269,6 +282,7 @@ function render(state: AppState): void {
     updatePalette(game);
     titleEl.textContent = game.title;
     buildInfoPanel(game);
+    applyPlayButton(game);
   } else {
     // idle / no-game error → the empty "Insert a game card" screen (wallpaper background).
     applyEmptyScreen();

@@ -14,6 +14,34 @@ import {
   type SfxName,
 } from '../shared/types';
 
+// Install-mode block (optional). When present, the card holds an installer and `executable` is
+// resolved relative to the app-controlled install dir (see readManifest), not the card root.
+const installSchema = z
+  .object({
+    installer: z.string().min(1),
+    type: z.enum(['nsis', 'inno', 'custom']),
+    // Run the installer elevated. Forbidden for `custom` (see the refine below).
+    runAsAdmin: z.boolean().default(false),
+    // For `custom`: the full argv with exactly one {dir} token. For nsis/inno: optional extra flags.
+    args: z.array(z.string()).default([]),
+  })
+  // F3: `custom` hands argv control to the card; running THAT elevated would escalate the attack
+  // surface beyond the read-only tasklist we use today. The app builds nsis/inno args itself, so
+  // elevated is fine there.
+  .refine((v) => !(v.type === 'custom' && v.runAsAdmin), {
+    message: 'install.runAsAdmin is not allowed with type "custom"',
+    path: ['runAsAdmin'],
+  })
+  // For `custom` the app substitutes the install dir into a single {dir} token — require exactly one,
+  // so the path is always (and unambiguously) injected. nsis/inno build the dir flag themselves.
+  .refine(
+    (v) => v.type !== 'custom' || v.args.filter((arg) => arg.includes('{dir}')).length === 1,
+    {
+      message: 'install.args (type "custom") must contain exactly one token with a {dir} placeholder',
+      path: ['args'],
+    },
+  );
+
 const manifestSchema = z.object({
   schemaVersion: z.literal(1),
   id: z
@@ -51,6 +79,7 @@ const manifestSchema = z.object({
     })
     .optional(),
   backgroundMusic: z.string().min(1).optional(),
+  install: installSchema.optional(),
 });
 
 /** The sound slots resolved inside the card root (order is stable for iteration). */
@@ -132,6 +161,65 @@ function formatZodError(error: z.ZodError): string {
   return `${where}: ${first.message}`;
 }
 
+type InstallResolveResult =
+  | {
+      readonly ok: true;
+      readonly install: NonNullable<ResolvedManifest['install']>;
+      /** `<installDir>/<executable>` — the effective launch target (may not exist yet). */
+      readonly executablePath: string;
+    }
+  | { readonly ok: false; readonly message: string };
+
+/**
+ * Resolves the install-mode block: verifies the installer exists on the card, derives the
+ * app-controlled install dir `%LOCALAPPDATA%\playhook\games\<id>` (Windows-only — install mode is
+ * impossible without it, like runAsAdmin off-Windows), and resolves `executable` RELATIVE to that
+ * dir (traversal forbidden, existence NOT checked — its absence is exactly the "not installed" state).
+ */
+async function resolveInstall(
+  root: string,
+  id: string,
+  executable: string,
+  install: NonNullable<GameManifest['install']>,
+): Promise<InstallResolveResult> {
+  const installerPath = resolveInside(root, install.installer);
+  if (installerPath === null) {
+    return { ok: false, message: `installer path escapes card root: ${install.installer}` };
+  }
+  if (!(await fse.pathExists(installerPath))) {
+    return { ok: false, message: `installer not found: ${install.installer}` };
+  }
+
+  // The install root is derived straight from the env var — the same mechanism pcSavePath uses —
+  // so nothing is added to ManifestEnv. %LOCALAPPDATA% is per-user, per-machine, non-roaming and
+  // needs no admin rights. Absent (non-Windows / unusual setups) → install mode is rejected.
+  const localAppData = process.env['LOCALAPPDATA'];
+  if (localAppData === undefined || localAppData === '') {
+    return { ok: false, message: 'install mode requires %LOCALAPPDATA% (Windows only)' };
+  }
+  // `id` is already constrained to [A-Za-z0-9._-] (no separators / not . or ..) → a safe folder name.
+  const dir = path.join(localAppData, 'playhook', 'games', id);
+
+  // `executable` resolves relative to the install dir — traversal forbidden, but existence is NOT
+  // checked here (it appears only after a successful install).
+  const executablePath = resolveInside(dir, executable);
+  if (executablePath === null) {
+    return { ok: false, message: `executable path escapes install dir: ${executable}` };
+  }
+
+  return {
+    ok: true,
+    executablePath,
+    install: {
+      installerPath,
+      type: install.type,
+      runAsAdmin: install.runAsAdmin,
+      args: install.args,
+      dir,
+    },
+  };
+}
+
 /**
  * Reads and fully validates the manifest at the card root.
  * `env` carries known-folder bases resolved in main (e.g. Documents) for pcSavePath.
@@ -153,12 +241,27 @@ export async function readManifest(root: string, env: ManifestEnv): Promise<Mani
   }
   const raw: GameManifest = parsed.data;
 
-  const executablePath = resolveInside(root, raw.executable);
-  if (executablePath === null) {
-    return { ok: false, message: `executable path escapes card root: ${raw.executable}` };
-  }
-  if (!(await fse.pathExists(executablePath))) {
-    return { ok: false, message: `executable not found: ${raw.executable}` };
+  // E5 (critical branch): the meaning of `executable` depends on install mode. Keep the two paths
+  // explicit so the normal flow is provably untouched (G2).
+  let executablePath: string;
+  let installResolved: ResolvedManifest['install'];
+  if (raw.install === undefined) {
+    // Normal game: `executable` is card-relative and MUST exist on the card (unchanged behaviour).
+    const resolved = resolveInside(root, raw.executable);
+    if (resolved === null) {
+      return { ok: false, message: `executable path escapes card root: ${raw.executable}` };
+    }
+    if (!(await fse.pathExists(resolved))) {
+      return { ok: false, message: `executable not found: ${raw.executable}` };
+    }
+    executablePath = resolved;
+  } else {
+    const resolvedInstall = await resolveInstall(root, raw.id, raw.executable, raw.install);
+    if (!resolvedInstall.ok) {
+      return { ok: false, message: resolvedInstall.message };
+    }
+    installResolved = resolvedInstall.install;
+    executablePath = resolvedInstall.executablePath;
   }
 
   let heroImagePath: string | undefined;
@@ -231,6 +334,7 @@ export async function readManifest(root: string, env: ManifestEnv): Promise<Mani
     ...(pcSavePath !== undefined ? { pcSavePath } : {}),
     ...(soundPaths !== undefined ? { soundPaths } : {}),
     ...(backgroundMusicPath !== undefined ? { backgroundMusicPath } : {}),
+    ...(installResolved !== undefined ? { install: installResolved } : {}),
   };
   return { ok: true, manifest };
 }
