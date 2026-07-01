@@ -456,13 +456,16 @@ body {
   color: var(--fg);
 }
 
-/* The error message can be long; cap its width so it wraps (matches the mockup's column). */
+/* Error detail: muted, полупрозрачный белый (как на макете — alpha поверх hero), и перенос
+   произвольного текста ошибки (сырой describe(cause) может дать длинный токен без пробелов, напр.
+   путь/URL) — при right-align он иначе вылезет за правый край. */
 #error-message {
-  max-width: calc(448 * var(--px));
+  color: color-mix(in srgb, var(--fg) 75%, transparent);
+  overflow-wrap: anywhere;
 }
 
-/* Confirmation question (Install / Uninstall) — larger heading per the updated mockup. */
-.confirm-message {
+/* Popup heading (Error / Confirmation question) — larger heading per the updated mockup. */
+.popup-message {
   max-width: calc(450 * var(--px));
   font-weight: 500;
   font-size: calc(32 * var(--px));
@@ -470,21 +473,27 @@ body {
   color: var(--fg);
 }
 
-/* Install-only description with the destination path. Hidden by default; shown for data-mode='install'. */
-.confirm-description {
-  display: none;
+/* Popup detail line under the heading. Visible by default (error always shows its detail); confirm
+   scopes its own conditional visibility below. */
+.popup-detail {
+  display: block;
   max-width: calc(450 * var(--px));
   font-weight: 300;
   font-size: calc(24 * var(--px));
   line-height: calc(36 * var(--px));
   color: var(--fg);
 }
-#confirm-popup[data-mode='install'] .confirm-description {
+
+/* Install-only description with the destination path. Hidden by default; shown for data-mode='install'. */
+#confirm-popup .popup-detail {
+  display: none;
+}
+#confirm-popup[data-mode='install'] .popup-detail {
   display: block;
 }
 /* Steam install has no card path / silent-mode note. One extra attribute → higher specificity than the
    rule above, so it wins and hides the description for the steam variant. */
-#confirm-popup[data-mode='install'][data-install-via='steam'] .confirm-description {
+#confirm-popup[data-mode='install'][data-install-via='steam'] .popup-detail {
   display: none;
 }
 
@@ -497,15 +506,17 @@ body {
   cursor: text;
 }
 
-/* The confirmation panel (title + subtitle) is centered vertically on screen — unlike Info/Error,
-   which sit at a fixed top. translateY(-50%) must be kept in BOTH the closed (slid-in) and open
+/* The confirmation & error panels (title + subtitle) are centered vertically on screen — unlike Info,
+   which sits at a fixed top. translateY(-50%) must be kept in BOTH the closed (slid-in) and open
    transforms, so override them at higher specificity than the shared .popup rules. */
-#confirm-popup .popup-panel {
+#confirm-popup .popup-panel,
+#error-popup .popup-panel {
   top: 50%;
   bottom: auto;
   transform: translateY(-50%) translateX(calc(40 * var(--px)));
 }
-#confirm-popup.is-open .popup-panel {
+#confirm-popup.is-open .popup-panel,
+#error-popup.is-open .popup-panel {
   transform: translateY(-50%);
 }
 
