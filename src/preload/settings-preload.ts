@@ -30,6 +30,7 @@ const CHANNELS = {
   titleBarOverlayUpdate: 'settings:titlebar-overlay',
   appVersionRequest: 'app:version',
   appIconRequest: 'app:icon',
+  moveSoundRequest: 'app:move-sound',
   openLogs: 'app:open-logs',
   openGamesFolder: 'app:open-games-folder',
 } as const;
@@ -40,6 +41,9 @@ const api: SettingsApi = {
   },
   getAppIcon(): Promise<string> {
     return ipcRenderer.invoke(CHANNELS.appIconRequest) as Promise<string>;
+  },
+  getMoveSound(): Promise<string> {
+    return ipcRenderer.invoke(CHANNELS.moveSoundRequest) as Promise<string>;
   },
   getSettings(): Promise<AppSettings> {
     return ipcRenderer.invoke(CHANNELS.settingsRequest) as Promise<AppSettings>;

@@ -113,8 +113,26 @@ function setSliderPercent(el: HTMLElement, percent: number): void {
   (el as HTMLElement & { value?: string }).value = String(percent);
 }
 
-// Wires a volume slider: updates the live "N%" label on every input, and persists the 0..1 volume on
-// change (drag-commit) via `persist`.
+// The default "move" UI sound, loaded as a data URL (settings CSP allows media-src data:). Played as a
+// volume preview when a slider is released. Null until it loads (or if it failed to load).
+let moveSound: HTMLAudioElement | null = null;
+void window.settingsApi.getMoveSound().then((url) => {
+  if (url !== '') moveSound = new Audio(url);
+});
+
+// Plays the move sound at the slider's current level — the "how loud is this" preview.
+function previewVolume(slider: HTMLElement): void {
+  if (moveSound === null) return;
+  // Clone so overlapping releases don't cut each other off (as the game renderer does for SFX).
+  const node = moveSound.cloneNode() as HTMLAudioElement;
+  node.volume = readSliderPercent(slider) / 100;
+  void node.play().catch(() => undefined);
+}
+
+// Wires a volume slider: updates the live "N%" label on every input, persists the 0..1 volume on change
+// (drag-commit), and plays a preview at the released level on pointer-up. The preview keys off pointerup
+// (not change, which fires continuously during a drag) so it sounds once when the mouse is released; the
+// one-shot window listener catches releases even when the pointer leaves the slider.
 function wireVolumeSlider(
   slider: HTMLElement,
   valueEl: HTMLElement,
@@ -127,6 +145,9 @@ function wireVolumeSlider(
   slider.addEventListener('change', () => {
     showValue();
     persist(readSliderPercent(slider) / 100);
+  });
+  slider.addEventListener('pointerdown', () => {
+    window.addEventListener('pointerup', () => previewVolume(slider), { once: true });
   });
 }
 

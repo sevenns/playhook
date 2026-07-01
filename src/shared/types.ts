@@ -382,6 +382,8 @@ export const IPC = {
   appVersionRequest: 'app:version',
   /** settings-renderer → main (invoke): request the app icon as a data URL (for the custom title bar). */
   appIconRequest: 'app:icon',
+  /** settings-renderer → main (invoke): request the default "move" UI sound as a data URL (volume preview). */
+  moveSoundRequest: 'app:move-sound',
   /** settings-renderer → main: recolor the native title-bar overlay (caption buttons) for the theme. */
   titleBarOverlayUpdate: 'settings:titlebar-overlay',
   /** settings-renderer → main: open the log folder in the OS file manager. */
@@ -415,6 +417,8 @@ export interface RendererApi {
 export interface SettingsApi {
   getAppVersion(): Promise<string>;
   getAppIcon(): Promise<string>;
+  /** The default "move" UI sound as a data URL, played as a volume preview on slider release. */
+  getMoveSound(): Promise<string>;
   getSettings(): Promise<AppSettings>;
   setAutoUpdate(mode: AutoUpdateMode): void;
   setTheme(mode: ThemeMode): void;

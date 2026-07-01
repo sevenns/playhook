@@ -167,6 +167,7 @@ export class UpdaterService {
     });
     ipcMain.handle(IPC.appVersionRequest, (): string => app.getVersion());
     ipcMain.handle(IPC.appIconRequest, (): Promise<string> => this.readIconDataUrl());
+    ipcMain.handle(IPC.moveSoundRequest, (): Promise<string> => this.readMoveSoundDataUrl());
     // Imperative maintenance actions — the logic (paths, shell) lives in main.ts callbacks; registered
     // here only to keep every settings-window channel in one place (avoids a duplicate handler).
     ipcMain.on(IPC.openLogs, () => this.deps.openLogs());
@@ -210,6 +211,21 @@ export class UpdaterService {
       this.iconDataUrl = ''; // empty → the renderer just hides the <img>
     }
     return this.iconDataUrl;
+  }
+
+  // Default "move" UI sound, handed to the settings window as a data URL (its CSP allows `media-src
+  // data:` only) so a volume slider can play a preview at the released level. Read once and cache.
+  private moveSoundDataUrl: string | null = null;
+  private async readMoveSoundDataUrl(): Promise<string> {
+    if (this.moveSoundDataUrl !== null) return this.moveSoundDataUrl;
+    try {
+      const buffer = await fs.readFile(path.join(__dirname, '../audio/default-move.wav'));
+      this.moveSoundDataUrl = `data:audio/wav;base64,${buffer.toString('base64')}`;
+    } catch (cause) {
+      log.error('[updater] failed to read move sound:', cause);
+      this.moveSoundDataUrl = ''; // empty → the renderer just skips the preview
+    }
+    return this.moveSoundDataUrl;
   }
 
   // ── autoUpdater event mapping (§3) ─────────────────────────────────────────
