@@ -5,6 +5,9 @@
 // NOTHING (a pure side-effect bundle), so we can't take setTheme from it. Instead we use the single
 // `.`-index resolution graph — pointed `*/define.js` side-effect imports register just the elements we
 // use, and setTheme comes from the same `@fluentui/web-components` index. One FAST copy, smaller bundle.
+// MUST be first: applies the theme tokens before the fluent-* elements upgrade, so the first paint has
+// them (otherwise labels/controls render dim until the first interaction). See settings-theme-init.ts.
+import './settings-theme-init.js';
 import '@fluentui/web-components/text/define.js';
 import '@fluentui/web-components/button/define.js';
 import '@fluentui/web-components/field/define.js';
