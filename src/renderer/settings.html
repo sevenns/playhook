@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- CSP copied 1:1 from index.html (incl. media-src data:) so the settings renderer doesn't drift
+         from the game one. The Fluent bundle (settings.js) is same-origin (file://) → script-src 'self'
+         is enough; no eval/new Function/fetch in Fluent v3 or FAST 3 → no 'unsafe-eval' needed. Segoe UI
+         is a system font (no external font-src), and we use no icon fluent-* components (no icon assets). -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; img-src data:; media-src data:; style-src 'self' 'unsafe-inline'; font-src 'self'; script-src 'self';"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Playhook — Settings</title>
+    <link rel="stylesheet" href="./settings.css" />
+  </head>
+  <body>
+    <!-- Custom title bar (Windows-11-Settings style): the native title bar is hidden (main:
+         titleBarStyle 'hidden'), so we draw our own draggable strip. App icon + "Playhook (version)"
+         on the left; the native min/max/close buttons are placed on the right by the Window Controls
+         Overlay, so the right ~140px is left clear. -->
+    <header id="titlebar">
+      <img id="titlebar-icon" alt="" />
+      <span id="titlebar-title">Playhook</span>
+      <span id="titlebar-version"></span>
+    </header>
+
+    <main id="settings">
+      <!-- Updates -->
+      <section class="section">
+        <fluent-text weight="semibold" size="500" block>Updates</fluent-text>
+        <fluent-text id="update-status" block>Loading…</fluent-text>
+        <fluent-progress-bar id="update-progress" hidden></fluent-progress-bar>
+        <fluent-button id="update-action" appearance="accent" hidden></fluent-button>
+      </section>
+
+      <!-- Auto-update mode. fluent-radio has no default label slot, so each radio is wrapped in a
+           fluent-field (label after the control). The radio-group still collects them (it queries its
+           whole subtree for radios), so selection / keyboard nav keep working. -->
+      <section class="section">
+        <fluent-text weight="semibold" size="500" block>Automatic updates</fluent-text>
+        <fluent-radio-group id="auto-update" name="auto-update" orientation="vertical">
+          <fluent-field label-position="after">
+            <fluent-radio slot="input" id="au-download-install" value="download-install"></fluent-radio>
+            <label slot="label" for="au-download-install">Download and install automatically</label>
+          </fluent-field>
+          <fluent-field label-position="after">
+            <fluent-radio slot="input" id="au-download" value="download"></fluent-radio>
+            <label slot="label" for="au-download">Download automatically, install manually</label>
+          </fluent-field>
+          <fluent-field label-position="after">
+            <fluent-radio slot="input" id="au-off" value="off"></fluent-radio>
+            <label slot="label" for="au-off">Off (check manually)</label>
+          </fluent-field>
+        </fluent-radio-group>
+        <fluent-field label-position="after">
+          <fluent-switch slot="input" id="prerelease"></fluent-switch>
+          <label slot="label" for="prerelease">Receive pre-release (beta) updates</label>
+        </fluent-field>
+      </section>
+
+      <!-- Appearance / theme -->
+      <section class="section">
+        <fluent-text weight="semibold" size="500" block>Appearance</fluent-text>
+        <fluent-radio-group id="theme" name="theme" orientation="vertical">
+          <fluent-field label-position="after">
+            <fluent-radio slot="input" id="theme-system" value="system"></fluent-radio>
+            <label slot="label" for="theme-system">Match system</label>
+          </fluent-field>
+          <fluent-field label-position="after">
+            <fluent-radio slot="input" id="theme-light" value="light"></fluent-radio>
+            <label slot="label" for="theme-light">Light</label>
+          </fluent-field>
+          <fluent-field label-position="after">
+            <fluent-radio slot="input" id="theme-dark" value="dark"></fluent-radio>
+            <label slot="label" for="theme-dark">Dark</label>
+          </fluent-field>
+        </fluent-radio-group>
+      </section>
+
+      <!-- General -->
+      <section class="section">
+        <fluent-text weight="semibold" size="500" block>General</fluent-text>
+        <fluent-field label-position="after">
+          <fluent-switch slot="input" id="summon-hotkey"></fluent-switch>
+          <label slot="label" for="summon-hotkey">Show the launcher with a gamepad shortcut</label>
+        </fluent-field>
+        <fluent-text appearance="secondary" size="200" block>
+          Hold <b>Menu + View</b> on your gamepad at any time to bring the launcher to the front.
+        </fluent-text>
+      </section>
+
+      <!-- Audio -->
+      <section class="section">
+        <fluent-text weight="semibold" size="500" block>Audio</fluent-text>
+        <div class="slider-row">
+          <label for="music-volume">Music volume</label>
+          <fluent-slider id="music-volume" min="0" max="100" step="1"></fluent-slider>
+          <span id="music-volume-value" class="slider-value"></span>
+        </div>
+        <div class="slider-row">
+          <label for="sfx-volume">UI sounds volume</label>
+          <fluent-slider id="sfx-volume" min="0" max="100" step="1"></fluent-slider>
+          <span id="sfx-volume-value" class="slider-value"></span>
+        </div>
+      </section>
+
+      <!-- Advanced: rarely-needed maintenance actions (moved out of the tray). -->
+      <section class="section">
+        <fluent-text weight="semibold" size="500" block>Advanced</fluent-text>
+        <div class="button-row">
+          <fluent-button id="open-logs">Open logs</fluent-button>
+          <fluent-button id="open-games">Open games folder</fluent-button>
+          <fluent-button id="reset-defaults">Reset to defaults</fluent-button>
+        </div>
+      </section>
+    </main>
+    <script type="module" src="./settings.js"></script>
+  </body>
+</html>

@@ -1,6 +1,6 @@
 {
   "name": "playhook",
-  "version": "0.1.9-alpha.2",
+  "version": "0.1.9",
   "description": "Background launcher that detects installed game on external device, syncs saves and tracks playtime. Bring console vibes to your PC.",
   "private": true,
   "main": "dist/main/main.js",
@@ -10,14 +10,18 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "build:main": "tsc -p tsconfig.main.json",
     "build:renderer": "tsc -p tsconfig.renderer.json",
+    "build:settings": "esbuild src/renderer/settings.ts --bundle --format=esm --platform=browser --outfile=dist/renderer/settings.js",
     "build:assets": "node scripts/copy-assets.mjs",
-    "build": "npm run build:renderer && npm run build:main && npm run build:assets",
+    "build": "npm run build:renderer && npm run build:settings && npm run build:main && npm run build:assets",
     "start": "npm run build && electron .",
     "rebuild": "electron-rebuild -f -w drivelist",
     "dist": "npm run build && electron-builder",
     "postinstall": "electron-builder install-app-deps"
   },
   "dependencies": {
+    "@fluentui/web-components": "^3.0.0",
+    "@microsoft/fast-element": "^3.0.1",
+    "@microsoft/focusgroup-polyfill": "^1.5.0",
     "drivelist": "^12.0.2",
     "electron-updater": "^6.8.9",
     "fs-extra": "^11.2.0",
@@ -30,6 +34,7 @@
     "@types/node": "^20.14.0",
     "electron": "^31.0.0",
     "electron-builder": "^24.13.3",
+    "esbuild": "^0.28.1",
     "typescript": "^5.5.0"
   }
 }

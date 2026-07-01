@@ -773,6 +773,14 @@ void window.api.requestAudio().then((assets) => {
   syncMusic();
 });
 
+// Audio volumes are app-wide (set in the settings window): seed them on startup and update live.
+const applyVolumes = (volumes: { music: number; sfx: number }): void => {
+  audio.setMusicVolume(volumes.music);
+  audio.setSfxVolume(volumes.sfx);
+};
+window.api.onVolumesUpdate(applyVolumes);
+void window.api.requestVolumes().then(applyVolumes);
+
 // Hero images are delivered on their own channel (not in AppState): the renderer rotates through them
 // locally, so we never re-send this large payload on every state transition. See applyHeroAssets.
 window.api.onHeroUpdate(applyHeroAssets);

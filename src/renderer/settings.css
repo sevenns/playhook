@@ -1,0 +1,110 @@
+/* Settings window layout. Component look (colors, typography, focus) comes from Fluent v3 + the theme
+   applied at runtime via setTheme() — which publishes the theme tokens as GLOBAL CSS custom properties.
+   So the page background/text below reference those tokens and follow the light/dark theme automatically
+   (the fallbacks apply only for the split second before setTheme runs). color-scheme is set from JS per
+   effective theme. Segoe UI is the system font Fluent uses; no external fonts (font-src 'self' holds). */
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+}
+
+body {
+  background: var(--colorNeutralBackground1, #1f1f1f);
+  color: var(--colorNeutralForeground1, #ffffff);
+  font-family: 'Segoe UI', system-ui, sans-serif;
+}
+
+/* Custom title bar (native one is hidden). Sticky so it stays put while settings scroll. Draggable via
+   -webkit-app-region; the right padding keeps the title clear of the native min/max/close overlay. Its
+   background matches the page (and the overlay `color` set in settings-window.ts) so the strip is
+   seamless. */
+#titlebar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 16px;
+  padding-right: 148px;
+  background: var(--colorNeutralBackground1, #1f1f1f);
+  -webkit-app-region: drag;
+  user-select: none;
+}
+
+#titlebar-icon {
+  width: 18px;
+  height: 18px;
+  flex: none;
+}
+
+#titlebar-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--colorNeutralForeground1, #ffffff);
+}
+
+#titlebar-version {
+  font-size: 12px;
+  color: var(--colorNeutralForeground2, #adadad);
+}
+
+#settings {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  padding: 24px 28px;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+fluent-radio-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.button-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* Slider row: label + live value on the first line, the slider spanning full width below it. */
+.slider-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  column-gap: 12px;
+  row-gap: 6px;
+}
+
+.slider-row > label {
+  grid-column: 1;
+}
+
+.slider-value {
+  grid-column: 2;
+  justify-self: end;
+  color: var(--colorNeutralForeground2, #adadad);
+  font-variant-numeric: tabular-nums;
+}
+
+.slider-row > fluent-slider {
+  grid-column: 1 / -1;
+}
+
+#update-action {
+  align-self: flex-start;
+}
+
+[hidden] {
+  display: none !important;
+}

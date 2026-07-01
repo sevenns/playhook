@@ -221,7 +221,6 @@ body {
 }
 
 .circle-button:hover::after,
-.circle-button:focus-visible::after,
 .circle-button.is-focused::after {
   opacity: 1;
   animation: pulse-ring 1.1s ease-in-out infinite;
@@ -295,10 +294,19 @@ body {
 }
 
 .rect-button:hover,
-.rect-button:focus-visible,
 .rect-button.is-focused {
   background: var(--d2);
   color: var(--d1);
+}
+
+/* The launcher drives its own focus indicator via .is-focused (gamepad / arrow-key nav), so the native
+   keyboard focus ring is redundant. It also lingered as a stray outline after closing a popup with Esc:
+   the button kept DOM focus from the opening mouse click, and Esc flipped Chromium into keyboard
+   modality, painting the :focus-visible ring. Suppress it — .is-focused is the single focus visual. */
+.circle-button,
+.rect-button,
+.text-button {
+  outline: none;
 }
 
 .icon-info,
@@ -542,7 +550,6 @@ body {
 }
 
 .text-button:hover,
-.text-button:focus-visible,
 .text-button.is-focused {
   background: var(--d2);
   color: var(--d1);
