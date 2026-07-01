@@ -33,13 +33,43 @@
         <fluent-button id="update-action" appearance="accent" hidden></fluent-button>
       </section>
 
-      <!-- Auto-update mode -->
+      <!-- Auto-update mode. fluent-radio has no default label slot, so each radio is wrapped in a
+           fluent-field (label after the control). The radio-group still collects them (it queries its
+           whole subtree for radios), so selection / keyboard nav keep working. -->
       <section class="section">
         <fluent-text weight="semibold" size="500" block>Automatic updates</fluent-text>
         <fluent-radio-group id="auto-update" name="auto-update" orientation="vertical">
-          <fluent-radio value="download-install">Download and install automatically</fluent-radio>
-          <fluent-radio value="download">Download automatically, install manually</fluent-radio>
-          <fluent-radio value="off">Off (check manually)</fluent-radio>
+          <fluent-field label-position="after">
+            <fluent-radio slot="input" id="au-download-install" value="download-install"></fluent-radio>
+            <label slot="label" for="au-download-install">Download and install automatically</label>
+          </fluent-field>
+          <fluent-field label-position="after">
+            <fluent-radio slot="input" id="au-download" value="download"></fluent-radio>
+            <label slot="label" for="au-download">Download automatically, install manually</label>
+          </fluent-field>
+          <fluent-field label-position="after">
+            <fluent-radio slot="input" id="au-off" value="off"></fluent-radio>
+            <label slot="label" for="au-off">Off (check manually)</label>
+          </fluent-field>
+        </fluent-radio-group>
+      </section>
+
+      <!-- Appearance / theme -->
+      <section class="section">
+        <fluent-text weight="semibold" size="500" block>Appearance</fluent-text>
+        <fluent-radio-group id="theme" name="theme" orientation="vertical">
+          <fluent-field label-position="after">
+            <fluent-radio slot="input" id="theme-system" value="system"></fluent-radio>
+            <label slot="label" for="theme-system">Match system</label>
+          </fluent-field>
+          <fluent-field label-position="after">
+            <fluent-radio slot="input" id="theme-light" value="light"></fluent-radio>
+            <label slot="label" for="theme-light">Light</label>
+          </fluent-field>
+          <fluent-field label-position="after">
+            <fluent-radio slot="input" id="theme-dark" value="dark"></fluent-radio>
+            <label slot="label" for="theme-dark">Dark</label>
+          </fluent-field>
         </fluent-radio-group>
       </section>
     </main>

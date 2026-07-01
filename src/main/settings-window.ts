@@ -9,7 +9,7 @@
 // requestUpdateStatus() and any early push both land), detachWindow() on hide/close (so the updater
 // never pushes into a hidden/destroyed window).
 import path from 'node:path';
-import { BrowserWindow } from 'electron';
+import { BrowserWindow, nativeTheme } from 'electron';
 import { APP_NAME } from '../shared/types';
 import { type UpdaterService } from './updater';
 
@@ -32,17 +32,23 @@ export class SettingsWindow {
 
   private create(): void {
     const window = new BrowserWindow({
+      // The default 520×600 is also the MINIMUM — the window is resizable, but can't shrink below the
+      // point where the settings layout gets cramped.
       width: 520,
       height: 600,
+      minWidth: 520,
+      minHeight: 600,
       show: false,
-      // A plain, non-resizable desktop window — no game kiosk/fullscreen. autoHideMenuBar is not
-      // needed: main.ts already does Menu.setApplicationMenu(null) globally (N6).
+      // A plain desktop window — no game kiosk/fullscreen. autoHideMenuBar is not needed: main.ts
+      // already does Menu.setApplicationMenu(null) globally (N6).
       frame: true,
-      resizable: false,
+      resizable: true,
       fullscreen: false,
       title: `${APP_NAME} — Settings`,
       icon: path.join(__dirname, '../icon.ico'),
-      backgroundColor: '#101014',
+      // Pre-paint background matched to the OS theme (the renderer applies the real Fluent theme on
+      // load) — avoids a dark flash on a light system and vice-versa. `system` is the default theme.
+      backgroundColor: nativeTheme.shouldUseDarkColors ? '#1f1f1f' : '#ffffff',
       webPreferences: {
         preload: path.join(__dirname, '../preload/settings-preload.js'),
         contextIsolation: true,

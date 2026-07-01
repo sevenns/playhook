@@ -6,11 +6,14 @@
 import path from 'node:path';
 import fse from 'fs-extra';
 import { z } from 'zod';
-import { type AppSettings, type AutoUpdateMode } from '../shared/types';
+import { type AppSettings, type AutoUpdateMode, type ThemeMode } from '../shared/types';
 
 const settingsSchema = z.object({
   schemaVersion: z.literal(1),
   autoUpdate: z.enum(['download', 'download-install', 'off']),
+  // `.default` makes an older settings.json (written before the theme setting existed) migrate
+  // seamlessly: a file with autoUpdate but no theme parses fine and keeps its autoUpdate value.
+  theme: z.enum(['system', 'light', 'dark']).default('system'),
 });
 
 // Default preserves the pre-settings behaviour (silent download + install on next quit), so the
@@ -18,6 +21,7 @@ const settingsSchema = z.object({
 export const DEFAULT_SETTINGS: AppSettings = {
   schemaVersion: 1,
   autoUpdate: 'download-install',
+  theme: 'system',
 };
 
 export class AppSettingsStore {
@@ -47,6 +51,14 @@ export class AppSettingsStore {
   async setAutoUpdate(mode: AutoUpdateMode): Promise<AppSettings> {
     const current = await this.read();
     const next: AppSettings = { ...current, autoUpdate: mode };
+    await this.write(next);
+    return next;
+  }
+
+  /** Persists a new UI theme, keeping the rest of the settings intact. */
+  async setTheme(mode: ThemeMode): Promise<AppSettings> {
+    const current = await this.read();
+    const next: AppSettings = { ...current, theme: mode };
     await this.write(next);
     return next;
   }

@@ -27,7 +27,7 @@
 import { app, type BrowserWindow } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import { log } from './logger';
-import { IPC, type AutoUpdateMode, type UpdateStatus } from '../shared/types';
+import { IPC, type AutoUpdateMode, type ThemeMode, type UpdateStatus } from '../shared/types';
 import { type AppSettingsStore } from './app-settings';
 import { ipcMain } from 'electron';
 
@@ -44,9 +44,6 @@ export interface UpdaterDeps {
 export class UpdaterService {
   private status: UpdateStatus = { kind: 'idle' };
   private window: BrowserWindow | null = null;
-  // True while a user-triggered manual action (check/download) is in flight — the `error` policy uses
-  // it to decide whether a network error should surface in the UI or be logged only (I4).
-  private activeAction = false;
   // Last version reported by `update-available` — carried into the `downloading` snapshot, since the
   // download-progress event itself has no version field.
   private pendingVersion: string | null = null;
@@ -108,6 +105,13 @@ export class UpdaterService {
         })
         .catch((cause: unknown) => log.error('[updater] failed to persist auto-update mode:', cause));
     });
+    // Theme is a pure renderer concern — persist it so the choice survives a restart; nothing to apply
+    // in main (the settings renderer applies the theme live via setTheme).
+    ipcMain.on(IPC.settingsSetTheme, (_event, mode: ThemeMode) => {
+      void this.deps.settings
+        .setTheme(mode)
+        .catch((cause: unknown) => log.error('[updater] failed to persist theme:', cause));
+    });
     ipcMain.handle(IPC.appVersionRequest, (): string => app.getVersion());
   }
 
@@ -138,21 +142,28 @@ export class UpdaterService {
     });
     autoUpdater.on('error', (err) => {
       log.error('[updater] error:', err);
-      this.handleError(err);
+      this.handleError();
     });
   }
 
-  // I4: an `error` from autoUpdater is global and also catches network failures of the BACKGROUND
-  // periodic check (routine for a long-lived background app). Only surface it in the UI when it came
-  // during a manual action, OR when the current status is not a terminal, useful one — never clobber a
-  // downloaded/downloading state (the user still wants to install / see progress) with a background
-  // network blip.
-  private handleError(err: unknown): void {
-    const terminal = this.status.kind === 'downloaded' || this.status.kind === 'downloading';
-    if (this.activeAction || !terminal) {
-      const message = err instanceof Error ? err.message : String(err);
-      this.setStatus({ kind: 'error', message });
+  // We NEVER surface a raw autoUpdater error to the user — those are stack traces / HTTP 404s (e.g. a
+  // missing latest.yml on a prerelease channel) that mean nothing to them. The error is already logged
+  // above for debugging; here we resolve the UI to a friendly, non-alarming state:
+  //  • downloaded / unsupported → left untouched (a ready-to-install update / a dev build);
+  //  • downloading that fell over → offer the update again if the version is known, else "up to date";
+  //  • anything else (a failed check, idle, available) → "up to date" — the background auto-check /
+  //    autoDownload will still pick up a real update later, so this is the least-surprising message.
+  private handleError(): void {
+    if (this.status.kind === 'downloaded' || this.status.kind === 'unsupported') return;
+    if (this.status.kind === 'downloading') {
+      this.setStatus(
+        this.pendingVersion !== null
+          ? { kind: 'available', version: this.pendingVersion }
+          : { kind: 'not-available', checkedAt: Date.now() },
+      );
+      return;
     }
+    this.setStatus({ kind: 'not-available', checkedAt: Date.now() });
   }
 
   // ── Auto-update mode → electron-updater flags + timer (§4) ──────────────────
@@ -176,8 +187,10 @@ export class UpdaterService {
 
   // ── Manual actions (from the settings UI) ──────────────────────────────────
 
-  // A background check does NOT set activeAction, so a network error while a useful state is shown is
-  // logged only (see handleError). The status transitions still flow through the shared event handlers.
+  // Status transitions flow through the shared autoUpdater event handlers; both the background and the
+  // manual paths just kick off checkForUpdates and swallow the rejection (the 'error' event, fired
+  // BEFORE the promise rejects, already resolved the UI via handleError — re-handling here would double
+  // it, N7). The only difference is logging context.
   private backgroundCheck(): void {
     void autoUpdater.checkForUpdates().catch((cause: unknown) => {
       log.error('[updater] background check failed:', cause);
@@ -186,26 +199,16 @@ export class UpdaterService {
 
   check(): void {
     if (!app.isPackaged) return; // unsupported in dev — the IPC is registered but this is a no-op.
-    this.activeAction = true;
-    // The 'error' event (fired BEFORE the promise rejects) owns the status transition; this .catch only
-    // prevents an unhandled rejection and must NOT re-transition, or we'd double the error state (N7).
     void autoUpdater
       .checkForUpdates()
-      .catch((cause: unknown) => log.error('[updater] check failed:', cause))
-      .finally(() => {
-        this.activeAction = false;
-      });
+      .catch((cause: unknown) => log.error('[updater] check failed:', cause));
   }
 
   download(): void {
     if (!app.isPackaged) return;
-    this.activeAction = true;
     void autoUpdater
       .downloadUpdate()
-      .catch((cause: unknown) => log.error('[updater] download failed:', cause))
-      .finally(() => {
-        this.activeAction = false;
-      });
+      .catch((cause: unknown) => log.error('[updater] download failed:', cause));
   }
 
   install(): void {

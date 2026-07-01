@@ -295,10 +295,14 @@ export type UpdateStatus =
  */
 export type AutoUpdateMode = 'download' | 'download-install' | 'off';
 
+/** UI theme for the settings window. `system` follows the OS light/dark preference. */
+export type ThemeMode = 'system' | 'light' | 'dark';
+
 /** App-wide settings (settings.json in userData), separate from per-game PcStore data. */
 export interface AppSettings {
   readonly schemaVersion: 1;
   readonly autoUpdate: AutoUpdateMode;
+  readonly theme: ThemeMode;
 }
 
 /** IPC channels (the preload typed bridge). */
@@ -344,6 +348,8 @@ export const IPC = {
   settingsRequest: 'settings:request',
   /** settings-renderer → main: change the auto-update mode (payload AutoUpdateMode). */
   settingsSetAutoUpdate: 'settings:set-auto-update',
+  /** settings-renderer → main: change the UI theme (payload ThemeMode). */
+  settingsSetTheme: 'settings:set-theme',
   /** settings-renderer → main (invoke): request the app version string. */
   appVersionRequest: 'app:version',
 } as const;
@@ -370,6 +376,7 @@ export interface SettingsApi {
   getAppVersion(): Promise<string>;
   getSettings(): Promise<AppSettings>;
   setAutoUpdate(mode: AutoUpdateMode): void;
+  setTheme(mode: ThemeMode): void;
   onUpdateStatus(cb: (status: UpdateStatus) => void): void;
   requestUpdateStatus(): Promise<UpdateStatus>;
   checkForUpdates(): void;

@@ -7,14 +7,44 @@
 // use, and setTheme comes from the same `@fluentui/web-components` index. One FAST copy, smaller bundle.
 import '@fluentui/web-components/text/define.js';
 import '@fluentui/web-components/button/define.js';
+import '@fluentui/web-components/field/define.js';
 import '@fluentui/web-components/radio/define.js';
 import '@fluentui/web-components/radio-group/define.js';
 import '@fluentui/web-components/progress-bar/define.js';
 import { setTheme } from '@fluentui/web-components';
-import { webDarkTheme } from '@fluentui/tokens';
-import type { AutoUpdateMode, UpdateStatus } from '../shared/types';
+import { webDarkTheme, webLightTheme } from '@fluentui/tokens';
+import type { AutoUpdateMode, ThemeMode, UpdateStatus } from '../shared/types';
 
-setTheme(webDarkTheme);
+// ── Theme ────────────────────────────────────────────────────────────────────
+// setTheme publishes the theme tokens as global CSS custom properties (see settings.css). `system`
+// follows the OS preference via matchMedia and re-applies on OS changes; `light`/`dark` are fixed.
+const darkQuery = window.matchMedia('(prefers-color-scheme: dark)');
+let systemListener: (() => void) | null = null;
+
+function isDark(mode: ThemeMode): boolean {
+  return mode === 'dark' || (mode === 'system' && darkQuery.matches);
+}
+
+function paint(dark: boolean): void {
+  setTheme(dark ? webDarkTheme : webLightTheme);
+  document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
+}
+
+function applyTheme(mode: ThemeMode): void {
+  paint(isDark(mode));
+  // Only keep an OS-change subscription alive in `system` mode.
+  if (systemListener !== null) {
+    darkQuery.removeEventListener('change', systemListener);
+    systemListener = null;
+  }
+  if (mode === 'system') {
+    systemListener = () => paint(darkQuery.matches);
+    darkQuery.addEventListener('change', systemListener);
+  }
+}
+
+// Apply a best-guess theme immediately (before settings load) to avoid a flash of unstyled tokens.
+applyTheme('system');
 
 function req<T extends HTMLElement>(id: string): T {
   const el = document.getElementById(id);
@@ -27,6 +57,7 @@ const statusEl = req('update-status');
 const progressEl = req('update-progress');
 const actionBtn = req('update-action');
 const radioGroup = req('auto-update');
+const themeGroup = req('theme');
 
 // Fluent custom elements reflect `disabled` / `value` as attributes/properties not present on the
 // HTMLElement type; narrow casts (never `any`) keep this typed without pulling the element classes in.
@@ -35,13 +66,18 @@ function setDisabled(el: HTMLElement, disabled: boolean): void {
   else el.removeAttribute('disabled');
 }
 
-function readGroupValue(el: HTMLElement): AutoUpdateMode | null {
+function readAutoUpdateValue(el: HTMLElement): AutoUpdateMode | null {
   const raw = (el as HTMLElement & { value?: unknown }).value;
   return raw === 'download' || raw === 'download-install' || raw === 'off' ? raw : null;
 }
 
-function setGroupValue(el: HTMLElement, mode: AutoUpdateMode): void {
-  (el as HTMLElement & { value?: string }).value = mode;
+function readThemeValue(el: HTMLElement): ThemeMode | null {
+  const raw = (el as HTMLElement & { value?: unknown }).value;
+  return raw === 'system' || raw === 'light' || raw === 'dark' ? raw : null;
+}
+
+function setGroupValue(el: HTMLElement, value: string): void {
+  (el as HTMLElement & { value?: string }).value = value;
 }
 
 // The context-dependent primary button action for the current status (null = the button is disabled
@@ -105,8 +141,16 @@ actionBtn.addEventListener('click', () => {
 });
 
 radioGroup.addEventListener('change', () => {
-  const value = readGroupValue(radioGroup);
+  const value = readAutoUpdateValue(radioGroup);
   if (value !== null) window.settingsApi.setAutoUpdate(value);
+});
+
+themeGroup.addEventListener('change', () => {
+  const value = readThemeValue(themeGroup);
+  if (value !== null) {
+    applyTheme(value); // apply live for instant feedback
+    window.settingsApi.setTheme(value); // and persist
+  }
 });
 
 async function init(): Promise<void> {
@@ -119,6 +163,8 @@ async function init(): Promise<void> {
   ]);
   versionEl.textContent = version;
   setGroupValue(radioGroup, settings.autoUpdate);
+  setGroupValue(themeGroup, settings.theme);
+  applyTheme(settings.theme);
   render(status);
 }
 

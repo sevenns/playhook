@@ -1,11 +1,8 @@
-/* Settings window layout. Component look (colors, typography, focus) comes from Fluent v3 + the dark
-   theme applied at runtime via setTheme(webDarkTheme); this file only does page layout and the page
-   background (matching the window's backgroundColor #101014). Segoe UI is the system font Fluent uses;
-   no external fonts (font-src 'self' holds). */
-
-:root {
-  color-scheme: dark;
-}
+/* Settings window layout. Component look (colors, typography, focus) comes from Fluent v3 + the theme
+   applied at runtime via setTheme() — which publishes the theme tokens as GLOBAL CSS custom properties.
+   So the page background/text below reference those tokens and follow the light/dark theme automatically
+   (the fallbacks apply only for the split second before setTheme runs). color-scheme is set from JS per
+   effective theme. Segoe UI is the system font Fluent uses; no external fonts (font-src 'self' holds). */
 
 html,
 body {
@@ -14,8 +11,8 @@ body {
 }
 
 body {
-  background: #101014;
-  color: #ffffff;
+  background: var(--colorNeutralBackground1, #1f1f1f);
+  color: var(--colorNeutralForeground1, #ffffff);
   font-family: 'Segoe UI', system-ui, sans-serif;
 }
 

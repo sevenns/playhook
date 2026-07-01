@@ -5,7 +5,13 @@
 // from shared is allowed (types erase at compile time). The literals below MUST match the IPC channel
 // values in shared/types.ts symbol-for-symbol — the compiler cannot catch a drift here (I1).
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
-import type { AppSettings, AutoUpdateMode, SettingsApi, UpdateStatus } from '../shared/types';
+import type {
+  AppSettings,
+  AutoUpdateMode,
+  SettingsApi,
+  ThemeMode,
+  UpdateStatus,
+} from '../shared/types';
 
 const CHANNELS = {
   updateStatusUpdate: 'update:status',
@@ -15,6 +21,7 @@ const CHANNELS = {
   updateInstall: 'update:install',
   settingsRequest: 'settings:request',
   settingsSetAutoUpdate: 'settings:set-auto-update',
+  settingsSetTheme: 'settings:set-theme',
   appVersionRequest: 'app:version',
 } as const;
 
@@ -27,6 +34,9 @@ const api: SettingsApi = {
   },
   setAutoUpdate(mode: AutoUpdateMode): void {
     ipcRenderer.send(CHANNELS.settingsSetAutoUpdate, mode);
+  },
+  setTheme(mode: ThemeMode): void {
+    ipcRenderer.send(CHANNELS.settingsSetTheme, mode);
   },
   onUpdateStatus(callback: (status: UpdateStatus) => void): void {
     ipcRenderer.on(CHANNELS.updateStatusUpdate, (_event: IpcRendererEvent, status: UpdateStatus) => {
