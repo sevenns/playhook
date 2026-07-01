@@ -85,24 +85,6 @@ function setGroupValue(el: HTMLElement, value: string): void {
   (el as HTMLElement & { value?: string }).value = value;
 }
 
-// Fluent v3 (its @fluentui/tokens is still alpha) radio-group intermittently leaves a radio — usually
-// the last one — in a transient `:state(disabled)` on first paint: it looks greyed until you hover or
-// select it. We never disable these radios, so clear any stuck disabled state. Toggling the property
-// true→false guarantees the change is observed even if only the visual state (not the property) is
-// stuck. Runs on both groups (all fluent-radio) after the values are set.
-function clearStuckRadioDisabled(): void {
-  const radios = document.querySelectorAll<HTMLElement & { disabled: boolean }>('fluent-radio');
-  radios.forEach((radio) => {
-    // Skip the checked radio: toggling `disabled` on it would make the group drop the selection
-    // (disabledRadioHandler clears checkedIndex when a checked radio becomes disabled). The stuck one is
-    // always an UNchecked radio anyway.
-    if (radio.matches(':state(disabled)') && !radio.matches(':state(checked)')) {
-      radio.disabled = true;
-      radio.disabled = false;
-    }
-  });
-}
-
 // The context-dependent primary button action for the current status (null = the button is disabled
 // or hidden). A single click listener dispatches to it, so render() only swaps label + handler.
 let currentAction: (() => void) | null = null;
@@ -196,12 +178,6 @@ async function init(): Promise<void> {
   setGroupValue(themeGroup, settings.theme);
   applyTheme(settings.theme);
   render(status);
-  // Clear the Fluent radio-group first-paint disabled glitch (see clearStuckRadioDisabled). Two frames:
-  // the stuck state can appear a frame after the values are set.
-  requestAnimationFrame(() => {
-    clearStuckRadioDisabled();
-    requestAnimationFrame(clearStuckRadioDisabled);
-  });
 }
 
 void init();
