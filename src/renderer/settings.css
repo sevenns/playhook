@@ -71,6 +71,12 @@ fluent-radio-group {
   gap: 8px;
 }
 
+.button-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 #update-action {
   align-self: flex-start;
 }

@@ -61,6 +61,8 @@ const progressEl = req('update-progress');
 const actionBtn = req('update-action');
 const radioGroup = req('auto-update');
 const themeGroup = req('theme');
+const openLogsBtn = req('open-logs');
+const openGamesBtn = req('open-games');
 
 // Fluent custom elements reflect `disabled` / `value` as attributes/properties not present on the
 // HTMLElement type; narrow casts (never `any`) keep this typed without pulling the element classes in.
@@ -155,6 +157,9 @@ themeGroup.addEventListener('change', () => {
     window.settingsApi.setTheme(value); // and persist
   }
 });
+
+openLogsBtn.addEventListener('click', () => window.settingsApi.openLogs());
+openGamesBtn.addEventListener('click', () => window.settingsApi.openGamesFolder());
 
 async function init(): Promise<void> {
   // I3: subscribe BEFORE requesting the initial snapshot, so a push arriving in between isn't lost.

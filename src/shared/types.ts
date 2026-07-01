@@ -356,6 +356,10 @@ export const IPC = {
   appIconRequest: 'app:icon',
   /** settings-renderer → main: recolor the native title-bar overlay (caption buttons) for the theme. */
   titleBarOverlayUpdate: 'settings:titlebar-overlay',
+  /** settings-renderer → main: open the log folder in the OS file manager. */
+  openLogs: 'app:open-logs',
+  /** settings-renderer → main: open the app-controlled games install folder in the OS file manager. */
+  openGamesFolder: 'app:open-games-folder',
 } as const;
 
 /** API that preload exposes on `window.api`. */
@@ -384,6 +388,8 @@ export interface SettingsApi {
   setTheme(mode: ThemeMode): void;
   /** Tell main to recolor the native caption buttons to match the effective (dark/light) theme. */
   setTitleBarDark(dark: boolean): void;
+  openLogs(): void;
+  openGamesFolder(): void;
   onUpdateStatus(cb: (status: UpdateStatus) => void): void;
   requestUpdateStatus(): Promise<UpdateStatus>;
   checkForUpdates(): void;

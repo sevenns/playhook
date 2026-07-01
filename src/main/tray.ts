@@ -7,7 +7,6 @@ import { APP_NAME } from '../shared/types';
 export interface TrayCallbacks {
   readonly onShow: () => void;
   readonly onOpenSettings: () => void;
-  readonly onOpenLogs: () => void;
   readonly onQuit: () => void;
 }
 
@@ -21,7 +20,6 @@ export function createTray(callbacks: TrayCallbacks): Tray {
   const menu = Menu.buildFromTemplate([
     { label: 'Show', click: () => callbacks.onShow() },
     { label: 'Settings', click: () => callbacks.onOpenSettings() },
-    { label: 'Open logs', click: () => callbacks.onOpenLogs() },
     { type: 'separator' },
     { label: 'Quit', click: () => callbacks.onQuit() },
   ]);

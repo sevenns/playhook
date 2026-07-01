@@ -25,6 +25,8 @@ const CHANNELS = {
   titleBarOverlayUpdate: 'settings:titlebar-overlay',
   appVersionRequest: 'app:version',
   appIconRequest: 'app:icon',
+  openLogs: 'app:open-logs',
+  openGamesFolder: 'app:open-games-folder',
 } as const;
 
 const api: SettingsApi = {
@@ -45,6 +47,12 @@ const api: SettingsApi = {
   },
   setTitleBarDark(dark: boolean): void {
     ipcRenderer.send(CHANNELS.titleBarOverlayUpdate, dark);
+  },
+  openLogs(): void {
+    ipcRenderer.send(CHANNELS.openLogs);
+  },
+  openGamesFolder(): void {
+    ipcRenderer.send(CHANNELS.openGamesFolder);
   },
   onUpdateStatus(callback: (status: UpdateStatus) => void): void {
     ipcRenderer.on(CHANNELS.updateStatusUpdate, (_event: IpcRendererEvent, status: UpdateStatus) => {

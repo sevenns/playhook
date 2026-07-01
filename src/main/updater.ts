@@ -41,6 +41,10 @@ export interface UpdaterDeps {
   readonly isBusy: () => boolean;
   /** Drops both windows' close-guards synchronously right before quitAndInstall (§5.1). */
   readonly beforeInstall: () => void;
+  /** Opens the log folder in the OS file manager (settings window "Open logs"). */
+  readonly openLogs: () => void;
+  /** Opens the games install folder in the OS file manager (settings window "Open games folder"). */
+  readonly openGamesFolder: () => void;
 }
 
 export class UpdaterService {
@@ -123,6 +127,10 @@ export class UpdaterService {
     });
     ipcMain.handle(IPC.appVersionRequest, (): string => app.getVersion());
     ipcMain.handle(IPC.appIconRequest, (): Promise<string> => this.readIconDataUrl());
+    // Imperative maintenance actions — the logic (paths, shell) lives in main.ts callbacks; registered
+    // here only to keep every settings-window channel in one place (avoids a duplicate handler).
+    ipcMain.on(IPC.openLogs, () => this.deps.openLogs());
+    ipcMain.on(IPC.openGamesFolder, () => this.deps.openGamesFolder());
   }
 
   // The settings window shows the app icon in its custom title bar. CSP there is `img-src data:`, so we

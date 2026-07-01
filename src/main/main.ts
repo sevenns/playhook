@@ -2,6 +2,7 @@
 // Background app: the window is shown ONLY when a valid game card is detected (state 'ready'); with
 // no game it stays hidden in the tray. Closing the window hides it to the tray, not quits.
 import path from 'node:path';
+import fs from 'node:fs';
 import { app, Menu, shell, type Tray } from 'electron';
 import { log, logFilePath } from './logger';
 import { StateManager } from './state';
@@ -28,6 +29,26 @@ function configureAutoLaunch(): void {
   // No `--hidden` arg needed: the app always starts hidden and only shows on a valid card.
   if (process.platform !== 'win32') return;
   app.setLoginItemSettings({ openAtLogin: true });
+}
+
+// Opens the log folder (settings window "Open logs" — moved here from the tray menu).
+function openLogs(): void {
+  void shell.openPath(path.dirname(logFilePath()));
+}
+
+// Opens the app-controlled games install root (%LOCALAPPDATA%\playhook\games; see manifest.ts). Created
+// on first use so there's always something to open. On non-Windows dev LOCALAPPDATA is absent — fall
+// back to appData so the action opens something rather than erroring.
+function openGamesFolder(): void {
+  const localAppData = process.env['LOCALAPPDATA'];
+  const base = localAppData !== undefined && localAppData !== '' ? localAppData : app.getPath('appData');
+  const dir = path.join(base, 'playhook', 'games');
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+  } catch {
+    // best-effort: openPath below will surface nothing if the dir couldn't be created
+  }
+  void shell.openPath(dir);
 }
 
 function quit(): void {
@@ -74,6 +95,8 @@ async function bootstrap(): Promise<void> {
       window.allowClose();
       settingsWindow.allowClose();
     },
+    openLogs,
+    openGamesFolder,
   });
   const settingsWindow = new SettingsWindow(updater);
   settingsWindowRef = settingsWindow;
@@ -85,7 +108,6 @@ async function bootstrap(): Promise<void> {
   trayRef = createTray({
     onShow: () => window.showAndFocus(),
     onOpenSettings: () => settingsWindow.openOrFocus(),
-    onOpenLogs: () => void shell.openPath(path.dirname(logFilePath())),
     onQuit: () => quit(),
   });
 
