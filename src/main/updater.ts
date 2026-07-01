@@ -31,6 +31,7 @@ import { autoUpdater } from 'electron-updater';
 import { log } from './logger';
 import {
   IPC,
+  type AppSettings,
   type AudioVolumes,
   type AutoUpdateMode,
   type ThemeMode,
@@ -158,6 +159,7 @@ export class UpdaterService {
     ipcMain.on(IPC.settingsSetSfxVolume, (_event, volume: number) => {
       void this.setVolume({ sfxVolume: volume });
     });
+    ipcMain.handle(IPC.settingsReset, (): Promise<AppSettings> => this.resetSettings());
     // game-renderer startup: hand it the current volumes to seed its AudioController.
     ipcMain.handle(IPC.volumeRequest, async (): Promise<AudioVolumes> => {
       const settings = await this.deps.settings.read();
@@ -169,6 +171,20 @@ export class UpdaterService {
     // here only to keep every settings-window channel in one place (avoids a duplicate handler).
     ipcMain.on(IPC.openLogs, () => this.deps.openLogs());
     ipcMain.on(IPC.openGamesFolder, () => this.deps.openGamesFolder());
+  }
+
+  // Resets settings to defaults and re-applies every side effect (auto-update mode, prerelease flag,
+  // summon-hotkey toggle, game-renderer volumes). Theme is re-applied by the settings renderer from the
+  // returned AppSettings. Returns the defaults so the settings UI can re-render its controls.
+  private async resetSettings(): Promise<AppSettings> {
+    const next = await this.deps.settings.reset();
+    if (app.isPackaged) {
+      autoUpdater.allowPrerelease = next.allowPrerelease;
+      this.applyMode(next.autoUpdate);
+    }
+    this.deps.onSummonHotkeyChanged(next.summonHotkeyEnabled);
+    this.deps.onVolumesChanged({ music: next.musicVolume, sfx: next.sfxVolume });
+    return next;
   }
 
   // Persists a volume change and pushes the full volume pair to the game renderer so it applies live.

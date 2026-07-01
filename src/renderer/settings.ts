@@ -15,7 +15,7 @@ import '@fluentui/web-components/slider/define.js';
 import '@fluentui/web-components/progress-bar/define.js';
 import { setTheme } from '@fluentui/web-components';
 import { webDarkTheme, webLightTheme } from '@fluentui/tokens';
-import type { AutoUpdateMode, ThemeMode, UpdateStatus } from '../shared/types';
+import type { AppSettings, AutoUpdateMode, ThemeMode, UpdateStatus } from '../shared/types';
 
 // ── Theme ────────────────────────────────────────────────────────────────────
 // setTheme publishes the theme tokens as global CSS custom properties (see settings.css). `system`
@@ -71,6 +71,7 @@ const sfxSlider = req('sfx-volume');
 const sfxValue = req('sfx-volume-value');
 const openLogsBtn = req('open-logs');
 const openGamesBtn = req('open-games');
+const resetBtn = req('reset-defaults');
 
 // Fluent custom elements reflect `disabled` / `value` as attributes/properties not present on the
 // HTMLElement type; narrow casts (never `any`) keep this typed without pulling the element classes in.
@@ -215,6 +216,24 @@ wireVolumeSlider(sfxSlider, sfxValue, (v) => window.settingsApi.setSfxVolume(v))
 
 openLogsBtn.addEventListener('click', () => window.settingsApi.openLogs());
 openGamesBtn.addEventListener('click', () => window.settingsApi.openGamesFolder());
+resetBtn.addEventListener('click', () => {
+  void window.settingsApi.reset().then(applySettings);
+});
+
+// Reflects the full settings state onto every control (used on startup and after "Reset to defaults").
+function applySettings(settings: AppSettings): void {
+  setGroupValue(radioGroup, settings.autoUpdate);
+  setGroupValue(themeGroup, settings.theme);
+  setChecked(prereleaseSwitch, settings.allowPrerelease);
+  setChecked(summonSwitch, settings.summonHotkeyEnabled);
+  const musicPercent = Math.round(settings.musicVolume * 100);
+  const sfxPercent = Math.round(settings.sfxVolume * 100);
+  setSliderPercent(musicSlider, musicPercent);
+  setSliderPercent(sfxSlider, sfxPercent);
+  musicValue.textContent = `${musicPercent}%`;
+  sfxValue.textContent = `${sfxPercent}%`;
+  applyTheme(settings.theme);
+}
 
 async function init(): Promise<void> {
   // I3: subscribe BEFORE requesting the initial snapshot, so a push arriving in between isn't lost.
@@ -229,17 +248,7 @@ async function init(): Promise<void> {
   if (icon !== '') titlebarIcon.src = icon;
   else titlebarIcon.hidden = true;
   titlebarVersion.textContent = `(${version})`;
-  setGroupValue(radioGroup, settings.autoUpdate);
-  setGroupValue(themeGroup, settings.theme);
-  setChecked(prereleaseSwitch, settings.allowPrerelease);
-  setChecked(summonSwitch, settings.summonHotkeyEnabled);
-  const musicPercent = Math.round(settings.musicVolume * 100);
-  const sfxPercent = Math.round(settings.sfxVolume * 100);
-  setSliderPercent(musicSlider, musicPercent);
-  setSliderPercent(sfxSlider, sfxPercent);
-  musicValue.textContent = `${musicPercent}%`;
-  sfxValue.textContent = `${sfxPercent}%`;
-  applyTheme(settings.theme);
+  applySettings(settings);
   render(status);
 }
 

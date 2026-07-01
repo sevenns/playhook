@@ -376,6 +376,8 @@ export const IPC = {
   settingsSetMusicVolume: 'settings:set-music-volume',
   /** settings-renderer → main: set the UI sound-effects volume 0..1 (payload number). */
   settingsSetSfxVolume: 'settings:set-sfx-volume',
+  /** settings-renderer → main (invoke): reset all settings to defaults → returns the new AppSettings. */
+  settingsReset: 'settings:reset',
   /** settings-renderer → main (invoke): request the app version string. */
   appVersionRequest: 'app:version',
   /** settings-renderer → main (invoke): request the app icon as a data URL (for the custom title bar). */
@@ -420,6 +422,8 @@ export interface SettingsApi {
   setSummonHotkey(on: boolean): void;
   setMusicVolume(volume: number): void;
   setSfxVolume(volume: number): void;
+  /** Resets all settings to defaults; resolves with the new AppSettings so the UI can re-render. */
+  reset(): Promise<AppSettings>;
   /** Tell main to recolor the native caption buttons to match the effective (dark/light) theme. */
   setTitleBarDark(dark: boolean): void;
   openLogs(): void;

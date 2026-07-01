@@ -70,4 +70,10 @@ export class AppSettingsStore {
   setTheme(mode: ThemeMode): Promise<AppSettings> {
     return this.patch({ theme: mode });
   }
+
+  /** Overwrites the file with the defaults and returns them. */
+  async reset(): Promise<AppSettings> {
+    await this.write(DEFAULT_SETTINGS);
+    return DEFAULT_SETTINGS;
+  }
 }

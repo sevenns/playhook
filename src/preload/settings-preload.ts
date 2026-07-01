@@ -26,6 +26,7 @@ const CHANNELS = {
   settingsSetSummonHotkey: 'settings:set-summon-hotkey',
   settingsSetMusicVolume: 'settings:set-music-volume',
   settingsSetSfxVolume: 'settings:set-sfx-volume',
+  settingsReset: 'settings:reset',
   titleBarOverlayUpdate: 'settings:titlebar-overlay',
   appVersionRequest: 'app:version',
   appIconRequest: 'app:icon',
@@ -60,6 +61,9 @@ const api: SettingsApi = {
   },
   setSfxVolume(volume: number): void {
     ipcRenderer.send(CHANNELS.settingsSetSfxVolume, volume);
+  },
+  reset(): Promise<AppSettings> {
+    return ipcRenderer.invoke(CHANNELS.settingsReset) as Promise<AppSettings>;
   },
   setTitleBarDark(dark: boolean): void {
     ipcRenderer.send(CHANNELS.titleBarOverlayUpdate, dark);
