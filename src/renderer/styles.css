@@ -71,22 +71,35 @@ body {
   isolation: isolate;
 }
 
-/* Hero background lives on a ::before layer (driven by --hero-image from JS) so it can be
-   transform-panned independently of the UI, which stays put. Sits behind all UI via z-index.
-   GTA-style: the hero is never a static frame — it slowly drifts to one side and back (ping-pong),
-   always. The direction (--pan-x) is randomized per image (set from JS when the background changes),
-   echoing GTA's alternating loading screens. scale(1.1) gives headroom so the pan never shows edges. */
-#app::before {
-  content: '';
+/* Hero background: two stacked layers inside #hero, cross-faded GTA-5-style as the renderer rotates
+   through the game's hero image(s) (and the idle wallpaper). The z-index lives ONLY on the container,
+   so the WHOLE hero sits one stacking level below the UI — the layers themselves carry no z-index (they
+   stack by DOM order inside #hero), which sidesteps the opacity-stacking-context pitfall. */
+#hero {
   position: absolute;
   inset: 0;
   z-index: -1;
-  background-image: var(--hero-image, none);
+}
+
+/* Each hero layer paints one image (background-image set per-layer from JS) and slowly drifts to one
+   side and back (Ken Burns / GTA ping-pong), always. The direction (--pan-x) is randomized per image
+   from JS on the incoming layer, echoing GTA's alternating loading screens. Both layers run bg-pan
+   perpetually; opacity 0/1 (toggled via .is-active) cross-fades between them. NOTE: opacity:0 does NOT
+   pause the animation, so JS force-restarts bg-pan on the incoming layer to start its drift from zero. */
+.hero-layer {
+  position: absolute;
+  inset: 0;
   background-size: cover;
   background-position: center;
+  opacity: 0;
+  transition: opacity 1s ease;
   transform-origin: center;
-  will-change: transform;
+  will-change: transform, opacity;
   animation: bg-pan 30s ease-in-out infinite alternate;
+}
+
+.hero-layer.is-active {
+  opacity: 1;
 }
 
 /* Ping-pong drift + a gentle zoom in/out, synced over the cycle (Ken Burns). The min scale (1.06)

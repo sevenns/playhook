@@ -99,7 +99,7 @@ absolute and must start with one of the allowed prefixes (see below).
   "executable": "game/hollow_knight.exe",   // relative path to the .exe from the card root
   "args": [],                               // launch arguments (optional)
   "runAsAdmin": false,                      // launch elevated via UAC for .exe requiring admin (optional, default false)
-  "heroImage": "assets/hero.jpg",           // window background (optional; falls back to a bundled wallpaper)
+  "heroImage": "assets/hero.jpg",           // window background: one path, or an array of paths that cross-fade every minute (optional; falls back to a bundled wallpaper)
   "saveOnCard": "saves",                    // copy folder for saves on the card (relative to the root)
   "pcSavePath": "%APPDATA%/Team Cherry/Hollow Knight", // where the game actually writes saves on the PC
   "launchTimeoutSec": 30,                   // how long to wait for the process to appear (optional, default 30)

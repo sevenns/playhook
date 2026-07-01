@@ -10,6 +10,7 @@ import {
   type AppState,
   type AudioAssets,
   type GameInfo,
+  type HeroAssets,
   type InstallManifest,
   type LaunchTarget,
   type ResolvedManifest,
@@ -283,6 +284,8 @@ export class GameController {
   private pendingRoot: string | null = null;
   // Audio for the current card, sent on its own channel (not on every AppState) — see AudioAssets.
   private currentAudio: AudioAssets | null = null;
+  // Hero images for the current card, sent on their own channel (not on every AppState) — see HeroAssets.
+  private currentHero: HeroAssets | null = null;
   // Steam-mode background re-detect timer (recursive setTimeout, no overlap). Non-null only while a
   // Steam game is on the ready screen with the card present (managed by enterReady).
   private steamInstallWatch: ReturnType<typeof setTimeout> | null = null;
@@ -315,6 +318,7 @@ export class GameController {
 
     ipcMain.handle(IPC.stateRequest, (): AppState => state.get());
     ipcMain.handle(IPC.audioRequest, (): AudioAssets | null => this.currentAudio);
+    ipcMain.handle(IPC.heroRequest, (): HeroAssets | null => this.currentHero);
     ipcMain.handle(IPC.wallpaperRequest, (): Promise<string | null> => this.readWallpaperDataUrl());
     ipcMain.on(IPC.actionLaunch, () => void this.onLaunchRequested());
     ipcMain.on(IPC.actionUninstall, () => void this.onUninstallRequested());
@@ -491,6 +495,7 @@ export class GameController {
       log.warn(`[insert] manifest rejected: ${result.message}`);
       this.current = null;
       this.setAudio(null);
+      this.setHero(null);
       this.deps.state.set({ kind: 'error', message: result.message });
       this.deps.window.hide();
       return;
@@ -499,6 +504,9 @@ export class GameController {
     this.current = manifest;
     log.info(`[insert] manifest ok id=${manifest.raw.id} root="${manifest.root}"`);
     this.setAudio(await this.readAudioAssets(manifest));
+    // Hero images are delivered once per card on their own channel (like audio) — the renderer holds
+    // the list and rotates locally, so we never re-send this large payload on subsequent state.set's.
+    this.setHero(await this.readHeroAssets(manifest));
 
     // Reconcile the card's traveling stats with this PC's mirror (the "one card, many PCs"
     // unified total) FIRST, so the PC mirror holds the merged value before anything else copies
@@ -557,6 +565,7 @@ export class GameController {
     this.steamUninstallRequest = null;
     this.current = null;
     this.setAudio(null);
+    this.setHero(null);
     this.deps.state.set({ kind: 'idle' });
     this.deps.window.hide();
   }
@@ -942,6 +951,7 @@ export class GameController {
       if (!this.cardPresent) {
         this.current = null;
         this.setAudio(null);
+        this.setHero(null);
         state.set({ kind: 'idle' });
         window.hide();
         return;
@@ -1009,6 +1019,7 @@ export class GameController {
       this.stopSteamInstallWatch();
       this.current = null;
       this.setAudio(null);
+      this.setHero(null);
       this.deps.state.set({ kind: 'idle' });
       this.deps.window.hide();
       return;
@@ -1052,7 +1063,8 @@ export class GameController {
   // ── Building GameInfo for the UI ─────────────────────────────────────────
 
   private async buildGameInfo(manifest: ResolvedManifest, stats: Stats): Promise<GameInfo> {
-    const heroImageDataUrl = await this.readHeroDataUrl(manifest.heroImagePath);
+    // Hero images are NOT part of GameInfo anymore — they travel on the hero:update channel (see
+    // readHeroAssets / setHero), delivered once per card on insert (not on every state transition).
     // Three mutually-exclusive modes decide requiresInstall/canUninstall/installVia. Kept as an EXPLICIT
     // 3-way branch (not the old `install !== undefined && !installed` formula, which gives false for a
     // steam game and would always show "Play"). executablePath is only read by pathExists in the
@@ -1100,18 +1112,7 @@ export class GameController {
       ...(steamInstalling ? { steamInstalling: true } : {}),
       ...(steamPaused ? { steamPaused: true } : {}),
       ...(steamPausedProgress !== undefined ? { steamPausedProgress } : {}),
-      ...(heroImageDataUrl !== undefined ? { heroImageDataUrl } : {}),
     };
-  }
-
-  /** Game hero, or the fallback wallpaper when the manifest has no heroImage (or it fails to read). */
-  private async readHeroDataUrl(heroImagePath: string | undefined): Promise<string | undefined> {
-    if (heroImagePath !== undefined) {
-      const url = await this.readImageDataUrl(heroImagePath);
-      if (url !== undefined) return url;
-      log.warn('[hero-image] failed to read, using wallpaper fallback');
-    }
-    return (await this.readWallpaperDataUrl()) ?? undefined;
   }
 
   private async readImageDataUrl(filePath: string): Promise<string | undefined> {
@@ -1131,6 +1132,36 @@ export class GameController {
     const url = await this.readImageDataUrl(WALLPAPER_PATH);
     this.wallpaperDataUrl = url ?? null;
     return this.wallpaperDataUrl;
+  }
+
+  // ── Hero images (delivered once per card, rotated in the renderer) ───────
+
+  /** Stores the current hero images and pushes them to the window (null when no card / on error). */
+  private setHero(assets: HeroAssets | null): void {
+    this.currentHero = assets;
+    const browserWindow = this.deps.window.browserWindow;
+    if (browserWindow !== null && !browserWindow.isDestroyed()) {
+      browserWindow.webContents.send(IPC.heroUpdate, assets);
+    }
+  }
+
+  /**
+   * Reads all of the manifest's hero images into data URLs, dropping any that fail to read. When none
+   * remain (no heroImage, or every file unreadable) it falls back to the bundled wallpaper — so the
+   * result always carries at least one image (same fallback semantics as the old single-hero path).
+   */
+  private async readHeroAssets(manifest: ResolvedManifest): Promise<HeroAssets> {
+    const images: string[] = [];
+    for (const heroPath of manifest.heroImagePaths ?? []) {
+      const url = await this.readImageDataUrl(heroPath);
+      if (url !== undefined) images.push(url);
+      else log.warn('[hero-image] failed to read, skipping:', heroPath);
+    }
+    if (images.length === 0) {
+      const wallpaper = await this.readWallpaperDataUrl();
+      if (wallpaper !== null) images.push(wallpaper);
+    }
+    return { images };
   }
 
   // ── Audio assets (sounds + background music) ─────────────────────────────

@@ -1,7 +1,7 @@
 // Renderer UI logic. Drives a persistent DOM (built once in index.html) by toggling classes
 // and data-attributes per AppState, so CSS transitions animate smoothly between states.
 // IMPORTANT: title/data come from the card (untrusted) — rendered via textContent, never innerHTML.
-import type { AppState, GameInfo } from '../shared/types';
+import type { AppState, GameInfo, HeroAssets } from '../shared/types';
 import { createGamepadController } from './gamepad.js';
 import { createAudioController } from './audio.js';
 import { computePalette, type Palette } from './dominant-color.js';
@@ -158,37 +158,74 @@ function applyPalette(palette: Palette | null): void {
   app.style.setProperty('--d2', palette.d2);
 }
 
-function updatePalette(game: GameInfo): void {
-  const dataUrl = game.heroImageDataUrl;
-  if (dataUrl === undefined) {
-    applyPalette(null);
-    return;
-  }
-  const cached = paletteCache.get(game.id);
+// Computes (or reuses a cached) palette for an arbitrary image, keyed by an arbitrary cache key
+// (per-hero: `${gameId}#${index}`). Applies it only if that image is STILL the one on screen, so a
+// slow compute for a rotated-away image can't clobber the current palette.
+function updatePaletteFor(url: string, cacheKey: string): void {
+  const cached = paletteCache.get(cacheKey);
   if (cached !== undefined) {
     applyPalette(cached);
     return;
   }
-  void computePalette(dataUrl).then((palette) => {
-    paletteCache.set(game.id, palette);
-    if (currentState.kind !== 'idle') applyPalette(palette);
+  void computePalette(url).then((palette) => {
+    paletteCache.set(cacheKey, palette);
+    if (shownUrl === url) applyPalette(palette);
   });
 }
 
-// ── Hero background ─────────────────────────────────────────────────────────
-
-// The hero is rendered by the #app::before layer via --hero-image (so it can be transform-panned).
-let currentBackground: string | null = null;
-function setBackgroundImage(value: string): void {
-  if (value === currentBackground) return; // unchanged → keep the pan running, don't re-randomize
-  currentBackground = value;
-  app.style.setProperty('--hero-image', value);
-  // GTA-style: each new image gets a random pan direction (drift left vs right).
-  app.style.setProperty('--pan-x', Math.random() < 0.5 ? '1.5%' : '-1.5%');
+// The wallpaper's palette, reused both on the idle screen AND when a game's hero falls back to the
+// wallpaper — so we never recompute the same dominant colors under a per-game key (review note 7).
+function applyWallpaperPalette(): void {
+  if (wallpaperPalette !== undefined) {
+    applyPalette(wallpaperPalette);
+    return;
+  }
+  if (wallpaperUrl === null) {
+    applyPalette(null);
+    return;
+  }
+  const url = wallpaperUrl;
+  void computePalette(url).then((palette) => {
+    wallpaperPalette = palette;
+    if (shownUrl === url) applyPalette(palette);
+  });
 }
 
-function setHero(game: GameInfo): void {
-  setBackgroundImage(game.heroImageDataUrl !== undefined ? `url("${game.heroImageDataUrl}")` : 'none');
+// ── Hero background (two cross-fading layers, GTA-5-style) ────────────────────
+
+// Two stacked layers we cross-fade between: activeLayer shows the current image, idleLayer receives the
+// next one; then the roles swap. Both run bg-pan perpetually (see styles.css).
+const heroLayers = Array.from(document.querySelectorAll<HTMLElement>('#hero .hero-layer'));
+const [heroLayerA, heroLayerB] = heroLayers;
+if (heroLayerA === undefined || heroLayerB === undefined) {
+  throw new Error('#hero must contain two .hero-layer elements');
+}
+let activeLayer: HTMLElement = heroLayerA;
+let idleLayer: HTMLElement = heroLayerB;
+// The url the active layer currently shows — a gate so the dozens of state.set renders per session
+// don't trigger a needless cross-fade / pan re-randomize when the image hasn't actually changed.
+let shownUrl: string | null = null;
+
+// Cross-fades to a new image on the idle layer, then swaps roles. No-op when the url is unchanged
+// (keeps the running pan going). null → no image (blank background).
+function showImage(url: string | null): void {
+  if (url === shownUrl) return;
+  shownUrl = url;
+  // The incoming (idle) layer gets the new image + a fresh random pan direction (drift left vs right).
+  idleLayer.style.backgroundImage = url !== null ? `url("${url}")` : 'none';
+  idleLayer.style.setProperty('--pan-x', Math.random() < 0.5 ? '1.5%' : '-1.5%');
+  // Force-restart bg-pan so the incoming image starts its drift from zero: opacity:0 does NOT pause the
+  // animation, so without this the layer would fade in mid-drift. Toggling animation + a reflow retriggers
+  // it — and the same reflow flushes styles so the opacity transition below actually animates.
+  idleLayer.style.animation = 'none';
+  void idleLayer.offsetWidth;
+  idleLayer.style.animation = '';
+  // Cross-fade: incoming layer in, outgoing out, then swap the roles.
+  idleLayer.classList.add('is-active');
+  activeLayer.classList.remove('is-active');
+  const previousActive = activeLayer;
+  activeLayer = idleLayer;
+  idleLayer = previousActive;
 }
 
 // The empty / idle screen (no game): the fallback wallpaper as background, its dominant colors as
@@ -196,19 +233,77 @@ function setHero(game: GameInfo): void {
 function applyEmptyScreen(): void {
   titleEl.textContent = EMPTY_TITLE;
   if (wallpaperUrl === null) {
-    setBackgroundImage('none');
+    showImage(null);
     applyPalette(null);
     return;
   }
-  setBackgroundImage(`url("${wallpaperUrl}")`);
-  if (wallpaperPalette !== undefined) {
-    applyPalette(wallpaperPalette);
+  showImage(wallpaperUrl);
+  applyWallpaperPalette();
+}
+
+// ── Hero rotation (renderer-local, GTA-5 cadence) ────────────────────────────
+
+const HERO_ROTATE_MS = 60_000;
+// Hero images for the current card (delivered on the hero:update channel) and the rotation cursor.
+let heroImages: readonly string[] = [];
+let heroIndex = 0;
+let heroTimer: number | null = null;
+
+// Shows the hero at `index`: cross-fade the image + (re)apply its palette. When the only image is the
+// wallpaper fallback, reuse the wallpaper palette instead of recomputing it under a per-game key.
+function showHeroAt(index: number): void {
+  const url = heroImages[index];
+  if (url === undefined) return;
+  showImage(url);
+  if (url === wallpaperUrl) {
+    applyWallpaperPalette();
     return;
   }
-  void computePalette(wallpaperUrl).then((palette) => {
-    wallpaperPalette = palette;
-    if (gameOf(currentState) === undefined) applyPalette(palette);
-  });
+  const id = gameOf(currentState)?.id ?? '';
+  updatePaletteFor(url, `${id}#${index}`);
+}
+
+// Rotation runs only with >1 image, the window visible, and a game on screen (symmetric to the music
+// gate). During a Steam download the window stays on the ready screen with a game, so rotation is fine.
+function heroRotationEligible(): boolean {
+  return (
+    heroImages.length > 1 &&
+    document.visibilityState === 'visible' &&
+    gameOf(currentState) !== undefined
+  );
+}
+
+// (Re)evaluates the rotation timer: starts it when eligible, stops it otherwise. Idempotent — if it is
+// already running and still eligible the countdown is left intact, so frequent state.set renders don't
+// starve the rotation by resetting the interval.
+function startHeroRotation(): void {
+  if (!heroRotationEligible()) {
+    stopHeroRotation();
+    return;
+  }
+  if (heroTimer !== null) return;
+  heroTimer = window.setInterval(() => {
+    heroIndex = (heroIndex + 1) % heroImages.length;
+    showHeroAt(heroIndex);
+  }, HERO_ROTATE_MS);
+}
+
+function stopHeroRotation(): void {
+  if (heroTimer === null) return;
+  window.clearInterval(heroTimer);
+  heroTimer = null;
+}
+
+// New hero payload for the current card: reset the cursor, paint the first image if a game is already on
+// screen (channels are independent — render may have landed first), and restart the rotation from fresh.
+function applyHeroAssets(assets: HeroAssets | null): void {
+  heroImages = assets?.images ?? [];
+  heroIndex = 0;
+  stopHeroRotation();
+  if (gameOf(currentState) !== undefined && heroImages.length > 0) {
+    showHeroAt(0);
+  }
+  startHeroRotation();
 }
 
 // ── Info panel ──────────────────────────────────────────────────────────────
@@ -388,8 +483,10 @@ function render(state: AppState): void {
   app.dataset['phase'] = phase;
 
   if (game !== undefined) {
-    setHero(game);
-    updatePalette(game);
+    // Hero images travel on their own channel (hero:update), independent of state:update — on a window
+    // reconnect render can arrive before the hero payload. Only paint when we already have images; an
+    // empty list means "wait for onHeroUpdate" (it back-fills), rather than blanking the background.
+    if (heroImages.length > 0) showHeroAt(heroIndex);
     titleEl.textContent = game.title;
     buildInfoPanel(game);
     applyPlayButton(game);
@@ -402,6 +499,10 @@ function render(state: AppState): void {
     uninstallButton.classList.remove('is-available');
     infoButton.classList.remove('has-uninstall-sibling');
   }
+
+  // Re-evaluate the hero rotation for the new state (start when eligible: >1 image, visible, a game on
+  // screen; stop otherwise, e.g. on the idle screen). Idempotent — see startHeroRotation.
+  startHeroRotation();
 
   // Steam non-blocking install/uninstall indicator: reuse the busy visuals (loader/status/slid title)
   // via a dedicated attribute, while the logical phase stays 'ready' (window hideable, card pullable).
@@ -672,8 +773,17 @@ void window.api.requestAudio().then((assets) => {
   syncMusic();
 });
 
-// Pause/resume music when the window is hidden to tray or restored.
-document.addEventListener('visibilitychange', () => syncMusic());
+// Hero images are delivered on their own channel (not in AppState): the renderer rotates through them
+// locally, so we never re-send this large payload on every state transition. See applyHeroAssets.
+window.api.onHeroUpdate(applyHeroAssets);
+void window.api.requestHero().then(applyHeroAssets);
+
+// Pause/resume music AND the hero rotation when the window is hidden to tray or restored. The active
+// layer keeps showing the current hero, so no force-show is needed on return — just (re)start the timer.
+document.addEventListener('visibilitychange', () => {
+  syncMusic();
+  startHeroRotation();
+});
 
 gamepad.start();
 

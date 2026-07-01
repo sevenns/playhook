@@ -51,7 +51,7 @@ export interface SteamManifest {
 
 /**
  * Raw `game.json` manifest after zod-schema validation (section 3a).
- * The executable/heroImage/saveOnCard paths are relative to the SD root;
+ * The executable/saveOnCard paths and each heroImage entry are relative to the SD root;
  * pcSavePath is absolute with an env prefix from the whitelist.
  */
 export interface GameManifest {
@@ -71,7 +71,12 @@ export interface GameManifest {
    * self-contained .exe games.
    */
   readonly watchProcesses?: readonly string[];
-  readonly heroImage?: string;
+  /**
+   * Card-relative hero background image(s). Accepts a single path OR a non-empty array of paths.
+   * When several are given, the renderer cross-fades between them (GTA-5-style loading rotation).
+   * Normalized to an array of resolved paths in ResolvedManifest.heroImagePaths.
+   */
+  readonly heroImage?: string | readonly string[];
   readonly saveOnCard?: string;
   readonly pcSavePath?: string;
   readonly launchTimeoutSec: number;
@@ -127,7 +132,8 @@ export interface ResolvedManifest {
    */
   readonly executablePath: string;
   readonly cwd: string;
-  readonly heroImagePath?: string;
+  /** Resolved, card-relative hero image paths (normalized to an array when at least one is set). */
+  readonly heroImagePaths?: readonly string[];
   readonly saveOnCardPath?: string;
   readonly pcSavePath?: string;
   /** Resolved, card-relative sound-effect file paths (any subset present). */
@@ -174,6 +180,17 @@ export interface AudioAssets {
   readonly music?: string;
 }
 
+/**
+ * Per-game hero background image(s) for the renderer, delivered as data URLs.
+ * Kept OUT of GameInfo/AppState on purpose (like AudioAssets): AppState is re-sent on every
+ * transition, and an array of encoded images is a large payload — so hero images are delivered
+ * once per card on their own channel and the renderer rotates through them locally.
+ */
+export interface HeroAssets {
+  /** Hero background images (data URLs), always at least one (a wallpaper fallback when none read). */
+  readonly images: readonly string[];
+}
+
 /** Game statistics. The source of truth is on the PC; the card copy is best-effort. */
 export interface Stats {
   readonly schemaVersion: 1;
@@ -186,8 +203,6 @@ export interface Stats {
 export interface GameInfo {
   readonly id: string;
   readonly title: string;
-  /** Background data URL (main reads the file and encodes it), or undefined. */
-  readonly heroImageDataUrl?: string;
   readonly lastPlayedAt: string | null;
   readonly totalPlaySeconds: number;
   readonly launchCount: number;
@@ -277,6 +292,10 @@ export const IPC = {
   audioUpdate: 'audio:update',
   /** renderer → main: request the current audio assets (on window startup). */
   audioRequest: 'audio:request',
+  /** main → renderer: hero background images for the current game (or null when no card). */
+  heroUpdate: 'hero:update',
+  /** renderer → main: request the current hero images (on window startup). */
+  heroRequest: 'hero:request',
   /** renderer → main: request the fallback wallpaper data URL (for the idle / empty screen). */
   wallpaperRequest: 'wallpaper:request',
 } as const;
@@ -293,6 +312,8 @@ export interface RendererApi {
   onError(callback: (message: string) => void): void;
   onAudioUpdate(callback: (assets: AudioAssets | null) => void): void;
   requestAudio(): Promise<AudioAssets | null>;
+  onHeroUpdate(callback: (assets: HeroAssets | null) => void): void;
+  requestHero(): Promise<HeroAssets | null>;
   requestWallpaper(): Promise<string | null>;
 }
 

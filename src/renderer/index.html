@@ -12,6 +12,14 @@
   </head>
   <body>
     <main id="app" data-phase="idle">
+      <!-- Hero background: two stacked layers behind all UI (z-index only on the container, see
+           styles.css). JS writes the image + pan into the idle layer and cross-fades it in, GTA-5-style,
+           rotating through multiple hero images (and the idle wallpaper) — see app.ts. -->
+      <div id="hero">
+        <div class="hero-layer"></div>
+        <div class="hero-layer"></div>
+      </div>
+
       <!-- Bottom bar (same layout for every screen): play / title / status, and on the right either
            the Info button (game screens) or the Hide button (empty / idle screen). -->
       <footer id="bottom-bar">

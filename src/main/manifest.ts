@@ -70,7 +70,9 @@ const manifestSchema = z
     .min(1)
     .max(16)
     .optional(),
-  heroImage: z.string().min(1).optional(),
+  // A single card-relative path, or a non-empty array of them (multi-hero rotation). Normalized to an
+  // array of resolved paths in readManifest. Backwards compatible: a lone string still works.
+  heroImage: z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]).optional(),
   saveOnCard: z.string().min(1).optional(),
   pcSavePath: z.string().min(1).optional(),
   launchTimeoutSec: z.number().int().positive().default(30),
@@ -321,13 +323,20 @@ export async function readManifest(root: string, env: ManifestEnv): Promise<Mani
     cwd = path.dirname(executablePath);
   }
 
-  let heroImagePath: string | undefined;
+  let heroImagePaths: string[] | undefined;
   if (raw.heroImage !== undefined) {
-    const resolved = resolveInside(root, raw.heroImage);
-    if (resolved === null) {
-      return { ok: false, message: `heroImage path escapes card root: ${raw.heroImage}` };
+    // Normalize the string|string[] union into an array, then resolve each entry inside the card root.
+    const rawHeroImages = typeof raw.heroImage === 'string' ? [raw.heroImage] : raw.heroImage;
+    const resolvedHeroImages: string[] = [];
+    for (const rel of rawHeroImages) {
+      const resolved = resolveInside(root, rel);
+      if (resolved === null) {
+        return { ok: false, message: `heroImage path escapes card root: ${rel}` };
+      }
+      resolvedHeroImages.push(resolved);
     }
-    heroImagePath = resolved;
+    // The schema guarantees a non-empty array, but guard so an empty result stays undefined (as before).
+    if (resolvedHeroImages.length > 0) heroImagePaths = resolvedHeroImages;
   }
 
   let saveOnCardPath: string | undefined;
@@ -386,7 +395,7 @@ export async function readManifest(root: string, env: ManifestEnv): Promise<Mani
     root,
     executablePath,
     cwd,
-    ...(heroImagePath !== undefined ? { heroImagePath } : {}),
+    ...(heroImagePaths !== undefined ? { heroImagePaths } : {}),
     ...(saveOnCardPath !== undefined ? { saveOnCardPath } : {}),
     ...(pcSavePath !== undefined ? { pcSavePath } : {}),
     ...(soundPaths !== undefined ? { soundPaths } : {}),
