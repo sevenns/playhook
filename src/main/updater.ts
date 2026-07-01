@@ -67,6 +67,13 @@ export class UpdaterService {
       return;
     }
 
+    // NSIS differential (delta) downloads try to reuse blocks from the currently-installed version and
+    // fall back to a FULL download when that fails (NsisUpdater.doDownloadUpdate). On a fast-moving
+    // prerelease channel that fallback happens almost every time, so the user saw TWO 0→100% passes:
+    // a failed differential attempt, then the full download. We publish small installers to a public
+    // repo, so the delta savings aren't worth it — force a single, clean full download.
+    autoUpdater.disableDifferentialDownload = true;
+
     this.subscribe();
     const settings = await this.deps.settings.read();
     this.applyMode(settings.autoUpdate);
