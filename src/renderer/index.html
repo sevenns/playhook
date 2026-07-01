@@ -88,10 +88,8 @@
       <section id="error-popup" class="popup" aria-hidden="true">
         <div class="popup-veil"></div>
         <div class="popup-panel">
-          <div class="info-item">
-            <div class="info-label">Error</div>
-            <div class="info-value" id="error-message"></div>
-          </div>
+          <div class="popup-message">Something went wrong</div>
+          <div class="popup-detail" id="error-message"></div>
         </div>
       </section>
 
@@ -103,10 +101,10 @@
       <section id="confirm-popup" class="popup" aria-hidden="true">
         <div class="popup-veil"></div>
         <div class="popup-panel">
-          <div class="confirm-message" id="confirm-message"></div>
+          <div class="popup-message" id="confirm-message"></div>
           <!-- Install mode only: the destination path (filled from JS), shown in case the installer
                opens a non-silent folder picker. Selectable so it can be copied. -->
-          <div class="confirm-description" id="confirm-description">
+          <div class="popup-detail" id="confirm-description">
             Since not all installers support silent mode, during installation you need to specify the
             following path:<br /><span class="confirm-path" id="confirm-path"></span>
           </div>

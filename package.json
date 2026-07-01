@@ -1,6 +1,6 @@
 {
   "name": "playhook",
-  "version": "0.1.9-alpha.1",
+  "version": "0.1.9-alpha.2",
   "description": "Background launcher that detects installed game on external device, syncs saves and tracks playtime. Bring console vibes to your PC.",
   "private": true,
   "main": "dist/main/main.js",
