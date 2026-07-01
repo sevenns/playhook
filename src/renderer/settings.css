@@ -1,0 +1,54 @@
+/* Settings window layout. Component look (colors, typography, focus) comes from Fluent v3 + the dark
+   theme applied at runtime via setTheme(webDarkTheme); this file only does page layout and the page
+   background (matching the window's backgroundColor #101014). Segoe UI is the system font Fluent uses;
+   no external fonts (font-src 'self' holds). */
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+}
+
+body {
+  background: #101014;
+  color: #ffffff;
+  font-family: 'Segoe UI', system-ui, sans-serif;
+}
+
+#settings {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  padding: 24px 28px;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+fluent-radio-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+#update-action {
+  align-self: flex-start;
+}
+
+[hidden] {
+  display: none !important;
+}

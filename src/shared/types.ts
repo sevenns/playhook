@@ -271,6 +271,36 @@ export type AppState =
   | { readonly kind: 'syncing-out'; readonly game: GameInfo }
   | { readonly kind: 'error'; readonly game?: GameInfo; readonly message: string };
 
+/**
+ * Update state for the settings window (discriminated union). The UpdaterService owns the current
+ * snapshot, returns it on request and pushes it on every change. Maps 1:1 onto electron-updater
+ * events (see updater.ts). `unsupported` is set immediately in dev / non-packaged builds, where
+ * self-update is a no-op — the settings window then just shows the version and an explanatory note.
+ */
+export type UpdateStatus =
+  | { readonly kind: 'idle' } // not checked yet
+  | { readonly kind: 'checking' } // a check is in flight
+  | { readonly kind: 'not-available'; readonly checkedAt: number } // up to date
+  | { readonly kind: 'available'; readonly version: string } // newer version → "Update" button
+  | { readonly kind: 'downloading'; readonly version: string; readonly percent: number }
+  | { readonly kind: 'downloaded'; readonly version: string } // ready → "Restart & install"
+  | { readonly kind: 'error'; readonly message: string } // → "Retry"
+  | { readonly kind: 'unsupported' }; // dev / not-packaged: update unavailable
+
+/**
+ * Auto-update mode (persisted in settings.json). Maps onto electron-updater flags:
+ * - `download-install` → autoDownload=true, autoInstallOnAppQuit=true  (current behaviour)
+ * - `download`         → autoDownload=true, autoInstallOnAppQuit=false (wait for explicit install)
+ * - `off`              → autoDownload=false, no periodic check (manual "Check for updates" only)
+ */
+export type AutoUpdateMode = 'download' | 'download-install' | 'off';
+
+/** App-wide settings (settings.json in userData), separate from per-game PcStore data. */
+export interface AppSettings {
+  readonly schemaVersion: 1;
+  readonly autoUpdate: AutoUpdateMode;
+}
+
 /** IPC channels (the preload typed bridge). */
 export const IPC = {
   /** main → renderer: replica of the current AppState. */
@@ -298,6 +328,24 @@ export const IPC = {
   heroRequest: 'hero:request',
   /** renderer → main: request the fallback wallpaper data URL (for the idle / empty screen). */
   wallpaperRequest: 'wallpaper:request',
+
+  // ── Settings window: updates + app settings (separate namespace from the game channels) ──
+  /** main → settings-renderer: the current UpdateStatus snapshot (pushed on every change). */
+  updateStatusUpdate: 'update:status',
+  /** settings-renderer → main (invoke): request the current UpdateStatus. */
+  updateStatusRequest: 'update:request',
+  /** settings-renderer → main: run a manual update check. */
+  updateCheck: 'update:check',
+  /** settings-renderer → main: start downloading the available update (manual download). */
+  updateDownload: 'update:download',
+  /** settings-renderer → main: install a downloaded update (quitAndInstall, guarded). */
+  updateInstall: 'update:install',
+  /** settings-renderer → main (invoke): request the current AppSettings. */
+  settingsRequest: 'settings:request',
+  /** settings-renderer → main: change the auto-update mode (payload AutoUpdateMode). */
+  settingsSetAutoUpdate: 'settings:set-auto-update',
+  /** settings-renderer → main (invoke): request the app version string. */
+  appVersionRequest: 'app:version',
 } as const;
 
 /** API that preload exposes on `window.api`. */
@@ -317,9 +365,22 @@ export interface RendererApi {
   requestWallpaper(): Promise<string | null>;
 }
 
+/** API that the settings preload exposes on `window.settingsApi` (separate from the game `api`). */
+export interface SettingsApi {
+  getAppVersion(): Promise<string>;
+  getSettings(): Promise<AppSettings>;
+  setAutoUpdate(mode: AutoUpdateMode): void;
+  onUpdateStatus(cb: (status: UpdateStatus) => void): void;
+  requestUpdateStatus(): Promise<UpdateStatus>;
+  checkForUpdates(): void;
+  downloadUpdate(): void;
+  installUpdate(): void;
+}
+
 declare global {
   // eslint-disable-next-line no-var
   interface Window {
     readonly api: RendererApi;
+    readonly settingsApi: SettingsApi;
   }
 }

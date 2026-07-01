@@ -15,5 +15,6 @@
     "rootDir": "src",
     "types": []
   },
-  "include": ["src/renderer/**/*.ts", "src/shared/**/*.ts"]
+  "include": ["src/renderer/**/*.ts", "src/shared/**/*.ts"],
+  "exclude": ["src/renderer/settings.ts"]
 }

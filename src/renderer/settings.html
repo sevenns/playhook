@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- CSP copied 1:1 from index.html (incl. media-src data:) so the settings renderer doesn't drift
+         from the game one. The Fluent bundle (settings.js) is same-origin (file://) → script-src 'self'
+         is enough; no eval/new Function/fetch in Fluent v3 or FAST 3 → no 'unsafe-eval' needed. Segoe UI
+         is a system font (no external font-src), and we use no icon fluent-* components (no icon assets). -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; img-src data:; media-src data:; style-src 'self' 'unsafe-inline'; font-src 'self'; script-src 'self';"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Playhook — Settings</title>
+    <link rel="stylesheet" href="./settings.css" />
+  </head>
+  <body>
+    <main id="settings">
+      <!-- About -->
+      <section class="section">
+        <fluent-text weight="semibold" size="500" block>About</fluent-text>
+        <div class="row">
+          <fluent-text>Playhook</fluent-text>
+          <fluent-text id="app-version" appearance="secondary">—</fluent-text>
+        </div>
+      </section>
+
+      <!-- Updates -->
+      <section class="section">
+        <fluent-text weight="semibold" size="500" block>Updates</fluent-text>
+        <fluent-text id="update-status" block>Loading…</fluent-text>
+        <fluent-progress-bar id="update-progress" hidden></fluent-progress-bar>
+        <fluent-button id="update-action" appearance="accent" hidden></fluent-button>
+      </section>
+
+      <!-- Auto-update mode -->
+      <section class="section">
+        <fluent-text weight="semibold" size="500" block>Automatic updates</fluent-text>
+        <fluent-radio-group id="auto-update" name="auto-update" orientation="vertical">
+          <fluent-radio value="download-install">Download and install automatically</fluent-radio>
+          <fluent-radio value="download">Download automatically, install manually</fluent-radio>
+          <fluent-radio value="off">Off (check manually)</fluent-radio>
+        </fluent-radio-group>
+      </section>
+    </main>
+    <script type="module" src="./settings.js"></script>
+  </body>
+</html>
