@@ -16,6 +16,42 @@ body {
   font-family: 'Segoe UI', system-ui, sans-serif;
 }
 
+/* Custom title bar (native one is hidden). Sticky so it stays put while settings scroll. Draggable via
+   -webkit-app-region; the right padding keeps the title clear of the native min/max/close overlay. Its
+   background matches the page (and the overlay `color` set in settings-window.ts) so the strip is
+   seamless. */
+#titlebar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 16px;
+  padding-right: 148px;
+  background: var(--colorNeutralBackground1, #1f1f1f);
+  -webkit-app-region: drag;
+  user-select: none;
+}
+
+#titlebar-icon {
+  width: 18px;
+  height: 18px;
+  flex: none;
+}
+
+#titlebar-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--colorNeutralForeground1, #ffffff);
+}
+
+#titlebar-version {
+  font-size: 12px;
+  color: var(--colorNeutralForeground2, #adadad);
+}
+
 #settings {
   display: flex;
   flex-direction: column;
@@ -26,13 +62,6 @@ body {
 .section {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-}
-
-.row {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
   gap: 12px;
 }
 

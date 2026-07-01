@@ -28,6 +28,8 @@ function isDark(mode: ThemeMode): boolean {
 function paint(dark: boolean): void {
   setTheme(dark ? webDarkTheme : webLightTheme);
   document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
+  // Keep the native caption buttons (min/max/close) in sync with the effective theme.
+  window.settingsApi.setTitleBarDark(dark);
 }
 
 function applyTheme(mode: ThemeMode): void {
@@ -52,7 +54,8 @@ function req<T extends HTMLElement>(id: string): T {
   return el as T;
 }
 
-const versionEl = req('app-version');
+const titlebarIcon = req<HTMLImageElement>('titlebar-icon');
+const titlebarVersion = req('titlebar-version');
 const statusEl = req('update-status');
 const progressEl = req('update-progress');
 const actionBtn = req('update-action');
@@ -156,12 +159,16 @@ themeGroup.addEventListener('change', () => {
 async function init(): Promise<void> {
   // I3: subscribe BEFORE requesting the initial snapshot, so a push arriving in between isn't lost.
   window.settingsApi.onUpdateStatus(render);
-  const [version, settings, status] = await Promise.all([
+  const [version, icon, settings, status] = await Promise.all([
     window.settingsApi.getAppVersion(),
+    window.settingsApi.getAppIcon(),
     window.settingsApi.getSettings(),
     window.settingsApi.requestUpdateStatus(),
   ]);
-  versionEl.textContent = version;
+  // Title bar: [icon] Playhook (version). Hide the <img> if the icon couldn't be read (empty string).
+  if (icon !== '') titlebarIcon.src = icon;
+  else titlebarIcon.hidden = true;
+  titlebarVersion.textContent = `(${version})`;
   setGroupValue(radioGroup, settings.autoUpdate);
   setGroupValue(themeGroup, settings.theme);
   applyTheme(settings.theme);

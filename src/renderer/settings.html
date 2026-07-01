@@ -15,16 +15,17 @@
     <link rel="stylesheet" href="./settings.css" />
   </head>
   <body>
-    <main id="settings">
-      <!-- About -->
-      <section class="section">
-        <fluent-text weight="semibold" size="500" block>About</fluent-text>
-        <div class="row">
-          <fluent-text>Playhook</fluent-text>
-          <fluent-text id="app-version" appearance="secondary">—</fluent-text>
-        </div>
-      </section>
+    <!-- Custom title bar (Windows-11-Settings style): the native title bar is hidden (main:
+         titleBarStyle 'hidden'), so we draw our own draggable strip. App icon + "Playhook (version)"
+         on the left; the native min/max/close buttons are placed on the right by the Window Controls
+         Overlay, so the right ~140px is left clear. -->
+    <header id="titlebar">
+      <img id="titlebar-icon" alt="" />
+      <span id="titlebar-title">Playhook</span>
+      <span id="titlebar-version"></span>
+    </header>
 
+    <main id="settings">
       <!-- Updates -->
       <section class="section">
         <fluent-text weight="semibold" size="500" block>Updates</fluent-text>

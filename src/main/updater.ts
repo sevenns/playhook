@@ -24,6 +24,8 @@
 // (AppUpdater docs), bypassing main.ts.quit(). Both GameWindow and SettingsWindow hold a
 // close→preventDefault+hide guard, so the install could hang on those guards. Hence beforeInstall() is
 // called SYNCHRONOUSLY right before quitAndInstall() to drop both windows' guards first.
+import path from 'node:path';
+import fs from 'node:fs/promises';
 import { app, type BrowserWindow } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import { log } from './logger';
@@ -120,6 +122,22 @@ export class UpdaterService {
         .catch((cause: unknown) => log.error('[updater] failed to persist theme:', cause));
     });
     ipcMain.handle(IPC.appVersionRequest, (): string => app.getVersion());
+    ipcMain.handle(IPC.appIconRequest, (): Promise<string> => this.readIconDataUrl());
+  }
+
+  // The settings window shows the app icon in its custom title bar. CSP there is `img-src data:`, so we
+  // hand the icon over as a data URL rather than a file path. Read once and cache.
+  private iconDataUrl: string | null = null;
+  private async readIconDataUrl(): Promise<string> {
+    if (this.iconDataUrl !== null) return this.iconDataUrl;
+    try {
+      const buffer = await fs.readFile(path.join(__dirname, '../icon.png'));
+      this.iconDataUrl = `data:image/png;base64,${buffer.toString('base64')}`;
+    } catch (cause) {
+      log.error('[updater] failed to read app icon:', cause);
+      this.iconDataUrl = ''; // empty → the renderer just hides the <img>
+    }
+    return this.iconDataUrl;
   }
 
   // ── autoUpdater event mapping (§3) ─────────────────────────────────────────

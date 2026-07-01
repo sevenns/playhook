@@ -352,6 +352,10 @@ export const IPC = {
   settingsSetTheme: 'settings:set-theme',
   /** settings-renderer → main (invoke): request the app version string. */
   appVersionRequest: 'app:version',
+  /** settings-renderer → main (invoke): request the app icon as a data URL (for the custom title bar). */
+  appIconRequest: 'app:icon',
+  /** settings-renderer → main: recolor the native title-bar overlay (caption buttons) for the theme. */
+  titleBarOverlayUpdate: 'settings:titlebar-overlay',
 } as const;
 
 /** API that preload exposes on `window.api`. */
@@ -374,9 +378,12 @@ export interface RendererApi {
 /** API that the settings preload exposes on `window.settingsApi` (separate from the game `api`). */
 export interface SettingsApi {
   getAppVersion(): Promise<string>;
+  getAppIcon(): Promise<string>;
   getSettings(): Promise<AppSettings>;
   setAutoUpdate(mode: AutoUpdateMode): void;
   setTheme(mode: ThemeMode): void;
+  /** Tell main to recolor the native caption buttons to match the effective (dark/light) theme. */
+  setTitleBarDark(dark: boolean): void;
   onUpdateStatus(cb: (status: UpdateStatus) => void): void;
   requestUpdateStatus(): Promise<UpdateStatus>;
   checkForUpdates(): void;

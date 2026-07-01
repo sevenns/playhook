@@ -22,12 +22,17 @@ const CHANNELS = {
   settingsRequest: 'settings:request',
   settingsSetAutoUpdate: 'settings:set-auto-update',
   settingsSetTheme: 'settings:set-theme',
+  titleBarOverlayUpdate: 'settings:titlebar-overlay',
   appVersionRequest: 'app:version',
+  appIconRequest: 'app:icon',
 } as const;
 
 const api: SettingsApi = {
   getAppVersion(): Promise<string> {
     return ipcRenderer.invoke(CHANNELS.appVersionRequest) as Promise<string>;
+  },
+  getAppIcon(): Promise<string> {
+    return ipcRenderer.invoke(CHANNELS.appIconRequest) as Promise<string>;
   },
   getSettings(): Promise<AppSettings> {
     return ipcRenderer.invoke(CHANNELS.settingsRequest) as Promise<AppSettings>;
@@ -37,6 +42,9 @@ const api: SettingsApi = {
   },
   setTheme(mode: ThemeMode): void {
     ipcRenderer.send(CHANNELS.settingsSetTheme, mode);
+  },
+  setTitleBarDark(dark: boolean): void {
+    ipcRenderer.send(CHANNELS.titleBarOverlayUpdate, dark);
   },
   onUpdateStatus(callback: (status: UpdateStatus) => void): void {
     ipcRenderer.on(CHANNELS.updateStatusUpdate, (_event: IpcRendererEvent, status: UpdateStatus) => {

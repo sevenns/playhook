@@ -9,14 +9,35 @@
 // requestUpdateStatus() and any early push both land), detachWindow() on hide/close (so the updater
 // never pushes into a hidden/destroyed window).
 import path from 'node:path';
-import { BrowserWindow, nativeTheme } from 'electron';
-import { APP_NAME } from '../shared/types';
+import { BrowserWindow, ipcMain, nativeTheme } from 'electron';
+import { APP_NAME, IPC } from '../shared/types';
 import { type UpdaterService } from './updater';
+
+const TITLE_BAR_HEIGHT = 48;
+
+// Native caption-button (min/max/close) colors for the Window Controls Overlay. `color` must match the
+// custom title bar's background in settings.css (Fluent colorNeutralBackground1) so the strip looks
+// seamless; `symbolColor` is the glyph color.
+const OVERLAY = {
+  dark: { color: '#292929', symbolColor: '#ffffff' },
+  light: { color: '#ffffff', symbolColor: '#000000' },
+} as const;
 
 export class SettingsWindow {
   private window: BrowserWindow | null = null;
 
-  constructor(private readonly updater: UpdaterService) {}
+  constructor(private readonly updater: UpdaterService) {
+    // The renderer computes the effective (system-resolved) theme and asks us to recolor the native
+    // caption buttons to match. Registered once here (SettingsWindow is a singleton); guarded on a live
+    // window. Not part of UpdaterService's settings IPC — this is pure window chrome.
+    ipcMain.on(IPC.titleBarOverlayUpdate, (_event, dark: boolean) => this.applyOverlay(dark));
+  }
+
+  private applyOverlay(dark: boolean): void {
+    const window = this.window;
+    if (window === null || window.isDestroyed()) return;
+    window.setTitleBarOverlay(dark ? OVERLAY.dark : OVERLAY.light);
+  }
 
   /** Opens the window, creating it lazily on first call; otherwise shows + focuses the existing one. */
   openOrFocus(): void {
@@ -41,7 +62,15 @@ export class SettingsWindow {
       show: false,
       // A plain desktop window — no game kiosk/fullscreen. autoHideMenuBar is not needed: main.ts
       // already does Menu.setApplicationMenu(null) globally (N6).
-      frame: true,
+      // Windows-11-Settings-style chrome: the native title bar is hidden and the app draws its own
+      // (icon + "Playhook (version)" on the left, see settings.html), while the native min/max/close
+      // buttons are kept via the Window Controls Overlay — recolored to the theme (initial guess from
+      // the OS; the renderer refines it once the effective theme is known).
+      titleBarStyle: 'hidden',
+      titleBarOverlay: {
+        ...(nativeTheme.shouldUseDarkColors ? OVERLAY.dark : OVERLAY.light),
+        height: TITLE_BAR_HEIGHT,
+      },
       resizable: true,
       fullscreen: false,
       title: `${APP_NAME} — Settings`,
