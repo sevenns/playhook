@@ -12,6 +12,7 @@ import path from 'node:path';
 import { BrowserWindow, ipcMain, nativeTheme } from 'electron';
 import { APP_NAME, IPC } from '../shared/types';
 import { type UpdaterService } from './updater';
+import { installHideOnClose, type HideOnCloseGuard } from './window-hide-guard';
 
 const TITLE_BAR_HEIGHT = 48;
 
@@ -25,6 +26,7 @@ const OVERLAY = {
 
 export class SettingsWindow {
   private window: BrowserWindow | null = null;
+  private closeGuard: HideOnCloseGuard | null = null;
 
   constructor(private readonly updater: UpdaterService) {
     // The renderer computes the effective (system-resolved) theme and asks us to recolor the native
@@ -86,15 +88,9 @@ export class SettingsWindow {
       },
     });
 
-    // Closing the window with the X doesn't quit the app — hide it to the tray (like GameWindow).
-    window.on('close', (event) => {
-      if (!this.forceClosing) {
-        event.preventDefault();
-        window.hide();
-      }
-      // Whether it's a real close or a hide, stop the updater from pushing into this window.
-      this.updater.detachWindow();
-    });
+    // Closing the window with the X doesn't quit the app — hide it to the tray (like GameWindow, N1).
+    // Whether it's a real close or a hide, stop the updater from pushing into this window.
+    this.closeGuard = installHideOnClose(window, () => this.updater.detachWindow());
 
     // Belt-and-suspenders: also detach when the window is merely hidden.
     window.on('hide', () => this.updater.detachWindow());
@@ -114,14 +110,12 @@ export class SettingsWindow {
     });
   }
 
-  private forceClosing = false;
-
   get browserWindow(): BrowserWindow | null {
     return this.window;
   }
 
   /** Allows the window to actually close (app quit / update install). */
   allowClose(): void {
-    this.forceClosing = true;
+    this.closeGuard?.allowClose();
   }
 }

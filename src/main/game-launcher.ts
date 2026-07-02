@@ -20,7 +20,9 @@ import path from 'node:path';
 import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import koffi from 'koffi';
-import { type InstallManifest, type LaunchTarget, type ResolvedManifest } from '../shared/types';
+import { type LaunchTarget, type ResolvedManifest } from '../shared/types';
+import { buildInstallerArgs, buildParameters } from './launch-args';
+import { delay } from './util';
 
 const execFileAsync = promisify(execFile);
 
@@ -45,9 +47,6 @@ export interface GameProcess {
   /** Releases the kept HANDLE (elevated path); no-op for the normal path. */
   dispose(): void;
 }
-
-const delay = (ms: number): Promise<void> =>
-  new Promise((resolve) => setTimeout(resolve, ms));
 
 function throwIfAborted(signal: AbortSignal | undefined): void {
   if (signal?.aborted === true) throw new LaunchAbortedError();
@@ -186,38 +185,6 @@ function loadKernel(): KernelLib {
 }
 
 /**
- * Quotes a single argument for ShellExecuteEx's raw lpParameters command line, following the
- * CommandLineToArgvW rules (backslashes are literal except before a quote). spawn did this for us;
- * the elevated path passes one raw string, so we must quote args containing whitespace or quotes.
- */
-function quoteArg(arg: string): string {
-  if (arg.length > 0 && !/[\s"]/.test(arg)) return arg;
-  let result = '"';
-  let backslashes = 0;
-  for (const ch of arg) {
-    if (ch === '\\') {
-      backslashes += 1;
-      continue;
-    }
-    if (ch === '"') {
-      // Escape the run of backslashes (each doubled) plus the quote itself.
-      result += '\\'.repeat(backslashes * 2 + 1) + '"';
-      backslashes = 0;
-      continue;
-    }
-    result += '\\'.repeat(backslashes) + ch;
-    backslashes = 0;
-  }
-  // Trailing backslashes precede the closing quote → double them so they stay literal.
-  result += '\\'.repeat(backslashes * 2) + '"';
-  return result;
-}
-
-function buildParameters(args: readonly string[]): string {
-  return args.map(quoteArg).join(' ');
-}
-
-/**
  * How the OS command line is formed — a game and a (pre-quoted, silent) installer differ:
  * - `verbatim`: the args are FINAL tokens, passed through without Node/CommandLineToArgvW quoting
  *   (the installer family's quoting is already baked into them by buildInstallerArgs).
@@ -341,30 +308,6 @@ export async function launchGame(manifest: ResolvedManifest): Promise<GameProces
     runAsAdmin: manifest.raw.runAsAdmin,
   };
   return launch(target, GAME_MODE);
-}
-
-/**
- * Builds the FINAL installer argument tokens for a silent install into `dir`, with each family's
- * quoting baked in (so they are passed verbatim, never re-quoted by Node/CommandLineToArgvW):
- * - `nsis`  → `/S` … `/D=<dir>` — `/D=` MUST be last and UNQUOTED (NSIS reads everything after it,
- *   to end of line, as the path — even with spaces).
- * - `inno`  → `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR="<dir>"` … — Inno needs the path quoted.
- * - `custom`→ the card author's own args, with `{dir}` substituted; they own the quoting/flags.
- * Extra `customArgs` for nsis/inno are appended (after the silent flags, before the trailing `/D=` for nsis).
- */
-function buildInstallerArgs(
-  type: InstallManifest['type'],
-  dir: string,
-  customArgs: readonly string[],
-): string[] {
-  switch (type) {
-    case 'nsis':
-      return ['/S', ...customArgs, `/D=${dir}`];
-    case 'inno':
-      return ['/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', `/DIR="${dir}"`, ...customArgs];
-    case 'custom':
-      return customArgs.map((arg) => arg.replaceAll('{dir}', dir));
-  }
 }
 
 /**

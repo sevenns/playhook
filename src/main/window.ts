@@ -6,9 +6,12 @@
 // switching back to the game/Steam. A focused fullscreen window already hides the taskbar.
 import path from 'node:path';
 import { BrowserWindow, Menu, clipboard } from 'electron';
+import { installHideOnClose, type HideOnCloseGuard } from './window-hide-guard';
+import { forceForegroundWindow } from './foreground';
 
 export class GameWindow {
   private window: BrowserWindow | null = null;
+  private closeGuard: HideOnCloseGuard | null = null;
 
   create(): BrowserWindow {
     const window = new BrowserWindow({
@@ -54,20 +57,13 @@ export class GameWindow {
       menu.popup({ window });
     });
 
-    // Closing the window with the X doesn't quit the app — we hide it to the tray.
-    window.on('close', (event) => {
-      if (!this.forceClosing) {
-        event.preventDefault();
-        window.hide();
-      }
-    });
+    // Closing the window with the X doesn't quit the app — we hide it to the tray (N1).
+    this.closeGuard = installHideOnClose(window);
 
     void window.loadFile(path.join(__dirname, '../renderer/index.html'));
     this.window = window;
     return window;
   }
-
-  private forceClosing = false;
 
   get browserWindow(): BrowserWindow | null {
     return this.window;
@@ -82,13 +78,19 @@ export class GameWindow {
   showAndFocus(forceForeground = false): void {
     const window = this.window;
     if (window === null) return;
+    if (window.isMinimized()) window.restore();
     if (!window.isVisible()) window.show();
-    if (forceForeground) {
-      window.minimize();
-      window.restore();
-    }
     if (!window.isFullScreen()) window.setFullScreen(true);
     window.focus();
+    if (forceForeground) {
+      // The summon came from the gamepad global hook, which Windows doesn't treat as user input to our
+      // window — so the foreground LOCK denies the focus() above real activation: the launcher shows and
+      // is even keyboard-focused, but the previous app stays the ACTIVE window (its taskbar shows). The
+      // native call lifts the lock (AttachThreadInput) and makes us the true foreground window — taskbar
+      // hides, activation is genuine. No-op off Windows; best-effort (a plain tray "Show launcher" is a
+      // real click and already gets foreground rights, so it doesn't need this).
+      forceForegroundWindow(window.getNativeWindowHandle());
+    }
     window.flashFrame(false);
   }
 
@@ -98,6 +100,6 @@ export class GameWindow {
 
   /** Allows the window to actually close (when quitting the app). */
   allowClose(): void {
-    this.forceClosing = true;
+    this.closeGuard?.allowClose();
   }
 }

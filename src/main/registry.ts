@@ -43,8 +43,9 @@ const MAX_NAME_CHARS = 256;
 const VALUE_BUF_BYTES = 4096;
 
 // HKEY is an opaque pointer; predefined roots are passed as BigInt values (koffi accepts BigInt for
-// opaque pointer args, as game-launcher.ts does for HANDLE).
-const HKEY = koffi.pointer('HKEY', koffi.opaque());
+// opaque pointer args, as game-launcher.ts does for HANDLE). Registered by name for the prototype
+// strings below (RegOpenKeyExW etc.) — the koffi.pointer call's side effect is what matters here.
+koffi.pointer('HKEY', koffi.opaque());
 
 type RegOpenKeyExWFn = (
   hKey: bigint,

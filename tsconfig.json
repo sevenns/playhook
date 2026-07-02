@@ -17,5 +17,7 @@
     "noEmit": true,
     "types": ["node"]
   },
+  // Type-check ONLY config (noEmit) over the whole of src — including settings.ts, which the renderer
+  // build config excludes because esbuild bundles it (audit N5). This is the single typecheck gate.
   "include": ["src/**/*.ts"]
 }

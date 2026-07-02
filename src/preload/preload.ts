@@ -1,9 +1,14 @@
 // Typed main↔renderer bridge (contextIsolation: true, nodeIntegration: false).
 // Channels are inlined as literals rather than imported from shared, so the preload
 // stays sandbox-compatible (a sandboxed preload cannot require arbitrary files).
-// The literals must match the IPC channels in shared/types.ts.
+// `satisfies Partial<typeof IPC>` gives us the compile-time bridge back: a wrong channel
+// value (TS2322) or a typo'd key (TS2353) now fails typecheck. `import type` keeps IPC
+// out of the runtime bundle (it erases), so the sandbox stays intact. Partial<> cannot
+// catch a *missing* channel though — that completeness is guarded by the ipc-channels
+// unit test (shared/types.ts is the single source of truth).
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
 import type { AppState, AudioAssets, AudioVolumes, HeroAssets, RendererApi } from '../shared/types';
+import type { IPC } from '../shared/types';
 
 const CHANNELS = {
   stateUpdate: 'state:update',
@@ -20,7 +25,7 @@ const CHANNELS = {
   wallpaperRequest: 'wallpaper:request',
   volumeRequest: 'volume:request',
   volumeUpdate: 'volume:update',
-} as const;
+} as const satisfies Partial<typeof IPC>;
 
 const api: RendererApi = {
   onStateUpdate(callback: (state: AppState) => void): void {

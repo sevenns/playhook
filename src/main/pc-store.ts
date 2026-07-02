@@ -8,6 +8,7 @@ import path from 'node:path';
 import fse from 'fs-extra';
 import { z } from 'zod';
 import { type Stats } from '../shared/types';
+import { readJsonValidated } from './json-store';
 
 const statsSchema = z.object({
   schemaVersion: z.literal(1),
@@ -60,15 +61,9 @@ export class PcStore {
     return path.join(this.statsDir, `${id}.json`);
   }
 
-  /** Reads statistics; returns zeros if the file is missing or corrupted. */
+  /** Reads statistics; returns zeros if the file is missing or corrupted (a warn is logged on corruption). */
   async readStats(id: string): Promise<Stats> {
-    try {
-      const raw: unknown = await fse.readJson(this.statsPath(id));
-      const parsed = statsSchema.safeParse(raw);
-      return parsed.success ? parsed.data : DEFAULT_STATS;
-    } catch {
-      return DEFAULT_STATS;
-    }
+    return readJsonValidated(this.statsPath(id), statsSchema, DEFAULT_STATS);
   }
 
   async writeStats(id: string, stats: Stats): Promise<void> {

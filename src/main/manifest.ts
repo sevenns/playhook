@@ -133,8 +133,8 @@ export interface ManifestEnv {
 // Env-var prefixes allowed in pcSavePath (resolved from process.env).
 const ENV_PREFIXES = ['APPDATA', 'LOCALAPPDATA', 'USERPROFILE'] as const;
 
-/** Resolves a card-relative path strictly inside its root. null = rejected. */
-function resolveInside(root: string, relative: string): string | null {
+/** Resolves a card-relative path strictly inside its root. null = rejected. Exported for unit tests (C1). */
+export function resolveInside(root: string, relative: string): string | null {
   if (path.isAbsolute(relative)) return null;
   const resolved = path.resolve(root, relative);
   const back = path.relative(root, resolved);
@@ -151,8 +151,11 @@ type ExpandResult =
 // Human-readable list of accepted prefixes (kept in sync with the resolution below) for error messages.
 const ALLOWED_PREFIXES_HELP = '%DOCUMENTS%, %APPDATA%, %LOCALAPPDATA%, %LOCALLOW% or %USERPROFILE%';
 
-/** Expands pcSavePath only from the allowed prefixes (%DOCUMENTS%/%LOCALLOW% + env vars), without traversal. */
-function expandPcSavePath(input: string, env: ManifestEnv): ExpandResult {
+/**
+ * Expands pcSavePath only from the allowed prefixes (%DOCUMENTS%/%LOCALLOW% + env vars), without traversal.
+ * Exported for unit tests (C1).
+ */
+export function expandPcSavePath(input: string, env: ManifestEnv): ExpandResult {
   const match = /^%([A-Za-z]+)%[\\/]?(.*)$/.exec(input);
   if (match === null) {
     return {
@@ -198,7 +201,8 @@ function expandPcSavePath(input: string, env: ManifestEnv): ExpandResult {
 function formatZodError(error: z.ZodError): string {
   const first = error.issues[0];
   if (first === undefined) return 'invalid manifest';
-  const where = first.path.join('.') || '(root)';
+  const joined = first.path.join('.');
+  const where = joined.length > 0 ? joined : '(root)';
   return `${where}: ${first.message}`;
 }
 

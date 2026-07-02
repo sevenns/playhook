@@ -2,8 +2,10 @@
 // Separate from preload.ts so the settings window gets its own `window.settingsApi`, isolated from the
 // game `window.api` contract (A1). As in preload.ts, channels are inlined as string LITERALS rather
 // than imported from shared: a sandboxed preload cannot require arbitrary files. Only `import type`
-// from shared is allowed (types erase at compile time). The literals below MUST match the IPC channel
-// values in shared/types.ts symbol-for-symbol — the compiler cannot catch a drift here (I1).
+// from shared is allowed (types erase at compile time). `satisfies Partial<typeof IPC>` restores a
+// compile-time guard over these literals: a wrong value (TS2322) or a typo'd key (TS2353) fails
+// typecheck. Partial<> still cannot catch a *missing* channel — the ipc-channels unit test guards
+// that this CHANNELS map equals its slice of the shared IPC source of truth.
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
 import type {
   AppSettings,
@@ -12,6 +14,7 @@ import type {
   ThemeMode,
   UpdateStatus,
 } from '../shared/types';
+import type { IPC } from '../shared/types';
 
 const CHANNELS = {
   updateStatusUpdate: 'update:status',
@@ -33,7 +36,7 @@ const CHANNELS = {
   moveSoundRequest: 'app:move-sound',
   openLogs: 'app:open-logs',
   openGamesFolder: 'app:open-games-folder',
-} as const;
+} as const satisfies Partial<typeof IPC>;
 
 const api: SettingsApi = {
   getAppVersion(): Promise<string> {
