@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- CSP mirrors settings.html. The bundle (configure.js, incl. CodeMirror) is same-origin (file://)
+         → script-src 'self' is enough; CodeMirror 6 uses no eval/new Function, so no 'unsafe-eval'.
+         style-src 'unsafe-inline' is required for CodeMirror's dynamically-injected theme stylesheets
+         (and Fluent's inline styles) — the settings pattern already allows it, so no policy is loosened. -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; img-src data:; media-src data:; style-src 'self' 'unsafe-inline'; font-src 'self'; script-src 'self';"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Playhook — Configure game</title>
+    <link rel="stylesheet" href="./configure.css" />
+  </head>
+  <body>
+    <!-- Custom title bar (native hidden). Draggable strip; the native min/max/close buttons sit on the
+         right via the Window Controls Overlay, so the right ~140px is left clear. -->
+    <header id="titlebar">
+      <span id="titlebar-title">Playhook — Configure game</span>
+    </header>
+
+    <main id="configure">
+      <!-- Drive picker -->
+      <section class="section">
+        <span class="section-label">Card</span>
+        <fluent-radio-group id="drive-group" name="drive"></fluent-radio-group>
+        <span id="drive-empty" hidden>Insert an SD card or flash drive.</span>
+      </section>
+
+      <!-- Starter templates -->
+      <section class="section">
+        <span class="section-label">Start from a template</span>
+        <div class="button-row">
+          <fluent-button id="tpl-executable">Executable file</fluent-button>
+          <fluent-button id="tpl-installer">Installer</fluent-button>
+          <fluent-button id="tpl-steam">Steam</fluent-button>
+        </div>
+      </section>
+
+      <!-- Editor + validation results -->
+      <section id="editor-section">
+        <span class="section-label">game.json</span>
+        <div id="editor"></div>
+        <div id="issues"></div>
+      </section>
+
+      <!-- Actions -->
+      <div class="actions">
+        <fluent-button id="save" appearance="accent">Save &amp; Apply</fluent-button>
+        <fluent-button id="reload">Reload</fluent-button>
+        <span id="status"></span>
+      </div>
+    </main>
+
+    <!-- Confirm modal (custom; used for template-replace and dirty-switch confirmations). -->
+    <div id="confirm-veil" hidden>
+      <div id="confirm-panel">
+        <span id="confirm-message"></span>
+        <div class="button-row">
+          <fluent-button id="confirm-cancel">Cancel</fluent-button>
+          <fluent-button id="confirm-ok" appearance="accent">Replace</fluent-button>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="./configure.js"></script>
+  </body>
+</html>

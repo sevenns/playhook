@@ -1,0 +1,179 @@
+/* Configure-game window layout. Like settings.css, component look (colors, typography, focus) comes from
+   Fluent v3 + the theme applied at runtime via setTheme() — which publishes the theme tokens as GLOBAL
+   CSS custom properties. The CodeMirror editor is themed off the very same tokens (see configure.ts
+   cmTheme), so it follows light/dark automatically. Segoe UI is the system font Fluent uses. */
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--colorNeutralBackground1, #1f1f1f);
+  color: var(--colorNeutralForeground1, #ffffff);
+  font-family: 'Segoe UI', system-ui, sans-serif;
+}
+
+/* Custom title bar (native one is hidden). Draggable; right padding keeps the title clear of the native
+   min/max/close overlay. Background matches the page and the overlay `color` set in configure-window.ts. */
+#titlebar {
+  flex: none;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 16px;
+  padding-right: 148px;
+  background: var(--colorNeutralBackground1, #1f1f1f);
+  -webkit-app-region: drag;
+  user-select: none;
+}
+
+#titlebar-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--colorNeutralForeground1, #ffffff);
+}
+
+#configure {
+  flex: 1 1 auto;
+  min-height: 0; /* let the editor shrink inside the flex column instead of overflowing */
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 12px 20px 20px;
+}
+
+.section {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.section-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--colorNeutralForeground2, #adadad);
+}
+
+fluent-radio-group#drive-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+#drive-empty {
+  color: var(--colorNeutralForeground2, #adadad);
+  font-size: 13px;
+}
+
+.button-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* Editor: grows to fill the remaining height; CodeMirror fills the box. */
+#editor-section {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+#editor {
+  flex: 1 1 auto;
+  min-height: 160px;
+  border: 1px solid var(--colorNeutralStroke2, #444);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+#editor .cm-editor {
+  height: 100%;
+}
+
+#editor .cm-scroller {
+  font-family: 'Cascadia Code', 'Consolas', ui-monospace, monospace;
+  font-size: 13px;
+}
+
+/* Issues panel: a short scrollable list under the editor. */
+#issues {
+  flex: none;
+  max-height: 120px;
+  overflow-y: auto;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+#issues.valid {
+  color: var(--colorStatusSuccessForeground1, #6ccb5f);
+}
+
+#issues .issue {
+  color: var(--colorStatusDangerForeground1, #f87171);
+}
+
+#issues .issue-path {
+  font-weight: 600;
+}
+
+#issues .warning {
+  color: var(--colorStatusWarningForeground1, #e6b800);
+}
+
+.actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+#status {
+  flex: 1 1 auto;
+  font-size: 12px;
+  color: var(--colorNeutralForeground2, #adadad);
+}
+
+/* Confirm modal (custom, in the spirit of the game window's .popup — reliable across Fluent v3 betas). */
+#confirm-veil {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 100;
+}
+
+#confirm-panel {
+  min-width: 300px;
+  max-width: 80%;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px;
+  border-radius: 8px;
+  background: var(--colorNeutralBackground1, #1f1f1f);
+  border: 1px solid var(--colorNeutralStroke2, #444);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+#confirm-message {
+  font-size: 14px;
+}
+
+#confirm-panel .button-row {
+  justify-content: flex-end;
+}
+
+[hidden] {
+  display: none !important;
+}

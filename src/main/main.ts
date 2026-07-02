@@ -16,6 +16,8 @@ import { GlobalGamepad } from './gamepad-global';
 import { createTray } from './tray';
 import { UpdaterService } from './updater';
 import { SettingsWindow } from './settings-window';
+import { GameConfigService } from './game-config';
+import { ConfigureWindow } from './configure-window';
 import { IPC } from '../shared/types';
 
 // Keep-alive reference so the Tray (and its icon) isn't garbage-collected; assigned, never read.
@@ -24,6 +26,7 @@ let trayRef: Tray | null = null;
 let controllerRef: GameController | null = null;
 let windowRef: GameWindow | null = null;
 let settingsWindowRef: SettingsWindow | null = null;
+let configureWindowRef: ConfigureWindow | null = null;
 let globalGamepadRef: GlobalGamepad | null = null;
 let quitting = false;
 // Whether the global Start+Back summon chord is active (mirrors AppSettings.summonHotkeyEnabled, toggled
@@ -63,6 +66,7 @@ function quit(): void {
   globalGamepadRef?.stop();
   windowRef?.allowClose();
   settingsWindowRef?.allowClose();
+  configureWindowRef?.allowClose();
   app.quit();
 }
 
@@ -101,6 +105,7 @@ async function bootstrap(): Promise<void> {
       quitting = true;
       window.allowClose();
       settingsWindow.allowClose();
+      configureWindow.allowClose();
     },
     openLogs,
     openGamesFolder,
@@ -115,12 +120,24 @@ async function bootstrap(): Promise<void> {
   const settingsWindow = new SettingsWindow(updater);
   settingsWindowRef = settingsWindow;
 
+  // Configure-game window + its backend. getActiveRoot / reloadManifest come from the controller/watcher
+  // (interface-DI); the theme comes from the same settings store the settings window uses.
+  const gameConfig = new GameConfigService({
+    settings,
+    getActiveRoot: () => watcher.getActiveRoot(),
+    reloadManifest: (root) => controller.reloadManifest(root),
+  });
+  gameConfig.init();
+  const configureWindow = new ConfigureWindow(gameConfig);
+  configureWindowRef = configureWindow;
+
   window.create();
   // Always start hidden in the tray — the window appears only when a valid game card is detected
   // (GameController shows it on the 'ready' state). No black "Insert a game card" screen on launch.
 
   trayRef = createTray({
     onShow: () => window.showAndFocus(),
+    onOpenConfigureGame: () => configureWindow.openOrFocus(),
     onOpenSettings: () => settingsWindow.openOrFocus(),
     onQuit: () => quit(),
   });
@@ -165,6 +182,7 @@ if (!gotSingleInstanceLock) {
     globalGamepadRef?.stop();
     windowRef?.allowClose();
     settingsWindowRef?.allowClose();
+    configureWindowRef?.allowClose();
   });
 
   app.whenReady().then(bootstrap).catch((cause: unknown) => {

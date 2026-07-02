@@ -9,8 +9,9 @@ const srcRenderer = resolve(root, 'src/renderer');
 const outDist = resolve(root, 'dist');
 const outRenderer = resolve(outDist, 'renderer');
 
-// settings.js is NOT here — esbuild emits it straight into dist/renderer (see build:settings).
-const files = ['index.html', 'styles.css', 'settings.html', 'settings.css'];
+// settings.js / configure.js are NOT here — esbuild emits them straight into dist/renderer (see
+// build:settings / build:configure).
+const files = ['index.html', 'styles.css', 'settings.html', 'settings.css', 'configure.html', 'configure.css'];
 const dirs = ['fonts'];
 
 await mkdir(outRenderer, { recursive: true });
