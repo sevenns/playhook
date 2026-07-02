@@ -15,10 +15,13 @@
     <link rel="stylesheet" href="./configure.css" />
   </head>
   <body>
-    <!-- Custom title bar (native hidden). Draggable strip; the native min/max/close buttons sit on the
-         right via the Window Controls Overlay, so the right ~140px is left clear. -->
+    <!-- Custom title bar (native hidden), matching the settings window: [icon] Playhook · Configure game.
+         Draggable strip; the native min/max/close buttons sit on the right via the Window Controls
+         Overlay, so the right ~140px is left clear. -->
     <header id="titlebar">
-      <span id="titlebar-title">Playhook — Configure game</span>
+      <img id="titlebar-icon" alt="" />
+      <span id="titlebar-title">Playhook</span>
+      <span id="titlebar-subtitle">Configure game</span>
     </header>
 
     <main id="configure">
@@ -49,7 +52,8 @@
       <!-- Actions -->
       <div class="actions">
         <fluent-button id="save" appearance="accent">Save &amp; Apply</fluent-button>
-        <fluent-button id="reload">Reload</fluent-button>
+        <fluent-button id="format">Format</fluent-button>
+        <fluent-button id="reset">Reset</fluent-button>
         <span id="status"></span>
       </div>
     </main>

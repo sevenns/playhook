@@ -9,6 +9,7 @@
 //    an arbitrary filesystem location;
 //  • Save re-runs the static validation server-side (a race guard against the UI enabling it wrongly).
 import path from 'node:path';
+import fs from 'node:fs/promises';
 import fse from 'fs-extra';
 import { ipcMain, type BrowserWindow } from 'electron';
 import {
@@ -71,6 +72,22 @@ export class GameConfigService {
     ipcMain.handle(IPC.configSettingsRequest, (): Promise<AppSettings> =>
       this.deps.settings.read(),
     );
+    ipcMain.handle(IPC.configIconRequest, (): Promise<string> => this.readIconDataUrl());
+  }
+
+  // The window shows the app icon in its custom title bar. CSP there is `img-src data:`, so we hand the
+  // icon over as a data URL rather than a file path (mirrors UpdaterService.readIconDataUrl). Read once.
+  private iconDataUrl: string | null = null;
+  private async readIconDataUrl(): Promise<string> {
+    if (this.iconDataUrl !== null) return this.iconDataUrl;
+    try {
+      const buffer = await fs.readFile(path.join(__dirname, '../icon.png'));
+      this.iconDataUrl = `data:image/png;base64,${buffer.toString('base64')}`;
+    } catch (cause) {
+      log.error('[game-config] failed to read app icon:', cause);
+      this.iconDataUrl = ''; // empty → the renderer just hides the <img>
+    }
+    return this.iconDataUrl;
   }
 
   /** Attaches the window and starts the visible-only drive poll (called on window show). */

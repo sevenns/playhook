@@ -33,10 +33,21 @@ body {
   user-select: none;
 }
 
+#titlebar-icon {
+  width: 18px;
+  height: 18px;
+  flex: none;
+}
+
 #titlebar-title {
   font-size: 12px;
   font-weight: 600;
   color: var(--colorNeutralForeground1, #ffffff);
+}
+
+#titlebar-subtitle {
+  font-size: 12px;
+  color: var(--colorNeutralForeground2, #adadad);
 }
 
 #configure {

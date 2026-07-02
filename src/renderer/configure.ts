@@ -73,12 +73,14 @@ function readGroupValue(el: HTMLElement): string | null {
   return typeof raw === 'string' && raw.length > 0 ? raw : null;
 }
 
+const titlebarIcon = req<HTMLImageElement>('titlebar-icon');
 const driveGroup = req('drive-group');
 const driveEmpty = req('drive-empty');
 const editorEl = req('editor');
 const issuesEl = req('issues');
 const saveBtn = req('save');
-const reloadBtn = req('reload');
+const formatBtn = req('format');
+const resetBtn = req('reset');
 const statusEl = req('status');
 const tplExecutable = req('tpl-executable');
 const tplInstaller = req('tpl-installer');
@@ -111,6 +113,15 @@ function cmTheme(dark: boolean): Extension {
       },
       '.cm-activeLine': { backgroundColor: 'var(--colorNeutralBackground1Hover)' },
       '.cm-activeLineGutter': { backgroundColor: 'var(--colorNeutralBackground2Hover)' },
+      // Selection highlight (double-click word select, drag select). basicSetup draws the selection via
+      // its own layer, so without an explicit background it's invisible on a dark theme — which read as
+      // "double-click doesn't select". Use the Fluent brand tint (fallback covers the pre-theme flash).
+      '.cm-selectionBackground, ::selection': {
+        backgroundColor: 'var(--colorBrandBackground2, rgba(56, 134, 222, 0.4))',
+      },
+      '&.cm-focused .cm-selectionBackground, &.cm-focused ::selection': {
+        backgroundColor: 'var(--colorBrandBackgroundSelected, rgba(56, 134, 222, 0.55))',
+      },
       '&.cm-focused': { outline: 'none' },
     },
     { dark },
@@ -257,11 +268,23 @@ confirmVeil.addEventListener('click', (event) => {
 });
 
 // ── Drive picker ─────────────────────────────────────────────────────────────
+// The list is pushed every 2s while the window is visible. Rebuilding the fluent-radio DOM on every push
+// wiped the current selection (fresh elements lose the checked state), so we ONLY rebuild when the list
+// actually changed (signature compare) and reconcile the selection on every push without touching the DOM.
+let lastDrivesSig = '';
+
+function drivesSignature(list: readonly DriveCandidate[]): string {
+  return list
+    .map((d) => `${d.root}|${d.label}|${d.hasManifest ? 1 : 0}|${d.isActive ? 1 : 0}`)
+    .join('¦');
+}
+
 function renderDrives(list: readonly DriveCandidate[]): void {
   drives = list;
-  driveGroup.replaceChildren();
 
   if (list.length === 0) {
+    lastDrivesSig = '';
+    driveGroup.replaceChildren();
     driveEmpty.hidden = false;
     setDisabled(driveGroup, true);
     // The selected card is gone (or none was ever present) → block editing, keep the text.
@@ -270,6 +293,16 @@ function renderDrives(list: readonly DriveCandidate[]): void {
   }
   driveEmpty.hidden = true;
 
+  const sig = drivesSignature(list);
+  if (sig !== lastDrivesSig) {
+    lastDrivesSig = sig;
+    rebuildRadios(list);
+  }
+  reconcileSelection(list);
+}
+
+function rebuildRadios(list: readonly DriveCandidate[]): void {
+  driveGroup.replaceChildren();
   for (const candidate of list) {
     const field = document.createElement('fluent-field');
     field.setAttribute('label-position', 'after');
@@ -284,7 +317,9 @@ function renderDrives(list: readonly DriveCandidate[]): void {
   }
   // A lone card auto-selects and the group is disabled (nothing to choose).
   setDisabled(driveGroup, list.length === 1);
+}
 
+function reconcileSelection(list: readonly DriveCandidate[]): void {
   const stillPresent = selectedRoot !== null && list.some((d) => d.root === selectedRoot);
   if (stillPresent && selectedRoot !== null) {
     // Keep the current selection; a card that had vanished and came back unblocks (text preserved).
@@ -308,7 +343,7 @@ function renderDrives(list: readonly DriveCandidate[]): void {
 function onSelectedGone(): void {
   blocked = true;
   setEditable(false);
-  setDisabled(reloadBtn, true);
+  setDisabled(resetBtn, true);
   setTemplatesDisabled(true);
   updateSaveEnabled();
   setStatus('The selected card is no longer available. Your text is kept.');
@@ -317,7 +352,7 @@ function onSelectedGone(): void {
 function unblock(): void {
   blocked = false;
   setEditable(true);
-  setDisabled(reloadBtn, false);
+  setDisabled(resetBtn, false);
   setTemplatesDisabled(false);
   updateSaveEnabled();
   setStatus('');
@@ -388,7 +423,28 @@ tplExecutable.addEventListener('click', () => void applyTemplate('executable'));
 tplInstaller.addEventListener('click', () => void applyTemplate('installer'));
 tplSteam.addEventListener('click', () => void applyTemplate('steam'));
 
-// ── Save & Apply / Reload ──────────────────────────────────────────────────────
+// ── Format ─────────────────────────────────────────────────────────────────────
+// Pretty-prints the editor JSON (2-space indent) — the in-app "prettier" for fixing indentation. Only
+// works on syntactically valid JSON; otherwise it asks the user to fix the errors first.
+function onFormat(): void {
+  if (blocked || view === null) return;
+  const text = getEditorText();
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    setStatus('Fix the JSON syntax errors before formatting.');
+    return;
+  }
+  const formatted = JSON.stringify(parsed, null, 2);
+  if (formatted === text) return; // already tidy — nothing to do (and don't flag it dirty)
+  setEditorText(formatted, false);
+  dirty = true;
+  void runValidate();
+  setStatus('');
+}
+
+// ── Save & Apply / Reset ────────────────────────────────────────────────────────
 async function onSave(): Promise<void> {
   if (selectedRoot === null || blocked || !lastValidOk) return;
   const root = selectedRoot;
@@ -417,17 +473,19 @@ async function onSave(): Promise<void> {
   updateSaveEnabled();
 }
 
-async function onReload(): Promise<void> {
+// Reverts unsaved edits by re-reading game.json from the card (labelled "Reset").
+async function onReset(): Promise<void> {
   if (selectedRoot === null || blocked) return;
   if (dirty) {
-    const ok = await confirmDialog('Discard unsaved changes and reload from the card?', 'Discard');
+    const ok = await confirmDialog('Discard unsaved changes and reset from the card?', 'Discard');
     if (!ok) return;
   }
   await loadDrive(selectedRoot);
 }
 
 saveBtn.addEventListener('click', () => void onSave());
-reloadBtn.addEventListener('click', () => void onReload());
+formatBtn.addEventListener('click', () => onFormat());
+resetBtn.addEventListener('click', () => void onReset());
 
 driveGroup.addEventListener('change', () => {
   const value = readGroupValue(driveGroup);
@@ -437,14 +495,28 @@ driveGroup.addEventListener('change', () => {
 // ── Init ─────────────────────────────────────────────────────────────────────
 applyTheme('system'); // best-guess before settings load, to avoid a flash
 
+// The theme is chosen in the settings window and persisted; there is no live cross-window push. The
+// window is a hidden/shown singleton, so re-fetch the persisted theme whenever it becomes visible again —
+// otherwise a theme change made in settings only took effect after a full app restart.
+async function refreshTheme(): Promise<void> {
+  const settings = await window.configureApi.getSettings();
+  applyTheme(settings.theme);
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') void refreshTheme();
+});
+
 async function init(): Promise<void> {
   window.configureApi.onDrivesUpdate(renderDrives);
-  const [settings, schema, drivesList] = await Promise.all([
+  const [settings, schema, drivesList, icon] = await Promise.all([
     window.configureApi.getSettings(),
     window.configureApi.getSchema(),
     window.configureApi.getDrives(),
+    window.configureApi.getAppIcon(),
   ]);
   applyTheme(settings.theme);
+  if (icon !== '') titlebarIcon.src = icon;
+  else titlebarIcon.hidden = true;
   // Schema-aware editor when the JSON Schema is available; plain JSON otherwise (graceful degradation —
   // syntax highlighting + parse-linting still work, just without field completion/hover).
   let schemaExt: Extension;

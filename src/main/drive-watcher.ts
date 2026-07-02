@@ -10,11 +10,40 @@ import { MANIFEST_FILENAME, type DriveCandidate } from '../shared/types';
 
 const DEFAULT_INTERVAL_MS = 1000;
 
+// Internal bus types some machines still report as `isRemovable` (hot-swap SATA bays, second SSDs, etc.).
+// The Configure picker must only offer EXTERNAL media (SD/USB), so we exclude these buses on top of the
+// removable/non-system check. Removable media report USB / SD(CARD) / MMC / UNKNOWN and pass.
+const INTERNAL_BUS_TYPES = new Set([
+  'SATA',
+  'ATA',
+  'ATAPI',
+  'IDE',
+  'NVME',
+  'SCSI',
+  'SAS',
+  'RAID',
+  'PCIE',
+  'PCI',
+]);
+
+/** True when a drive is a genuine external, removable, non-system volume (SD card / USB stick). */
+function isExternalDrive(drive: {
+  readonly isRemovable: boolean;
+  readonly isSystem: boolean;
+  readonly isVirtual: boolean | null;
+  readonly busType: string;
+}): boolean {
+  if (drive.isRemovable !== true || drive.isSystem === true || drive.isVirtual === true)
+    return false;
+  return !INTERNAL_BUS_TYPES.has(drive.busType.toUpperCase());
+}
+
 /**
- * Enumerates removable/non-system mountpoints as Configure-window candidates (stage: init/edit
- * game.json). Same drive criteria as scan(), but it does NOT filter by the presence of game.json —
- * a BLANK drive must be selectable to be initialized (`hasManifest` distinguishes it). The label is
- * built from the drive root plus the manifest title (drivelist gives no volume label on Windows).
+ * Enumerates external removable, non-system mountpoints as Configure-window candidates (stage: init/edit
+ * game.json). Unlike scan() it does NOT filter by the presence of game.json — a BLANK drive must be
+ * selectable to be initialized (`hasManifest` distinguishes it) — but it DOES exclude internal disks that
+ * merely report `isRemovable` (see isExternalDrive). The label is built from the drive root plus the
+ * manifest title (drivelist gives no volume label on Windows).
  */
 export async function listDriveCandidates(
   activeRoot: string | null,
@@ -22,7 +51,7 @@ export async function listDriveCandidates(
   const drives = await list();
   const candidates: DriveCandidate[] = [];
   for (const drive of drives) {
-    if (drive.isRemovable !== true || drive.isSystem === true) continue;
+    if (!isExternalDrive(drive)) continue;
     for (const mount of drive.mountpoints) {
       if (typeof mount.path !== 'string' || mount.path.length === 0) continue;
       const root = mount.path;

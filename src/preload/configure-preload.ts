@@ -26,6 +26,7 @@ const CHANNELS = {
   configTemplatesRequest: 'config:templates-request',
   configSchemaRequest: 'config:schema-request',
   configSettingsRequest: 'config:settings-request',
+  configIconRequest: 'config:icon',
   configTitleBarOverlay: 'config:titlebar-overlay',
 } as const satisfies Partial<typeof IPC>;
 
@@ -58,6 +59,9 @@ const api: ConfigureApi = {
   },
   getSettings(): Promise<AppSettings> {
     return ipcRenderer.invoke(CHANNELS.configSettingsRequest) as Promise<AppSettings>;
+  },
+  getAppIcon(): Promise<string> {
+    return ipcRenderer.invoke(CHANNELS.configIconRequest) as Promise<string>;
   },
   setTitleBarDark(dark: boolean): void {
     ipcRenderer.send(CHANNELS.configTitleBarOverlay, dark);

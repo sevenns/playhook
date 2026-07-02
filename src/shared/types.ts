@@ -408,6 +408,8 @@ export const IPC = {
   configSchemaRequest: 'config:schema-request',
   /** configure-renderer → main (invoke): the current AppSettings (for the window theme). */
   configSettingsRequest: 'config:settings-request',
+  /** configure-renderer → main (invoke): the app icon as a data URL (for the custom title bar). */
+  configIconRequest: 'config:icon',
   /** configure-renderer → main: recolor THIS window's native title-bar overlay for the theme. */
   configTitleBarOverlay: 'config:titlebar-overlay',
 } as const;
@@ -442,8 +444,7 @@ export type ConfigValidationResult =
 
 /** Result of reading a card's game.json for the editor. */
 export type ConfigReadResult =
-  | { readonly ok: true; readonly text: string }
-  | { readonly ok: false; readonly message: string };
+  { readonly ok: true; readonly text: string } | { readonly ok: false; readonly message: string };
 
 /**
  * Result of Save & Apply. `saved` false → nothing was written (message tells why). When written,
@@ -452,7 +453,11 @@ export type ConfigReadResult =
  * or `failed` (written, but re-reading the manifest was rejected — message carries the reason).
  */
 export type ConfigSaveResult =
-  | { readonly saved: true; readonly applied: 'applied' | 'deferred' | 'failed'; readonly message?: string }
+  | {
+      readonly saved: true;
+      readonly applied: 'applied' | 'deferred' | 'failed';
+      readonly message?: string;
+    }
   | { readonly saved: false; readonly message: string };
 
 /** The three starter templates (valid JSON strings) offered when initializing a card. */
@@ -527,6 +532,8 @@ export interface ConfigureApi {
   getSchema(): Promise<unknown>;
   /** The current AppSettings (for the window theme). */
   getSettings(): Promise<AppSettings>;
+  /** The app icon as a data URL, shown in the custom title bar (matches the settings window). */
+  getAppIcon(): Promise<string>;
   /** Tell main to recolor THIS window's native caption buttons to match the effective theme. */
   setTitleBarDark(dark: boolean): void;
 }

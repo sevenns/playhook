@@ -40,57 +40,62 @@ const installSchema = z
   .refine(
     (v) => v.type !== 'custom' || v.args.filter((arg) => arg.includes('{dir}')).length === 1,
     {
-      message: 'install.args (type "custom") must contain exactly one token with a {dir} placeholder',
+      message:
+        'install.args (type "custom") must contain exactly one token with a {dir} placeholder',
       path: ['args'],
     },
   );
 
 const manifestSchema = z
   .object({
-  schemaVersion: z.literal(1),
-  id: z
-    .string()
-    .min(1)
-    // id is used as a folder name on the PC (stats/pending-flush) — we forbid
-    // separators and traversal so the card can't control paths outside its own folder.
-    .regex(/^[A-Za-z0-9._-]+$/, 'id must match [A-Za-z0-9._-]')
-    .refine((v) => v !== '.' && v !== '..', 'id must not be . or ..'),
-  title: z.string().min(1),
-  // Optional: present for a normal/install-mode game, absent in Steam mode (the superRefine below
-  // enforces exactly one launch method).
-  executable: z.string().min(1).optional(),
-  args: z.array(z.string()).default([]),
-  // Opt-in elevation: for .exe whose embedded manifest requires administrator (spawn would EACCES).
-  runAsAdmin: z.boolean().default(false),
-  // Optional game process image names for launcher/wrapper setups (see GameManifest.watchProcesses).
-  // Each name is a bare `*.exe` file: no quotes, no path separators — both a hard constraint against
-  // injection into the `tasklist` argv (execFile is shell-less, but we validate strictly anyway) and a
-  // guard against accidental generic names. `.min(1)` rejects an empty array (defense in depth vs the
-  // `?.length` branch in ipc). Names are compared case-insensitively (lower-cased) at match time.
-  watchProcesses: z
-    .array(z.string().regex(/^[A-Za-z0-9._ -]+\.exe$/i, 'watchProcesses entries must be a bare *.exe name'))
-    .min(1)
-    .max(16)
-    .optional(),
-  // A single card-relative path, or a non-empty array of them (multi-hero rotation). Normalized to an
-  // array of resolved paths in readManifest. Backwards compatible: a lone string still works.
-  heroImage: z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]).optional(),
-  saveOnCard: z.string().min(1).optional(),
-  pcSavePath: z.string().min(1).optional(),
-  launchTimeoutSec: z.number().int().positive().default(30),
-  sounds: z
-    .object({
-      play: z.string().min(1).optional(),
-      navigate: z.string().min(1).optional(),
-      button: z.string().min(1).optional(),
-      back: z.string().min(1).optional(),
-    })
-    .optional(),
-  backgroundMusic: z.string().min(1).optional(),
-  install: installSchema.optional(),
-  // Steam mode: a pointer to a Steam app by appid (no game files on the card). Mutually exclusive with
-  // install/executable and requires watchProcesses — enforced by the superRefine below.
-  steam: z.object({ appid: z.number().int().positive() }).optional(),
+    schemaVersion: z.literal(1),
+    id: z
+      .string()
+      .min(1)
+      // id is used as a folder name on the PC (stats/pending-flush) — we forbid
+      // separators and traversal so the card can't control paths outside its own folder.
+      .regex(/^[A-Za-z0-9._-]+$/, 'id must match [A-Za-z0-9._-]')
+      .refine((v) => v !== '.' && v !== '..', 'id must not be . or ..'),
+    title: z.string().min(1),
+    // Optional: present for a normal/install-mode game, absent in Steam mode (the superRefine below
+    // enforces exactly one launch method).
+    executable: z.string().min(1).optional(),
+    args: z.array(z.string()).default([]),
+    // Opt-in elevation: for .exe whose embedded manifest requires administrator (spawn would EACCES).
+    runAsAdmin: z.boolean().default(false),
+    // Optional game process image names for launcher/wrapper setups (see GameManifest.watchProcesses).
+    // Each name is a bare `*.exe` file: no quotes, no path separators — both a hard constraint against
+    // injection into the `tasklist` argv (execFile is shell-less, but we validate strictly anyway) and a
+    // guard against accidental generic names. `.min(1)` rejects an empty array (defense in depth vs the
+    // `?.length` branch in ipc). Names are compared case-insensitively (lower-cased) at match time.
+    watchProcesses: z
+      .array(
+        z
+          .string()
+          .regex(/^[A-Za-z0-9._ -]+\.exe$/i, 'watchProcesses entries must be a bare *.exe name'),
+      )
+      .min(1)
+      .max(16)
+      .optional(),
+    // A single card-relative path, or a non-empty array of them (multi-hero rotation). Normalized to an
+    // array of resolved paths in readManifest. Backwards compatible: a lone string still works.
+    heroImage: z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]).optional(),
+    saveOnCard: z.string().min(1).optional(),
+    pcSavePath: z.string().min(1).optional(),
+    launchTimeoutSec: z.number().int().positive().default(30),
+    sounds: z
+      .object({
+        play: z.string().min(1).optional(),
+        navigate: z.string().min(1).optional(),
+        button: z.string().min(1).optional(),
+        back: z.string().min(1).optional(),
+      })
+      .optional(),
+    backgroundMusic: z.string().min(1).optional(),
+    install: installSchema.optional(),
+    // Steam mode: a pointer to a Steam app by appid (no game files on the card). Mutually exclusive with
+    // install/executable and requires watchProcesses — enforced by the superRefine below.
+    steam: z.object({ appid: z.number().int().positive() }).optional(),
   })
   // Exactly one launch method, with its invariants. Steam mode is a separate backend from install
   // mode, so we forbid the card installer/executable/elevation there and require watchProcesses
@@ -98,20 +103,40 @@ const manifestSchema = z
   .superRefine((v, ctx) => {
     if (v.steam !== undefined) {
       if (v.install !== undefined) {
-        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['install'], message: 'install is not allowed together with steam' });
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['install'],
+          message: 'install is not allowed together with steam',
+        });
       }
       if (v.executable !== undefined) {
-        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['executable'], message: 'executable is not allowed in steam mode' });
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['executable'],
+          message: 'executable is not allowed in steam mode',
+        });
       }
       if (v.runAsAdmin) {
-        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['runAsAdmin'], message: 'runAsAdmin is not allowed in steam mode' });
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['runAsAdmin'],
+          message: 'runAsAdmin is not allowed in steam mode',
+        });
       }
       if (v.watchProcesses === undefined) {
-        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['watchProcesses'], message: 'watchProcesses is required in steam mode' });
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['watchProcesses'],
+          message: 'watchProcesses is required in steam mode',
+        });
       }
     } else if (v.executable === undefined) {
       // Non-steam game: an executable is mandatory (its meaning depends on install mode — see readManifest).
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['executable'], message: 'executable is required' });
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['executable'],
+        message: 'executable is required',
+      });
     }
   });
 
@@ -147,8 +172,7 @@ export function resolveInside(root: string, relative: string): string | null {
 }
 
 type ExpandResult =
-  | { readonly ok: true; readonly value: string }
-  | { readonly ok: false; readonly message: string };
+  { readonly ok: true; readonly value: string } | { readonly ok: false; readonly message: string };
 
 // Human-readable list of accepted prefixes (kept in sync with the resolution below) for error messages.
 const ALLOWED_PREFIXES_HELP = '%DOCUMENTS%, %APPDATA%, %LOCALAPPDATA%, %LOCALLOW% or %USERPROFILE%';
@@ -382,7 +406,10 @@ export async function readManifest(root: string, env: ManifestEnv): Promise<Mani
   if (raw.backgroundMusic !== undefined) {
     const resolved = resolveInside(root, raw.backgroundMusic);
     if (resolved === null) {
-      return { ok: false, message: `backgroundMusic path escapes card root: ${raw.backgroundMusic}` };
+      return {
+        ok: false,
+        message: `backgroundMusic path escapes card root: ${raw.backgroundMusic}`,
+      };
     }
     backgroundMusicPath = resolved;
   }
@@ -482,7 +509,8 @@ export function validateManifestText(text: string): ConfigValidationResult {
   const raw = result.data;
   const issues: ManifestValidationIssue[] = [];
 
-  if (raw.executable !== undefined) pushIfEscapes(issues, 'executable', raw.executable, 'executable');
+  if (raw.executable !== undefined)
+    pushIfEscapes(issues, 'executable', raw.executable, 'executable');
   if (raw.install !== undefined) {
     pushIfEscapes(issues, 'install.installer', raw.install.installer, 'installer');
   }
@@ -493,7 +521,8 @@ export function validateManifestText(text: string): ConfigValidationResult {
       pushIfEscapes(issues, field, rel, 'heroImage');
     }
   }
-  if (raw.saveOnCard !== undefined) pushIfEscapes(issues, 'saveOnCard', raw.saveOnCard, 'saveOnCard');
+  if (raw.saveOnCard !== undefined)
+    pushIfEscapes(issues, 'saveOnCard', raw.saveOnCard, 'saveOnCard');
   if (raw.backgroundMusic !== undefined) {
     pushIfEscapes(issues, 'backgroundMusic', raw.backgroundMusic, 'backgroundMusic');
   }
@@ -523,9 +552,14 @@ export function validateManifestText(text: string): ConfigValidationResult {
  * `superRefine`/`refine` rules (mode exclusivity, traversal, pcSavePath prefixes) are unrepresentable in
  * JSON Schema and are silently dropped here — the authoritative verdict stays with validateManifestText.
  * `unrepresentable: 'any'` keeps the conversion from throwing on anything else it can't express.
+ *
+ * `io: 'input'` is critical: the editor validates what the USER TYPES (before defaults), so fields with a
+ * `.default()` (args, runAsAdmin, launchTimeoutSec) must NOT be `required`. Without it the editor's linter
+ * flagged "args is missing" while validateManifestText (which zod-parses and fills the defaults) reported
+ * the very same text as valid — the two verdicts disagreed.
  */
 export function manifestJsonSchema(): unknown {
-  return z.toJSONSchema(manifestSchema, { unrepresentable: 'any' });
+  return z.toJSONSchema(manifestSchema, { unrepresentable: 'any', io: 'input' });
 }
 
 function describe(cause: unknown): string {

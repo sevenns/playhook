@@ -9,7 +9,7 @@
 // into a hidden/destroyed window). The WCO recolor channel is OWN (config:titlebar-overlay), not the
 // settings one — setTitleBarOverlay must target THIS window's instance.
 import path from 'node:path';
-import { BrowserWindow, ipcMain, nativeTheme } from 'electron';
+import { BrowserWindow, Menu, ipcMain, nativeTheme } from 'electron';
 import { APP_NAME, IPC } from '../shared/types';
 import { type GameConfigService } from './game-config';
 import { installHideOnClose, type HideOnCloseGuard } from './window-hide-guard';
@@ -78,6 +78,19 @@ export class ConfigureWindow {
         nodeIntegration: false,
         sandbox: true,
       },
+    });
+
+    // Right-click editing menu (cut/copy/paste/select-all) for the JSON editor — a sandboxed renderer
+    // has no context menu of its own, so main provides one, enabled per the focused control's editFlags.
+    window.webContents.on('context-menu', (_event, params) => {
+      const menu = Menu.buildFromTemplate([
+        { role: 'cut', enabled: params.editFlags.canCut },
+        { role: 'copy', enabled: params.editFlags.canCopy },
+        { role: 'paste', enabled: params.editFlags.canPaste },
+        { type: 'separator' },
+        { role: 'selectAll', enabled: params.editFlags.canSelectAll },
+      ]);
+      menu.popup({ window });
     });
 
     // X hides to the tray instead of quitting (like GameWindow/SettingsWindow); detach the poll on close.
