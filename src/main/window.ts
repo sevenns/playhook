@@ -7,6 +7,7 @@
 import path from 'node:path';
 import { BrowserWindow, Menu, clipboard } from 'electron';
 import { installHideOnClose, type HideOnCloseGuard } from './window-hide-guard';
+import { forceForegroundWindow } from './foreground';
 
 export class GameWindow {
   private window: BrowserWindow | null = null;
@@ -77,27 +78,18 @@ export class GameWindow {
   showAndFocus(forceForeground = false): void {
     const window = this.window;
     if (window === null) return;
+    if (window.isMinimized()) window.restore();
     if (!window.isVisible()) window.show();
-    if (forceForeground) {
-      // Summoning over another app when the trigger is the gamepad global hook (Windows grants no
-      // foreground rights to input it didn't route to our window) needs BOTH:
-      //  1. minimize→restore — the one action Windows treats as a real activation, so the window gets
-      //     actual keyboard focus. This is required for the renderer's Gamepad API to receive input
-      //     (R5) — a plain topmost raise makes the window visible but NOT focused, so navigation dies.
-      //  2. a momentary topmost raise (below) — so the game window wins the Z-order over the settings
-      //     window (a second top-level window otherwise defeats the plain restore, per the summon bug).
-      window.minimize();
-      window.restore();
-    }
     if (!window.isFullScreen()) window.setFullScreen(true);
+    window.focus();
     if (forceForeground) {
-      // Momentary topmost raise for Z-order dominance over the settings window; NOT held (a persistent
-      // topmost traps focus and blocks switching back to the game/Steam), so it's dropped right after.
-      window.setAlwaysOnTop(true);
-      window.focus();
-      window.setAlwaysOnTop(false);
-    } else {
-      window.focus();
+      // The summon came from the gamepad global hook, which Windows doesn't treat as user input to our
+      // window — so the foreground LOCK denies the focus() above real activation: the launcher shows and
+      // is even keyboard-focused, but the previous app stays the ACTIVE window (its taskbar shows). The
+      // native call lifts the lock (AttachThreadInput) and makes us the true foreground window — taskbar
+      // hides, activation is genuine. No-op off Windows; best-effort (a plain tray "Show launcher" is a
+      // real click and already gets foreground rights, so it doesn't need this).
+      forceForegroundWindow(window.getNativeWindowHandle());
     }
     window.flashFrame(false);
   }
