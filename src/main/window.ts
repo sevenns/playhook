@@ -77,19 +77,23 @@ export class GameWindow {
   showAndFocus(forceForeground = false): void {
     const window = this.window;
     if (window === null) return;
-    if (window.isMinimized()) window.restore();
     if (!window.isVisible()) window.show();
+    if (forceForeground) {
+      // Summoning over another app when the trigger is the gamepad global hook (Windows grants no
+      // foreground rights to input it didn't route to our window) needs BOTH:
+      //  1. minimize→restore — the one action Windows treats as a real activation, so the window gets
+      //     actual keyboard focus. This is required for the renderer's Gamepad API to receive input
+      //     (R5) — a plain topmost raise makes the window visible but NOT focused, so navigation dies.
+      //  2. a momentary topmost raise (below) — so the game window wins the Z-order over the settings
+      //     window (a second top-level window otherwise defeats the plain restore, per the summon bug).
+      window.minimize();
+      window.restore();
+    }
     if (!window.isFullScreen()) window.setFullScreen(true);
     if (forceForeground) {
-      // Seize the foreground from another app (e.g. Explorer). Windows denies a plain
-      // SetForegroundWindow to a process that didn't receive the last input — and the summon arrives via
-      // the gamepad global hook, not an input to our window. The old minimize→restore hack was fragile:
-      // a second top-level window (the settings window, even hidden/minimized) could defeat it, leaving
-      // the launcher flickering while the other app stayed on top. A momentary topmost raise is reliable
-      // regardless of other windows. We do NOT hold alwaysOnTop (it would trap focus and block switching
-      // back to the game/Steam), so it's dropped immediately after the focus grab.
+      // Momentary topmost raise for Z-order dominance over the settings window; NOT held (a persistent
+      // topmost traps focus and blocks switching back to the game/Steam), so it's dropped right after.
       window.setAlwaysOnTop(true);
-      window.show();
       window.focus();
       window.setAlwaysOnTop(false);
     } else {
