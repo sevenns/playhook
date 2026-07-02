@@ -1,6 +1,6 @@
 {
   "name": "playhook",
-  "version": "0.1.9",
+  "version": "0.1.10-alpha.1",
   "description": "Background launcher that detects installed game on external device, syncs saves and tracks playtime. Bring console vibes to your PC.",
   "private": true,
   "main": "dist/main/main.js",
@@ -8,6 +8,10 @@
   "license": "MIT",
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "eslint src",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "vitest run",
     "build:main": "tsc -p tsconfig.main.json",
     "build:renderer": "tsc -p tsconfig.renderer.json",
     "build:settings": "esbuild src/renderer/settings.ts --bundle --format=esm --platform=browser --outfile=dist/renderer/settings.js",
@@ -35,6 +39,11 @@
     "electron": "^31.0.0",
     "electron-builder": "^24.13.3",
     "esbuild": "^0.28.1",
-    "typescript": "^5.5.0"
+    "eslint": "^9.39.4",
+    "eslint-config-prettier": "^9.1.2",
+    "prettier": "^3.9.4",
+    "typescript": "^5.5.0",
+    "typescript-eslint": "^8.62.1",
+    "vitest": "^2.1.9"
   }
 }

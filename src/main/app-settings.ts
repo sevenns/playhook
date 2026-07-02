@@ -7,6 +7,7 @@ import path from 'node:path';
 import fse from 'fs-extra';
 import { z } from 'zod';
 import { type AppSettings, type AutoUpdateMode, type ThemeMode } from '../shared/types';
+import { readJsonValidated } from './json-store';
 
 const settingsSchema = z.object({
   schemaVersion: z.literal(1),
@@ -39,15 +40,9 @@ export class AppSettingsStore {
     this.settingsPath = path.join(baseDir, 'settings.json');
   }
 
-  /** Reads settings; returns the default when the file is missing or corrupted. */
+  /** Reads settings; returns the default when the file is missing or corrupted (a warn is logged on corruption). */
   async read(): Promise<AppSettings> {
-    try {
-      const raw: unknown = await fse.readJson(this.settingsPath);
-      const parsed = settingsSchema.safeParse(raw);
-      return parsed.success ? parsed.data : DEFAULT_SETTINGS;
-    } catch {
-      return DEFAULT_SETTINGS;
-    }
+    return readJsonValidated(this.settingsPath, settingsSchema, DEFAULT_SETTINGS);
   }
 
   async write(next: AppSettings): Promise<void> {

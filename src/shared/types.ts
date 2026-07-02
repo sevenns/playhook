@@ -440,7 +440,6 @@ export interface SettingsApi {
 }
 
 declare global {
-  // eslint-disable-next-line no-var
   interface Window {
     readonly api: RendererApi;
     readonly settingsApi: SettingsApi;

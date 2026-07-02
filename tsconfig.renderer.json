@@ -16,5 +16,7 @@
     "types": []
   },
   "include": ["src/renderer/**/*.ts", "src/shared/**/*.ts"],
+  // settings.ts is bundled by esbuild (build:settings), not emitted by tsc — so it's excluded here.
+  // It is still type-checked, via the root tsconfig.json's `npm run typecheck` (audit N5).
   "exclude": ["src/renderer/settings.ts"]
 }

@@ -18,6 +18,8 @@ import { UpdaterService } from './updater';
 import { SettingsWindow } from './settings-window';
 import { IPC } from '../shared/types';
 
+// Keep-alive reference so the Tray (and its icon) isn't garbage-collected; assigned, never read.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 let trayRef: Tray | null = null;
 let controllerRef: GameController | null = null;
 let windowRef: GameWindow | null = null;

@@ -5,6 +5,7 @@
 // No preserveTimestamps — on FAT/exFAT mtime is off by ±2s and isn't needed for a "directional" sync.
 import path from 'node:path';
 import fse from 'fs-extra';
+import { delay } from './util';
 
 const RETRYABLE_CODES = new Set(['EBUSY', 'EPERM', 'EACCES', 'ENOTEMPTY']);
 const MAX_ATTEMPTS = 5;
@@ -18,11 +19,8 @@ function errorCode(cause: unknown): string | undefined {
   return undefined;
 }
 
-const delay = (ms: number): Promise<void> =>
-  new Promise((resolve) => setTimeout(resolve, ms));
-
-/** Retry with exponential backoff on "busy" files (EBUSY and related). */
-async function withRetry<T>(operation: () => Promise<T>): Promise<T> {
+/** Retry with exponential backoff on "busy" files (EBUSY and related). Exported for unit tests (C1). */
+export async function withRetry<T>(operation: () => Promise<T>): Promise<T> {
   let lastError: unknown;
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
     try {

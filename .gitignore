@@ -3,3 +3,7 @@ dist/
 release/
 *.log
 .DS_Store
+
+# Build artifacts must never live next to their .ts sources in src/ (see audit C3).
+src/**/*.js
+src/**/*.js.map

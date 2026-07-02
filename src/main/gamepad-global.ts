@@ -49,7 +49,7 @@ function loadXInput(): XInputGetStateFn | null {
       const fn = lib.func(
         'uint32 __stdcall XInputGetState(uint32 dwUserIndex, _Out_ XINPUT_STATE *pState)',
       );
-      return fn as unknown as XInputGetStateFn;
+      return fn;
     } catch {
       // try the next DLL name
     }

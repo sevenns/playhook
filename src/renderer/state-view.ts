@@ -1,0 +1,70 @@
+// Pure views over AppState shared by the renderer modules (audit I2). No DOM — just the mapping from a
+// state to the UI phase, the status label, the Steam-busy flag and the current game. Kept in one place
+// so app.ts (render/title-slide) and controls.ts (focus/actions) read the same derivations.
+import type { AppState, GameInfo } from '../shared/types';
+
+export type Phase = 'idle' | 'ready' | 'busy' | 'error';
+
+export function phaseOf(state: AppState): Phase {
+  switch (state.kind) {
+    case 'idle':
+      return 'idle';
+    case 'ready':
+      return 'ready';
+    case 'error':
+      return 'error';
+    case 'installing':
+    case 'uninstalling':
+    case 'syncing-in':
+    case 'launching':
+    case 'running':
+    case 'syncing-out':
+      return 'busy';
+  }
+}
+
+export function statusOf(state: AppState): string {
+  // Plain "..." instead of the "…" glyph: in M PLUS Rounded 1c (a CJK font) the ellipsis
+  // glyph is centered vertically (Japanese convention), which looks misaligned in a Latin UI.
+  switch (state.kind) {
+    case 'installing':
+      return 'Installing...';
+    case 'uninstalling':
+      return 'Uninstalling...';
+    case 'syncing-in':
+      return 'Syncing saves...';
+    case 'launching':
+      return 'Launching...';
+    case 'running':
+      return 'Running...';
+    case 'syncing-out':
+      return 'Saving progress...';
+    case 'ready': {
+      // Steam non-blocking install/uninstall indicators on the ready screen (the window stays usable).
+      // No install percent: Steam exposes no reliable live progress in the files we read (see main).
+      if (state.game.steamUninstalling === true) return 'Uninstalling...';
+      if (state.game.steamInstalling === true) {
+        if (state.game.steamPaused !== true) return 'Installing...';
+        const progress = state.game.steamPausedProgress;
+        return progress === undefined
+          ? 'Installing paused...'
+          : `Installing paused on ${Math.round(progress * 100)}%...`;
+      }
+      return '';
+    }
+    default:
+      return '';
+  }
+}
+
+// True while a Steam install (download) or uninstall is in progress: a non-blocking indicator on the
+// (still) ready screen — the busy visuals (loader + status + slid title) are reused via
+// #app[data-steam-busy], NOT the busy phase.
+export function steamBusy(state: AppState): boolean {
+  if (state.kind !== 'ready') return false;
+  return state.game.steamInstalling === true || state.game.steamUninstalling === true;
+}
+
+export function gameOf(state: AppState): GameInfo | undefined {
+  return 'game' in state ? state.game : undefined;
+}

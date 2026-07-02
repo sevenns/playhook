@@ -14,7 +14,6 @@ import {
   type InstallManifest,
   type LaunchTarget,
   type ResolvedManifest,
-  type SfxName,
   type Stats,
 } from '../shared/types';
 import { type StateManager } from './state';
@@ -36,7 +35,10 @@ import {
   type GameProcess,
 } from './game-launcher';
 import { findUninstallEntry, getSteamPath } from './registry';
-import { steamInstallStatus, openSteamUri, type SteamInstallStatus } from './steam';
+import { steamInstallStatus, openSteamUri } from './steam';
+import { AssetReader } from './asset-reader';
+import { SteamInstallWatch } from './steam-install-watch';
+import { describe, delay } from './util';
 import { log } from './logger';
 
 export interface ControllerDeps {
@@ -47,64 +49,8 @@ export interface ControllerDeps {
   readonly watcher: DriveWatcher;
 }
 
-const IMAGE_MIME: Readonly<Record<string, string>> = {
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.png': 'image/png',
-  '.webp': 'image/webp',
-  '.gif': 'image/gif',
-};
-
-// Fallback hero background (bundled by copy-assets into dist/wallpaper.png). __dirname is dist/main.
-const WALLPAPER_PATH = path.join(__dirname, '../wallpaper.png');
-
-const AUDIO_MIME: Readonly<Record<string, string>> = {
-  '.mp3': 'audio/mpeg',
-  '.ogg': 'audio/ogg',
-  '.oga': 'audio/ogg',
-  '.opus': 'audio/ogg',
-  '.wav': 'audio/wav',
-  '.m4a': 'audio/mp4',
-  '.aac': 'audio/aac',
-  '.flac': 'audio/flac',
-  '.webm': 'audio/webm',
-};
-
-const SFX_NAMES: readonly SfxName[] = ['play', 'navigate', 'button', 'back'];
-
-// Bundled default UI sounds (in dist/audio, copied by copy-assets). Used per slot when a game.json
-// doesn't provide its own sound, so every game has interface sounds out of the box.
-const DEFAULT_SFX_FILES: Readonly<Record<SfxName, string>> = {
-  play: 'default-play.wav',
-  navigate: 'default-move.wav',
-  button: 'default-button.wav',
-  back: 'default-back.wav',
-};
-
-function defaultSfxPath(name: SfxName): string {
-  // __dirname at runtime is dist/main; the bundled sounds live in dist/audio.
-  return path.join(__dirname, '../audio', DEFAULT_SFX_FILES[name]);
-}
-
-function describe(cause: unknown): string {
-  return cause instanceof Error ? cause.message : String(cause);
-}
-
-const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
-
 // Grace-poll cadence after the installer exits, waiting for the game executable to appear (C1).
 const INSTALL_POLL_INTERVAL_MS = 1000;
-
-// Steam-mode background re-detect cadence: while a Steam game shows "Install" (not yet installed in
-// Steam), poll its .acf state so the button flips to "Play" once the (possibly hours-long) download
-// finishes. Non-blocking — no `installing` state is entered (see runSteamInstall).
-const STEAM_INSTALL_WATCH_INTERVAL_MS = 5000;
-
-// How long to keep showing "Uninstalling…" after we open steam://uninstall before giving up. Steam's
-// uninstall is fire-and-forget: we can't tell "user is reading the dialog / cancelled" from "removing".
-// If the .acf is still present after this window, we assume a cancel and return to "Play"/"Uninstall".
-// Safe either way — the poller keeps running and will flip to "Install" if removal completes later.
-const STEAM_UNINSTALL_TIMEOUT_MS = 60_000;
 
 // Directory removal retries (I5/R-UNINST-SELFCOPY): an Inno uninstaller forks a copy of itself into
 // temp and exits early, so right after waitForExit it may still hold `unins000.*` for a moment — a
@@ -286,18 +232,17 @@ export class GameController {
   private currentAudio: AudioAssets | null = null;
   // Hero images for the current card, sent on their own channel (not on every AppState) — see HeroAssets.
   private currentHero: HeroAssets | null = null;
-  // Steam-mode background re-detect timer (recursive setTimeout, no overlap). Non-null only while a
-  // Steam game is on the ready screen with the card present (managed by enterReady).
-  private steamInstallWatch: ReturnType<typeof setTimeout> | null = null;
-  // True while a tick is mid-flight (between nulling the timer and finishing). Prevents a concurrent
-  // startSteamInstallWatch (e.g. an Install/Uninstall action landing during the tick's await) from
-  // spinning up a SECOND poller. The tick re-arms itself in its finally.
-  private steamTickInFlight = false;
-  // A steam://uninstall we requested (appid + when), driving the optimistic "Uninstalling…" indicator
-  // until the .acf disappears or STEAM_UNINSTALL_TIMEOUT_MS elapses (assumed cancel). Null = none.
-  private steamUninstallRequest: { readonly appid: number; readonly since: number } | null = null;
-  // Bundled fallback wallpaper as a data URL: undefined = not read yet, null = unavailable.
-  private wallpaperDataUrl: string | null | undefined;
+  // Reads card assets (hero/audio/wallpaper) into data URLs; owns the bundled-wallpaper cache (I1).
+  private readonly assets = new AssetReader();
+  // Steam-mode background re-detect poller (timer + tick + optimistic uninstall request), extracted from
+  // this controller (I1). Reaches back only through the narrow accessor seam below.
+  private readonly steamWatch = new SteamInstallWatch({
+    getManifest: () => this.current,
+    isLaunchInFlight: () => this.launchInFlight,
+    getState: () => this.deps.state.get(),
+    isCardPresent: () => this.cardPresent,
+    enterReady: (info) => this.enterReady(info),
+  });
 
   constructor(private readonly deps: ControllerDeps) {}
 
@@ -319,7 +264,7 @@ export class GameController {
     ipcMain.handle(IPC.stateRequest, (): AppState => state.get());
     ipcMain.handle(IPC.audioRequest, (): AudioAssets | null => this.currentAudio);
     ipcMain.handle(IPC.heroRequest, (): HeroAssets | null => this.currentHero);
-    ipcMain.handle(IPC.wallpaperRequest, (): Promise<string | null> => this.readWallpaperDataUrl());
+    ipcMain.handle(IPC.wallpaperRequest, (): Promise<string | null> => this.assets.readWallpaperDataUrl());
     ipcMain.on(IPC.actionLaunch, () => void this.onLaunchRequested());
     ipcMain.on(IPC.actionUninstall, () => void this.onUninstallRequested());
     ipcMain.on(IPC.actionHide, () => this.deps.window.hide());
@@ -337,8 +282,8 @@ export class GameController {
   /** Stops the process waits and the watcher (on application exit). */
   shutdown(): void {
     this.abort?.abort();
-    this.stopSteamInstallWatch();
-    this.steamUninstallRequest = null;
+    this.steamWatch.stop();
+    this.steamWatch.clearUninstallRequest();
     this.deps.watcher.stop();
   }
 
@@ -356,118 +301,9 @@ export class GameController {
     // uninstall completion (Play→Install) — incl. an uninstall the user triggers in Steam directly — and
     // download progress. The .acf read is cheap, so a perpetual 5s poll for an inserted steam card is fine.
     if (info.installVia === 'steam' && this.cardPresent) {
-      this.startSteamInstallWatch();
+      this.steamWatch.start();
     } else {
-      this.stopSteamInstallWatch();
-    }
-  }
-
-  /** (Re)starts the recursive Steam re-detect timer. No-op if already running or a tick is in flight. */
-  private startSteamInstallWatch(): void {
-    if (this.steamInstallWatch !== null || this.steamTickInFlight) return;
-    this.steamInstallWatch = setTimeout(() => void this.steamInstallTick(), STEAM_INSTALL_WATCH_INTERVAL_MS);
-  }
-
-  /** Stops the Steam re-detect timer. */
-  private stopSteamInstallWatch(): void {
-    if (this.steamInstallWatch === null) return;
-    clearTimeout(this.steamInstallWatch);
-    this.steamInstallWatch = null;
-  }
-
-  /**
-   * One Steam re-detect tick: captures the current manifest's appid, reads Steam's .acf state, and — only
-   * if the card/state is still the same after the await (same steam game, ready, no launch in flight) —
-   * reconciles the UI flags (requiresInstall/canUninstall/progress/uninstalling) by PATCHING the current
-   * GameInfo in place (cheap — no hero re-read). Catches install completion, uninstall completion (incl.
-   * an uninstall done in Steam directly), live download progress, and the uninstall-cancel timeout.
-   */
-  private async steamInstallTick(): Promise<void> {
-    this.steamInstallWatch = null; // consumed; the finally re-arms it if we should still be polling
-    const manifest = this.current;
-    const appid = manifest?.steam?.appid;
-    if (manifest === undefined || manifest === null || appid === undefined) return; // not steam → stop
-    this.steamTickInFlight = true;
-    try {
-      let status: SteamInstallStatus = { state: 'absent' };
-      try {
-        status = await steamInstallStatus(appid);
-      } catch (cause) {
-        log.warn('[steam-watch] detect failed:', describe(cause));
-      }
-
-      // Re-validate everything that could have changed during the await (card swap, launch in flight).
-      const snapshot = this.deps.state.get();
-      if (
-        this.launchInFlight ||
-        this.current !== manifest ||
-        snapshot.kind !== 'ready' ||
-        snapshot.game.installVia !== 'steam'
-      ) {
-        return; // stale — drop this result (the finally re-arms iff still a steam card on ready)
-      }
-      const prev = snapshot.game;
-
-      // Reconcile the UI flags with Steam's fresh .acf state. Only these flags change on install/uninstall;
-      // the rest of GameInfo (title/hero/stats) is unaffected, so we patch `prev` in place — no hero re-read.
-      let requiresInstall = status.state !== 'installed';
-      let canUninstall = status.state === 'installed';
-      const steamInstalling = status.state === 'downloading';
-      const steamPaused = status.state === 'downloading' && status.paused;
-      const steamPausedProgress =
-        status.state === 'downloading' ? (status.progress ?? undefined) : undefined;
-      let steamUninstalling = false;
-
-      // A requested steam://uninstall is in flight for this game.
-      const req = this.steamUninstallRequest;
-      if (req !== null && req.appid === appid) {
-        if (status.state === 'installed') {
-          // .acf still present: either Steam is removing files, or the user is still on / cancelled the
-          // dialog. Keep "Uninstalling…" until the timeout, then assume cancel and restore Play/Uninstall.
-          if (Date.now() - req.since > STEAM_UNINSTALL_TIMEOUT_MS) {
-            log.info(`[steam-uninstall] appid=${appid} still installed after timeout — assuming cancel`);
-            this.steamUninstallRequest = null;
-          } else {
-            steamUninstalling = true;
-            canUninstall = false; // hide Uninstall while the indicator is up
-          }
-        } else {
-          // .acf gone (absent/downloading) → Steam removed the game; finish the uninstall.
-          log.info(`[steam-uninstall] appid=${appid} removed — flipping to Install`);
-          this.steamUninstallRequest = null;
-        }
-      }
-
-      const changed =
-        prev.requiresInstall !== requiresInstall ||
-        prev.canUninstall !== canUninstall ||
-        (prev.steamInstalling ?? false) !== steamInstalling ||
-        (prev.steamPaused ?? false) !== steamPaused ||
-        prev.steamPausedProgress !== steamPausedProgress ||
-        (prev.steamUninstalling ?? false) !== steamUninstalling;
-      if (changed) {
-        if (!steamUninstalling) {
-          log.info(
-            `[steam-watch] appid=${appid} state=${status.state}${steamPaused ? ' (paused)' : ''} → requiresInstall=${requiresInstall} canUninstall=${canUninstall}`,
-          );
-        }
-        this.enterReady({
-          ...prev,
-          requiresInstall,
-          canUninstall,
-          steamInstalling,
-          steamPaused,
-          steamPausedProgress,
-          steamUninstalling,
-        });
-      }
-    } finally {
-      this.steamTickInFlight = false;
-      // Re-arm iff we should still be watching this steam card (mirrors enterReady's start condition).
-      const s = this.deps.state.get();
-      if (s.kind === 'ready' && s.game.installVia === 'steam' && this.cardPresent) {
-        this.startSteamInstallWatch();
-      }
+      this.steamWatch.stop();
     }
   }
 
@@ -503,10 +339,10 @@ export class GameController {
     const manifest = result.manifest;
     this.current = manifest;
     log.info(`[insert] manifest ok id=${manifest.raw.id} root="${manifest.root}"`);
-    this.setAudio(await this.readAudioAssets(manifest));
+    this.setAudio(await this.assets.readAudioAssets(manifest));
     // Hero images are delivered once per card on their own channel (like audio) — the renderer holds
     // the list and rotates locally, so we never re-send this large payload on subsequent state.set's.
-    this.setHero(await this.readHeroAssets(manifest));
+    this.setHero(await this.assets.readHeroAssets(manifest));
 
     // Reconcile the card's traveling stats with this PC's mirror (the "one card, many PCs"
     // unified total) FIRST, so the PC mirror holds the merged value before anything else copies
@@ -561,8 +397,8 @@ export class GameController {
     }
     // ready / error / idle → no card, hide the window. Stop any Steam re-detect poller (the card is gone;
     // a Steam game in `ready` reaches here since its kind is never running/installing).
-    this.stopSteamInstallWatch();
-    this.steamUninstallRequest = null;
+    this.steamWatch.stop();
+    this.steamWatch.clearUninstallRequest();
     this.current = null;
     this.setAudio(null);
     this.setHero(null);
@@ -639,7 +475,7 @@ export class GameController {
     // Ensure the re-detect poller is running so the button flips to "Play" when the download completes
     // (no-op if already running; info confirms this is a steam game still requiring install).
     if (info.installVia === 'steam' && info.requiresInstall && this.cardPresent) {
-      this.startSteamInstallWatch();
+      this.steamWatch.start();
     }
   }
 
@@ -679,7 +515,7 @@ export class GameController {
     // Optimistically show "Uninstalling…": record the request and flip the UI. The poller clears it when
     // the .acf is gone (→ Install) or on timeout (assumed cancel → back to Play/Uninstall). enterReady
     // (re)arms the poller for the inserted steam card.
-    this.steamUninstallRequest = { appid, since: Date.now() };
+    this.steamWatch.requestUninstall(appid);
     this.enterReady({ ...info, steamUninstalling: true, canUninstall: false });
   }
 
@@ -716,13 +552,13 @@ export class GameController {
         // Pre-check: openExternal doesn't reliably reject when steam:// is unregistered, so gate the
         // launch on Steam actually being installed (I8) instead of relying on a reject.
         if ((await getSteamPath()) === null) {
-          this.failLaunch(info, 'Steam is not installed');
+          this.failSequence('launch', info, 'Steam is not installed');
           return;
         }
         try {
           await openSteamUri(`steam://rungameid/${manifest.steam.appid}`);
         } catch (cause) {
-          this.failLaunch(info, `failed to launch via Steam: ${describe(cause)}`);
+          this.failSequence('launch', info, `failed to launch via Steam: ${describe(cause)}`);
           return;
         }
         // No launcher pid → null. watchProcesses is guaranteed non-empty by the schema in steam mode.
@@ -753,7 +589,7 @@ export class GameController {
         try {
           proc = await launchGame(manifest);
         } catch (cause) {
-          this.failLaunch(info, `failed to launch the game: ${describe(cause)}`);
+          this.failSequence('launch', info, `failed to launch the game: ${describe(cause)}`);
           return;
         }
         if (watchProcesses !== undefined && watchProcesses.length > 0) {
@@ -778,7 +614,7 @@ export class GameController {
         } else {
           const started = await waitForStart(proc, manifest.raw.launchTimeoutSec, abort.signal);
           if (!started) {
-            this.failLaunch(info, 'the game did not start (process wait timed out)');
+            this.failSequence('launch', info, 'the game did not start (process wait timed out)');
             return;
           }
           since = Date.now();
@@ -805,7 +641,7 @@ export class GameController {
       window.showAndFocus();
     } catch (cause) {
       if (cause instanceof LaunchAbortedError) return; // application is shutting down
-      this.failLaunch(info, describe(cause));
+      this.failSequence('launch', info, describe(cause));
     } finally {
       // Release the elevated HANDLE (no-op for the normal spawn path).
       proc?.dispose();
@@ -840,7 +676,7 @@ export class GameController {
       try {
         proc = await launchInstaller(install);
       } catch (cause) {
-        this.failInstall(info, `failed to start the installer: ${describe(cause)}`);
+        this.failSequence('install', info, `failed to start the installer: ${describe(cause)}`);
         return;
       }
 
@@ -853,7 +689,7 @@ export class GameController {
         abort.signal,
       );
       if (!installed) {
-        this.failInstall(info, 'installation did not complete (the game executable did not appear)');
+        this.failSequence('install', info, 'installation did not complete (the game executable did not appear)');
         return;
       }
 
@@ -866,7 +702,7 @@ export class GameController {
       window.showAndFocus();
     } catch (cause) {
       if (cause instanceof LaunchAbortedError) return; // aborted by shutdown or a card swap (E1/E2)
-      this.failInstall(info, describe(cause));
+      this.failSequence('install', info, describe(cause));
     } finally {
       proc?.dispose();
       this.launchInFlight = false;
@@ -892,18 +728,6 @@ export class GameController {
       if (Date.now() >= deadline) return false;
       await delay(INSTALL_POLL_INTERVAL_MS);
     }
-  }
-
-  /**
-   * An install attempt failed: return to the 'ready' screen with the SAME info (its executable still
-   * doesn't exist → requiresInstall stays true → the button remains "Install") and surface the reason.
-   * Mirrors failLaunch; the next attempt pre-cleans the install dir.
-   */
-  private failInstall(game: GameInfo, message: string): void {
-    log.warn(`[install] failed: ${message}`);
-    this.enterReady(game);
-    this.deps.window.showAndFocus();
-    this.sendError(message);
   }
 
   /**
@@ -966,25 +790,13 @@ export class GameController {
       window.showAndFocus();
     } catch (cause) {
       if (cause instanceof LaunchAbortedError) return; // aborted by shutdown or a card swap (E1/E2)
-      this.failUninstall(info, describe(cause));
+      this.failSequence('uninstall', info, describe(cause));
     } finally {
       proc?.dispose();
       this.launchInFlight = false;
       this.abort = null;
       this.resumePendingInsert();
     }
-  }
-
-  /**
-   * An uninstall attempt failed (e.g. the install dir files are locked): return to 'ready' with the
-   * SAME info — the game is still installed → canUninstall stays true → the "Uninstall" button remains —
-   * and surface the reason. Mirrors failInstall.
-   */
-  private failUninstall(game: GameInfo, message: string): void {
-    log.warn(`[uninstall] failed: ${message}`);
-    this.enterReady(game);
-    this.deps.window.showAndFocus();
-    this.sendError(message);
   }
 
   /** Replays a card insertion deferred during an in-flight launch/install (E1). No-op if none pending. */
@@ -996,11 +808,13 @@ export class GameController {
   }
 
   /**
-   * A launch attempt failed: return to the normal 'ready' screen (the game is still on the card)
-   * and surface the reason in the error popup. The user can read it, close it (B / veil) and retry.
+   * A launch/install/uninstall attempt failed: return to the 'ready' screen with the SAME info and
+   * surface the reason in the error popup. The info is unchanged, so the flags recompute to the pre-attempt
+   * button (launch → "Play", failed install → still "Install", failed uninstall → still "Uninstall"); the
+   * user can read the error, close it (B / veil) and retry. Only the log prefix differs per phase.
    */
-  private failLaunch(game: GameInfo, message: string): void {
-    log.warn(`[launch] failed: ${message}`);
+  private failSequence(phase: 'launch' | 'install' | 'uninstall', game: GameInfo, message: string): void {
+    log.warn(`[${phase}] failed: ${message}`);
     this.enterReady(game);
     this.deps.window.showAndFocus();
     this.sendError(message);
@@ -1016,7 +830,7 @@ export class GameController {
   private abandonWatchedLaunch(game: GameInfo): void {
     log.info('[launch] watched game never appeared — returning without recording a session');
     if (!this.cardPresent) {
-      this.stopSteamInstallWatch();
+      this.steamWatch.stop();
       this.current = null;
       this.setAudio(null);
       this.setHero(null);
@@ -1115,25 +929,6 @@ export class GameController {
     };
   }
 
-  private async readImageDataUrl(filePath: string): Promise<string | undefined> {
-    try {
-      const mime = IMAGE_MIME[path.extname(filePath).toLowerCase()] ?? 'application/octet-stream';
-      const buffer = await fse.readFile(filePath);
-      return `data:${mime};base64,${buffer.toString('base64')}`;
-    } catch (cause) {
-      log.warn(`[image] failed to read "${filePath}":`, describe(cause));
-      return undefined;
-    }
-  }
-
-  /** Bundled fallback wallpaper as a data URL (read once and cached). null if it can't be read. */
-  private async readWallpaperDataUrl(): Promise<string | null> {
-    if (this.wallpaperDataUrl !== undefined) return this.wallpaperDataUrl;
-    const url = await this.readImageDataUrl(WALLPAPER_PATH);
-    this.wallpaperDataUrl = url ?? null;
-    return this.wallpaperDataUrl;
-  }
-
   // ── Hero images (delivered once per card, rotated in the renderer) ───────
 
   /** Stores the current hero images and pushes them to the window (null when no card / on error). */
@@ -1145,25 +940,6 @@ export class GameController {
     }
   }
 
-  /**
-   * Reads all of the manifest's hero images into data URLs, dropping any that fail to read. When none
-   * remain (no heroImage, or every file unreadable) it falls back to the bundled wallpaper — so the
-   * result always carries at least one image (same fallback semantics as the old single-hero path).
-   */
-  private async readHeroAssets(manifest: ResolvedManifest): Promise<HeroAssets> {
-    const images: string[] = [];
-    for (const heroPath of manifest.heroImagePaths ?? []) {
-      const url = await this.readImageDataUrl(heroPath);
-      if (url !== undefined) images.push(url);
-      else log.warn('[hero-image] failed to read, skipping:', heroPath);
-    }
-    if (images.length === 0) {
-      const wallpaper = await this.readWallpaperDataUrl();
-      if (wallpaper !== null) images.push(wallpaper);
-    }
-    return { images };
-  }
-
   // ── Audio assets (sounds + background music) ─────────────────────────────
 
   /** Stores the current audio and pushes it to the window (null when no card / on error). */
@@ -1172,35 +948,6 @@ export class GameController {
     const browserWindow = this.deps.window.browserWindow;
     if (browserWindow !== null && !browserWindow.isDestroyed()) {
       browserWindow.webContents.send(IPC.audioUpdate, assets);
-    }
-  }
-
-  /** Reads the manifest's sounds + music into data URLs. Returns null when nothing is configured. */
-  private async readAudioAssets(manifest: ResolvedManifest): Promise<AudioAssets | null> {
-    const sounds: Record<string, string> = {};
-    for (const name of SFX_NAMES) {
-      // Per slot: the game's own sound if set, otherwise the bundled default.
-      const filePath = manifest.soundPaths?.[name] ?? defaultSfxPath(name);
-      const url = await this.readAudioDataUrl(filePath);
-      if (url !== undefined) sounds[name] = url;
-    }
-    const music =
-      manifest.backgroundMusicPath !== undefined
-        ? await this.readAudioDataUrl(manifest.backgroundMusicPath)
-        : undefined;
-
-    if (Object.keys(sounds).length === 0 && music === undefined) return null;
-    return { sounds, ...(music !== undefined ? { music } : {}) };
-  }
-
-  private async readAudioDataUrl(filePath: string): Promise<string | undefined> {
-    try {
-      const mime = AUDIO_MIME[path.extname(filePath).toLowerCase()] ?? 'application/octet-stream';
-      const buffer = await fse.readFile(filePath);
-      return `data:${mime};base64,${buffer.toString('base64')}`;
-    } catch (cause) {
-      log.warn('[audio] failed to read, skipping:', describe(cause));
-      return undefined;
     }
   }
 }

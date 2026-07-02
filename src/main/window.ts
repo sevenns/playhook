@@ -6,9 +6,11 @@
 // switching back to the game/Steam. A focused fullscreen window already hides the taskbar.
 import path from 'node:path';
 import { BrowserWindow, Menu, clipboard } from 'electron';
+import { installHideOnClose, type HideOnCloseGuard } from './window-hide-guard';
 
 export class GameWindow {
   private window: BrowserWindow | null = null;
+  private closeGuard: HideOnCloseGuard | null = null;
 
   create(): BrowserWindow {
     const window = new BrowserWindow({
@@ -54,20 +56,13 @@ export class GameWindow {
       menu.popup({ window });
     });
 
-    // Closing the window with the X doesn't quit the app — we hide it to the tray.
-    window.on('close', (event) => {
-      if (!this.forceClosing) {
-        event.preventDefault();
-        window.hide();
-      }
-    });
+    // Closing the window with the X doesn't quit the app — we hide it to the tray (N1).
+    this.closeGuard = installHideOnClose(window);
 
     void window.loadFile(path.join(__dirname, '../renderer/index.html'));
     this.window = window;
     return window;
   }
-
-  private forceClosing = false;
 
   get browserWindow(): BrowserWindow | null {
     return this.window;
@@ -98,6 +93,6 @@ export class GameWindow {
 
   /** Allows the window to actually close (when quitting the app). */
   allowClose(): void {
-    this.forceClosing = true;
+    this.closeGuard?.allowClose();
   }
 }
