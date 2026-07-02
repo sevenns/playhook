@@ -77,13 +77,24 @@ export class GameWindow {
   showAndFocus(forceForeground = false): void {
     const window = this.window;
     if (window === null) return;
+    if (window.isMinimized()) window.restore();
     if (!window.isVisible()) window.show();
-    if (forceForeground) {
-      window.minimize();
-      window.restore();
-    }
     if (!window.isFullScreen()) window.setFullScreen(true);
-    window.focus();
+    if (forceForeground) {
+      // Seize the foreground from another app (e.g. Explorer). Windows denies a plain
+      // SetForegroundWindow to a process that didn't receive the last input — and the summon arrives via
+      // the gamepad global hook, not an input to our window. The old minimize→restore hack was fragile:
+      // a second top-level window (the settings window, even hidden/minimized) could defeat it, leaving
+      // the launcher flickering while the other app stayed on top. A momentary topmost raise is reliable
+      // regardless of other windows. We do NOT hold alwaysOnTop (it would trap focus and block switching
+      // back to the game/Steam), so it's dropped immediately after the focus grab.
+      window.setAlwaysOnTop(true);
+      window.show();
+      window.focus();
+      window.setAlwaysOnTop(false);
+    } else {
+      window.focus();
+    }
     window.flashFrame(false);
   }
 
