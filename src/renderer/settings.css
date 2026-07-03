@@ -65,10 +65,19 @@ body {
   gap: 12px;
 }
 
-fluent-radio-group {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+fluent-dropdown {
+  align-self: flex-start;
+  min-inline-size: 260px;
+}
+
+/* Fluent v3 positions the dropdown's listbox popover with the CSS anchor sides anchor(outside) /
+   anchor(inside), which Chromium 126 (Electron 31) does not implement — so those declarations are dropped
+   and the popup renders unpositioned/invisible, while the component's `@supports (anchor-name)` gate still
+   skips its JS repositioning fallback. Re-pin the popover below the control with the standard anchor sides
+   this Chromium does support. */
+fluent-listbox[popover] {
+  inset-block-start: anchor(bottom) !important;
+  inset-inline-start: anchor(start) !important;
 }
 
 .button-row {
