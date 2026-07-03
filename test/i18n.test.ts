@@ -3,14 +3,18 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { createTranslator, translateIssueMessage } from '../src/shared/i18n/index';
 import { en } from '../src/shared/i18n/en';
+import { ru } from '../src/shared/i18n/ru';
+import { enPlural } from '../src/shared/i18n/en-plural';
+import { ruPlural } from '../src/shared/i18n/ru-plural';
 import { resolveLocale } from '../src/main/locale';
 
 describe('createTranslator — fallback + interpolation', () => {
-  it('falls back to the English value when the Russian key is unfilled', () => {
-    const ru = createTranslator('ru');
-    // ru.ts is intentionally empty → every key falls back to en.
-    expect(ru('tray.quit')).toBe(en['tray.quit']);
-    expect(ru('launcher.emptyTitle')).toBe(en['launcher.emptyTitle']);
+  it('returns the Russian value when present, else falls back to English (robust to fill state)', () => {
+    const t = createTranslator('ru');
+    for (const key of Object.keys(en) as (keyof typeof en)[]) {
+      // The fallback contract: ru[key] when filled, otherwise en[key] — never empty/undefined.
+      expect(t(key)).toBe(ru[key] ?? en[key]);
+    }
   });
 
   it('interpolates {name} placeholders', () => {
@@ -37,26 +41,41 @@ describe('en dictionary integrity', () => {
 });
 
 describe('plural (tp) via Intl.PluralRules', () => {
-  it('interpolates {n} automatically', () => {
+  it('interpolates {n} with the English forms', () => {
     const t = createTranslator('en');
     expect(t.tp('format.minutes', 5)).toBe('5m');
     expect(t.tp('format.hours', 2)).toBe('2h');
   });
 
-  it('falls back through the form chain when a Russian form is unfilled', () => {
-    // ru-plural.ts is empty → tp falls back to the English `other` form, never renders empty.
-    const ru = createTranslator('ru');
-    expect(ru.tp('format.minutes', 3)).toBe('3m');
-    expect(ru.tp('format.minutes', 1)).toBe('1m');
-  });
-
   it('the ICU build distinguishes the Russian one/few/many categories', () => {
-    // The crux of the plural risk (P1): a minimal ICU could collapse these. When the user fills
-    // ru-plural.ts, tp selects the form for exactly this rule.
+    // The crux of the plural risk (P1): a minimal ICU could collapse these.
     const rules = new Intl.PluralRules('ru-RU');
     expect(rules.select(1)).toBe('one');
     expect(rules.select(2)).toBe('few');
     expect(rules.select(5)).toBe('many');
+  });
+
+  it('selects the Russian form matching the plural rule (robust to the dictionary values)', () => {
+    const t = createTranslator('ru');
+    const forms = ruPlural['format.minutes'];
+    expect(forms, 'format.minutes must be filled in ru-plural for this test').toBeDefined();
+    const rules = new Intl.PluralRules('ru-RU');
+    for (const n of [1, 3, 5, 21]) {
+      const rule = rules.select(n);
+      const expected = (forms?.[rule] ?? forms?.other ?? '').replace(/\{n\}/g, String(n));
+      expect(t.tp('format.minutes', n)).toBe(expected);
+    }
+  });
+
+  it('never renders an empty plural for any key/locale', () => {
+    for (const locale of ['en', 'ru'] as const) {
+      const t = createTranslator(locale);
+      for (const key of Object.keys(enPlural) as (keyof typeof enPlural)[]) {
+        for (const n of [0, 1, 2, 5, 11, 21]) {
+          expect(t.tp(key, n).length, `${locale} ${key} n=${n}`).toBeGreaterThan(0);
+        }
+      }
+    }
   });
 });
 

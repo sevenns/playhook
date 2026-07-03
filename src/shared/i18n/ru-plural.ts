@@ -1,8 +1,9 @@
-// Russian plural mirror. INTENTIONALLY EMPTY for now — the user fills it in. Russian has one/few/many/
-// other forms; `tp` selects the right one via Intl.PluralRules('ru-RU') and falls back to `other`, then
-// to the English forms, for any form left unfilled (see createTranslator).
+// Russian plural mirror. Russian has one/few/many/other; `tp` picks the form via Intl.PluralRules('ru-RU')
+// (1 → one, 2–4 → few, 5–20 / 0 → many, fractions → other) and interpolates {n}. Full word forms are used
+// here (the English source keeps compact "{n}h"/"{n}m" abbreviations) — so playtime reads "2 часа 15 минут".
 import type { PluralKey, PluralForms } from './en-plural';
 
 export const ruPlural: Partial<Record<PluralKey, PluralForms>> = {
-  // to be filled manually, e.g. 'format.minutes': { one: '{n} минута', few: '{n} минуты', many: '{n} минут', other: '{n} минуты' }
+  'format.hours': { one: '{n} час', few: '{n} часа', many: '{n} часов', other: '{n} часа' },
+  'format.minutes': { one: '{n} минута', few: '{n} минуты', many: '{n} минут', other: '{n} минуты' },
 };
