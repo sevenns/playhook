@@ -28,7 +28,9 @@
       <!-- Drive picker -->
       <section class="section">
         <span class="section-label" data-i18n="configure.card">Card</span>
-        <fluent-radio-group id="drive-group" name="drive"></fluent-radio-group>
+        <fluent-dropdown id="drive-group" name="drive">
+          <fluent-listbox id="drive-listbox"></fluent-listbox>
+        </fluent-dropdown>
         <span id="drive-empty" data-i18n="configure.insertCard" hidden>Insert an SD card or flash drive.</span>
       </section>
 

@@ -8,8 +8,9 @@
 import '@fluentui/web-components/text/define.js';
 import '@fluentui/web-components/button/define.js';
 import '@fluentui/web-components/field/define.js';
-import '@fluentui/web-components/radio/define.js';
-import '@fluentui/web-components/radio-group/define.js';
+import '@fluentui/web-components/dropdown/define.js';
+import '@fluentui/web-components/listbox/define.js';
+import '@fluentui/web-components/option/define.js';
 import '@fluentui/web-components/switch/define.js';
 import '@fluentui/web-components/slider/define.js';
 import '@fluentui/web-components/progress-bar/define.js';
@@ -67,7 +68,7 @@ const titlebarVersion = req('titlebar-version');
 const statusEl = req('update-status');
 const progressEl = req('update-progress');
 const actionBtn = req('update-action');
-const radioGroup = req('auto-update');
+const autoUpdateGroup = req('auto-update');
 const themeGroup = req('theme');
 const languageGroup = req('language');
 const prereleaseSwitch = req('prerelease');
@@ -102,30 +103,20 @@ function readLanguageValue(el: HTMLElement): LanguageMode | null {
   return raw === 'system' || raw === 'en' || raw === 'ru' ? raw : null;
 }
 
-function setGroupValue(el: HTMLElement, value: string): void {
-  // Set each fluent-radio's `checked` directly (reliable visual state) plus the group value — setting only
-  // the group value could leave the dot on the wrong radio on some interactions.
-  for (const radio of el.querySelectorAll('fluent-radio')) {
-    (radio as HTMLElement & { checked?: boolean; value?: string }).checked =
-      (radio as HTMLElement & { value?: string }).value === value;
-  }
-  (el as HTMLElement & { value?: string }).value = value;
+// fluent-dropdown exposes a settable `value` (the selected option's value): setting it re-runs the
+// component's selectOption, which also refreshes the collapsed control text. Kept as a narrow cast so we
+// don't pull the element class in.
+function setDropdownValue(el: HTMLElement, value: string): void {
+  (el as HTMLElement & { value?: string | null }).value = value;
 }
 
-// fluent-radio-group leaves selection visual-only when the label or the gap beside a radio is clicked
-// (`value`/`change` don't update). Delegate clicks: resolve the clicked row's radio value, force it as the
-// group value and run `apply`. `change` (kept below) still covers keyboard; both paths are idempotent.
-function wireRadioGroup(group: HTMLElement, apply: () => void): void {
-  group.addEventListener('click', (event) => {
-    const target = event.target as Element | null;
-    const field = target?.closest('fluent-field, fluent-radio') ?? null;
-    if (field === null) return;
-    const radio = field.matches('fluent-radio') ? field : field.querySelector('fluent-radio');
-    const value = (radio as (HTMLElement & { value?: string }) | null)?.value;
-    if (value === undefined || value.length === 0) return;
-    setGroupValue(group, value);
-    apply();
-  });
+// Re-asserts the dropdown's current value so the collapsed control text re-renders from the (possibly
+// just re-localized) selected option. selectOption reads option.text at selection time, so without this a
+// language change would leave the old-language label showing in the closed control.
+function refreshDropdownDisplay(el: HTMLElement): void {
+  const dd = el as HTMLElement & { value?: string | null };
+  const current = dd.value;
+  if (typeof current === 'string') dd.value = current;
 }
 
 // fluent-switch exposes a `checked` property; fluent-slider a numeric `valueAsNumber` / string `value`.
@@ -255,11 +246,10 @@ actionBtn.addEventListener('click', () => {
 });
 
 function applyAutoUpdate(): void {
-  const value = readAutoUpdateValue(radioGroup);
+  const value = readAutoUpdateValue(autoUpdateGroup);
   if (value !== null) window.settingsApi.setAutoUpdate(value);
 }
-radioGroup.addEventListener('change', applyAutoUpdate);
-wireRadioGroup(radioGroup, applyAutoUpdate);
+autoUpdateGroup.addEventListener('change', applyAutoUpdate);
 
 function applyThemeChoice(): void {
   const value = readThemeValue(themeGroup);
@@ -269,9 +259,8 @@ function applyThemeChoice(): void {
   }
 }
 themeGroup.addEventListener('change', applyThemeChoice);
-wireRadioGroup(themeGroup, applyThemeChoice);
 
-// Language is applied via a single push path: the click sends the mode, and the effective locale comes
+// Language is applied via a single push path: the change sends the mode, and the effective locale comes
 // back through settingsLanguageUpdate (for `system` the renderer can't resolve it locally). No local
 // application here — the push arrives within milliseconds.
 function applyLanguageChoice(): void {
@@ -279,7 +268,6 @@ function applyLanguageChoice(): void {
   if (value !== null) window.settingsApi.setLanguage(value);
 }
 languageGroup.addEventListener('change', applyLanguageChoice);
-wireRadioGroup(languageGroup, applyLanguageChoice);
 
 prereleaseSwitch.addEventListener('change', () => {
   window.settingsApi.setPrerelease(readChecked(prereleaseSwitch));
@@ -300,9 +288,9 @@ resetBtn.addEventListener('click', () => {
 
 // Reflects the full settings state onto every control (used on startup and after "Reset to defaults").
 function applySettings(settings: AppSettings): void {
-  setGroupValue(radioGroup, settings.autoUpdate);
-  setGroupValue(themeGroup, settings.theme);
-  setGroupValue(languageGroup, settings.language);
+  setDropdownValue(autoUpdateGroup, settings.autoUpdate);
+  setDropdownValue(themeGroup, settings.theme);
+  setDropdownValue(languageGroup, settings.language);
   setChecked(prereleaseSwitch, settings.allowPrerelease);
   setChecked(summonSwitch, settings.summonHotkeyEnabled);
   const musicPercent = Math.round(settings.musicVolume * 100);
@@ -330,6 +318,11 @@ function applyLocale(locale: Locale): void {
   // "Playhook" is the product name — not translated.
   document.title = `Playhook — ${translator('window.settings')}`;
   localizeDocument(translator);
+  // The dropdowns' collapsed control text is a snapshot of the selected option's text — re-assert each
+  // value so it re-renders with the freshly-localized labels (auto-update / theme / language "System").
+  refreshDropdownDisplay(autoUpdateGroup);
+  refreshDropdownDisplay(themeGroup);
+  refreshDropdownDisplay(languageGroup);
   renderTitlebarVersion();
   if (lastStatus !== null) render(lastStatus);
 }

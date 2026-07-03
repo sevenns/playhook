@@ -34,25 +34,17 @@
         <fluent-button id="update-action" appearance="accent" hidden></fluent-button>
       </section>
 
-      <!-- Auto-update mode. fluent-radio has no default label slot, so each radio is wrapped in a
-           fluent-field (label after the control). The radio-group still collects them (it queries its
-           whole subtree for radios), so selection / keyboard nav keep working. -->
+      <!-- Auto-update mode. fluent-dropdown holds a fluent-listbox of fluent-options; the option's value
+           is the persisted mode and its text is the (localizable) label. -->
       <section class="section">
         <fluent-text weight="semibold" size="500" block data-i18n="settings.sectionAutoUpdate">Automatic updates</fluent-text>
-        <fluent-radio-group id="auto-update" name="auto-update" orientation="vertical">
-          <fluent-field label-position="after">
-            <fluent-radio slot="input" id="au-download-install" value="download-install"></fluent-radio>
-            <label slot="label" for="au-download-install" data-i18n="settings.autoDownloadInstall">Download and install automatically</label>
-          </fluent-field>
-          <fluent-field label-position="after">
-            <fluent-radio slot="input" id="au-download" value="download"></fluent-radio>
-            <label slot="label" for="au-download" data-i18n="settings.autoDownloadManual">Download automatically, install manually</label>
-          </fluent-field>
-          <fluent-field label-position="after">
-            <fluent-radio slot="input" id="au-off" value="off"></fluent-radio>
-            <label slot="label" for="au-off" data-i18n="settings.autoOff">Off (check manually)</label>
-          </fluent-field>
-        </fluent-radio-group>
+        <fluent-dropdown id="auto-update" name="auto-update">
+          <fluent-listbox>
+            <fluent-option value="download-install" data-i18n="settings.autoDownloadInstall">Download and install automatically</fluent-option>
+            <fluent-option value="download" data-i18n="settings.autoDownloadManual">Download automatically, install manually</fluent-option>
+            <fluent-option value="off" data-i18n="settings.autoOff">Off (check manually)</fluent-option>
+          </fluent-listbox>
+        </fluent-dropdown>
         <fluent-field label-position="after">
           <fluent-switch slot="input" id="prerelease"></fluent-switch>
           <label slot="label" for="prerelease" data-i18n="settings.prerelease">Receive pre-release (beta) updates</label>
@@ -62,40 +54,26 @@
       <!-- Appearance / theme -->
       <section class="section">
         <fluent-text weight="semibold" size="500" block data-i18n="settings.sectionAppearance">Appearance</fluent-text>
-        <fluent-radio-group id="theme" name="theme" orientation="vertical">
-          <fluent-field label-position="after">
-            <fluent-radio slot="input" id="theme-system" value="system"></fluent-radio>
-            <label slot="label" for="theme-system" data-i18n="settings.themeSystem">Match system</label>
-          </fluent-field>
-          <fluent-field label-position="after">
-            <fluent-radio slot="input" id="theme-light" value="light"></fluent-radio>
-            <label slot="label" for="theme-light" data-i18n="settings.themeLight">Light</label>
-          </fluent-field>
-          <fluent-field label-position="after">
-            <fluent-radio slot="input" id="theme-dark" value="dark"></fluent-radio>
-            <label slot="label" for="theme-dark" data-i18n="settings.themeDark">Dark</label>
-          </fluent-field>
-        </fluent-radio-group>
+        <fluent-dropdown id="theme" name="theme">
+          <fluent-listbox>
+            <fluent-option value="system" data-i18n="settings.themeSystem">Match system</fluent-option>
+            <fluent-option value="light" data-i18n="settings.themeLight">Light</fluent-option>
+            <fluent-option value="dark" data-i18n="settings.themeDark">Dark</fluent-option>
+          </fluent-listbox>
+        </fluent-dropdown>
       </section>
 
       <!-- Language. System is translated; English / Русский are ENDONYMS — always shown in their own
-           language, so no data-i18n on those two labels. -->
+           language, so no data-i18n on those two options. -->
       <section class="section">
         <fluent-text weight="semibold" size="500" block data-i18n="settings.sectionLanguage">Language</fluent-text>
-        <fluent-radio-group id="language" name="language" orientation="vertical">
-          <fluent-field label-position="after">
-            <fluent-radio slot="input" id="lang-system" value="system"></fluent-radio>
-            <label slot="label" for="lang-system" data-i18n="settings.languageSystem">System</label>
-          </fluent-field>
-          <fluent-field label-position="after">
-            <fluent-radio slot="input" id="lang-en" value="en"></fluent-radio>
-            <label slot="label" for="lang-en">English</label>
-          </fluent-field>
-          <fluent-field label-position="after">
-            <fluent-radio slot="input" id="lang-ru" value="ru"></fluent-radio>
-            <label slot="label" for="lang-ru">Русский</label>
-          </fluent-field>
-        </fluent-radio-group>
+        <fluent-dropdown id="language" name="language">
+          <fluent-listbox>
+            <fluent-option value="system" data-i18n="settings.languageSystem">System</fluent-option>
+            <fluent-option value="en">English</fluent-option>
+            <fluent-option value="ru">Русский</fluent-option>
+          </fluent-listbox>
+        </fluent-dropdown>
       </section>
 
       <!-- General -->
