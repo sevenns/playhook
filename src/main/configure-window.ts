@@ -38,7 +38,7 @@ export class ConfigureWindow {
   }
 
   /** The native window title (taskbar). Re-applied on a language change (the renderer also sets
-   * document.title so the HTML <title> doesn't override this — see N2). */
+   * document.title, otherwise the HTML <title> would override this in the taskbar). */
   private title(): string {
     return `${APP_NAME} — ${this.getTranslator()('window.configureGame')}`;
   }
@@ -101,8 +101,8 @@ export class ConfigureWindow {
     // editFlags); Format / Reset are renderer actions, dispatched back over an IPC command channel.
     window.webContents.on('context-menu', (_event, params) => {
       // Clipboard items keep their native ROLE (behaviour) but get an explicit translated LABEL — without
-      // it Electron shows English defaults on Windows (review I2). Menu is rebuilt per right-click, so a
-      // language change is picked up on its own.
+      // it Electron shows its English defaults on Windows. Menu is rebuilt per right-click, so a language
+      // change is picked up on its own.
       const t = this.getTranslator();
       const menu = Menu.buildFromTemplate([
         { role: 'cut', label: t('menu.cut'), enabled: params.editFlags.canCut },

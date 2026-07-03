@@ -136,7 +136,8 @@ export const en = {
   'configure.unknownReason': 'unknown reason',
 
   // ── User-facing errors from main (ipc.ts / game-config.ts / updater.ts) ─────
-  // The wrapper is translated; the technical cause ({cause}) is inserted as-is (see §3.4/§3.6a).
+  // The wrapper is translated; the technical cause ({cause}) is inserted as-is (system messages, nested
+  // exceptions and the like stay in their original form).
   'errors.finishBeforeApply': 'Finish what’s running before applying the config',
   'errors.reloadInProgress': 'a reload is already in progress',
   'errors.steamNotInstalled': 'Steam is not installed',

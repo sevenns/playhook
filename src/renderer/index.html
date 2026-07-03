@@ -24,7 +24,7 @@
            the Info button (game screens) or the Hide button (empty / idle screen). -->
       <footer id="bottom-bar">
         <div class="bar-content">
-          <!-- aria-label is DYNAMIC (Play/Install), set from JS via t() — no data-i18n-aria-label here (N3). -->
+          <!-- aria-label is DYNAMIC (Play/Install), set from JS via t() — no data-i18n-aria-label here. -->
           <button id="play-button" class="circle-button" type="button" aria-label="Play" data-action="play">
             <svg class="icon-play" viewBox="0 0 36 48" aria-hidden="true">
               <path d="M2 2 L34 24 L2 46 Z" />
@@ -105,7 +105,7 @@
           <div class="popup-message" id="confirm-message"></div>
           <!-- Install mode only: the destination path (filled from JS), shown in case the installer
                opens a non-silent folder picker. Selectable so it can be copied. -->
-          <!-- Mixed markup (I3): only the leading TEXT is localized via its own [data-i18n] span; the <br/>
+          <!-- Mixed markup: only the leading TEXT is localized via its own [data-i18n] span; the <br/>
                and #confirm-path (filled from JS) stay untouched — no textContent on the parent. -->
           <div class="popup-detail" id="confirm-description">
             <span data-i18n="launcher.installPathNote"

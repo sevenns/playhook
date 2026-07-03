@@ -40,7 +40,7 @@ export class SettingsWindow {
   }
 
   /** The native window title (taskbar). Re-applied on a language change (the renderer also sets
-   * document.title so the HTML <title> doesn't override this — see N2). */
+   * document.title, otherwise the HTML <title> would override this in the taskbar). */
   private title(): string {
     return `${APP_NAME} — ${this.getTranslator()('window.settings')}`;
   }

@@ -484,7 +484,7 @@ function validatePcSavePathStatic(input: string, t: Translator): string | null {
 }
 
 /** Adds a traversal issue for a card-relative path if it escapes the root. `label` is a field identifier
- * (kept latin — see §3.6); the wrapper message is translated. */
+ * (kept latin — a JSON field name, not translatable text); the wrapper message is translated. */
 function pushIfEscapes(
   issues: ManifestValidationIssue[],
   fieldPath: string,

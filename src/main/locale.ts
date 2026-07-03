@@ -2,9 +2,9 @@
 // current translator for the main process. Mirrors the onSummonHotkeyChanged pattern: the mode is passed
 // as an ARGUMENT (setMode), never read asynchronously from the store here.
 //
-// The system locale is read ONCE at construction and on each setMode (plan P2): a full Windows display-
-// language change requires a sign-out, after which the app restarts and picks up the locale afresh — so
-// there is nothing to watch live.
+// The system locale is read ONCE at construction and on each setMode: a full Windows display-language
+// change requires a sign-out, after which the app restarts and picks up the locale afresh — so there is
+// nothing to watch live.
 import { app } from 'electron';
 import { z } from 'zod';
 import { createTranslator, type Locale, type Translator } from '../shared/i18n/index';
@@ -23,7 +23,7 @@ export function resolveLocale(mode: LanguageMode, systemLanguages: readonly stri
 
 // zod 4 ships built-in message locales; switch them globally so structural manifest errors (Configure
 // window / error popup) come out in the active language. The config is process-global (it also affects the
-// internal settings.json / stats.json schemas, harmlessly — their errors are not user-facing, §3.6).
+// internal settings.json / stats.json schemas, harmlessly — their errors are not user-facing).
 function applyZodLocale(locale: Locale): void {
   z.config(locale === 'ru' ? z.locales.ru() : z.locales.en());
 }

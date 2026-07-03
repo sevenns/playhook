@@ -560,9 +560,9 @@ function renderTitlebarSubtitle(): void {
 }
 
 // A language push (or the initial seed): rebuild the translator, re-localize the static DOM, re-title the
-// window (so the HTML <title> doesn't override the taskbar caption — N2) and refresh the subtitle. The
+// window (so the HTML <title> doesn't override the taskbar caption) and refresh the subtitle. The
 // ephemeral status line and issues panel are NOT re-rendered retroactively — they update on the next event
-// (drive labels re-push every 2s; a re-validate happens on the next edit) — per §5.
+// (drive labels re-push every 2s; a re-validate happens on the next edit).
 function applyLocale(locale: Locale): void {
   translator = createTranslator(locale);
   document.documentElement.lang = locale;

@@ -85,8 +85,9 @@ async function bootstrap(): Promise<void> {
   const initialSettings = await settings.read();
   summonHotkeyEnabled = initialSettings.summonHotkeyEnabled;
 
-  // Resolve the effective UI locale ONCE at startup from the persisted mode (P2: the system locale is not
-  // watched live). localeService.t is read live by every consumer, so a later setMode applies everywhere.
+  // Resolve the effective UI locale ONCE at startup from the persisted mode (the system locale is not
+  // watched live — a Windows display-language change requires a sign-out and app restart anyway).
+  // localeService.t is read live by every consumer, so a later setMode applies everywhere.
   const localeService = new LocaleService(initialSettings.language);
   const getTranslator = (): typeof localeService.t => localeService.t;
 
@@ -156,8 +157,8 @@ async function bootstrap(): Promise<void> {
 
   // UI-locale wiring. Each window seeds via an invoke (effective Locale) and receives live pushes; the
   // set-language SEND lives in UpdaterService (with the other settings:* writes). No did-finish-load hooks
-  // — the plain windows are created lazily, so there's nothing to hook (review I4); the invoke-seed covers
-  // startup instead. All three requests just return the current effective locale.
+  // — the plain windows are created lazily, so there's nothing to hook; the invoke-seed covers startup
+  // instead. All three requests just return the current effective locale.
   ipcMain.handle(IPC.languageRequest, (): Locale => localeService.current());
   ipcMain.handle(IPC.settingsLanguageRequest, (): Locale => localeService.current());
   ipcMain.handle(IPC.configLanguageRequest, (): Locale => localeService.current());

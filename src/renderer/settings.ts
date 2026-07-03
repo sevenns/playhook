@@ -202,7 +202,7 @@ function hideAction(): void {
 }
 
 // Last rendered status, cached so a language push can re-render the Updates block in the new language
-// (render is otherwise only called on a status change — review I7). null before the first snapshot.
+// (render is otherwise only called on a status change). null before the first snapshot.
 let lastStatus: UpdateStatus | null = null;
 
 function render(status: UpdateStatus): void {
@@ -271,9 +271,9 @@ function applyThemeChoice(): void {
 themeGroup.addEventListener('change', applyThemeChoice);
 wireRadioGroup(themeGroup, applyThemeChoice);
 
-// Language is applied via the single push path (review I7): the click sends the mode, and the effective
-// locale comes back through settingsLanguageUpdate (for `system` the renderer can't resolve it locally).
-// No local application here — the push arrives within milliseconds.
+// Language is applied via a single push path: the click sends the mode, and the effective locale comes
+// back through settingsLanguageUpdate (for `system` the renderer can't resolve it locally). No local
+// application here — the push arrives within milliseconds.
 function applyLanguageChoice(): void {
   const value = readLanguageValue(languageGroup);
   if (value !== null) window.settingsApi.setLanguage(value);
@@ -321,12 +321,12 @@ function renderTitlebarVersion(): void {
 }
 
 // A language push: rebuild the translator, re-localize the static DOM, re-title the window (so the HTML
-// <title> doesn't override the taskbar caption — N2), and re-render the state-driven bits (Updates block
-// from the cached status, the title-bar suffix).
+// <title> doesn't override the taskbar caption), and re-render the state-driven bits (Updates block from
+// the cached status, the title-bar suffix).
 function applyLocale(locale: Locale): void {
   translator = createTranslator(locale);
   document.documentElement.lang = locale;
-  // Match main's native window title so the HTML <title> doesn't override the taskbar caption (N2).
+  // Match main's native window title so the HTML <title> doesn't override the taskbar caption.
   // "Playhook" is the product name — not translated.
   document.title = `Playhook — ${translator('window.settings')}`;
   localizeDocument(translator);

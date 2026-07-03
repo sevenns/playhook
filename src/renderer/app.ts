@@ -155,7 +155,7 @@ function render(state: AppState): void {
 
 // UI locale: subscribe BEFORE the invoke-seed so a push arriving in between isn't lost (seed pattern).
 // A push rebuilds the translator, re-localizes the static DOM and re-renders the current state (info
-// panel, status, title, button aria all flow through the translator) — no new caches (review I6).
+// panel, status, title, button aria all flow through the translator) — no new caches needed.
 function applyLocale(locale: Locale): void {
   currentLocale = locale;
   translator = createTranslator(locale);

@@ -12,7 +12,9 @@ export type { PluralKey } from './en-plural';
 /** The supported UI locales. The architecture is extensible: add a dictionary + a literal here. */
 export type Locale = 'en' | 'ru';
 
-/** Interpolation params for a message. Parameters are not typed per key on purpose (see plan §3.1). */
+// Parameters are deliberately not typed per key: the cost of a wrong placeholder name is low and the
+// tests cover the actual call sites, so the extra type machinery isn't worth it.
+/** Interpolation params for a message. */
 export type TranslateParams = Readonly<Record<string, string | number>>;
 
 /** A callable translator: `t(key, params)` for a plain message, `t.tp(key, n, params)` for a plural. */

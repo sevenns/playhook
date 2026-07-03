@@ -21,7 +21,7 @@ const settingsSchema = z.object({
   // missing the field parses fine and keeps its other values.
   theme: z.enum(['system', 'light', 'dark']).default('system'),
   // Language mirrors theme: `.default('system')` so an older settings.json without the field stays valid
-  // (no schemaVersion bump / migration needed — see plan §3.2).
+  // (no schemaVersion bump / migration needed).
   language: z.enum(['system', 'en', 'ru']).default('system'),
   allowPrerelease: z.boolean().default(false),
   summonHotkeyEnabled: z.boolean().default(true),

@@ -48,7 +48,7 @@ describe('plural (tp) via Intl.PluralRules', () => {
   });
 
   it('the ICU build distinguishes the Russian one/few/many categories', () => {
-    // The crux of the plural risk (P1): a minimal ICU could collapse these.
+    // The crux of the plural risk: a minimal ICU build could collapse these categories.
     const rules = new Intl.PluralRules('ru-RU');
     expect(rules.select(1)).toBe('one');
     expect(rules.select(2)).toBe('few');
@@ -110,7 +110,7 @@ describe('translateIssueMessage', () => {
   });
 });
 
-// ── HTML fallback ↔ dictionary scan (review I8) ──────────────────────────────
+// ── HTML fallback ↔ dictionary scan ──────────────────────────────────────────
 // Every [data-i18n] element in the HTML must (a) point at a real `en` key and (b) carry an English
 // fallback text equal to that key's value — otherwise the two silently diverge. [data-i18n-aria-label]
 // keys are only checked for existence (the fallback lives in the aria-label attribute).
