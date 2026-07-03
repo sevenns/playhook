@@ -34,9 +34,11 @@ import {
   type AppSettings,
   type AudioVolumes,
   type AutoUpdateMode,
+  type LanguageMode,
   type ThemeMode,
   type UpdateStatus,
 } from '../shared/types';
+import { type Translator } from '../shared/i18n/index';
 import { type AppSettingsStore } from './app-settings';
 import { ipcMain } from 'electron';
 
@@ -56,6 +58,10 @@ export interface UpdaterDeps {
   readonly onSummonHotkeyChanged: (enabled: boolean) => void;
   /** Pushes new audio volumes to the game renderer so they apply live. */
   readonly onVolumesChanged: (volumes: AudioVolumes) => void;
+  /** Applies a UI-language change (re-resolve locale, rebuild tray/titles, push to live windows). */
+  readonly onLanguageChanged: (mode: LanguageMode) => void;
+  /** The current translator (for the install-busy soft error rendered in the settings window). */
+  readonly getTranslator: () => Translator;
 }
 
 export class UpdaterService {
@@ -159,6 +165,14 @@ export class UpdaterService {
     ipcMain.on(IPC.settingsSetSfxVolume, (_event, volume: number) => {
       void this.setVolume({ sfxVolume: volume });
     });
+    // Language mirrors the summon-hotkey path: persist, then hand the mode to the deps callback (main
+    // re-resolves the locale, rebuilds tray/titles and pushes the effective locale to every live window).
+    ipcMain.on(IPC.settingsSetLanguage, (_event, mode: LanguageMode) => {
+      void this.deps.settings
+        .setLanguage(mode)
+        .then(() => this.deps.onLanguageChanged(mode))
+        .catch((cause: unknown) => log.error('[updater] failed to persist language:', cause));
+    });
     ipcMain.handle(IPC.settingsReset, (): Promise<AppSettings> => this.resetSettings());
     // game-renderer startup: hand it the current volumes to seed its AudioController.
     ipcMain.handle(IPC.volumeRequest, async (): Promise<AudioVolumes> => {
@@ -185,6 +199,7 @@ export class UpdaterService {
     }
     this.deps.onSummonHotkeyChanged(next.summonHotkeyEnabled);
     this.deps.onVolumesChanged({ music: next.musicVolume, sfx: next.sfxVolume });
+    this.deps.onLanguageChanged(next.language);
     return next;
   }
 
@@ -339,7 +354,7 @@ export class UpdaterService {
       log.info('[updater] install deferred: app busy');
       this.pushTransient({
         kind: 'error',
-        message: 'Finish what’s running before installing the update.',
+        message: this.deps.getTranslator()('errors.finishBeforeInstall'),
       });
       return;
     }

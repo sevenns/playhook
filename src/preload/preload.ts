@@ -9,6 +9,7 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
 import type { AppState, AudioAssets, AudioVolumes, HeroAssets, RendererApi } from '../shared/types';
 import type { IPC } from '../shared/types';
+import type { Locale } from '../shared/i18n/index';
 
 const CHANNELS = {
   stateUpdate: 'state:update',
@@ -25,6 +26,8 @@ const CHANNELS = {
   wallpaperRequest: 'wallpaper:request',
   volumeRequest: 'volume:request',
   volumeUpdate: 'volume:update',
+  languageRequest: 'app:language-request',
+  languageUpdate: 'app:language-update',
 } as const satisfies Partial<typeof IPC>;
 
 const api: RendererApi = {
@@ -78,6 +81,14 @@ const api: RendererApi = {
   onVolumesUpdate(callback: (volumes: AudioVolumes) => void): void {
     ipcRenderer.on(CHANNELS.volumeUpdate, (_event: IpcRendererEvent, volumes: AudioVolumes) => {
       callback(volumes);
+    });
+  },
+  getLanguage(): Promise<Locale> {
+    return ipcRenderer.invoke(CHANNELS.languageRequest) as Promise<Locale>;
+  },
+  onLanguageUpdate(callback: (locale: Locale) => void): void {
+    ipcRenderer.on(CHANNELS.languageUpdate, (_event: IpcRendererEvent, locale: Locale) => {
+      callback(locale);
     });
   },
 };

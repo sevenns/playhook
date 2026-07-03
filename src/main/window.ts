@@ -6,12 +6,16 @@
 // switching back to the game/Steam. A focused fullscreen window already hides the taskbar.
 import path from 'node:path';
 import { BrowserWindow, Menu, clipboard } from 'electron';
+import { type Translator } from '../shared/i18n/index';
 import { installHideOnClose, type HideOnCloseGuard } from './window-hide-guard';
 import { forceForegroundWindow } from './foreground';
 
 export class GameWindow {
   private window: BrowserWindow | null = null;
   private closeGuard: HideOnCloseGuard | null = null;
+
+  // The current translator is read live so the "Copy" menu (built per right-click) follows the language.
+  constructor(private readonly getTranslator: () => Translator) {}
 
   create(): BrowserWindow {
     const window = new BrowserWindow({
@@ -44,7 +48,7 @@ export class GameWindow {
       if (params.selectionText.trim().length === 0) return;
       const menu = Menu.buildFromTemplate([
         {
-          label: 'Copy',
+          label: this.getTranslator()('menu.copy'),
           enabled: params.editFlags.canCopy,
           click: () => {
             clipboard.writeText(params.selectionText);

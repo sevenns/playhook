@@ -7,6 +7,7 @@ import path from 'node:path';
 import fse from 'fs-extra';
 import { list } from 'drivelist';
 import { MANIFEST_FILENAME, type DriveCandidate } from '../shared/types';
+import { type Translator } from '../shared/i18n/index';
 
 const DEFAULT_INTERVAL_MS = 1000;
 
@@ -47,6 +48,7 @@ function isExternalDrive(drive: {
  */
 export async function listDriveCandidates(
   activeRoot: string | null,
+  t: Translator,
 ): Promise<readonly DriveCandidate[]> {
   const drives = await list();
   const candidates: DriveCandidate[] = [];
@@ -63,7 +65,7 @@ export async function listDriveCandidates(
       const hasManifest = await fse.pathExists(manifestPath);
       candidates.push({
         root,
-        label: await buildDriveLabel(root, manifestPath, hasManifest),
+        label: await buildDriveLabel(root, manifestPath, hasManifest, t),
         hasManifest,
         isActive: root === activeRoot,
       });
@@ -81,17 +83,20 @@ async function buildDriveLabel(
   root: string,
   manifestPath: string,
   hasManifest: boolean,
+  t: Translator,
 ): Promise<string> {
-  if (!hasManifest) return `${root} — blank drive`;
+  // The `root — …` shape and the card title (untrusted) stay literal; only the descriptive suffix is
+  // translated. The picker re-pushes every 2s while visible, so a language change is picked up on its own.
+  if (!hasManifest) return `${root} — ${t('drive.blank')}`;
   try {
     const parsed: unknown = await fse.readJson(manifestPath);
     if (typeof parsed === 'object' && parsed !== null && 'title' in parsed) {
       const title = parsed.title;
       if (typeof title === 'string' && title.length > 0) return `${root} — ${title}`;
     }
-    return `${root} — invalid game.json`;
+    return `${root} — ${t('drive.invalid')}`;
   } catch {
-    return `${root} — invalid game.json`;
+    return `${root} — ${t('drive.invalid')}`;
   }
 }
 

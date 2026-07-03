@@ -6,6 +6,8 @@
 // info panel, title slide, music gating).
 // IMPORTANT: title/data come from the card (untrusted) — rendered via textContent, never innerHTML.
 import type { AppState, GameInfo } from '../shared/types';
+import { createTranslator, type Locale, type Translator } from '../shared/i18n/index.js';
+import { localizeDocument } from './i18n-dom.js';
 import { createAudioController } from './audio.js';
 import { createHeroController } from './hero.js';
 import { createControls } from './controls.js';
@@ -20,6 +22,11 @@ const infoPanel = req('info-panel');
 const barContent = reqQuery<HTMLElement>('.bar-content');
 
 let currentState: AppState = { kind: 'idle' };
+// UI locale + translator (both refreshed on a language push). The HTML ships English fallback text, so
+// until the invoke-seed lands there is no blank flash — the seed then localizes and re-renders.
+let currentLocale: Locale = 'en';
+let translator: Translator = createTranslator(currentLocale);
+const getTranslator = (): Translator => translator;
 const audio = createAudioController();
 
 // ── Hero background + palette (own subsystem, see hero.ts) ───────────────────
@@ -31,13 +38,14 @@ const audio = createAudioController();
 const hero = createHeroController({
   hasGameOnScreen: () => gameOf(currentState) !== undefined,
   getGameId: () => gameOf(currentState)?.id ?? '',
+  getTranslator,
 });
 
 // ── Interaction layer (popups + focus + actions, see controls.ts) ────────────
 // Owns the popups, the two focus groups and the actions they trigger, plus their wiring (clicks, hover,
 // gamepad, Esc). render() drives it via applyGameButtons/clearGameButtons/refresh; main's error goes to
 // showError; the gamepad loop starts with start().
-const controls = createControls({ getState: () => currentState, audio });
+const controls = createControls({ getState: () => currentState, audio, getTranslator });
 
 // ── Info panel ──────────────────────────────────────────────────────────────
 
@@ -57,9 +65,9 @@ function infoItem(label: string, value: string): HTMLElement {
 function buildInfoPanel(game: GameInfo): void {
   while (infoPanel.firstChild !== null) infoPanel.removeChild(infoPanel.firstChild);
   infoPanel.append(
-    infoItem('Last Played', formatDate(game.lastPlayedAt)),
-    infoItem('Playtime', formatPlaytime(game.totalPlaySeconds)),
-    infoItem('Launches', String(game.launchCount)),
+    infoItem(translator('launcher.info.lastPlayed'), formatDate(game.lastPlayedAt, translator, currentLocale)),
+    infoItem(translator('launcher.info.playtime'), formatPlaytime(game.totalPlaySeconds, translator)),
+    infoItem(translator('launcher.info.launches'), String(game.launchCount)),
   );
 }
 
@@ -135,7 +143,7 @@ function render(state: AppState): void {
   if (busySteam) app.dataset['steamBusy'] = 'true';
   else delete app.dataset['steamBusy'];
 
-  statusEl.textContent = statusOf(state);
+  statusEl.textContent = statusOf(state, translator);
   applyTitleSlide(phase === 'busy' || busySteam);
 
   // Force-close popups off the ready screen, then re-apply the focus highlight (see controls.refresh).
@@ -144,6 +152,19 @@ function render(state: AppState): void {
 }
 
 // ── Wiring ──────────────────────────────────────────────────────────────────
+
+// UI locale: subscribe BEFORE the invoke-seed so a push arriving in between isn't lost (seed pattern).
+// A push rebuilds the translator, re-localizes the static DOM and re-renders the current state (info
+// panel, status, title, button aria all flow through the translator) — no new caches (review I6).
+function applyLocale(locale: Locale): void {
+  currentLocale = locale;
+  translator = createTranslator(locale);
+  document.documentElement.lang = locale;
+  localizeDocument(translator);
+  render(currentState);
+}
+window.api.onLanguageUpdate(applyLocale);
+void window.api.getLanguage().then(applyLocale);
 
 window.api.onStateUpdate(render);
 void window.api.requestState().then(render);

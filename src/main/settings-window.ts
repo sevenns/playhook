@@ -11,6 +11,7 @@
 import path from 'node:path';
 import { BrowserWindow, ipcMain, nativeTheme } from 'electron';
 import { APP_NAME, IPC } from '../shared/types';
+import { type Translator } from '../shared/i18n/index';
 import { type UpdaterService } from './updater';
 import { installHideOnClose, type HideOnCloseGuard } from './window-hide-guard';
 
@@ -28,11 +29,26 @@ export class SettingsWindow {
   private window: BrowserWindow | null = null;
   private closeGuard: HideOnCloseGuard | null = null;
 
-  constructor(private readonly updater: UpdaterService) {
+  constructor(
+    private readonly updater: UpdaterService,
+    private readonly getTranslator: () => Translator,
+  ) {
     // The renderer computes the effective (system-resolved) theme and asks us to recolor the native
     // caption buttons to match. Registered once here (SettingsWindow is a singleton); guarded on a live
     // window. Not part of UpdaterService's settings IPC — this is pure window chrome.
     ipcMain.on(IPC.titleBarOverlayUpdate, (_event, dark: boolean) => this.applyOverlay(dark));
+  }
+
+  /** The native window title (taskbar). Re-applied on a language change (the renderer also sets
+   * document.title so the HTML <title> doesn't override this — see N2). */
+  private title(): string {
+    return `${APP_NAME} — ${this.getTranslator()('window.settings')}`;
+  }
+
+  /** Re-titles a live window after a language change. */
+  refreshTitle(): void {
+    const window = this.window;
+    if (window !== null && !window.isDestroyed()) window.setTitle(this.title());
   }
 
   private applyOverlay(dark: boolean): void {
@@ -75,7 +91,7 @@ export class SettingsWindow {
       },
       resizable: true,
       fullscreen: false,
-      title: `${APP_NAME} — Settings`,
+      title: this.title(),
       icon: path.join(__dirname, '../icon.ico'),
       // Pre-paint background matched to the OS theme (the renderer applies the real Fluent theme on
       // load) — avoids a dark flash on a light system and vice-versa. `system` is the default theme.

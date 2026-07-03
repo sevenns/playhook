@@ -10,11 +10,13 @@ import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
 import type {
   AppSettings,
   AutoUpdateMode,
+  LanguageMode,
   SettingsApi,
   ThemeMode,
   UpdateStatus,
 } from '../shared/types';
 import type { IPC } from '../shared/types';
+import type { Locale } from '../shared/i18n/index';
 
 const CHANNELS = {
   updateStatusUpdate: 'update:status',
@@ -29,6 +31,9 @@ const CHANNELS = {
   settingsSetSummonHotkey: 'settings:set-summon-hotkey',
   settingsSetMusicVolume: 'settings:set-music-volume',
   settingsSetSfxVolume: 'settings:set-sfx-volume',
+  settingsSetLanguage: 'settings:set-language',
+  settingsLanguageRequest: 'settings:language-request',
+  settingsLanguageUpdate: 'settings:language-update',
   settingsReset: 'settings:reset',
   titleBarOverlayUpdate: 'settings:titlebar-overlay',
   appVersionRequest: 'app:version',
@@ -68,6 +73,17 @@ const api: SettingsApi = {
   },
   setSfxVolume(volume: number): void {
     ipcRenderer.send(CHANNELS.settingsSetSfxVolume, volume);
+  },
+  setLanguage(mode: LanguageMode): void {
+    ipcRenderer.send(CHANNELS.settingsSetLanguage, mode);
+  },
+  getLanguage(): Promise<Locale> {
+    return ipcRenderer.invoke(CHANNELS.settingsLanguageRequest) as Promise<Locale>;
+  },
+  onLanguageUpdate(callback: (locale: Locale) => void): void {
+    ipcRenderer.on(CHANNELS.settingsLanguageUpdate, (_event: IpcRendererEvent, locale: Locale) => {
+      callback(locale);
+    });
   },
   reset(): Promise<AppSettings> {
     return ipcRenderer.invoke(CHANNELS.settingsReset) as Promise<AppSettings>;

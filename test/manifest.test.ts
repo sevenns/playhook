@@ -7,6 +7,11 @@ import {
   validateManifestText,
 } from '../src/main/manifest';
 import { MANIFEST_TEMPLATES } from '../src/main/manifest-templates';
+import { createTranslator } from '../src/shared/i18n/index';
+
+// An English translator makes the translated messages identical to the previous hardcoded English, so
+// the assertions below (incl. the `.includes('together')` check) hold unchanged.
+const t = createTranslator('en');
 
 // Path helpers are platform-sensitive (path.sep differs), so assertions check the *inside/outside*
 // invariant rather than exact separators — the anti-traversal contract is what matters (audit S4).
@@ -47,34 +52,34 @@ describe('expandPcSavePath', () => {
   });
 
   it('expands %DOCUMENTS% to a path inside the documents base', () => {
-    const result = expandPcSavePath('%DOCUMENTS%\\Saves\\MyGame', { documents: docs });
+    const result = expandPcSavePath('%DOCUMENTS%\\Saves\\MyGame', { documents: docs, t });
     expect(result.ok).toBe(true);
     if (result.ok) expect(isInside(docs, result.value)).toBe(true);
   });
 
   it('expands an allowlisted env prefix (%APPDATA%)', () => {
-    const result = expandPcSavePath('%APPDATA%\\MyGame', { documents: docs });
+    const result = expandPcSavePath('%APPDATA%\\MyGame', { documents: docs, t });
     expect(result.ok).toBe(true);
   });
 
   it('rejects a prefix that is not on the allowlist', () => {
-    const result = expandPcSavePath('%WINDIR%\\System32', { documents: docs });
+    const result = expandPcSavePath('%WINDIR%\\System32', { documents: docs, t });
     expect(result.ok).toBe(false);
   });
 
   it('rejects a path with no %PREFIX%', () => {
-    const result = expandPcSavePath('C:\\Users\\me\\Saves', { documents: docs });
+    const result = expandPcSavePath('C:\\Users\\me\\Saves', { documents: docs, t });
     expect(result.ok).toBe(false);
   });
 
   it('rejects traversal via ..', () => {
-    const result = expandPcSavePath('%DOCUMENTS%\\..\\..\\Windows', { documents: docs });
+    const result = expandPcSavePath('%DOCUMENTS%\\..\\..\\Windows', { documents: docs, t });
     expect(result.ok).toBe(false);
   });
 
   it('reports an unavailable prefix when the env var is missing', () => {
     delete process.env['APPDATA'];
-    const result = expandPcSavePath('%APPDATA%\\MyGame', { documents: docs });
+    const result = expandPcSavePath('%APPDATA%\\MyGame', { documents: docs, t });
     expect(result.ok).toBe(false);
   });
 });
@@ -82,31 +87,31 @@ describe('expandPcSavePath', () => {
 describe('validateManifestText', () => {
   it('accepts all three starter templates (also catches JSONC/trailing-comment leftovers)', () => {
     for (const [name, text] of Object.entries(MANIFEST_TEMPLATES)) {
-      const result = validateManifestText(text);
+      const result = validateManifestText(text, t);
       expect(result.ok, `${name} template should be valid: ${JSON.stringify(result)}`).toBe(true);
     }
   });
 
   it('rejects JSONC (README-style // comments) as a syntax error', () => {
     const jsonc = '{\n  "schemaVersion": 1, // a comment\n  "id": "x"\n}';
-    const result = validateManifestText(jsonc);
+    const result = validateManifestText(jsonc, t);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.issues[0]?.path).toBe('(root)');
   });
 
   it('rejects broken JSON', () => {
-    const result = validateManifestText('{ not json');
+    const result = validateManifestText('{ not json', t);
     expect(result.ok).toBe(false);
   });
 
   it('rejects a non-steam manifest with no executable (schema)', () => {
-    const result = validateManifestText(JSON.stringify({ schemaVersion: 1, id: 'x', title: 'X' }));
+    const result = validateManifestText(JSON.stringify({ schemaVersion: 1, id: 'x', title: 'X' }), t);
     expect(result.ok).toBe(false);
   });
 
   it('rejects steam mode without watchProcesses (schema)', () => {
     const text = JSON.stringify({ schemaVersion: 1, id: 'x', title: 'X', steam: { appid: 480 } });
-    expect(validateManifestText(text).ok).toBe(false);
+    expect(validateManifestText(text, t).ok).toBe(false);
   });
 
   it('rejects a custom installer that is elevated (schema refine)', () => {
@@ -117,7 +122,7 @@ describe('validateManifestText', () => {
       executable: 'g/g.exe',
       install: { installer: 's/s.exe', type: 'custom', runAsAdmin: true, args: ['{dir}'] },
     });
-    expect(validateManifestText(text).ok).toBe(false);
+    expect(validateManifestText(text, t).ok).toBe(false);
   });
 
   it('rejects executable path traversal (semantic, fs-free)', () => {
@@ -127,7 +132,7 @@ describe('validateManifestText', () => {
       title: 'X',
       executable: '../outside.exe',
     });
-    const result = validateManifestText(text);
+    const result = validateManifestText(text, t);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.issues.some((i) => i.path === 'executable')).toBe(true);
   });
@@ -141,7 +146,7 @@ describe('validateManifestText', () => {
       saveOnCard: 'saves',
       pcSavePath: '%WINDIR%/System32',
     });
-    const result = validateManifestText(text);
+    const result = validateManifestText(text, t);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.issues.some((i) => i.path === 'pcSavePath')).toBe(true);
   });
@@ -154,7 +159,7 @@ describe('validateManifestText', () => {
       executable: 'g/g.exe',
       saveOnCard: 'saves',
     });
-    const result = validateManifestText(text);
+    const result = validateManifestText(text, t);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.issues.some((i) => i.message.includes('together'))).toBe(true);
   });

@@ -6,6 +6,7 @@
 // It reaches back into app.ts only through the narrow `deps` seam (current state + the audio controller);
 // app.ts drives it via applyGameButtons/clearGameButtons/refresh/showError and starts it with start().
 import type { AppState, GameInfo } from '../shared/types';
+import type { Translator } from '../shared/i18n/index.js';
 import { createGamepadController } from './gamepad.js';
 import { type AudioController } from './audio.js';
 import { gameOf, phaseOf, steamBusy } from './state-view.js';
@@ -13,13 +14,6 @@ import { req, reqQuery } from './dom.js';
 
 // Which action the confirmation popup is asking about (only meaningful while confirmOpen).
 type ConfirmMode = 'install' | 'uninstall';
-const CONFIRM_TEXT: Readonly<Record<ConfirmMode, string>> = {
-  install: 'Do you want to install game?',
-  uninstall: 'Do you want to uninstall game from your PC?',
-};
-// Steam-mode confirm copy: the action opens Steam (no card path / silent-mode note applies).
-const STEAM_INSTALL_TEXT = 'Open Steam to install this game?';
-const STEAM_UNINSTALL_TEXT = 'Open Steam to uninstall this game?';
 // Gamepad A doesn't trigger :active, so flash a press class to play the scale-down animation.
 const PRESS_MS = 130;
 
@@ -29,6 +23,8 @@ export interface ControlsDeps {
   getState(): AppState;
   /** The shared audio controller (UI sounds). */
   audio: AudioController;
+  /** The current translator (read live so confirm copy / Play aria follow the language). */
+  getTranslator(): Translator;
 }
 
 export interface Controls {
@@ -47,6 +43,7 @@ export interface Controls {
 export function createControls(deps: ControlsDeps): Controls {
   const { audio } = deps;
   const state = (): AppState => deps.getState();
+  const t = (): Translator => deps.getTranslator();
 
   const hideButton = req<HTMLButtonElement>('hide-button');
   const playButton = req<HTMLButtonElement>('play-button');
@@ -132,9 +129,13 @@ export function createControls(deps: ControlsDeps): Controls {
       delete confirmPopup.dataset['installVia'];
     }
     if (isSteam) {
-      confirmMessage.textContent = mode === 'install' ? STEAM_INSTALL_TEXT : STEAM_UNINSTALL_TEXT;
+      confirmMessage.textContent = t()(
+        mode === 'install' ? 'launcher.confirm.steamInstall' : 'launcher.confirm.steamUninstall',
+      );
     } else {
-      confirmMessage.textContent = CONFIRM_TEXT[mode];
+      confirmMessage.textContent = t()(
+        mode === 'install' ? 'launcher.confirm.install' : 'launcher.confirm.uninstall',
+      );
     }
     // Card path only for a card-installer game (empty for steam — there is no install dir).
     if (mode === 'install') confirmPath.textContent = isSteamInstall ? '' : (game.installDir ?? '');
@@ -162,7 +163,7 @@ export function createControls(deps: ControlsDeps): Controls {
   function applyPlayButton(game: GameInfo): void {
     const install = game.requiresInstall;
     playButton.dataset['action'] = install ? 'install' : 'play';
-    playButton.setAttribute('aria-label', install ? 'Install' : 'Play');
+    playButton.setAttribute('aria-label', t()(install ? 'launcher.aria.install' : 'launcher.aria.play'));
   }
 
   // The Uninstall button is shown only for an installed install-mode game (canUninstall), via a per-game

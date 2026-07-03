@@ -17,6 +17,7 @@ import type {
   DriveCandidate,
 } from '../shared/types';
 import type { IPC } from '../shared/types';
+import type { Locale } from '../shared/i18n/index';
 
 const CHANNELS = {
   configDrivesRequest: 'config:drives-request',
@@ -31,6 +32,8 @@ const CHANNELS = {
   configVersionRequest: 'config:version',
   configEditorCommand: 'config:editor-command',
   configTitleBarOverlay: 'config:titlebar-overlay',
+  configLanguageRequest: 'config:language-request',
+  configLanguageUpdate: 'config:language-update',
 } as const satisfies Partial<typeof IPC>;
 
 const api: ConfigureApi = {
@@ -79,6 +82,14 @@ const api: ConfigureApi = {
   },
   setTitleBarDark(dark: boolean): void {
     ipcRenderer.send(CHANNELS.configTitleBarOverlay, dark);
+  },
+  getLanguage(): Promise<Locale> {
+    return ipcRenderer.invoke(CHANNELS.configLanguageRequest) as Promise<Locale>;
+  },
+  onLanguageUpdate(callback: (locale: Locale) => void): void {
+    ipcRenderer.on(CHANNELS.configLanguageUpdate, (_event: IpcRendererEvent, locale: Locale) => {
+      callback(locale);
+    });
   },
 };
 

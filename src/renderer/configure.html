@@ -27,22 +27,23 @@
     <main id="configure">
       <!-- Drive picker -->
       <section class="section">
-        <span class="section-label">Card</span>
+        <span class="section-label" data-i18n="configure.card">Card</span>
         <fluent-radio-group id="drive-group" name="drive"></fluent-radio-group>
-        <span id="drive-empty" hidden>Insert an SD card or flash drive.</span>
+        <span id="drive-empty" data-i18n="configure.insertCard" hidden>Insert an SD card or flash drive.</span>
       </section>
 
       <!-- Starter templates -->
       <section class="section">
-        <span class="section-label">Start from a template</span>
+        <span class="section-label" data-i18n="configure.startTemplate">Start from a template</span>
         <div class="button-row">
-          <fluent-button id="tpl-executable">Executable file</fluent-button>
-          <fluent-button id="tpl-installer">Installer</fluent-button>
+          <fluent-button id="tpl-executable" data-i18n="configure.tplExecutable">Executable file</fluent-button>
+          <fluent-button id="tpl-installer" data-i18n="configure.tplInstaller">Installer</fluent-button>
+          <!-- "Steam" is a brand name — not translated. -->
           <fluent-button id="tpl-steam">Steam</fluent-button>
         </div>
       </section>
 
-      <!-- Editor + validation results -->
+      <!-- Editor + validation results. "game.json" is a filename — not translated. -->
       <section id="editor-section">
         <span class="section-label">game.json</span>
         <div id="editor"></div>
@@ -51,7 +52,7 @@
 
       <!-- Actions. Format / Reset live in the editor's right-click context menu (see configure-window.ts). -->
       <div class="actions">
-        <fluent-button id="save" appearance="accent">Save &amp; Apply</fluent-button>
+        <fluent-button id="save" appearance="accent" data-i18n="configure.save">Save &amp; Apply</fluent-button>
         <span id="status"></span>
       </div>
     </main>
@@ -61,8 +62,8 @@
       <div id="confirm-panel">
         <span id="confirm-message"></span>
         <div class="button-row">
-          <fluent-button id="confirm-cancel">Cancel</fluent-button>
-          <fluent-button id="confirm-ok" appearance="accent">Replace</fluent-button>
+          <fluent-button id="confirm-cancel" data-i18n="configure.cancel">Cancel</fluent-button>
+          <fluent-button id="confirm-ok" appearance="accent" data-i18n="configure.replace">Replace</fluent-button>
         </div>
       </div>
     </div>

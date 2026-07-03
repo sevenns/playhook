@@ -16,6 +16,7 @@ import {
   type ResolvedManifest,
   type SfxName,
 } from '../shared/types';
+import { translateIssueMessage, type Translator } from '../shared/i18n/index';
 
 // Install-mode block (optional). When present, the card holds an installer and `executable` is
 // resolved relative to the app-controlled install dir (see readManifest), not the card root.
@@ -31,8 +32,11 @@ const installSchema = z
   // F3: `custom` hands argv control to the card; running THAT elevated would escalate the attack
   // surface beyond the read-only tasklist we use today. The app builds nsis/inno args itself, so
   // elevated is fine there.
+  // Custom messages are stored as dictionary KEYS (translated later at the issue-mapping points via
+  // translateIssueMessage — see formatZodError / validateManifestText). The schema is module-private, so
+  // it is never rebuilt per locale.
   .refine((v) => !(v.type === 'custom' && v.runAsAdmin), {
-    message: 'install.runAsAdmin is not allowed with type "custom"',
+    message: 'manifest.installRunAsAdminCustom',
     path: ['runAsAdmin'],
   })
   // For `custom` the app substitutes the install dir into a single {dir} token — require exactly one,
@@ -40,8 +44,7 @@ const installSchema = z
   .refine(
     (v) => v.type !== 'custom' || v.args.filter((arg) => arg.includes('{dir}')).length === 1,
     {
-      message:
-        'install.args (type "custom") must contain exactly one token with a {dir} placeholder',
+      message: 'manifest.installArgsDir',
       path: ['args'],
     },
   );
@@ -54,8 +57,8 @@ const manifestSchema = z
       .min(1)
       // id is used as a folder name on the PC (stats/pending-flush) — we forbid
       // separators and traversal so the card can't control paths outside its own folder.
-      .regex(/^[A-Za-z0-9._-]+$/, 'id must match [A-Za-z0-9._-]')
-      .refine((v) => v !== '.' && v !== '..', 'id must not be . or ..'),
+      .regex(/^[A-Za-z0-9._-]+$/, 'manifest.idPattern')
+      .refine((v) => v !== '.' && v !== '..', 'manifest.idDots'),
     title: z.string().min(1),
     // Optional: present for a normal/install-mode game, absent in Steam mode (the superRefine below
     // enforces exactly one launch method).
@@ -72,7 +75,7 @@ const manifestSchema = z
       .array(
         z
           .string()
-          .regex(/^[A-Za-z0-9._ -]+\.exe$/i, 'watchProcesses entries must be a bare *.exe name'),
+          .regex(/^[A-Za-z0-9._ -]+\.exe$/i, 'manifest.watchProcessesName'),
       )
       .min(1)
       .max(16)
@@ -106,28 +109,28 @@ const manifestSchema = z
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: ['install'],
-          message: 'install is not allowed together with steam',
+          message: 'manifest.installWithSteam',
         });
       }
       if (v.executable !== undefined) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: ['executable'],
-          message: 'executable is not allowed in steam mode',
+          message: 'manifest.executableWithSteam',
         });
       }
       if (v.runAsAdmin) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: ['runAsAdmin'],
-          message: 'runAsAdmin is not allowed in steam mode',
+          message: 'manifest.runAsAdminWithSteam',
         });
       }
       if (v.watchProcesses === undefined) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: ['watchProcesses'],
-          message: 'watchProcesses is required in steam mode',
+          message: 'manifest.watchProcessesRequired',
         });
       }
     } else if (v.executable === undefined) {
@@ -135,7 +138,7 @@ const manifestSchema = z
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['executable'],
-        message: 'executable is required',
+        message: 'manifest.executableRequired',
       });
     }
   });
@@ -155,6 +158,8 @@ export interface ManifestEnv {
    * matches the game's real save location regardless of UI language or OneDrive redirection.
    */
   readonly documents: string;
+  /** Translator for user-facing validation messages (the wrapper is translated, identifiers stay latin). */
+  readonly t: Translator;
 }
 
 // Env-var prefixes allowed in pcSavePath (resolved from process.env).
@@ -182,11 +187,12 @@ const ALLOWED_PREFIXES_HELP = '%DOCUMENTS%, %APPDATA%, %LOCALAPPDATA%, %LOCALLOW
  * Exported for unit tests (C1).
  */
 export function expandPcSavePath(input: string, env: ManifestEnv): ExpandResult {
+  const { t } = env;
   const match = /^%([A-Za-z]+)%[\\/]?(.*)$/.exec(input);
   if (match === null) {
     return {
       ok: false,
-      message: `pcSavePath must start with ${ALLOWED_PREFIXES_HELP}`,
+      message: t('manifest.pcSavePathPrefix', { prefixes: ALLOWED_PREFIXES_HELP }),
     };
   }
   const prefix = (match[1] ?? '').toUpperCase();
@@ -205,31 +211,32 @@ export function expandPcSavePath(input: string, env: ManifestEnv): ExpandResult 
   } else {
     return {
       ok: false,
-      message: `pcSavePath prefix %${prefix}% is not allowed (use ${ALLOWED_PREFIXES_HELP})`,
+      message: t('manifest.pcSavePathNotAllowed', { prefix, prefixes: ALLOWED_PREFIXES_HELP }),
     };
   }
   if (base === undefined || base === '') {
-    return { ok: false, message: `pcSavePath prefix %${prefix}% is not available on this system` };
+    return { ok: false, message: t('manifest.pcSavePathUnavailable', { prefix }) };
   }
   const rest = match[2] ?? '';
   const segments = rest.split(/[\\/]+/).filter((s) => s.length > 0);
   if (segments.includes('..')) {
-    return { ok: false, message: 'pcSavePath must not contain ".."' };
+    return { ok: false, message: t('manifest.pcSavePathNoTraversal') };
   }
   const resolved = path.resolve(base, ...segments);
   const back = path.relative(base, resolved);
   if (back === '..' || back.startsWith(`..${path.sep}`) || path.isAbsolute(back)) {
-    return { ok: false, message: 'pcSavePath escapes its base directory' };
+    return { ok: false, message: t('manifest.pcSavePathEscapes') };
   }
   return { ok: true, value: resolved };
 }
 
-function formatZodError(error: z.ZodError): string {
+function formatZodError(error: z.ZodError, t: Translator): string {
   const first = error.issues[0];
-  if (first === undefined) return 'invalid manifest';
+  if (first === undefined) return t('manifest.invalid');
   const joined = first.path.join('.');
   const where = joined.length > 0 ? joined : '(root)';
-  return `${where}: ${first.message}`;
+  // A schema refine stores a MessageKey; a structural zod message is already localized via z.config.
+  return `${where}: ${translateIssueMessage(first.message, t)}`;
 }
 
 type InstallResolveResult =
@@ -252,13 +259,14 @@ async function resolveInstall(
   id: string,
   executable: string,
   install: NonNullable<GameManifest['install']>,
+  t: Translator,
 ): Promise<InstallResolveResult> {
   const installerPath = resolveInside(root, install.installer);
   if (installerPath === null) {
-    return { ok: false, message: `installer path escapes card root: ${install.installer}` };
+    return { ok: false, message: t('manifest.installerEscapes', { path: install.installer }) };
   }
   if (!(await fse.pathExists(installerPath))) {
-    return { ok: false, message: `installer not found: ${install.installer}` };
+    return { ok: false, message: t('manifest.installerNotFound', { path: install.installer }) };
   }
 
   // The install root is derived straight from the env var — the same mechanism pcSavePath uses —
@@ -266,7 +274,7 @@ async function resolveInstall(
   // needs no admin rights. Absent (non-Windows / unusual setups) → install mode is rejected.
   const localAppData = process.env['LOCALAPPDATA'];
   if (localAppData === undefined || localAppData === '') {
-    return { ok: false, message: 'install mode requires %LOCALAPPDATA% (Windows only)' };
+    return { ok: false, message: t('manifest.installNeedsLocalAppData') };
   }
   // `id` is already constrained to [A-Za-z0-9._-] (no separators / not . or ..) → a safe folder name.
   const dir = path.join(localAppData, 'playhook', 'games', id);
@@ -275,7 +283,7 @@ async function resolveInstall(
   // checked here (it appears only after a successful install).
   const executablePath = resolveInside(dir, executable);
   if (executablePath === null) {
-    return { ok: false, message: `executable path escapes install dir: ${executable}` };
+    return { ok: false, message: t('manifest.executableEscapesInstall', { path: executable }) };
   }
 
   return {
@@ -297,18 +305,22 @@ async function resolveInstall(
  * Also checks that the executable exists (an edge case from the plan).
  */
 export async function readManifest(root: string, env: ManifestEnv): Promise<ManifestResult> {
+  const { t } = env;
   const manifestPath = path.join(root, MANIFEST_FILENAME);
 
   let parsedJson: unknown;
   try {
     parsedJson = await fse.readJson(manifestPath);
   } catch (cause) {
-    return { ok: false, message: `cannot read ${MANIFEST_FILENAME}: ${describe(cause)}` };
+    return {
+      ok: false,
+      message: t('errors.cannotReadManifest', { file: MANIFEST_FILENAME, cause: describe(cause) }),
+    };
   }
 
   const parsed = manifestSchema.safeParse(parsedJson);
   if (!parsed.success) {
-    return { ok: false, message: formatZodError(parsed.error) };
+    return { ok: false, message: formatZodError(parsed.error, t) };
   }
   const raw: GameManifest = parsed.data;
 
@@ -329,22 +341,22 @@ export async function readManifest(root: string, env: ManifestEnv): Promise<Mani
     // Normal game: `executable` is card-relative and MUST exist on the card (unchanged behaviour).
     // The schema guarantees `executable` is present here (non-steam ⇒ required); guard defensively.
     if (raw.executable === undefined) {
-      return { ok: false, message: 'executable is required' };
+      return { ok: false, message: t('manifest.executableRequired') };
     }
     const resolved = resolveInside(root, raw.executable);
     if (resolved === null) {
-      return { ok: false, message: `executable path escapes card root: ${raw.executable}` };
+      return { ok: false, message: t('manifest.executableEscapes', { path: raw.executable }) };
     }
     if (!(await fse.pathExists(resolved))) {
-      return { ok: false, message: `executable not found: ${raw.executable}` };
+      return { ok: false, message: t('manifest.executableNotFound', { path: raw.executable }) };
     }
     executablePath = resolved;
     cwd = path.dirname(executablePath);
   } else {
     if (raw.executable === undefined) {
-      return { ok: false, message: 'executable is required' };
+      return { ok: false, message: t('manifest.executableRequired') };
     }
-    const resolvedInstall = await resolveInstall(root, raw.id, raw.executable, raw.install);
+    const resolvedInstall = await resolveInstall(root, raw.id, raw.executable, raw.install, t);
     if (!resolvedInstall.ok) {
       return { ok: false, message: resolvedInstall.message };
     }
@@ -361,7 +373,7 @@ export async function readManifest(root: string, env: ManifestEnv): Promise<Mani
     for (const rel of rawHeroImages) {
       const resolved = resolveInside(root, rel);
       if (resolved === null) {
-        return { ok: false, message: `heroImage path escapes card root: ${rel}` };
+        return { ok: false, message: t('manifest.heroEscapes', { path: rel }) };
       }
       resolvedHeroImages.push(resolved);
     }
@@ -373,7 +385,7 @@ export async function readManifest(root: string, env: ManifestEnv): Promise<Mani
   if (raw.saveOnCard !== undefined) {
     const resolved = resolveInside(root, raw.saveOnCard);
     if (resolved === null) {
-      return { ok: false, message: `saveOnCard path escapes card root: ${raw.saveOnCard}` };
+      return { ok: false, message: t('manifest.saveOnCardEscapes', { path: raw.saveOnCard }) };
     }
     saveOnCardPath = resolved;
   }
@@ -395,7 +407,7 @@ export async function readManifest(root: string, env: ManifestEnv): Promise<Mani
       if (rel === undefined) continue;
       const resolved = resolveInside(root, rel);
       if (resolved === null) {
-        return { ok: false, message: `sound "${name}" path escapes card root: ${rel}` };
+        return { ok: false, message: t('manifest.soundEscapes', { name, path: rel }) };
       }
       resolvedSounds[name] = resolved;
     }
@@ -408,7 +420,7 @@ export async function readManifest(root: string, env: ManifestEnv): Promise<Mani
     if (resolved === null) {
       return {
         ok: false,
-        message: `backgroundMusic path escapes card root: ${raw.backgroundMusic}`,
+        message: t('manifest.backgroundMusicEscapes', { path: raw.backgroundMusic }),
       };
     }
     backgroundMusicPath = resolved;
@@ -419,7 +431,7 @@ export async function readManifest(root: string, env: ManifestEnv): Promise<Mani
   if ((pcSavePath === undefined) !== (saveOnCardPath === undefined)) {
     return {
       ok: false,
-      message: 'saveOnCard and pcSavePath must be set together or both omitted',
+      message: t('manifest.savePairing'),
     };
   }
 
@@ -458,28 +470,30 @@ const PCSAVE_PREFIXES = ['DOCUMENTS', 'LOCALLOW', ...ENV_PREFIXES] as const;
  * availability is a runtime/FS concern → left to readManifest's expandPcSavePath). Returns an error
  * message or null when statically fine.
  */
-function validatePcSavePathStatic(input: string): string | null {
+function validatePcSavePathStatic(input: string, t: Translator): string | null {
   const match = /^%([A-Za-z]+)%[\\/]?(.*)$/.exec(input);
-  if (match === null) return `pcSavePath must start with ${ALLOWED_PREFIXES_HELP}`;
+  if (match === null) return t('manifest.pcSavePathPrefix', { prefixes: ALLOWED_PREFIXES_HELP });
   const prefix = (match[1] ?? '').toUpperCase();
   if (!(PCSAVE_PREFIXES as readonly string[]).includes(prefix)) {
-    return `pcSavePath prefix %${prefix}% is not allowed (use ${ALLOWED_PREFIXES_HELP})`;
+    return t('manifest.pcSavePathNotAllowed', { prefix, prefixes: ALLOWED_PREFIXES_HELP });
   }
   const rest = match[2] ?? '';
   const segments = rest.split(/[\\/]+/).filter((s) => s.length > 0);
-  if (segments.includes('..')) return 'pcSavePath must not contain ".."';
+  if (segments.includes('..')) return t('manifest.pcSavePathNoTraversal');
   return null;
 }
 
-/** Adds a traversal issue for a card-relative path if it escapes the root. */
+/** Adds a traversal issue for a card-relative path if it escapes the root. `label` is a field identifier
+ * (kept latin — see §3.6); the wrapper message is translated. */
 function pushIfEscapes(
   issues: ManifestValidationIssue[],
   fieldPath: string,
   relative: string,
+  t: Translator,
   label = 'path',
 ): void {
   if (resolveInside(VALIDATION_ROOT, relative) === null) {
-    issues.push({ path: fieldPath, message: `${label} escapes the card root: ${relative}` });
+    issues.push({ path: fieldPath, message: t('manifest.pathEscapes', { label, path: relative }) });
   }
 }
 
@@ -489,19 +503,26 @@ function pushIfEscapes(
  * so the caller may see structural errors first and semantic ones on a later pass. The schema stays
  * module-private — only this pure function is exported, so there is a single source of truth.
  */
-export function validateManifestText(text: string): ConfigValidationResult {
+export function validateManifestText(text: string, t: Translator): ConfigValidationResult {
   let parsed: unknown;
   try {
     parsed = JSON.parse(text) as unknown;
   } catch (cause) {
-    return { ok: false, issues: [{ path: '(root)', message: `invalid JSON: ${describe(cause)}` }] };
+    return {
+      ok: false,
+      issues: [{ path: '(root)', message: t('manifest.invalidJson', { cause: describe(cause) }) }],
+    };
   }
 
   const result = manifestSchema.safeParse(parsed);
   if (!result.success) {
     const issues = result.error.issues.map((issue): ManifestValidationIssue => {
       const joined = issue.path.join('.');
-      return { path: joined.length > 0 ? joined : '(root)', message: issue.message };
+      // A refine stores a MessageKey; a structural zod message is already localized via z.config.
+      return {
+        path: joined.length > 0 ? joined : '(root)',
+        message: translateIssueMessage(issue.message, t),
+      };
     });
     return { ok: false, issues };
   }
@@ -510,37 +531,37 @@ export function validateManifestText(text: string): ConfigValidationResult {
   const issues: ManifestValidationIssue[] = [];
 
   if (raw.executable !== undefined)
-    pushIfEscapes(issues, 'executable', raw.executable, 'executable');
+    pushIfEscapes(issues, 'executable', raw.executable, t, 'executable');
   if (raw.install !== undefined) {
-    pushIfEscapes(issues, 'install.installer', raw.install.installer, 'installer');
+    pushIfEscapes(issues, 'install.installer', raw.install.installer, t, 'installer');
   }
   if (raw.heroImage !== undefined) {
     const heroes = typeof raw.heroImage === 'string' ? [raw.heroImage] : raw.heroImage;
     for (const [index, rel] of heroes.entries()) {
       const field = typeof raw.heroImage === 'string' ? 'heroImage' : `heroImage.${index}`;
-      pushIfEscapes(issues, field, rel, 'heroImage');
+      pushIfEscapes(issues, field, rel, t, 'heroImage');
     }
   }
   if (raw.saveOnCard !== undefined)
-    pushIfEscapes(issues, 'saveOnCard', raw.saveOnCard, 'saveOnCard');
+    pushIfEscapes(issues, 'saveOnCard', raw.saveOnCard, t, 'saveOnCard');
   if (raw.backgroundMusic !== undefined) {
-    pushIfEscapes(issues, 'backgroundMusic', raw.backgroundMusic, 'backgroundMusic');
+    pushIfEscapes(issues, 'backgroundMusic', raw.backgroundMusic, t, 'backgroundMusic');
   }
   if (raw.sounds !== undefined) {
     for (const name of SFX_NAMES) {
       const rel = raw.sounds[name];
-      if (rel !== undefined) pushIfEscapes(issues, `sounds.${name}`, rel, `sound "${name}"`);
+      if (rel !== undefined) pushIfEscapes(issues, `sounds.${name}`, rel, t, `sound "${name}"`);
     }
   }
   if (raw.pcSavePath !== undefined) {
-    const message = validatePcSavePathStatic(raw.pcSavePath);
+    const message = validatePcSavePathStatic(raw.pcSavePath, t);
     if (message !== null) issues.push({ path: 'pcSavePath', message });
   }
   // Sync needs BOTH sides (mirrors readManifest): a lone side means the card was prepared incorrectly.
   if ((raw.pcSavePath === undefined) !== (raw.saveOnCard === undefined)) {
     issues.push({
       path: raw.pcSavePath === undefined ? 'pcSavePath' : 'saveOnCard',
-      message: 'saveOnCard and pcSavePath must be set together or both omitted',
+      message: t('manifest.savePairing'),
     });
   }
 

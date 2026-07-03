@@ -4,10 +4,10 @@
 // share `shownUrl`/`wallpaperUrl` so they live together — keeping the palette race gate internal rather
 // than threaded through app.ts. The controller reaches back only through the narrow `deps` seam.
 import type { HeroAssets } from '../shared/types';
+import type { Translator } from '../shared/i18n/index.js';
 import { computePalette, type Palette } from './dominant-color.js';
 import { req } from './dom.js';
 
-const EMPTY_TITLE = 'Insert a game card';
 const HERO_ROTATE_MS = 60_000;
 
 /** The narrow view of app state the hero subsystem needs. */
@@ -16,6 +16,8 @@ export interface HeroDeps {
   hasGameOnScreen(): boolean;
   /** The current game's id (for the per-hero palette cache key); '' when none. */
   getGameId(): string;
+  /** The current translator (read live so the empty-screen title follows the language). */
+  getTranslator(): Translator;
 }
 
 export interface HeroController {
@@ -125,7 +127,7 @@ export function createHeroController(deps: HeroDeps): HeroController {
   // The empty / idle screen (no game): the fallback wallpaper as background, its dominant colors as
   // the palette, and "Insert a game card" as the title. Reuses the main screen's bottom bar layout.
   function applyEmptyScreen(): void {
-    titleEl.textContent = EMPTY_TITLE;
+    titleEl.textContent = deps.getTranslator()('launcher.emptyTitle');
     if (wallpaperUrl === null) {
       showImage(null);
       applyPalette(null);

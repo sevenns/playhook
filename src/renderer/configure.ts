@@ -21,6 +21,11 @@ import type {
   ManifestValidationIssue,
   ThemeMode,
 } from '../shared/types';
+import { createTranslator, type Locale, type Translator } from '../shared/i18n/index.js';
+import { localizeDocument } from './i18n-dom.js';
+
+// Translator, refreshed on a language push. The HTML ships English fallback (no blank flash).
+let translator: Translator = createTranslator('en');
 
 // ── Theme (copied from settings.ts) ────────────────────────────────────────────
 const darkQuery = window.matchMedia('(prefers-color-scheme: dark)');
@@ -229,14 +234,14 @@ function renderIssues(issues: readonly ManifestValidationIssue[] | null, text: s
   if (issues === null) {
     issuesEl.classList.add('valid');
     const ok = document.createElement('div');
-    ok.textContent = 'Config is valid.';
+    ok.textContent = translator('configure.configValid');
     issuesEl.append(ok);
     // Changing `id` moves the game's PC stats to a fresh key → a "new" game with zero playtime.
     const id = parseId(text);
     if (loadedId !== null && id !== null && id !== loadedId) {
       const warn = document.createElement('div');
       warn.className = 'warning';
-      warn.textContent = `Warning: id changed (${loadedId} → ${id}). Playtime stats are keyed by id and will reset for the new id.`;
+      warn.textContent = translator('configure.idChangedWarning', { from: loadedId, to: id });
       issuesEl.append(warn);
     }
     return;
@@ -373,7 +378,7 @@ function onSelectedGone(): void {
   setEditable(false);
   setTemplatesDisabled(true);
   updateSaveEnabled();
-  setStatus('The selected card is no longer available. Your text is kept.');
+  setStatus(translator('configure.cardGone'));
 }
 
 function unblock(): void {
@@ -398,7 +403,7 @@ async function selectDrive(root: string, confirmDirty: boolean): Promise<void> {
   switching = true;
   try {
     if (confirmDirty && dirty) {
-      const ok = await confirmDialog('Discard unsaved changes and switch cards?', 'Discard');
+      const ok = await confirmDialog(translator('configure.confirmSwitch'), translator('configure.discard'));
       if (!ok) {
         if (selectedRoot !== null) checkRadio(driveGroup, selectedRoot); // revert the radio
         return;
@@ -419,13 +424,13 @@ async function loadDrive(root: string): Promise<void> {
     // Blank drive: empty editor, invite a template. loadedId null → no id-change warning.
     loadedId = null;
     setEditorText('', true);
-    setStatus('Blank drive — pick a template to start.');
+    setStatus(translator('configure.blankDrive'));
     return;
   }
   const result = await window.configureApi.readConfig(root);
   if (!result.ok) {
     loadedId = null;
-    setStatus(`Could not read game.json: ${result.message}`);
+    setStatus(translator('configure.couldNotRead', { message: result.message }));
     return;
   }
   loadedId = parseId(result.text);
@@ -445,7 +450,7 @@ async function applyTemplate(kind: keyof ConfigTemplates): Promise<void> {
   const template = templates[kind];
   const current = getEditorText().trim();
   if (current.length > 0 && current !== template.trim()) {
-    const ok = await confirmDialog('Replace current config with the template?', 'Replace');
+    const ok = await confirmDialog(translator('configure.confirmReplace'), translator('configure.replace'));
     if (!ok) return;
   }
   setEditorText(template, false);
@@ -467,7 +472,7 @@ function onFormat(): void {
   try {
     parsed = JSON.parse(text);
   } catch {
-    setStatus('Fix the JSON syntax errors before formatting.');
+    setStatus(translator('configure.fixSyntax'));
     return;
   }
   const formatted = JSON.stringify(parsed, null, 2);
@@ -484,10 +489,10 @@ async function onSave(): Promise<void> {
   const root = selectedRoot;
   const text = getEditorText();
   setDisabled(saveBtn, true);
-  setStatus('Saving…');
+  setStatus(translator('configure.saving'));
   const result = await window.configureApi.saveConfig(root, text);
   if (!result.saved) {
-    setStatus(`Not saved: ${result.message}`);
+    setStatus(translator('configure.notSaved', { message: result.message }));
     updateSaveEnabled();
     return;
   }
@@ -495,13 +500,17 @@ async function onSave(): Promise<void> {
   loadedId = parseId(text);
   switch (result.applied) {
     case 'applied':
-      setStatus('Applied. The launcher was updated.');
+      setStatus(translator('configure.applied'));
       break;
     case 'deferred':
-      setStatus('Saved. It will load shortly, or after the active card is removed.');
+      setStatus(translator('configure.deferred'));
       break;
     case 'failed':
-      setStatus(`Saved, but the manifest was rejected: ${result.message ?? 'unknown reason'}`);
+      setStatus(
+        translator('configure.savedRejected', {
+          message: result.message ?? translator('configure.unknownReason'),
+        }),
+      );
       break;
   }
   updateSaveEnabled();
@@ -511,7 +520,7 @@ async function onSave(): Promise<void> {
 async function onReset(): Promise<void> {
   if (selectedRoot === null || blocked) return;
   if (dirty) {
-    const ok = await confirmDialog('Discard unsaved changes and reset from the card?', 'Discard');
+    const ok = await confirmDialog(translator('configure.confirmReset'), translator('configure.discard'));
     if (!ok) return;
   }
   await loadDrive(selectedRoot);
@@ -544,20 +553,40 @@ document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') void refreshTheme();
 });
 
+// The app version, cached so a language change can re-render the "(version) — Configure game" suffix.
+let appVersion = '';
+function renderTitlebarSubtitle(): void {
+  titlebarSubtitle.textContent = translator('configure.titlebarVersion', { version: appVersion });
+}
+
+// A language push (or the initial seed): rebuild the translator, re-localize the static DOM, re-title the
+// window (so the HTML <title> doesn't override the taskbar caption — N2) and refresh the subtitle. The
+// ephemeral status line and issues panel are NOT re-rendered retroactively — they update on the next event
+// (drive labels re-push every 2s; a re-validate happens on the next edit) — per §5.
+function applyLocale(locale: Locale): void {
+  translator = createTranslator(locale);
+  document.documentElement.lang = locale;
+  // "Playhook" is the product name — not translated.
+  document.title = `Playhook — ${translator('window.configureGame')}`;
+  localizeDocument(translator);
+  renderTitlebarSubtitle();
+}
+
 async function init(): Promise<void> {
   window.configureApi.onDrivesUpdate(renderDrives);
-  const [settings, schema, drivesList, icon, version] = await Promise.all([
+  window.configureApi.onLanguageUpdate(applyLocale);
+  const [settings, schema, drivesList, icon, version, locale] = await Promise.all([
     window.configureApi.getSettings(),
     window.configureApi.getSchema(),
     window.configureApi.getDrives(),
     window.configureApi.getAppIcon(),
     window.configureApi.getAppVersion(),
+    window.configureApi.getLanguage(),
   ]);
   applyTheme(settings.theme);
   if (icon !== '') titlebarIcon.src = icon;
   else titlebarIcon.hidden = true;
-  // Title bar: [icon] Playhook · "(version) — Configure game" (unified with the settings window).
-  titlebarSubtitle.textContent = `(${version}) — Configure game`;
+  appVersion = version;
   // Schema-aware editor when the JSON Schema is available; plain JSON otherwise (graceful degradation —
   // syntax highlighting + parse-linting still work, just without field completion/hover).
   let schemaExt: Extension;
@@ -568,6 +597,8 @@ async function init(): Promise<void> {
   }
   buildEditor('', schemaExt);
   renderDrives(drivesList);
+  // Seed the locale last so it localizes the freshly-populated DOM and title-bar suffix in one pass.
+  applyLocale(locale);
 }
 
 void init();

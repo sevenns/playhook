@@ -11,6 +11,7 @@
 import path from 'node:path';
 import { BrowserWindow, Menu, ipcMain, nativeTheme } from 'electron';
 import { APP_NAME, IPC } from '../shared/types';
+import { type Translator } from '../shared/i18n/index';
 import { type GameConfigService } from './game-config';
 import { installHideOnClose, type HideOnCloseGuard } from './window-hide-guard';
 
@@ -27,10 +28,25 @@ export class ConfigureWindow {
   private window: BrowserWindow | null = null;
   private closeGuard: HideOnCloseGuard | null = null;
 
-  constructor(private readonly gameConfig: GameConfigService) {
+  constructor(
+    private readonly gameConfig: GameConfigService,
+    private readonly getTranslator: () => Translator,
+  ) {
     // The renderer computes the effective theme and asks us to recolor the native caption buttons.
     // Registered once here (singleton); guarded on a live window. Its own channel — see the file header.
     ipcMain.on(IPC.configTitleBarOverlay, (_event, dark: boolean) => this.applyOverlay(dark));
+  }
+
+  /** The native window title (taskbar). Re-applied on a language change (the renderer also sets
+   * document.title so the HTML <title> doesn't override this — see N2). */
+  private title(): string {
+    return `${APP_NAME} — ${this.getTranslator()('window.configureGame')}`;
+  }
+
+  /** Re-titles a live window after a language change. */
+  refreshTitle(): void {
+    const window = this.window;
+    if (window !== null && !window.isDestroyed()) window.setTitle(this.title());
   }
 
   private applyOverlay(dark: boolean): void {
@@ -67,7 +83,7 @@ export class ConfigureWindow {
       },
       resizable: true,
       fullscreen: false,
-      title: `${APP_NAME} — Configure game`,
+      title: this.title(),
       icon: path.join(__dirname, '../icon.ico'),
       // Pre-paint background matched to the OS theme (the renderer applies the real Fluent theme on load)
       // to avoid a dark/light flash before load.
@@ -84,17 +100,24 @@ export class ConfigureWindow {
     // so main provides one. Clipboard items use native roles (enabled per the focused control's
     // editFlags); Format / Reset are renderer actions, dispatched back over an IPC command channel.
     window.webContents.on('context-menu', (_event, params) => {
+      // Clipboard items keep their native ROLE (behaviour) but get an explicit translated LABEL — without
+      // it Electron shows English defaults on Windows (review I2). Menu is rebuilt per right-click, so a
+      // language change is picked up on its own.
+      const t = this.getTranslator();
       const menu = Menu.buildFromTemplate([
-        { role: 'cut', enabled: params.editFlags.canCut },
-        { role: 'copy', enabled: params.editFlags.canCopy },
-        { role: 'paste', enabled: params.editFlags.canPaste },
-        { role: 'selectAll', enabled: params.editFlags.canSelectAll },
+        { role: 'cut', label: t('menu.cut'), enabled: params.editFlags.canCut },
+        { role: 'copy', label: t('menu.copy'), enabled: params.editFlags.canCopy },
+        { role: 'paste', label: t('menu.paste'), enabled: params.editFlags.canPaste },
+        { role: 'selectAll', label: t('menu.selectAll'), enabled: params.editFlags.canSelectAll },
         { type: 'separator' },
         {
-          label: 'Format',
+          label: t('menu.format'),
           click: () => window.webContents.send(IPC.configEditorCommand, 'format'),
         },
-        { label: 'Reset', click: () => window.webContents.send(IPC.configEditorCommand, 'reset') },
+        {
+          label: t('menu.reset'),
+          click: () => window.webContents.send(IPC.configEditorCommand, 'reset'),
+        },
       ]);
       menu.popup({ window });
     });

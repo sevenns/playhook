@@ -16,6 +16,7 @@ import {
   type ResolvedManifest,
   type Stats,
 } from '../shared/types';
+import { type Translator } from '../shared/i18n/index';
 import { type StateManager } from './state';
 import { type GameWindow } from './window';
 import { type PcStore } from './pc-store';
@@ -47,6 +48,8 @@ export interface ControllerDeps {
   readonly store: PcStore;
   readonly stats: StatsService;
   readonly watcher: DriveWatcher;
+  /** The current translator (read live so a language change applies to freshly-generated messages). */
+  readonly getTranslator: () => Translator;
 }
 
 // Grace-poll cadence after the installer exits, waiting for the game executable to appear (C1).
@@ -252,6 +255,11 @@ export class GameController {
 
   constructor(private readonly deps: ControllerDeps) {}
 
+  /** The current translator (a message is fixed at the language of the moment it is generated). */
+  private get t(): Translator {
+    return this.deps.getTranslator();
+  }
+
   /** Subscriptions to drive-watcher, state replication to the window, IPC handlers. */
   init(): void {
     const { state, window, watcher } = this.deps;
@@ -343,7 +351,7 @@ export class GameController {
     // Documents is resolved via the system Known Folder API (the same one the game uses),
     // so %DOCUMENTS% in the manifest maps to the real save folder regardless of UI
     // language or OneDrive redirection. Safe to read here — app is ready by now.
-    const env: ManifestEnv = { documents: app.getPath('documents') };
+    const env: ManifestEnv = { documents: app.getPath('documents'), t: this.t };
     const result = await readManifest(root, env);
     if (!result.ok) {
       // No valid game determined → keep the window hidden (the reason is in the log). We still set
@@ -399,9 +407,9 @@ export class GameController {
   async reloadManifest(root: string): Promise<{ ok: true } | { ok: false; message: string }> {
     const kind = this.deps.state.get().kind;
     if ((kind !== 'ready' && kind !== 'error' && kind !== 'idle') || this.launchInFlight) {
-      return { ok: false, message: 'Finish what’s running before applying the config' };
+      return { ok: false, message: this.t('errors.finishBeforeApply') };
     }
-    if (this.reloadInFlight) return { ok: false, message: 'a reload is already in progress' };
+    if (this.reloadInFlight) return { ok: false, message: this.t('errors.reloadInProgress') };
     this.reloadInFlight = true;
     try {
       return await this.loadCard(root, { focus: false });
@@ -508,14 +516,14 @@ export class GameController {
     const appid = manifest.steam?.appid;
     if (appid === undefined) return; // defensive: onLaunchRequested only calls this in steam mode
     if ((await getSteamPath()) === null) {
-      this.sendError('Steam is not installed');
+      this.sendError(this.t('errors.steamNotInstalled'));
       return;
     }
     try {
       await openSteamUri(`steam://install/${appid}`);
       log.info(`[steam-install] opened steam://install/${appid} id=${manifest.raw.id}`);
     } catch (cause) {
-      this.sendError(`failed to open Steam install: ${describe(cause)}`);
+      this.sendError(this.t('errors.steamOpenInstall', { cause: describe(cause) }));
       return;
     }
     // Ensure the re-detect poller is running so the button flips to "Play" when the download completes
@@ -540,7 +548,7 @@ export class GameController {
     try {
       await openSteamUri('steam://open/downloads');
     } catch (cause) {
-      this.sendError(`failed to open Steam downloads: ${describe(cause)}`);
+      this.sendError(this.t('errors.steamOpenDownloads', { cause: describe(cause) }));
     }
   }
 
@@ -548,14 +556,14 @@ export class GameController {
     const appid = manifest.steam?.appid;
     if (appid === undefined) return; // defensive: onUninstallRequested only calls this in steam mode
     if ((await getSteamPath()) === null) {
-      this.sendError('Steam is not installed');
+      this.sendError(this.t('errors.steamNotInstalled'));
       return;
     }
     try {
       await openSteamUri(`steam://uninstall/${appid}`);
       log.info(`[steam-uninstall] opened steam://uninstall/${appid} id=${manifest.raw.id}`);
     } catch (cause) {
-      this.sendError(`failed to open Steam uninstall: ${describe(cause)}`);
+      this.sendError(this.t('errors.steamOpenUninstall', { cause: describe(cause) }));
       return;
     }
     // Optimistically show "Uninstalling…": record the request and flip the UI. The poller clears it when
@@ -598,13 +606,13 @@ export class GameController {
         // Pre-check: openExternal doesn't reliably reject when steam:// is unregistered, so gate the
         // launch on Steam actually being installed (I8) instead of relying on a reject.
         if ((await getSteamPath()) === null) {
-          this.failSequence('launch', info, 'Steam is not installed');
+          this.failSequence('launch', info, this.t('errors.steamNotInstalled'));
           return;
         }
         try {
           await openSteamUri(`steam://rungameid/${manifest.steam.appid}`);
         } catch (cause) {
-          this.failSequence('launch', info, `failed to launch via Steam: ${describe(cause)}`);
+          this.failSequence('launch', info, this.t('errors.launchViaSteam', { cause: describe(cause) }));
           return;
         }
         // No launcher pid → null. watchProcesses is guaranteed non-empty by the schema in steam mode.
@@ -635,7 +643,7 @@ export class GameController {
         try {
           proc = await launchGame(manifest);
         } catch (cause) {
-          this.failSequence('launch', info, `failed to launch the game: ${describe(cause)}`);
+          this.failSequence('launch', info, this.t('errors.launchGame', { cause: describe(cause) }));
           return;
         }
         if (watchProcesses !== undefined && watchProcesses.length > 0) {
@@ -660,7 +668,7 @@ export class GameController {
         } else {
           const started = await waitForStart(proc, manifest.raw.launchTimeoutSec, abort.signal);
           if (!started) {
-            this.failSequence('launch', info, 'the game did not start (process wait timed out)');
+            this.failSequence('launch', info, this.t('errors.gameDidNotStart'));
             return;
           }
           since = Date.now();
@@ -722,7 +730,7 @@ export class GameController {
       try {
         proc = await launchInstaller(install);
       } catch (cause) {
-        this.failSequence('install', info, `failed to start the installer: ${describe(cause)}`);
+        this.failSequence('install', info, this.t('errors.startInstaller', { cause: describe(cause) }));
         return;
       }
 
@@ -735,7 +743,7 @@ export class GameController {
         abort.signal,
       );
       if (!installed) {
-        this.failSequence('install', info, 'installation did not complete (the game executable did not appear)');
+        this.failSequence('install', info, this.t('errors.installIncomplete'));
         return;
       }
 

@@ -15,7 +15,13 @@ import '@fluentui/web-components/slider/define.js';
 import '@fluentui/web-components/progress-bar/define.js';
 import { setTheme } from '@fluentui/web-components';
 import { webDarkTheme, webLightTheme } from '@fluentui/tokens';
-import type { AppSettings, AutoUpdateMode, ThemeMode, UpdateStatus } from '../shared/types';
+import type { AppSettings, AutoUpdateMode, LanguageMode, ThemeMode, UpdateStatus } from '../shared/types';
+import { createTranslator, type Locale, type Translator } from '../shared/i18n/index.js';
+import { localizeDocument } from './i18n-dom.js';
+
+// Translator, refreshed on a language push. The HTML ships English fallback so there's no blank flash
+// before the invoke-seed lands.
+let translator: Translator = createTranslator('en');
 
 // ── Theme ────────────────────────────────────────────────────────────────────
 // setTheme publishes the theme tokens as global CSS custom properties (see settings.css). `system`
@@ -63,6 +69,7 @@ const progressEl = req('update-progress');
 const actionBtn = req('update-action');
 const radioGroup = req('auto-update');
 const themeGroup = req('theme');
+const languageGroup = req('language');
 const prereleaseSwitch = req('prerelease');
 const summonSwitch = req('summon-hotkey');
 const musicSlider = req('music-volume');
@@ -88,6 +95,11 @@ function readAutoUpdateValue(el: HTMLElement): AutoUpdateMode | null {
 function readThemeValue(el: HTMLElement): ThemeMode | null {
   const raw = (el as HTMLElement & { value?: unknown }).value;
   return raw === 'system' || raw === 'light' || raw === 'dark' ? raw : null;
+}
+
+function readLanguageValue(el: HTMLElement): LanguageMode | null {
+  const raw = (el as HTMLElement & { value?: unknown }).value;
+  return raw === 'system' || raw === 'en' || raw === 'ru' ? raw : null;
 }
 
 function setGroupValue(el: HTMLElement, value: string): void {
@@ -189,41 +201,50 @@ function hideAction(): void {
   currentAction = null;
 }
 
+// Last rendered status, cached so a language push can re-render the Updates block in the new language
+// (render is otherwise only called on a status change — review I7). null before the first snapshot.
+let lastStatus: UpdateStatus | null = null;
+
 function render(status: UpdateStatus): void {
+  lastStatus = status;
+  const t = translator;
   progressEl.hidden = true;
   switch (status.kind) {
     case 'idle':
-      statusEl.textContent = 'Check for updates to see if a new version is available.';
-      showAction('Check for updates', () => window.settingsApi.checkForUpdates());
+      statusEl.textContent = t('settings.status.idle');
+      showAction(t('settings.action.check'), () => window.settingsApi.checkForUpdates());
       break;
     case 'not-available':
-      statusEl.textContent = 'You’re up to date.';
-      showAction('Check for updates', () => window.settingsApi.checkForUpdates());
+      statusEl.textContent = t('settings.status.upToDate');
+      showAction(t('settings.action.check'), () => window.settingsApi.checkForUpdates());
       break;
     case 'checking':
-      statusEl.textContent = 'Checking for updates…';
-      showAction('Checking…', null, true);
+      statusEl.textContent = t('settings.status.checking');
+      showAction(t('settings.action.checking'), null, true);
       break;
     case 'available':
-      statusEl.textContent = `Update available: ${status.version}`;
-      showAction(`Update to ${status.version}`, () => window.settingsApi.downloadUpdate());
+      statusEl.textContent = t('settings.status.available', { version: status.version });
+      showAction(t('settings.action.updateTo', { version: status.version }), () =>
+        window.settingsApi.downloadUpdate(),
+      );
       break;
     case 'downloading':
-      statusEl.textContent = `Downloading… ${status.percent}%`;
+      statusEl.textContent = t('settings.status.downloading', { percent: status.percent });
       progressEl.hidden = false;
       progressEl.setAttribute('value', String(status.percent));
-      showAction('Downloading…', null, true);
+      showAction(t('settings.action.downloading'), null, true);
       break;
     case 'downloaded':
-      statusEl.textContent = `Update ${status.version} is ready to install.`;
-      showAction('Restart & install', () => window.settingsApi.installUpdate());
+      statusEl.textContent = t('settings.status.downloaded', { version: status.version });
+      showAction(t('settings.action.restartInstall'), () => window.settingsApi.installUpdate());
       break;
     case 'error':
+      // The message is already localized in main (or a passthrough technical cause) — render as-is.
       statusEl.textContent = status.message;
-      showAction('Retry', () => window.settingsApi.checkForUpdates());
+      showAction(t('settings.action.retry'), () => window.settingsApi.checkForUpdates());
       break;
     case 'unsupported':
-      statusEl.textContent = 'Updates are available only in the installed build.';
+      statusEl.textContent = t('settings.status.unsupported');
       hideAction();
       break;
   }
@@ -250,6 +271,16 @@ function applyThemeChoice(): void {
 themeGroup.addEventListener('change', applyThemeChoice);
 wireRadioGroup(themeGroup, applyThemeChoice);
 
+// Language is applied via the single push path (review I7): the click sends the mode, and the effective
+// locale comes back through settingsLanguageUpdate (for `system` the renderer can't resolve it locally).
+// No local application here — the push arrives within milliseconds.
+function applyLanguageChoice(): void {
+  const value = readLanguageValue(languageGroup);
+  if (value !== null) window.settingsApi.setLanguage(value);
+}
+languageGroup.addEventListener('change', applyLanguageChoice);
+wireRadioGroup(languageGroup, applyLanguageChoice);
+
 prereleaseSwitch.addEventListener('change', () => {
   window.settingsApi.setPrerelease(readChecked(prereleaseSwitch));
 });
@@ -271,6 +302,7 @@ resetBtn.addEventListener('click', () => {
 function applySettings(settings: AppSettings): void {
   setGroupValue(radioGroup, settings.autoUpdate);
   setGroupValue(themeGroup, settings.theme);
+  setGroupValue(languageGroup, settings.language);
   setChecked(prereleaseSwitch, settings.allowPrerelease);
   setChecked(summonSwitch, settings.summonHotkeyEnabled);
   const musicPercent = Math.round(settings.musicVolume * 100);
@@ -282,22 +314,45 @@ function applySettings(settings: AppSettings): void {
   applyTheme(settings.theme);
 }
 
+// The app version, cached so a language change can re-render the "(version) — Settings" suffix.
+let appVersion = '';
+function renderTitlebarVersion(): void {
+  titlebarVersion.textContent = translator('settings.titlebarVersion', { version: appVersion });
+}
+
+// A language push: rebuild the translator, re-localize the static DOM, re-title the window (so the HTML
+// <title> doesn't override the taskbar caption — N2), and re-render the state-driven bits (Updates block
+// from the cached status, the title-bar suffix).
+function applyLocale(locale: Locale): void {
+  translator = createTranslator(locale);
+  document.documentElement.lang = locale;
+  // Match main's native window title so the HTML <title> doesn't override the taskbar caption (N2).
+  // "Playhook" is the product name — not translated.
+  document.title = `Playhook — ${translator('window.settings')}`;
+  localizeDocument(translator);
+  renderTitlebarVersion();
+  if (lastStatus !== null) render(lastStatus);
+}
+
 async function init(): Promise<void> {
   // I3: subscribe BEFORE requesting the initial snapshot, so a push arriving in between isn't lost.
   window.settingsApi.onUpdateStatus(render);
-  const [version, icon, settings, status] = await Promise.all([
+  window.settingsApi.onLanguageUpdate(applyLocale);
+  const [version, icon, settings, status, locale] = await Promise.all([
     window.settingsApi.getAppVersion(),
     window.settingsApi.getAppIcon(),
     window.settingsApi.getSettings(),
     window.settingsApi.requestUpdateStatus(),
+    window.settingsApi.getLanguage(),
   ]);
+  appVersion = version;
   // Title bar: [icon] Playhook (version). Hide the <img> if the icon couldn't be read (empty string).
   if (icon !== '') titlebarIcon.src = icon;
   else titlebarIcon.hidden = true;
-  // Unified title-bar format across the plain windows: [icon] Playhook · "(version) — Settings".
-  titlebarVersion.textContent = `(${version}) — Settings`;
   applySettings(settings);
   render(status);
+  // Seed the locale last so it localizes the freshly-populated DOM and title-bar suffix in one pass.
+  applyLocale(locale);
 }
 
 void init();

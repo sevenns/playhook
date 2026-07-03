@@ -2,6 +2,7 @@
 // state to the UI phase, the status label, the Steam-busy flag and the current game. Kept in one place
 // so app.ts (render/title-slide) and controls.ts (focus/actions) read the same derivations.
 import type { AppState, GameInfo } from '../shared/types';
+import type { Translator } from '../shared/i18n/index.js';
 
 export type Phase = 'idle' | 'ready' | 'busy' | 'error';
 
@@ -23,32 +24,32 @@ export function phaseOf(state: AppState): Phase {
   }
 }
 
-export function statusOf(state: AppState): string {
+export function statusOf(state: AppState, t: Translator): string {
   // Plain "..." instead of the "…" glyph: in M PLUS Rounded 1c (a CJK font) the ellipsis
   // glyph is centered vertically (Japanese convention), which looks misaligned in a Latin UI.
   switch (state.kind) {
     case 'installing':
-      return 'Installing...';
+      return t('launcher.state.installing');
     case 'uninstalling':
-      return 'Uninstalling...';
+      return t('launcher.state.uninstalling');
     case 'syncing-in':
-      return 'Syncing saves...';
+      return t('launcher.state.syncingIn');
     case 'launching':
-      return 'Launching...';
+      return t('launcher.state.launching');
     case 'running':
-      return 'Running...';
+      return t('launcher.state.running');
     case 'syncing-out':
-      return 'Saving progress...';
+      return t('launcher.state.syncingOut');
     case 'ready': {
       // Steam non-blocking install/uninstall indicators on the ready screen (the window stays usable).
       // No install percent: Steam exposes no reliable live progress in the files we read (see main).
-      if (state.game.steamUninstalling === true) return 'Uninstalling...';
+      if (state.game.steamUninstalling === true) return t('launcher.state.uninstalling');
       if (state.game.steamInstalling === true) {
-        if (state.game.steamPaused !== true) return 'Installing...';
+        if (state.game.steamPaused !== true) return t('launcher.state.installing');
         const progress = state.game.steamPausedProgress;
         return progress === undefined
-          ? 'Installing paused...'
-          : `Installing paused on ${Math.round(progress * 100)}%...`;
+          ? t('launcher.state.installingPaused')
+          : t('launcher.state.installingPausedPercent', { percent: Math.round(progress * 100) });
       }
       return '';
     }
