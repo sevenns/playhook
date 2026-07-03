@@ -1,4 +1,4 @@
-// State directory on the PC — the SOURCE OF TRUTH (stage 4, R2).
+// State directory on the PC — the SOURCE OF TRUTH.
 // Lives in %APPDATA%/<app>/ and holds: stats/<id>.json (per-game statistics) and
 // the pending-flush/<id>/ queue (a deferred PC→SD, if the card was yanked mid-game).
 //

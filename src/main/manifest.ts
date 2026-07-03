@@ -1,5 +1,5 @@
-// Reading and validating the `game.json` manifest from the card (plan stage 3).
-// The card is UNTRUSTED input (R7/P6): beyond the zod schema we validate path SEMANTICS —
+// Reading and validating the `game.json` manifest from the card.
+// The card is UNTRUSTED input: beyond the zod schema we validate path SEMANTICS —
 // executable/heroImage/saveOnCard must live inside the card root (forbidding `..`
 // and absolute paths), pcSavePath — only from an allowlist of prefixes:
 // the %DOCUMENTS% known folder (resolved via the system Known Folder API, so it is
@@ -29,7 +29,7 @@ const installSchema = z
     // For `custom`: the full argv with exactly one {dir} token. For nsis/inno: optional extra flags.
     args: z.array(z.string()).default([]),
   })
-  // F3: `custom` hands argv control to the card; running THAT elevated would escalate the attack
+  // `custom` hands argv control to the card; running THAT elevated would escalate the attack
   // surface beyond the read-only tasklist we use today. The app builds nsis/inno args itself, so
   // elevated is fine there.
   // Custom messages are stored as dictionary KEYS (translated later at the issue-mapping points via
@@ -165,7 +165,7 @@ export interface ManifestEnv {
 // Env-var prefixes allowed in pcSavePath (resolved from process.env).
 const ENV_PREFIXES = ['APPDATA', 'LOCALAPPDATA', 'USERPROFILE'] as const;
 
-/** Resolves a card-relative path strictly inside its root. null = rejected. Exported for unit tests (C1). */
+/** Resolves a card-relative path strictly inside its root. null = rejected. Exported for unit tests. */
 export function resolveInside(root: string, relative: string): string | null {
   if (path.isAbsolute(relative)) return null;
   const resolved = path.resolve(root, relative);
@@ -184,7 +184,7 @@ const ALLOWED_PREFIXES_HELP = '%DOCUMENTS%, %APPDATA%, %LOCALAPPDATA%, %LOCALLOW
 
 /**
  * Expands pcSavePath only from the allowed prefixes (%DOCUMENTS%/%LOCALLOW% + env vars), without traversal.
- * Exported for unit tests (C1).
+ * Exported for unit tests.
  */
 export function expandPcSavePath(input: string, env: ManifestEnv): ExpandResult {
   const { t } = env;
@@ -302,7 +302,7 @@ async function resolveInstall(
 /**
  * Reads and fully validates the manifest at the card root.
  * `env` carries known-folder bases resolved in main (e.g. Documents) for pcSavePath.
- * Also checks that the executable exists (an edge case from the plan).
+ * Also checks that the executable exists (an edge case).
  */
 export async function readManifest(root: string, env: ManifestEnv): Promise<ManifestResult> {
   const { t } = env;
@@ -324,8 +324,8 @@ export async function readManifest(root: string, env: ManifestEnv): Promise<Mani
   }
   const raw: GameManifest = parsed.data;
 
-  // E5 (critical branch): the meaning of `executable` depends on the mode. Keep the three paths
-  // explicit so the normal flow is provably untouched (G2).
+  // Critical branch: the meaning of `executable` depends on the mode. Keep the three paths
+  // explicit so the normal flow is provably untouched.
   let executablePath: string;
   let cwd: string;
   let installResolved: ResolvedManifest['install'];
@@ -426,7 +426,7 @@ export async function readManifest(root: string, env: ManifestEnv): Promise<Mani
     backgroundMusicPath = resolved;
   }
 
-  // Sync only makes sense if BOTH sides are set (section 3): the copy on the card and
+  // Sync only makes sense if BOTH sides are set: the copy on the card and
   // the write location on the PC. If only one is set, the card was prepared incorrectly.
   if ((pcSavePath === undefined) !== (saveOnCardPath === undefined)) {
     return {

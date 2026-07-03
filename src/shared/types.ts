@@ -51,7 +51,7 @@ export interface SteamManifest {
 }
 
 /**
- * Raw `game.json` manifest after zod-schema validation (section 3a).
+ * Raw `game.json` manifest after zod-schema validation.
  * The executable/saveOnCard paths and each heroImage entry are relative to the SD root;
  * pcSavePath is absolute with an env prefix from the whitelist.
  */
@@ -114,7 +114,7 @@ export interface SoundManifest {
 }
 
 /**
- * Manifest with already-resolved and security-checked paths (P6/R7).
+ * Manifest with already-resolved and security-checked paths.
  * All *Path values are absolute; the card's relative paths are verified to stay
  * "inside the root", and pcSavePath is expanded from the env whitelist.
  */
@@ -260,7 +260,7 @@ export interface GameInfo {
   readonly steamUninstalling?: boolean;
 }
 
-/** The flow state machine (discriminated union, section 4). */
+/** The flow state machine (discriminated union). */
 export type AppState =
   | { readonly kind: 'idle' }
   | { readonly kind: 'ready'; readonly game: GameInfo }

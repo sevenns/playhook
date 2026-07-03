@@ -1,4 +1,4 @@
-// Detecting card insertion/removal (stage 2, A1).
+// Detecting card insertion/removal.
 // The criterion for "our card" is NOT a bare diff over mountpoints (it's unreliable: the
 // mountpoint lags on card readers), but the appearance of a removable/non-system volume that
 // has a `game.json` in the root of one of its mountpoints. While the mountpoint is empty, scan
@@ -40,8 +40,8 @@ function isExternalDrive(drive: {
 }
 
 /**
- * Enumerates external removable, non-system mountpoints as Configure-window candidates (stage: init/edit
- * game.json). Unlike scan() it does NOT filter by the presence of game.json — a BLANK drive must be
+ * Enumerates external removable, non-system mountpoints as Configure-window candidates (for initializing
+ * or editing game.json). Unlike scan() it does NOT filter by the presence of game.json — a BLANK drive must be
  * selectable to be initialized (`hasManifest` distinguishes it) — but it DOES exclude internal disks that
  * merely report `isRemovable` (see isExternalDrive). The label is built from the drive root plus the
  * manifest title (drivelist gives no volume label on Windows).
@@ -177,7 +177,7 @@ export class DriveWatcher {
     let firstFound: string | null = null;
     for (const drive of drives) {
       if (drive.isRemovable !== true || drive.isSystem === true) continue;
-      // A disk may have several partitions/mountpoints (P7) — we iterate over all of them.
+      // A disk may have several partitions/mountpoints — we iterate over all of them.
       for (const mount of drive.mountpoints) {
         if (typeof mount.path !== 'string' || mount.path.length === 0) continue;
         const manifestPath = path.join(mount.path, MANIFEST_FILENAME);

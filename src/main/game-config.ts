@@ -32,7 +32,7 @@ import { describe } from './util';
 import { log } from './logger';
 
 // Blank-drive insertion is only visible via enumeration (DriveWatcher events fire for cards WITH a
-// game.json only, R6), so we poll while the window is visible. 2s is a fine cost for a foreground window.
+// game.json only), so we poll while the window is visible. 2s is a fine cost for a foreground window.
 const DRIVE_POLL_INTERVAL_MS = 2000;
 
 export interface GameConfigDeps {

@@ -79,7 +79,7 @@ export class SettingsWindow {
       minHeight: 600,
       show: false,
       // A plain desktop window — no game kiosk/fullscreen. autoHideMenuBar is not needed: main.ts
-      // already does Menu.setApplicationMenu(null) globally (N6).
+      // already does Menu.setApplicationMenu(null) globally.
       // Windows-11-Settings-style chrome: the native title bar is hidden and the app draws its own
       // (icon + "Playhook (version)" on the left, see settings.html), while the native min/max/close
       // buttons are kept via the Window Controls Overlay — recolored to the theme (initial guess from
@@ -104,7 +104,7 @@ export class SettingsWindow {
       },
     });
 
-    // Closing the window with the X doesn't quit the app — hide it to the tray (like GameWindow, N1).
+    // Closing the window with the X doesn't quit the app — hide it to the tray (like GameWindow).
     // Whether it's a real close or a hide, stop the updater from pushing into this window.
     this.closeGuard = installHideOnClose(window, () => this.updater.detachWindow());
 
@@ -114,7 +114,7 @@ export class SettingsWindow {
 
     this.window = window;
     // Attach BEFORE loadFile so the renderer can subscribe and request the snapshot as soon as it
-    // starts, and any early push has a live window to reach (I3).
+    // starts, and any early push has a live window to reach.
     this.updater.attachWindow(window);
 
     void window.loadFile(path.join(__dirname, '../renderer/settings.html'));

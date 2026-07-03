@@ -1,4 +1,4 @@
-// Directional save synchronization (stage 8, section 3).
+// Directional save synchronization.
 // Atomicity for a FOLDER is unachievable (rename is atomic only for a single object),
 // so we minimize the inconsistency window: copy into `<dest>.tmp` on the SAME volume,
 // then do a quick swap (old → `<dest>.bak` as a rollback, `<dest>.tmp` → `<dest>`).
@@ -19,7 +19,7 @@ function errorCode(cause: unknown): string | undefined {
   return undefined;
 }
 
-/** Retry with exponential backoff on "busy" files (EBUSY and related). Exported for unit tests (C1). */
+/** Retry with exponential backoff on "busy" files (EBUSY and related). Exported for unit tests. */
 export async function withRetry<T>(operation: () => Promise<T>): Promise<T> {
   let lastError: unknown;
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {

@@ -1,4 +1,4 @@
-// Playtime tracking (stage 7, section 3).
+// Playtime tracking.
 // "One card, many PCs": the card's stats.json is the TRAVELING canonical record, and the per-PC
 // PcStore is a working mirror. On insertion the two are reconciled (merged) so the card carries a
 // single unified total across machines. The card write stays best-effort: the card may be yanked,

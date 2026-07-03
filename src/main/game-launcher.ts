@@ -1,4 +1,4 @@
-// Launching the game and detecting when it closes (stage 6, A2/R4).
+// Launching the game and detecting when it closes.
 // Two launch paths, dispatched by manifest.raw.runAsAdmin:
 //
 // 1. Normal (default): `spawn` the .exe. We've settled on a direct self-contained .exe → the pid from
@@ -8,13 +8,13 @@
 // 2. Elevated (runAsAdmin): `spawn` cannot raise rights, so an .exe whose embedded manifest requires
 //    administrator fails with EACCES (CreateProcess → ERROR_ELEVATION_REQUIRED 740). We launch it via
 //    ShellExecuteExW with the "runas" verb (triggers UAC) through koffi (same FFI pattern as
-//    gamepad-global.ts). Monitoring CANNOT go through `tasklist` here — limitation R4 below — so we keep
+//    gamepad-global.ts). Monitoring CANNOT go through `tasklist` here — see the limitation below — so we keep
 //    the real process HANDLE and poll it with WaitForSingleObject, bypassing tasklist entirely.
 //
 // Both paths return a GameProcess, so waitForStart/waitForExit stay agnostic. Process-polling is started
 // ONLY by the controller and only in launching/running.
 //
-// Limitation (R4): from a non-elevated app, `tasklist` does NOT see an elevated process — that is exactly
+// Limitation: from a non-elevated app, `tasklist` does NOT see an elevated process — that is exactly
 // why the elevated path watches by HANDLE instead. For a normal direct .exe we assume the rights suffice.
 import path from 'node:path';
 import { spawn, execFile } from 'node:child_process';
@@ -199,7 +199,7 @@ const GAME_MODE: LaunchMode = { verbatim: false, hide: false };
 const INSTALLER_MODE: LaunchMode = { verbatim: true, hide: true };
 // Uninstaller: hidden (silent), but verbatim:FALSE — unlike the installer, the uninstaller target's
 // file/args are LOGICAL tokens (a found .exe path possibly with spaces/Cyrillic, or registry-parsed
-// argv), so Node/CommandLineToArgvW quoting must re-quote them correctly (B1).
+// argv), so Node/CommandLineToArgvW quoting must re-quote them correctly.
 const UNINSTALLER_MODE: LaunchMode = { verbatim: false, hide: true };
 
 /** Normal launch: spawn the file and watch by pid via tasklist. Behaviour for games is 1:1 with the old code. */
@@ -235,7 +235,7 @@ async function launchNormal(target: LaunchTarget, mode: LaunchMode): Promise<Gam
 }
 
 /**
- * Elevated launch: ShellExecuteExW with verb "runas" (UAC). Synchronous on purpose (R4 above): koffi's
+ * Elevated launch: ShellExecuteExW with verb "runas" (UAC). Synchronous on purpose (see the limitation above): koffi's
  * .async() is callback-style and GetLastError isn't readable from a worker thread; the UAC dialog is a
  * few seconds and gamepad input is ignored outside `ready`, so the brief block is acceptable.
  */

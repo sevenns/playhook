@@ -2,7 +2,7 @@
 // that the FS search in the install dir missed). We read the Windows "Uninstall" registry branches via
 // the advapi32 Reg* API through koffi, NOT `reg query`: that CLI emits its output in the console OEM
 // codepage (CP866 for ru-RU), which mojibakes Cyrillic paths and silently breaks the InstallLocation
-// match (I2). The Reg*W (wide) API returns proper UTF-16, so Cyrillic install paths compare correctly.
+// match. The Reg*W (wide) API returns proper UTF-16, so Cyrillic install paths compare correctly.
 //
 // Everything here is best-effort: ANY failure (FFI error, missing key, unreadable value) degrades to
 // `null`, and the caller then falls back to a plain directory removal. The whole lookup is wrapped so a
@@ -21,7 +21,7 @@ export interface UninstallEntry {
   readonly uninstallString?: string;
   /** `QuietUninstallString` value, if present (already silent — preferred). */
   readonly quietUninstallString?: string;
-  /** True when the entry lives under HKLM (machine-wide) — informs the elevated decision (R-UAC-KIOSK). */
+  /** True when the entry lives under HKLM (machine-wide) — informs the elevated decision. */
   readonly fromHKLM: boolean;
 }
 
@@ -100,7 +100,7 @@ function loadAdvapi32(): Advapi32 {
   return advapi32;
 }
 
-// ── Path normalization & env expansion (explicit — not path.resolve, I3) ─────
+// ── Path normalization & env expansion (explicit — not path.resolve) ─────
 
 /** Lowercase, forward→back slashes, no trailing backslash — for a stable InstallLocation==installDir match. */
 function normalizePath(p: string): string {

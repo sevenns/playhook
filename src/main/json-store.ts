@@ -1,6 +1,6 @@
-// Shared safe-read for zod-validated JSON stores (audit N3 + I3). PcStore and AppSettingsStore both
+// Shared safe-read for zod-validated JSON stores. PcStore and AppSettingsStore both
 // had the identical `try → readJson → safeParse → success ? data : DEFAULT` shape, and both swallowed
-// failures silently. This is the single home for that pattern, and — per I3 — it distinguishes the
+// failures silently. This is the single home for that pattern, and it distinguishes the
 // two failure modes: a MISSING file is the normal first-run case (silent), while a file that exists
 // but fails to read or validate is a real anomaly (corruption / incompatible shape) that gets a
 // log.warn breadcrumb instead of a silent fallback that could mask damaged user data.

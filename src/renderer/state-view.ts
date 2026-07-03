@@ -1,4 +1,4 @@
-// Pure views over AppState shared by the renderer modules (audit I2). No DOM — just the mapping from a
+// Pure views over AppState shared by the renderer modules. No DOM — just the mapping from a
 // state to the UI phase, the status label, the Steam-busy flag and the current game. Kept in one place
 // so app.ts (render/title-slide) and controls.ts (focus/actions) read the same derivations.
 import type { AppState, GameInfo } from '../shared/types';

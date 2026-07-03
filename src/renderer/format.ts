@@ -1,4 +1,4 @@
-// Pure display formatters for the game info panel (audit I2 — split out of app.ts). The translator and
+// Pure display formatters for the game info panel (split out of app.ts). The translator and
 // locale are passed in (kept pure): plural units go through `tp`, dates through toLocaleString.
 import type { Locale, Translator } from '../shared/i18n/index.js';
 

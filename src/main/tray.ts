@@ -1,4 +1,4 @@
-// Tray icon and context menu (stage 1): "Show" / "Quit".
+// Tray icon and context menu: "Show" / "Quit".
 // A background app lives in the tray; closing the window doesn't quit the program.
 import path from 'node:path';
 import { Tray, Menu, nativeImage } from 'electron';

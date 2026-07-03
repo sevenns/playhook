@@ -1,4 +1,4 @@
-// Tiny shared helpers used across main-process modules (audit N2 — de-duplicates the copies of
+// Tiny shared helpers used across main-process modules (de-duplicates the copies of
 // `delay`/`describe` that had drifted into individual files).
 
 /** Human-readable message for an unknown thrown value. */

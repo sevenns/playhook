@@ -1,4 +1,4 @@
-// Interaction layer (audit I2 — split out of app.ts). Owns the popups (Info / Error / Confirm), the two
+// Interaction layer (split out of app.ts). Owns the popups (Info / Error / Confirm), the two
 // focus groups (main buttons + the confirm modal's No/Yes) and the user actions they trigger, plus all
 // their wiring: button/veil clicks, mouse hover, the gamepad controller and the keyboard Esc handler.
 // These are bidirectionally coupled (popups call applyFocus; focus reads the popup-open flags), so they
@@ -142,7 +142,7 @@ export function createControls(deps: ControlsDeps): Controls {
     confirmOpen = true;
     confirmPopup.classList.add('is-open');
     confirmPopup.setAttribute('aria-hidden', 'false');
-    confirmIndex = confirmButtons.indexOf(confirmNo); // default focus on "No" (safe default, Q1)
+    confirmIndex = confirmButtons.indexOf(confirmNo); // default focus on "No" (safe default)
     applyFocus(); // main highlight clears (focusActive becomes false with confirmOpen)
     applyConfirmFocus();
   }
@@ -192,7 +192,7 @@ export function createControls(deps: ControlsDeps): Controls {
 
   // Main focus is only meaningful on the ready screen with no popup open — including the confirm modal:
   // with confirmOpen this returns false, so triggerPlay/triggerInfo/moveFocus/activateFocused/mouseenter
-  // (all guarded by focusActive) go quiet naturally while the modal is up (B1).
+  // (all guarded by focusActive) go quiet naturally while the modal is up.
   function focusActive(): boolean {
     return phaseOf(state()) === 'ready' && !infoOpen && !errorOpen && !confirmOpen;
   }
@@ -219,7 +219,7 @@ export function createControls(deps: ControlsDeps): Controls {
   }
 
   // Confirm modal focus group — fully separate from the main group (No / Yes), so it can never disturb
-  // the main focusIndex (I6). Active only while the confirm modal is open on the ready screen.
+  // the main focusIndex. Active only while the confirm modal is open on the ready screen.
   // Visual order, left → right: Yes on the left, No on the right (per design). Navigation/default-focus
   // key off button identity, not a fixed index, so this order can change without touching the logic.
   const confirmButtons: readonly HTMLButtonElement[] = [confirmYes, confirmNo];
@@ -318,7 +318,7 @@ export function createControls(deps: ControlsDeps): Controls {
       audio.play('play');
       window.api.requestLaunch();
     } else {
-      audio.play('button'); // Q3: neutral button sound for the destructive confirm
+      audio.play('button'); // neutral button sound for the destructive confirm
       window.api.requestUninstall();
     }
   }
@@ -405,7 +405,7 @@ export function createControls(deps: ControlsDeps): Controls {
 
   function clearGameButtons(): void {
     // The idle branch doesn't touch the Uninstall button, so clear a stale .is-available from a prior
-    // ready state explicitly (don't rely on CSS specificity alone, I5).
+    // ready state explicitly (don't rely on CSS specificity alone).
     uninstallButton.classList.remove('is-available');
     infoButton.classList.remove('has-uninstall-sibling');
   }

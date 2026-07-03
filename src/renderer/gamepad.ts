@@ -1,4 +1,4 @@
-// Gamepad polling in the renderer (stage 9, R5).
+// Gamepad polling in the renderer.
 // HTML5 Gamepad API + requestAnimationFrame loop, standard mapping.
 // Navigation: D-pad Left/Right (buttons[14]/[15]) or left-stick X (axes[0]).
 // A = buttons[0] (activate focused control), B = buttons[1] (back / close popup).

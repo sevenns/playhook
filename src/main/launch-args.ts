@@ -1,4 +1,4 @@
-// Pure command-line argument helpers, split out of game-launcher.ts (audit C1).
+// Pure command-line argument helpers, split out of game-launcher.ts.
 // game-launcher.ts imports koffi and evaluates koffi.struct/union at module load, which drags a
 // native FFI addon into any importer — impossible to unit-test in plain Node. These helpers are
 // pure string logic (quoting rules, installer flag families) with no koffi/electron dependency, so

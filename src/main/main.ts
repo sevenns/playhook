@@ -1,4 +1,4 @@
-// Application bootstrap (stage 1): single-instance, tray, lifecycle, auto-launch.
+// Application bootstrap: single-instance, tray, lifecycle, auto-launch.
 // Background app: the window is shown ONLY when a valid game card is detected (state 'ready'); with
 // no game it stays hidden in the tray. Closing the window hides it to the tray, not quits.
 import path from 'node:path';
@@ -36,7 +36,7 @@ let quitting = false;
 let summonHotkeyEnabled = true;
 
 function configureAutoLaunch(): void {
-  // openAtLogin is reliable for an NSIS install; portable is best-effort (R6).
+  // openAtLogin is reliable for an NSIS install; portable is best-effort.
   // No `--hidden` arg needed: the app always starts hidden and only shows on a valid card.
   if (process.platform !== 'win32') return;
   app.setLoginItemSettings({ openAtLogin: true });
@@ -102,8 +102,8 @@ async function bootstrap(): Promise<void> {
   controller.init();
 
   // Update service + settings window. isBusy covers ALL in-flight states (not just a running game),
-  // so a manual install can't tear down a save-sync / game install (§5, N4). beforeInstall drops both
-  // windows' close-guards synchronously before quitAndInstall (§5.1, B1).
+  // so a manual install can't tear down a save-sync / game install. beforeInstall drops both
+  // windows' close-guards synchronously before quitAndInstall.
   const updater = new UpdaterService({
     settings,
     isBusy: () => {

@@ -1,4 +1,4 @@
-// Hero background subsystem (audit I2 — split out of app.ts). Owns everything about "what image is on
+// Hero background subsystem (split out of app.ts). Owns everything about "what image is on
 // screen and its colors": the two cross-fading hero layers, the shown-url gate, the renderer-local hero
 // rotation, the empty/idle wallpaper screen, and the two-color palette (compute + cache + apply). These
 // share `shownUrl`/`wallpaperUrl` so they live together — keeping the palette race gate internal rather
@@ -70,7 +70,7 @@ export function createHeroController(deps: HeroDeps): HeroController {
   }
 
   // The wallpaper's palette, reused both on the idle screen AND when a game's hero falls back to the
-  // wallpaper — so we never recompute the same dominant colors under a per-game key (review note 7).
+  // wallpaper — so we never recompute the same dominant colors under a per-game key.
   function applyWallpaperPalette(): void {
     if (wallpaperPalette !== undefined) {
       applyPalette(wallpaperPalette);

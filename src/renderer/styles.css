@@ -562,7 +562,7 @@ body {
 
 /* ── Confirmation actions (No / Yes row) ────────────────────────────────────
    Pinned to the bottom strip (aligned to .bar-content's 50px inset), so they sit OUTSIDE
-   .popup-panel and need their OWN opacity/pointer-events gate (N5) — without it the buttons would be
+   .popup-panel and need their OWN opacity/pointer-events gate — without it the buttons would be
    visible and clickable over the ready screen at all times. Fades in together with the veil/panel. */
 .confirm-actions {
   position: absolute;

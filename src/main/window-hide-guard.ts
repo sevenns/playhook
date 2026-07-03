@@ -1,4 +1,4 @@
-// Shared "X hides to tray instead of quitting" window behavior (audit N1). GameWindow and
+// Shared "X hides to tray instead of quitting" window behavior. GameWindow and
 // SettingsWindow both had an identical forceClosing flag + on('close')→preventDefault/hide + allowClose
 // pair; this centralizes it. `onClose` runs on every close attempt regardless of the guard (e.g. the
 // settings window detaches its updater there).

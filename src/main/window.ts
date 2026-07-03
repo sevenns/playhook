@@ -1,5 +1,5 @@
-// Game window (stage 5). Created hidden; shown/force-focused when a card is inserted
-// and after exiting a game (R5: so that "press A" via the Gamepad API works in Electron).
+// Game window. Created hidden; shown/force-focused when a card is inserted
+// and after exiting a game (so that "press A" via the Gamepad API works in Electron).
 // When summoned over a running game (Start+Back), Windows blocks a plain focus() grab; a
 // minimize→restore is treated by the OS as a legitimate activation and reliably foregrounds us.
 // We deliberately do NOT hold alwaysOnTop — a persistent topmost window traps focus and prevents
@@ -61,7 +61,7 @@ export class GameWindow {
       menu.popup({ window });
     });
 
-    // Closing the window with the X doesn't quit the app — we hide it to the tray (N1).
+    // Closing the window with the X doesn't quit the app — we hide it to the tray.
     this.closeGuard = installHideOnClose(window);
 
     void window.loadFile(path.join(__dirname, '../renderer/index.html'));

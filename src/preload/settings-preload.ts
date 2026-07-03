@@ -1,6 +1,6 @@
 // Typed main↔settings-renderer bridge (contextIsolation: true, nodeIntegration: false, sandbox: true).
 // Separate from preload.ts so the settings window gets its own `window.settingsApi`, isolated from the
-// game `window.api` contract (A1). As in preload.ts, channels are inlined as string LITERALS rather
+// game `window.api` contract. As in preload.ts, channels are inlined as string LITERALS rather
 // than imported from shared: a sandboxed preload cannot require arbitrary files. Only `import type`
 // from shared is allowed (types erase at compile time). `satisfies Partial<typeof IPC>` restores a
 // compile-time guard over these literals: a wrong value (TS2322) or a typo'd key (TS2353) fails

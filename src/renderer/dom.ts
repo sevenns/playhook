@@ -1,4 +1,4 @@
-// Small DOM lookup helpers shared across the renderer modules (audit I2). Throw on a missing element
+// Small DOM lookup helpers shared across the renderer modules. Throw on a missing element
 // so a broken index.html fails loudly at startup rather than producing silent null-deref bugs later.
 
 export function req<T extends HTMLElement>(id: string): T {

@@ -1,4 +1,4 @@
-// The single source of truth for the flow: the current AppState (discriminated union, section 4).
+// The single source of truth for the flow: the current AppState (discriminated union).
 // Driven in main, replicated to the renderer via subscription (the controller sends it to the window).
 import { type AppState } from '../shared/types';
 

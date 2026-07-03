@@ -1,5 +1,5 @@
 // Reading card assets (hero images, UI sounds, background music, fallback wallpaper) into data URLs
-// for the renderer (audit I1 — split out of the GameController god-object). Stateless except for the
+// for the renderer (split out of the GameController god-object). Stateless except for the
 // bundled-wallpaper cache. GameController owns delivery (setHero/setAudio push to the window); this
 // class only reads bytes off disk and encodes them.
 import path from 'node:path';

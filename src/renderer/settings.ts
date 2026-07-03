@@ -1,7 +1,7 @@
 // Settings-window renderer (Fluent UI Web Components v3, dark theme). No gamepad / hero / audio — this
 // is the plain "system settings" UI: app version + update management.
 //
-// Fluent import channel (I-F1 fallback per plan §6.6): web-components.min.js turned out to export
+// Fluent import channel (fallback): web-components.min.js turned out to export
 // NOTHING (a pure side-effect bundle), so we can't take setTheme from it. Instead we use the single
 // `.`-index resolution graph — pointed `*/define.js` side-effect imports register just the elements we
 // use, and setTheme comes from the same `@fluentui/web-components` index. One FAST copy, smaller bundle.
@@ -335,7 +335,7 @@ function applyLocale(locale: Locale): void {
 }
 
 async function init(): Promise<void> {
-  // I3: subscribe BEFORE requesting the initial snapshot, so a push arriving in between isn't lost.
+  // Subscribe BEFORE requesting the initial snapshot, so a push arriving in between isn't lost.
   window.settingsApi.onUpdateStatus(render);
   window.settingsApi.onLanguageUpdate(applyLocale);
   const [version, icon, settings, status, locale] = await Promise.all([
