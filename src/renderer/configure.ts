@@ -312,11 +312,21 @@ function renderDrives(list: readonly DriveCandidate[]): void {
   driveEmpty.hidden = true;
 
   const sig = drivesSignature(list);
-  if (sig !== lastDrivesSig) {
+  const rebuilt = sig !== lastDrivesSig;
+  if (rebuilt) {
     lastDrivesSig = sig;
     rebuildRadios(list);
   }
   reconcileSelection(list);
+  if (rebuilt) {
+    // fluent-radio-group reconciles freshly-appended children on its own async init, which drops a
+    // selection set during this synchronous render — so on first open the active card only appeared
+    // checked after the next 2s poll. Re-assert on the next frame (after the group settles) so it shows
+    // immediately. Only after a rebuild (first open / genuine change), not on every poll.
+    requestAnimationFrame(() => {
+      if (selectedRoot !== null) checkRadio(driveGroup, selectedRoot);
+    });
+  }
 }
 
 function rebuildRadios(list: readonly DriveCandidate[]): void {
