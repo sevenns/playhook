@@ -13,14 +13,14 @@
 //  • It applies an auto-update MODE (download-install / download / off) from AppSettingsStore, mapping
 //    it onto autoUpdater.autoDownload / autoInstallOnAppQuit and the periodic-check timer.
 //
-// Two install guards protect the "never interrupt an in-flight operation" invariant (§5):
+// Two install guards protect the "never interrupt an in-flight operation" invariant:
 //  (a) status guard — install only from the `downloaded` snapshot (closes a race where the mode is
 //      flipped mid-download and a stale install fires);
 //  (b) busy guard — install only when the app is idle/ready/error, i.e. NOT during any in-flight
 //      operation (running, launching, installing, uninstalling, syncing-in/out) — not just a running
 //      game, because quitAndInstall's app.quit() would also tear down a save-sync or a game install.
 //
-// Window-guard lifecycle (§5.1): quitAndInstall() closes ALL app windows BEFORE emitting `before-quit`
+// Window-guard lifecycle: quitAndInstall() closes ALL app windows BEFORE emitting `before-quit`
 // (AppUpdater docs), bypassing main.ts.quit(). Both GameWindow and SettingsWindow hold a
 // close→preventDefault+hide guard, so the install could hang on those guards. Hence beforeInstall() is
 // called SYNCHRONOUSLY right before quitAndInstall() to drop both windows' guards first.
@@ -34,9 +34,11 @@ import {
   type AppSettings,
   type AudioVolumes,
   type AutoUpdateMode,
+  type LanguageMode,
   type ThemeMode,
   type UpdateStatus,
 } from '../shared/types';
+import { type Translator } from '../shared/i18n/index';
 import { type AppSettingsStore } from './app-settings';
 import { ipcMain } from 'electron';
 
@@ -46,7 +48,7 @@ export interface UpdaterDeps {
   readonly settings: AppSettingsStore;
   /** True while ANY in-flight operation runs (not only a running game) — blocks the manual install. */
   readonly isBusy: () => boolean;
-  /** Drops both windows' close-guards synchronously right before quitAndInstall (§5.1). */
+  /** Drops both windows' close-guards synchronously right before quitAndInstall. */
   readonly beforeInstall: () => void;
   /** Opens the log folder in the OS file manager (settings window "Open logs"). */
   readonly openLogs: () => void;
@@ -56,6 +58,10 @@ export interface UpdaterDeps {
   readonly onSummonHotkeyChanged: (enabled: boolean) => void;
   /** Pushes new audio volumes to the game renderer so they apply live. */
   readonly onVolumesChanged: (volumes: AudioVolumes) => void;
+  /** Applies a UI-language change (re-resolve locale, rebuild tray/titles, push to live windows). */
+  readonly onLanguageChanged: (mode: LanguageMode) => void;
+  /** The current translator (for the install-busy soft error rendered in the settings window). */
+  readonly getTranslator: () => Translator;
 }
 
 export class UpdaterService {
@@ -127,7 +133,7 @@ export class UpdaterService {
       void this.deps.settings
         .setAutoUpdate(mode)
         .then(() => {
-          // A7: persist always, but only touch autoUpdater in a packaged build.
+          // Persist always, but only touch autoUpdater in a packaged build.
           if (app.isPackaged) this.applyMode(mode);
         })
         .catch((cause: unknown) => log.error('[updater] failed to persist auto-update mode:', cause));
@@ -159,6 +165,14 @@ export class UpdaterService {
     ipcMain.on(IPC.settingsSetSfxVolume, (_event, volume: number) => {
       void this.setVolume({ sfxVolume: volume });
     });
+    // Language mirrors the summon-hotkey path: persist, then hand the mode to the deps callback (main
+    // re-resolves the locale, rebuilds tray/titles and pushes the effective locale to every live window).
+    ipcMain.on(IPC.settingsSetLanguage, (_event, mode: LanguageMode) => {
+      void this.deps.settings
+        .setLanguage(mode)
+        .then(() => this.deps.onLanguageChanged(mode))
+        .catch((cause: unknown) => log.error('[updater] failed to persist language:', cause));
+    });
     ipcMain.handle(IPC.settingsReset, (): Promise<AppSettings> => this.resetSettings());
     // game-renderer startup: hand it the current volumes to seed its AudioController.
     ipcMain.handle(IPC.volumeRequest, async (): Promise<AudioVolumes> => {
@@ -185,6 +199,7 @@ export class UpdaterService {
     }
     this.deps.onSummonHotkeyChanged(next.summonHotkeyEnabled);
     this.deps.onVolumesChanged({ music: next.musicVolume, sfx: next.sfxVolume });
+    this.deps.onLanguageChanged(next.language);
     return next;
   }
 
@@ -228,7 +243,7 @@ export class UpdaterService {
     return this.moveSoundDataUrl;
   }
 
-  // ── autoUpdater event mapping (§3) ─────────────────────────────────────────
+  // ── autoUpdater event mapping ─────────────────────────────────────────
 
   private subscribe(): void {
     autoUpdater.on('checking-for-update', () => {
@@ -279,7 +294,7 @@ export class UpdaterService {
     this.setStatus({ kind: 'not-available', checkedAt: Date.now() });
   }
 
-  // ── Auto-update mode → electron-updater flags + timer (§4) ──────────────────
+  // ── Auto-update mode → electron-updater flags + timer ──────────────────
 
   applyMode(mode: AutoUpdateMode): void {
     autoUpdater.autoDownload = mode !== 'off';
@@ -303,7 +318,7 @@ export class UpdaterService {
   // Status transitions flow through the shared autoUpdater event handlers; both the background and the
   // manual paths just kick off checkForUpdates and swallow the rejection (the 'error' event, fired
   // BEFORE the promise rejects, already resolved the UI via handleError — re-handling here would double
-  // it, N7). The only difference is logging context.
+  // it). The only difference is logging context.
   private backgroundCheck(): void {
     void autoUpdater.checkForUpdates().catch((cause: unknown) => {
       log.error('[updater] background check failed:', cause);
@@ -339,12 +354,12 @@ export class UpdaterService {
       log.info('[updater] install deferred: app busy');
       this.pushTransient({
         kind: 'error',
-        message: 'Finish what’s running before installing the update.',
+        message: this.deps.getTranslator()('errors.finishBeforeInstall'),
       });
       return;
     }
     log.info('[updater] installing update — quitAndInstall');
-    this.deps.beforeInstall(); // drop both windows' close-guards synchronously (§5.1) first
+    this.deps.beforeInstall(); // drop both windows' close-guards synchronously first
     autoUpdater.quitAndInstall();
   }
 

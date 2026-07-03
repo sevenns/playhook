@@ -24,6 +24,7 @@
            the Info button (game screens) or the Hide button (empty / idle screen). -->
       <footer id="bottom-bar">
         <div class="bar-content">
+          <!-- aria-label is DYNAMIC (Play/Install), set from JS via t() — no data-i18n-aria-label here. -->
           <button id="play-button" class="circle-button" type="button" aria-label="Play" data-action="play">
             <svg class="icon-play" viewBox="0 0 36 48" aria-hidden="true">
               <path d="M2 2 L34 24 L2 46 Z" />
@@ -43,7 +44,7 @@
           <div id="status" class="status"></div>
           <div id="title" class="title"></div>
 
-          <button id="info-button" class="rect-button" type="button" aria-label="Info">
+          <button id="info-button" class="rect-button" type="button" aria-label="Info" data-i18n-aria-label="launcher.aria.info">
             <!-- Filled ⓘ disc with the "i" cut OUT (fill-rule evenodd) so the button background
                  shows through the hole — which makes the hover color inversion automatic. -->
             <svg class="icon-info" viewBox="0 0 40 40" aria-hidden="true">
@@ -59,7 +60,7 @@
           <!-- Uninstall button: same rect-button component as Info, a disc with a trash bin cut out
                (fill-rule nonzero). Shown only for an installed install-mode game (toggled via the
                .is-available class from JS); opens the uninstall confirmation popup. -->
-          <button id="uninstall-button" class="rect-button" type="button" aria-label="Uninstall">
+          <button id="uninstall-button" class="rect-button" type="button" aria-label="Uninstall" data-i18n-aria-label="launcher.aria.uninstall">
             <svg class="icon-uninstall" viewBox="0 0 40 40" aria-hidden="true">
               <path d="M20 0C31.0457 0 40 8.9543 40 20C40 31.0457 31.0457 40 20 40C8.9543 40 0 31.0457 0 20C0 8.9543 8.9543 0 20 0ZM11.0146 29C11.0147 30.105 11.9097 31 13.0146 31L27.0146 31C28.1195 30.9998 29.0146 30.1049 29.0146 29L29.0146 13L11.0146 13L11.0146 29ZM18.0146 8C17.8822 7.9982 17.7499 8.02282 17.627 8.07227C17.5042 8.12171 17.3921 8.19515 17.2979 8.28809C17.2037 8.38107 17.1292 8.49215 17.0781 8.61426C17.027 8.73646 17.001 8.86755 17.001 9L11.0146 9C10.8821 8.99813 10.7499 9.02285 10.627 9.07227C10.5041 9.12168 10.3921 9.19512 10.2979 9.28809C10.2036 9.38109 10.1283 9.49208 10.0771 9.61426C10.0261 9.73641 10 9.8676 10 10C10 10.1324 10.0261 10.2636 10.0771 10.3857C10.1283 10.5079 10.2036 10.6189 10.2979 10.7119C10.3921 10.8049 10.5041 10.8783 10.627 10.9277C10.7499 10.9771 10.8821 11.0019 11.0146 11L29.0146 11C29.147 11.0018 29.2785 10.9771 29.4014 10.9277C29.5243 10.8783 29.6361 10.8049 29.7305 10.7119C29.8248 10.6189 29.9 10.508 29.9512 10.3857C30.0022 10.2636 30.0283 10.1324 30.0283 10C30.0283 9.86758 30.0022 9.73643 29.9512 9.61426C29.9 9.49204 29.8248 9.38111 29.7305 9.28809C29.6361 9.19508 29.5243 9.12168 29.4014 9.07227C29.2785 9.0229 29.147 8.99818 29.0146 9L23.0283 9C23.0283 8.86753 23.0013 8.73647 22.9502 8.61426C22.8991 8.49212 22.8247 8.38109 22.7305 8.28809C22.6362 8.19511 22.5242 8.12171 22.4014 8.07227C22.2786 8.02287 22.147 7.99826 22.0146 8L18.0146 8Z" />
             </svg>
@@ -67,7 +68,7 @@
 
           <!-- Hide button: same rect-button component as Info, but a disc with an X cut out
                (fill-rule evenodd). Shown only on the empty / idle screen; hides the window. -->
-          <button id="hide-button" class="rect-button" type="button" aria-label="Hide">
+          <button id="hide-button" class="rect-button" type="button" aria-label="Hide" data-i18n-aria-label="launcher.aria.hide">
             <svg class="icon-hide" viewBox="0 0 40 40" aria-hidden="true">
               <path
                 fill-rule="evenodd"
@@ -88,7 +89,7 @@
       <section id="error-popup" class="popup" aria-hidden="true">
         <div class="popup-veil"></div>
         <div class="popup-panel">
-          <div class="popup-message">Something went wrong</div>
+          <div class="popup-message" data-i18n="launcher.errorTitle">Something went wrong</div>
           <div class="popup-detail" id="error-message"></div>
         </div>
       </section>
@@ -104,14 +105,17 @@
           <div class="popup-message" id="confirm-message"></div>
           <!-- Install mode only: the destination path (filled from JS), shown in case the installer
                opens a non-silent folder picker. Selectable so it can be copied. -->
+          <!-- Mixed markup: only the leading TEXT is localized via its own [data-i18n] span; the <br/>
+               and #confirm-path (filled from JS) stay untouched — no textContent on the parent. -->
           <div class="popup-detail" id="confirm-description">
-            Since not all installers support silent mode, during installation you need to specify the
-            following path:<br /><span class="confirm-path" id="confirm-path"></span>
+            <span data-i18n="launcher.installPathNote"
+              >Since not all installers support silent mode, during installation you need to specify the following path:</span
+            ><br /><span class="confirm-path" id="confirm-path"></span>
           </div>
         </div>
         <div class="confirm-actions">
-          <button id="confirm-yes" class="text-button" type="button">Yes</button>
-          <button id="confirm-no" class="text-button" type="button">No</button>
+          <button id="confirm-yes" class="text-button" type="button" data-i18n="common.yes">Yes</button>
+          <button id="confirm-no" class="text-button" type="button" data-i18n="common.no">No</button>
         </div>
       </section>
     </main>

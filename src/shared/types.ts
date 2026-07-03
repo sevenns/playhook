@@ -1,6 +1,7 @@
 // Shared contract between main, preload and renderer.
 // Types only — the file compiles to empty JS and creates no runtime dependencies,
 // so the renderer can import from here via `import type` without require.
+import type { Locale } from './i18n/index';
 
 /** Display name (window title / tray tooltip). The %APPDATA% data folder is derived separately by
  * Electron from package.json `name` (currently "playhook"). */
@@ -50,7 +51,7 @@ export interface SteamManifest {
 }
 
 /**
- * Raw `game.json` manifest after zod-schema validation (section 3a).
+ * Raw `game.json` manifest after zod-schema validation.
  * The executable/saveOnCard paths and each heroImage entry are relative to the SD root;
  * pcSavePath is absolute with an env prefix from the whitelist.
  */
@@ -113,7 +114,7 @@ export interface SoundManifest {
 }
 
 /**
- * Manifest with already-resolved and security-checked paths (P6/R7).
+ * Manifest with already-resolved and security-checked paths.
  * All *Path values are absolute; the card's relative paths are verified to stay
  * "inside the root", and pcSavePath is expanded from the env whitelist.
  */
@@ -259,7 +260,7 @@ export interface GameInfo {
   readonly steamUninstalling?: boolean;
 }
 
-/** The flow state machine (discriminated union, section 4). */
+/** The flow state machine (discriminated union). */
 export type AppState =
   | { readonly kind: 'idle' }
   | { readonly kind: 'ready'; readonly game: GameInfo }
@@ -298,11 +299,20 @@ export type AutoUpdateMode = 'download' | 'download-install' | 'off';
 /** UI theme for the settings window. `system` follows the OS light/dark preference. */
 export type ThemeMode = 'system' | 'light' | 'dark';
 
+/**
+ * UI language mode (persisted in settings.json). `system` resolves to the OS locale in main
+ * (`app.getPreferredSystemLanguages()`), `en`/`ru` are explicit. The resolved effective `Locale` is what
+ * travels over IPC to the renderers; the raw mode only lives in the settings form. Mirrors ThemeMode.
+ */
+export type LanguageMode = 'system' | 'en' | 'ru';
+
 /** App-wide settings (settings.json in userData), separate from per-game PcStore data. */
 export interface AppSettings {
   readonly schemaVersion: 1;
   readonly autoUpdate: AutoUpdateMode;
   readonly theme: ThemeMode;
+  /** UI language. Default 'system' → resolved from the OS locale in main. Mirrors `theme`. */
+  readonly language: LanguageMode;
   /** Receive pre-release (beta) updates. Default false → the stable channel only. */
   readonly allowPrerelease: boolean;
   /** Enable the global Start+Back gamepad chord that summons the launcher. Default true. */
@@ -350,6 +360,10 @@ export const IPC = {
   volumeRequest: 'volume:request',
   /** main → game-renderer: updated audio volumes (pushed when changed in the settings window). */
   volumeUpdate: 'volume:update',
+  /** game-renderer → main (invoke): request the current effective UI locale (on window startup). */
+  languageRequest: 'app:language-request',
+  /** main → game-renderer: updated effective UI locale (pushed when the language changes). */
+  languageUpdate: 'app:language-update',
 
   // ── Settings window: updates + app settings (separate namespace from the game channels) ──
   /** main → settings-renderer: the current UpdateStatus snapshot (pushed on every change). */
@@ -376,6 +390,12 @@ export const IPC = {
   settingsSetMusicVolume: 'settings:set-music-volume',
   /** settings-renderer → main: set the UI sound-effects volume 0..1 (payload number). */
   settingsSetSfxVolume: 'settings:set-sfx-volume',
+  /** settings-renderer → main: change the UI language (payload LanguageMode). */
+  settingsSetLanguage: 'settings:set-language',
+  /** settings-renderer → main (invoke): request the current effective UI locale (on window startup). */
+  settingsLanguageRequest: 'settings:language-request',
+  /** main → settings-renderer: updated effective UI locale (pushed when the language changes). */
+  settingsLanguageUpdate: 'settings:language-update',
   /** settings-renderer → main (invoke): reset all settings to defaults → returns the new AppSettings. */
   settingsReset: 'settings:reset',
   /** settings-renderer → main (invoke): request the app version string. */
@@ -416,6 +436,10 @@ export const IPC = {
   configEditorCommand: 'config:editor-command',
   /** configure-renderer → main: recolor THIS window's native title-bar overlay for the theme. */
   configTitleBarOverlay: 'config:titlebar-overlay',
+  /** configure-renderer → main (invoke): request the current effective UI locale (on window startup). */
+  configLanguageRequest: 'config:language-request',
+  /** main → configure-renderer: updated effective UI locale (pushed when the language changes). */
+  configLanguageUpdate: 'config:language-update',
 } as const;
 
 /** Editor commands dispatched from the Configure window's native right-click menu. */
@@ -493,6 +517,10 @@ export interface RendererApi {
   requestVolumes(): Promise<AudioVolumes>;
   /** Live audio-volume updates, pushed when changed in the settings window. */
   onVolumesUpdate(callback: (volumes: AudioVolumes) => void): void;
+  /** Current effective UI locale (on window startup). */
+  getLanguage(): Promise<Locale>;
+  /** Live UI-locale updates, pushed when the language changes. */
+  onLanguageUpdate(callback: (locale: Locale) => void): void;
 }
 
 /** API that the settings preload exposes on `window.settingsApi` (separate from the game `api`). */
@@ -508,6 +536,12 @@ export interface SettingsApi {
   setSummonHotkey(on: boolean): void;
   setMusicVolume(volume: number): void;
   setSfxVolume(volume: number): void;
+  /** Change the UI language (the effective locale comes back via onLanguageUpdate). */
+  setLanguage(mode: LanguageMode): void;
+  /** Current effective UI locale (on window startup). */
+  getLanguage(): Promise<Locale>;
+  /** Live UI-locale updates, pushed when the language changes. */
+  onLanguageUpdate(callback: (locale: Locale) => void): void;
   /** Resets all settings to defaults; resolves with the new AppSettings so the UI can re-render. */
   reset(): Promise<AppSettings>;
   /** Tell main to recolor the native caption buttons to match the effective (dark/light) theme. */
@@ -547,6 +581,10 @@ export interface ConfigureApi {
   onEditorCommand(callback: (command: ConfigEditorCommand) => void): void;
   /** Tell main to recolor THIS window's native caption buttons to match the effective theme. */
   setTitleBarDark(dark: boolean): void;
+  /** Current effective UI locale (on window startup). */
+  getLanguage(): Promise<Locale>;
+  /** Live UI-locale updates, pushed when the language changes. */
+  onLanguageUpdate(callback: (locale: Locale) => void): void;
 }
 
 declare global {

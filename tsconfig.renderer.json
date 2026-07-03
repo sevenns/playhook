@@ -16,8 +16,23 @@
     "types": []
   },
   "include": ["src/renderer/**/*.ts", "src/shared/**/*.ts"],
-  // settings.ts / configure.ts are bundled by esbuild (build:settings / build:configure), not emitted by
-  // tsc — so they're excluded here. They are still type-checked via the root tsconfig.json's
+  // settings.ts / configure.ts AND the whole app.ts graph are bundled by esbuild (build:settings /
+  // build:configure / build:app), not emitted by tsc — so they're excluded here. The game renderer moved
+  // to esbuild because a runtime dictionary import from a tsc-emitted app.js would break (dist/shared is
+  // overwritten as CJS by build:main). All of these are still type-checked via the root tsconfig.json's
   // `npm run typecheck` (audit N5).
-  "exclude": ["src/renderer/settings.ts", "src/renderer/configure.ts"]
+  "exclude": [
+    "src/renderer/settings.ts",
+    "src/renderer/configure.ts",
+    "src/renderer/app.ts",
+    "src/renderer/audio.ts",
+    "src/renderer/hero.ts",
+    "src/renderer/controls.ts",
+    "src/renderer/format.ts",
+    "src/renderer/state-view.ts",
+    "src/renderer/dom.ts",
+    "src/renderer/gamepad.ts",
+    "src/renderer/dominant-color.ts",
+    "src/renderer/i18n-dom.ts"
+  ]
 }

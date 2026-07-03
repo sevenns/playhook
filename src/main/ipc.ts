@@ -1,4 +1,4 @@
-// Flow orchestrator + IPC registration (stages 5/10).
+// Flow orchestrator + IPC registration.
 // This is where the state machine lives: the controller listens to drive-watcher, reacts to
 // the "Launch" action from the renderer, runs the sequence sync→spawn→wait→sync
 // and replicates AppState to the window. All FS/process work happens only here (in main).
@@ -16,6 +16,7 @@ import {
   type ResolvedManifest,
   type Stats,
 } from '../shared/types';
+import { type Translator } from '../shared/i18n/index';
 import { type StateManager } from './state';
 import { type GameWindow } from './window';
 import { type PcStore } from './pc-store';
@@ -47,12 +48,14 @@ export interface ControllerDeps {
   readonly store: PcStore;
   readonly stats: StatsService;
   readonly watcher: DriveWatcher;
+  /** The current translator (read live so a language change applies to freshly-generated messages). */
+  readonly getTranslator: () => Translator;
 }
 
-// Grace-poll cadence after the installer exits, waiting for the game executable to appear (C1).
+// Grace-poll cadence after the installer exits, waiting for the game executable to appear.
 const INSTALL_POLL_INTERVAL_MS = 1000;
 
-// Directory removal retries (I5/R-UNINST-SELFCOPY): an Inno uninstaller forks a copy of itself into
+// Directory removal retries: an Inno uninstaller forks a copy of itself into
 // temp and exits early, so right after waitForExit it may still hold `unins000.*` for a moment — a
 // few backed-off retries let the lock clear before fse.remove succeeds.
 const REMOVE_RETRY_ATTEMPTS = 3;
@@ -158,7 +161,7 @@ function parseCommandLine(command: string): string[] {
 }
 
 /**
- * Resolves what to launch to uninstall an install-mode game (§2): FS search in the install dir first
+ * Resolves what to launch to uninstall an install-mode game: FS search in the install dir first
  * (deterministic, no parsing/encoding issues — we build the silent args), then a registry fallback for a
  * rare nonstandard NSIS uninstaller name. Returns null → the caller does a plain directory removal.
  */
@@ -200,7 +203,7 @@ async function resolveUninstaller(
 }
 
 /**
- * Removes a directory with a few backed-off retries (I5): the forked Inno uninstaller may still hold
+ * Removes a directory with a few backed-off retries: the forked Inno uninstaller may still hold
  * files for a moment after waitForExit. Checks `signal.aborted` between attempts (fse.remove itself is
  * not interruptible). Throws the last error if every attempt fails.
  */
@@ -230,7 +233,7 @@ export class GameController {
   // launching). Only the reload path is raced like this — an ordinary insert never is.
   private reloadInFlight = false;
   private abort: AbortController | null = null;
-  // A card swapped in WHILE a launch/install was in flight (E1): DriveWatcher can swap without an
+  // A card swapped in WHILE a launch/install was in flight: DriveWatcher can swap without an
   // empty tick, so we stash the new root, abort the in-flight sequence, and replay onInsert from its
   // finally (after launchInFlight clears) — otherwise the aborted sequence could set state over the new card.
   private pendingRoot: string | null = null;
@@ -238,10 +241,10 @@ export class GameController {
   private currentAudio: AudioAssets | null = null;
   // Hero images for the current card, sent on their own channel (not on every AppState) — see HeroAssets.
   private currentHero: HeroAssets | null = null;
-  // Reads card assets (hero/audio/wallpaper) into data URLs; owns the bundled-wallpaper cache (I1).
+  // Reads card assets (hero/audio/wallpaper) into data URLs; owns the bundled-wallpaper cache.
   private readonly assets = new AssetReader();
   // Steam-mode background re-detect poller (timer + tick + optimistic uninstall request), extracted from
-  // this controller (I1). Reaches back only through the narrow accessor seam below.
+  // this controller. Reaches back only through the narrow accessor seam below.
   private readonly steamWatch = new SteamInstallWatch({
     getManifest: () => this.current,
     isLaunchInFlight: () => this.launchInFlight,
@@ -251,6 +254,11 @@ export class GameController {
   });
 
   constructor(private readonly deps: ControllerDeps) {}
+
+  /** The current translator (a message is fixed at the language of the moment it is generated). */
+  private get t(): Translator {
+    return this.deps.getTranslator();
+  }
 
   /** Subscriptions to drive-watcher, state replication to the window, IPC handlers. */
   init(): void {
@@ -316,7 +324,7 @@ export class GameController {
   // ── Reaction to card insertion ───────────────────────────────────────────
 
   private async onInsert(root: string): Promise<void> {
-    // E1: a card was swapped in mid-flight (no empty tick). Don't process it now — that would race the
+    // A card was swapped in mid-flight (no empty tick). Don't process it now — that would race the
     // in-flight sequence. Stash it, abort the current flow; its finally replays this once it unwinds.
     if (this.launchInFlight) {
       log.info(`[insert] card swapped during launch/install — deferring root="${root}"`);
@@ -343,7 +351,7 @@ export class GameController {
     // Documents is resolved via the system Known Folder API (the same one the game uses),
     // so %DOCUMENTS% in the manifest maps to the real save folder regardless of UI
     // language or OneDrive redirection. Safe to read here — app is ready by now.
-    const env: ManifestEnv = { documents: app.getPath('documents') };
+    const env: ManifestEnv = { documents: app.getPath('documents'), t: this.t };
     const result = await readManifest(root, env);
     if (!result.ok) {
       // No valid game determined → keep the window hidden (the reason is in the log). We still set
@@ -399,9 +407,9 @@ export class GameController {
   async reloadManifest(root: string): Promise<{ ok: true } | { ok: false; message: string }> {
     const kind = this.deps.state.get().kind;
     if ((kind !== 'ready' && kind !== 'error' && kind !== 'idle') || this.launchInFlight) {
-      return { ok: false, message: 'Finish what’s running before applying the config' };
+      return { ok: false, message: this.t('errors.finishBeforeApply') };
     }
-    if (this.reloadInFlight) return { ok: false, message: 'a reload is already in progress' };
+    if (this.reloadInFlight) return { ok: false, message: this.t('errors.reloadInProgress') };
     this.reloadInFlight = true;
     try {
       return await this.loadCard(root, { focus: false });
@@ -425,7 +433,7 @@ export class GameController {
   private onRemove(): void {
     this.cardPresent = false;
     const kind = this.deps.state.get().kind;
-    // During play/sync, removal is expected (R2): the flow continues, sync-out
+    // During play/sync, removal is expected: the flow continues, sync-out
     // will see cardPresent=false and put the task into pending-flush. We don't touch state.
     if (
       kind === 'running' ||
@@ -435,10 +443,10 @@ export class GameController {
       kind === 'syncing-in' ||
       kind === 'syncing-out'
     ) {
-      // During install, removal is also expected (A5): the installer reads from the card, so yanking
+      // During install, removal is also expected: the installer reads from the card, so yanking
       // it makes the install fail → <exe> won't appear → we stay on "Install"; next attempt pre-cleans.
       // During uninstall it targets the PC, so it completes; runUninstallSequence then sees cardPresent
-      // = false and goes idle + hide on its own (R-CARDPULL-UNINSTALL).
+      // = false and goes idle + hide on its own.
       return;
     }
     // ready / error / idle → no card, hide the window. Stop any Steam re-detect poller (the card is gone;
@@ -456,7 +464,7 @@ export class GameController {
 
   private onLaunchRequested(): void {
     // Ignore input outside the ready state — this is the "ignore-gamepad" during play
-    // (harmless under any interpretation of the Gamepad API focus bug, R5).
+    // (harmless under any interpretation of the Gamepad API focus bug).
     const snapshot = this.deps.state.get();
     if (snapshot.kind !== 'ready' || this.launchInFlight || this.reloadInFlight) return;
     const manifest = this.current;
@@ -501,21 +509,21 @@ export class GameController {
    * and the download — possibly hours/GBs) and returns WITHOUT entering a blocking `installing` state.
    * We stay on the `ready` ("Install") screen; the background re-detect poller (started by enterReady)
    * flips the button to "Play" once Steam's .acf reports the game fully installed. Steam itself collapses
-   * repeated `steam://install` calls, so no debounce is needed. Pre-checks getSteamPath (I8): openExternal
+   * repeated `steam://install` calls, so no debounce is needed. Pre-checks getSteamPath: openExternal
    * doesn't reliably reject when steam:// is unregistered.
    */
   private async runSteamInstall(manifest: ResolvedManifest, info: GameInfo): Promise<void> {
     const appid = manifest.steam?.appid;
     if (appid === undefined) return; // defensive: onLaunchRequested only calls this in steam mode
     if ((await getSteamPath()) === null) {
-      this.sendError('Steam is not installed');
+      this.sendError(this.t('errors.steamNotInstalled'));
       return;
     }
     try {
       await openSteamUri(`steam://install/${appid}`);
       log.info(`[steam-install] opened steam://install/${appid} id=${manifest.raw.id}`);
     } catch (cause) {
-      this.sendError(`failed to open Steam install: ${describe(cause)}`);
+      this.sendError(this.t('errors.steamOpenInstall', { cause: describe(cause) }));
       return;
     }
     // Ensure the re-detect poller is running so the button flips to "Play" when the download completes
@@ -529,7 +537,7 @@ export class GameController {
    * Steam uninstall action: fire-and-forget, mirroring runSteamInstall. Opens `steam://uninstall/<appid>`
    * (Steam shows its own confirmation/removal UI) and returns WITHOUT a blocking `uninstalling` state. We
    * stay on the `ready` ("Play"/"Uninstall") screen; the background poller flips the button back to
-   * "Install" once Steam removes the .acf. Pre-checks getSteamPath (I8).
+   * "Install" once Steam removes the .acf. Pre-checks getSteamPath.
    */
   /**
    * Opens Steam's Downloads page (steam://open/downloads). Triggered by the Play button while a Steam
@@ -540,7 +548,7 @@ export class GameController {
     try {
       await openSteamUri('steam://open/downloads');
     } catch (cause) {
-      this.sendError(`failed to open Steam downloads: ${describe(cause)}`);
+      this.sendError(this.t('errors.steamOpenDownloads', { cause: describe(cause) }));
     }
   }
 
@@ -548,14 +556,14 @@ export class GameController {
     const appid = manifest.steam?.appid;
     if (appid === undefined) return; // defensive: onUninstallRequested only calls this in steam mode
     if ((await getSteamPath()) === null) {
-      this.sendError('Steam is not installed');
+      this.sendError(this.t('errors.steamNotInstalled'));
       return;
     }
     try {
       await openSteamUri(`steam://uninstall/${appid}`);
       log.info(`[steam-uninstall] opened steam://uninstall/${appid} id=${manifest.raw.id}`);
     } catch (cause) {
-      this.sendError(`failed to open Steam uninstall: ${describe(cause)}`);
+      this.sendError(this.t('errors.steamOpenUninstall', { cause: describe(cause) }));
       return;
     }
     // Optimistically show "Uninstalling…": record the request and flip the UI. The poller clears it when
@@ -596,15 +604,15 @@ export class GameController {
       if (manifest.steam !== undefined) {
         state.set({ kind: 'launching', game: info });
         // Pre-check: openExternal doesn't reliably reject when steam:// is unregistered, so gate the
-        // launch on Steam actually being installed (I8) instead of relying on a reject.
+        // launch on Steam actually being installed instead of relying on a reject.
         if ((await getSteamPath()) === null) {
-          this.failSequence('launch', info, 'Steam is not installed');
+          this.failSequence('launch', info, this.t('errors.steamNotInstalled'));
           return;
         }
         try {
           await openSteamUri(`steam://rungameid/${manifest.steam.appid}`);
         } catch (cause) {
-          this.failSequence('launch', info, `failed to launch via Steam: ${describe(cause)}`);
+          this.failSequence('launch', info, this.t('errors.launchViaSteam', { cause: describe(cause) }));
           return;
         }
         // No launcher pid → null. watchProcesses is guaranteed non-empty by the schema in steam mode.
@@ -635,7 +643,7 @@ export class GameController {
         try {
           proc = await launchGame(manifest);
         } catch (cause) {
-          this.failSequence('launch', info, `failed to launch the game: ${describe(cause)}`);
+          this.failSequence('launch', info, this.t('errors.launchGame', { cause: describe(cause) }));
           return;
         }
         if (watchProcesses !== undefined && watchProcesses.length > 0) {
@@ -660,7 +668,7 @@ export class GameController {
         } else {
           const started = await waitForStart(proc, manifest.raw.launchTimeoutSec, abort.signal);
           if (!started) {
-            this.failSequence('launch', info, 'the game did not start (process wait timed out)');
+            this.failSequence('launch', info, this.t('errors.gameDidNotStart'));
             return;
           }
           since = Date.now();
@@ -693,7 +701,7 @@ export class GameController {
       proc?.dispose();
       this.launchInFlight = false;
       this.abort = null;
-      // Replay a card that was swapped in mid-flight (E1), now that launchInFlight has cleared.
+      // Replay a card that was swapped in mid-flight, now that launchInFlight has cleared.
       this.resumePendingInsert();
     }
   }
@@ -701,28 +709,28 @@ export class GameController {
   /**
    * Runs the installer for an install-mode game that isn't installed yet (mirrors runLaunchSequence's
    * infrastructure: launchInFlight/abort, the LaunchAbortedError guard, the pendingRoot replay).
-   * Pre-cleans the install dir (C1), runs the installer silently, then grace-polls for the executable —
+   * Pre-cleans the install dir, runs the installer silently, then grace-polls for the executable —
    * on success the button becomes "Play"; otherwise we stay on "Install" and surface the reason.
    */
   private async runInstallSequence(manifest: ResolvedManifest, info: GameInfo): Promise<void> {
     const install = manifest.install;
     if (install === undefined) return; // defensive: onLaunchRequested only calls this in install mode
     const { state, window, stats } = this.deps;
-    this.launchInFlight = true; // E3: set/cleared explicitly, like runLaunchSequence
+    this.launchInFlight = true; // set/cleared explicitly, like runLaunchSequence
     const abort = new AbortController();
     this.abort = abort;
     let proc: GameProcess | null = null;
     try {
       state.set({ kind: 'installing', game: info });
 
-      // Pre-clean (C1): a partial install left by a previous failed attempt could carry a stale <exe> →
+      // Pre-clean: a partial install left by a previous failed attempt could carry a stale <exe> →
       // a bogus "Play". We're (re)installing anyway, so a clean directory is safe.
       await fse.remove(install.dir);
 
       try {
         proc = await launchInstaller(install);
       } catch (cause) {
-        this.failSequence('install', info, `failed to start the installer: ${describe(cause)}`);
+        this.failSequence('install', info, this.t('errors.startInstaller', { cause: describe(cause) }));
         return;
       }
 
@@ -735,7 +743,7 @@ export class GameController {
         abort.signal,
       );
       if (!installed) {
-        this.failSequence('install', info, 'installation did not complete (the game executable did not appear)');
+        this.failSequence('install', info, this.t('errors.installIncomplete'));
         return;
       }
 
@@ -747,7 +755,7 @@ export class GameController {
       this.enterReady(installedInfo);
       window.showAndFocus();
     } catch (cause) {
-      if (cause instanceof LaunchAbortedError) return; // aborted by shutdown or a card swap (E1/E2)
+      if (cause instanceof LaunchAbortedError) return; // aborted by shutdown or a card swap
       this.failSequence('install', info, describe(cause));
     } finally {
       proc?.dispose();
@@ -759,8 +767,8 @@ export class GameController {
 
   /**
    * Polls for the game executable to appear within `timeoutSec` (grace window after the installer
-   * exits, C1). Throws LaunchAbortedError if aborted, so a mid-install card swap unwinds WITHOUT
-   * setting state over the new card (E1) — never returns false on abort.
+   * exits). Throws LaunchAbortedError if aborted, so a mid-install card swap unwinds WITHOUT
+   * setting state over the new card — never returns false on abort.
    */
   private async pollForExecutable(
     executablePath: string,
@@ -786,14 +794,14 @@ export class GameController {
     const install = manifest.install;
     if (install === undefined) return; // defensive: onUninstallRequested only calls this in install mode
     const { state, window, stats } = this.deps;
-    this.launchInFlight = true; // E3: set/cleared explicitly, like runInstallSequence
+    this.launchInFlight = true; // set/cleared explicitly, like runInstallSequence
     const abort = new AbortController();
     this.abort = abort;
     let proc: GameProcess | null = null;
     try {
       state.set({ kind: 'uninstalling', game: info });
 
-      // Run the game's own uninstaller if we can resolve one (FS search → registry fallback, §2). Any
+      // Run the game's own uninstaller if we can resolve one (FS search → registry fallback). Any
       // launch/wait failure is NON-fatal: we log it and fall through to the directory sweep. Only a
       // LaunchAbortedError (from waitForExit on a card swap) propagates to unwind cleanly.
       const target = await resolveUninstaller(install);
@@ -813,11 +821,11 @@ export class GameController {
 
       // fse.remove is NOT interrupted by the signal (unlike waitForExit), so check the abort flag
       // manually — strictly BEFORE reading cardPresent / rebuilding info — so a mid-uninstall card swap
-      // doesn't set state over the new card (the finally → resumePendingInsert handles it). (I2)
+      // doesn't set state over the new card (the finally → resumePendingInsert handles it).
       if (abort.signal.aborted) return;
 
       // The card may have been yanked during the uninstall (it targets the PC, so it completed): no card
-      // → idle + hide, mirroring abandonWatchedLaunch / onRemove's cleanup (R-CARDPULL-UNINSTALL).
+      // → idle + hide, mirroring abandonWatchedLaunch / onRemove's cleanup.
       if (!this.cardPresent) {
         this.current = null;
         this.setAudio(null);
@@ -835,7 +843,7 @@ export class GameController {
       this.enterReady(updatedInfo);
       window.showAndFocus();
     } catch (cause) {
-      if (cause instanceof LaunchAbortedError) return; // aborted by shutdown or a card swap (E1/E2)
+      if (cause instanceof LaunchAbortedError) return; // aborted by shutdown or a card swap
       this.failSequence('uninstall', info, describe(cause));
     } finally {
       proc?.dispose();
@@ -845,7 +853,7 @@ export class GameController {
     }
   }
 
-  /** Replays a card insertion deferred during an in-flight launch/install (E1). No-op if none pending. */
+  /** Replays a card insertion deferred during an in-flight launch/install. No-op if none pending. */
   private resumePendingInsert(): void {
     const root = this.pendingRoot;
     if (root === null) return;
@@ -868,7 +876,7 @@ export class GameController {
 
   /**
    * The watched-launcher path ended without the game ever becoming visible: the user closed the launcher
-   * without playing, or the game runs elevated / as a service and `tasklist` can't see it (R4). This is
+   * without playing, or the game runs elevated / as a service and `tasklist` can't see it. This is
    * neither a failure nor a play session — we do NOT call stats.recordPlay (it would bump launchCount and
    * lastPlayedAt for a 0s session) and we do NOT surface an error popup. Back to the normal screen; if the
    * card is already gone, go idle and hide, mirroring onRemove's cleanup.
@@ -890,7 +898,7 @@ export class GameController {
 
   private async performSyncOut(manifest: ResolvedManifest, stats: Stats): Promise<void> {
     const id = manifest.raw.id;
-    // The card is already removed (the expected R2 scenario) → defer PC→SD into pending-flush.
+    // The card is already removed (the expected scenario) → defer PC→SD into pending-flush.
     if (!this.cardPresent) {
       if (manifest.pcSavePath !== undefined) {
         await this.deps.store.enqueuePcToSd(id, manifest.pcSavePath);

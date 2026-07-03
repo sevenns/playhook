@@ -1,4 +1,4 @@
-// Steam-mode background re-detect poller (audit I1 — split out of the GameController god-object).
+// Steam-mode background re-detect poller (split out of the GameController god-object).
 // While a Steam game sits on the `ready` screen with the card present, this polls Steam's .acf state
 // so the UI flips Install↔Play↔Uninstall as a (possibly hours-long) download/uninstall completes —
 // including changes the user makes in Steam directly. It owns its timer, the in-flight guard and the

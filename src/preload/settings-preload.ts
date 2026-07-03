@@ -1,6 +1,6 @@
 // Typed main↔settings-renderer bridge (contextIsolation: true, nodeIntegration: false, sandbox: true).
 // Separate from preload.ts so the settings window gets its own `window.settingsApi`, isolated from the
-// game `window.api` contract (A1). As in preload.ts, channels are inlined as string LITERALS rather
+// game `window.api` contract. As in preload.ts, channels are inlined as string LITERALS rather
 // than imported from shared: a sandboxed preload cannot require arbitrary files. Only `import type`
 // from shared is allowed (types erase at compile time). `satisfies Partial<typeof IPC>` restores a
 // compile-time guard over these literals: a wrong value (TS2322) or a typo'd key (TS2353) fails
@@ -10,11 +10,13 @@ import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
 import type {
   AppSettings,
   AutoUpdateMode,
+  LanguageMode,
   SettingsApi,
   ThemeMode,
   UpdateStatus,
 } from '../shared/types';
 import type { IPC } from '../shared/types';
+import type { Locale } from '../shared/i18n/index';
 
 const CHANNELS = {
   updateStatusUpdate: 'update:status',
@@ -29,6 +31,9 @@ const CHANNELS = {
   settingsSetSummonHotkey: 'settings:set-summon-hotkey',
   settingsSetMusicVolume: 'settings:set-music-volume',
   settingsSetSfxVolume: 'settings:set-sfx-volume',
+  settingsSetLanguage: 'settings:set-language',
+  settingsLanguageRequest: 'settings:language-request',
+  settingsLanguageUpdate: 'settings:language-update',
   settingsReset: 'settings:reset',
   titleBarOverlayUpdate: 'settings:titlebar-overlay',
   appVersionRequest: 'app:version',
@@ -68,6 +73,17 @@ const api: SettingsApi = {
   },
   setSfxVolume(volume: number): void {
     ipcRenderer.send(CHANNELS.settingsSetSfxVolume, volume);
+  },
+  setLanguage(mode: LanguageMode): void {
+    ipcRenderer.send(CHANNELS.settingsSetLanguage, mode);
+  },
+  getLanguage(): Promise<Locale> {
+    return ipcRenderer.invoke(CHANNELS.settingsLanguageRequest) as Promise<Locale>;
+  },
+  onLanguageUpdate(callback: (locale: Locale) => void): void {
+    ipcRenderer.on(CHANNELS.settingsLanguageUpdate, (_event: IpcRendererEvent, locale: Locale) => {
+      callback(locale);
+    });
   },
   reset(): Promise<AppSettings> {
     return ipcRenderer.invoke(CHANNELS.settingsReset) as Promise<AppSettings>;

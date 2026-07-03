@@ -22,6 +22,7 @@ import {
   type ConfigTemplates,
   type DriveCandidate,
 } from '../shared/types';
+import { type Translator } from '../shared/i18n/index';
 import { type AppSettingsStore } from './app-settings';
 import { listDriveCandidates } from './drive-watcher';
 import { validateManifestText, manifestJsonSchema } from './manifest';
@@ -31,7 +32,7 @@ import { describe } from './util';
 import { log } from './logger';
 
 // Blank-drive insertion is only visible via enumeration (DriveWatcher events fire for cards WITH a
-// game.json only, R6), so we poll while the window is visible. 2s is a fine cost for a foreground window.
+// game.json only), so we poll while the window is visible. 2s is a fine cost for a foreground window.
 const DRIVE_POLL_INTERVAL_MS = 2000;
 
 export interface GameConfigDeps {
@@ -40,6 +41,8 @@ export interface GameConfigDeps {
   readonly getActiveRoot: () => string | null;
   /** Applies an edited game.json to the active card without a restart (GameController.reloadManifest). */
   readonly reloadManifest: (root: string) => Promise<{ ok: true } | { ok: false; message: string }>;
+  /** The current translator (read live so a language change applies to labels/validation/errors). */
+  readonly getTranslator: () => Translator;
 }
 
 export class GameConfigService {
@@ -52,13 +55,13 @@ export class GameConfigService {
   /** Registers all config:* invoke handlers once (the service is a singleton). */
   init(): void {
     ipcMain.handle(IPC.configDrivesRequest, (): Promise<readonly DriveCandidate[]> =>
-      listDriveCandidates(this.deps.getActiveRoot()),
+      listDriveCandidates(this.deps.getActiveRoot(), this.deps.getTranslator()),
     );
     ipcMain.handle(IPC.configRead, (_event, root: string): Promise<ConfigReadResult> =>
       this.readConfig(root),
     );
     ipcMain.handle(IPC.configValidate, (_event, text: string): ConfigValidationResult =>
-      validateManifestText(text),
+      validateManifestText(text, this.deps.getTranslator()),
     );
     ipcMain.handle(
       IPC.configSave,
@@ -106,29 +109,34 @@ export class GameConfigService {
   // ── Reading / saving game.json ─────────────────────────────────────────────
 
   private async readConfig(root: string): Promise<ConfigReadResult> {
+    const t = this.deps.getTranslator();
     if (!(await this.isAllowedRoot(root))) {
-      return { ok: false, message: 'the selected drive is no longer available' };
+      return { ok: false, message: t('errors.driveUnavailable') };
     }
     try {
       const text = await fse.readFile(path.join(root, MANIFEST_FILENAME), 'utf8');
       return { ok: true, text };
     } catch (cause) {
-      return { ok: false, message: `cannot read ${MANIFEST_FILENAME}: ${describe(cause)}` };
+      return {
+        ok: false,
+        message: t('errors.cannotReadManifest', { file: MANIFEST_FILENAME, cause: describe(cause) }),
+      };
     }
   }
 
   private async save(root: string, text: string): Promise<ConfigSaveResult> {
+    const t = this.deps.getTranslator();
     // 1. main never trusts the renderer's path — it must be a live removable candidate.
     if (!(await this.isAllowedRoot(root))) {
-      return { saved: false, message: 'the selected drive is no longer available' };
+      return { saved: false, message: t('errors.driveUnavailable') };
     }
     // 2. re-validate server-side (guards against a UI race that enabled Save with a stale verdict).
-    const validation = validateManifestText(text);
+    const validation = validateManifestText(text, t);
     if (!validation.ok) {
       const first = validation.issues[0];
       return {
         saved: false,
-        message: first !== undefined ? `${first.path}: ${first.message}` : 'the config is invalid',
+        message: first !== undefined ? `${first.path}: ${first.message}` : t('errors.configInvalid'),
       };
     }
     // 3. atomic write — reuse the card-hardened writer (temp→move, EBUSY/EPERM retry, drive-root nuance).
@@ -136,7 +144,10 @@ export class GameConfigService {
     try {
       await writeFileAtomic(path.join(root, MANIFEST_FILENAME), text);
     } catch (cause) {
-      return { saved: false, message: `failed to write ${MANIFEST_FILENAME}: ${describe(cause)}` };
+      return {
+        saved: false,
+        message: t('errors.cannotWriteManifest', { file: MANIFEST_FILENAME, cause: describe(cause) }),
+      };
     }
     // 4. apply. Active card → reload in place; any other (blank/second) card → DriveWatcher handles it
     // (≤1s if no active card; otherwise scan() stabilization keeps the active one and this loads on removal).
@@ -151,7 +162,7 @@ export class GameConfigService {
 
   /** True when `root` is a current removable/non-system mountpoint (anti-arbitrary-write check). */
   private async isAllowedRoot(root: string): Promise<boolean> {
-    const candidates = await listDriveCandidates(this.deps.getActiveRoot());
+    const candidates = await listDriveCandidates(this.deps.getActiveRoot(), this.deps.getTranslator());
     return candidates.some((candidate) => candidate.root === root);
   }
 
@@ -174,7 +185,7 @@ export class GameConfigService {
     if (this.polling) return; // skip overlapping ticks (drivelist can be slow on some readers)
     this.polling = true;
     try {
-      const drives = await listDriveCandidates(this.deps.getActiveRoot());
+      const drives = await listDriveCandidates(this.deps.getActiveRoot(), this.deps.getTranslator());
       const window = this.window;
       if (window !== null && !window.isDestroyed()) {
         window.webContents.send(IPC.configDrivesUpdate, drives);

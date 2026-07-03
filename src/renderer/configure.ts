@@ -6,9 +6,9 @@
 // element we use, and setTheme comes from the same `@fluentui/web-components` index.
 import '@fluentui/web-components/text/define.js';
 import '@fluentui/web-components/button/define.js';
-import '@fluentui/web-components/field/define.js';
-import '@fluentui/web-components/radio/define.js';
-import '@fluentui/web-components/radio-group/define.js';
+import '@fluentui/web-components/dropdown/define.js';
+import '@fluentui/web-components/listbox/define.js';
+import '@fluentui/web-components/option/define.js';
 import { setTheme } from '@fluentui/web-components';
 import { webDarkTheme, webLightTheme } from '@fluentui/tokens';
 import { EditorView, basicSetup } from 'codemirror';
@@ -21,6 +21,11 @@ import type {
   ManifestValidationIssue,
   ThemeMode,
 } from '../shared/types';
+import { createTranslator, type Locale, type Translator } from '../shared/i18n/index.js';
+import { localizeDocument } from './i18n-dom.js';
+
+// Translator, refreshed on a language push. The HTML ships English fallback (no blank flash).
+let translator: Translator = createTranslator('en');
 
 // ── Theme (copied from settings.ts) ────────────────────────────────────────────
 const darkQuery = window.matchMedia('(prefers-color-scheme: dark)');
@@ -69,30 +74,16 @@ function readGroupValue(el: HTMLElement): string | null {
   return typeof raw === 'string' && raw.length > 0 ? raw : null;
 }
 
-// Reliably reflect the selected radio. Setting only the group's `value` was flaky on freshly-built /
-// disabled radios (the dot didn't move), so we set each fluent-radio's `checked` property directly (FAST
-// preserves properties set before upgrade) AND the group value.
-function checkRadio(group: HTMLElement, value: string): void {
-  for (const radio of group.querySelectorAll('fluent-radio')) {
-    (radio as HTMLElement & { checked?: boolean; value?: string }).checked =
-      (radio as HTMLElement & { value?: string }).value === value;
-  }
-  (group as HTMLElement & { value?: string }).value = value;
+// Sets the dropdown's selected option by value. Setting `value` re-runs the component's selectOption,
+// which also refreshes the collapsed control text (needed after a relabel). A programmatic set does NOT
+// emit a `change` event, so this never re-enters wireDropdown.
+function setDropdownValue(group: HTMLElement, value: string): void {
+  (group as HTMLElement & { value?: string | null }).value = value;
 }
 
-// fluent-radio-group's own change/value handling is unreliable when the LABEL or the gap next to the radio
-// is clicked (the dot moves visually but `value`/`change` don't update — the selection is visual-only). So
-// we drive selection deterministically: on any click inside the group, resolve the clicked row's radio and
-// apply its value; `change` still covers keyboard arrows. `apply` must be idempotent (guarded by callers).
-function wireRadioGroup(group: HTMLElement, apply: (value: string) => void): void {
-  group.addEventListener('click', (event) => {
-    const target = event.target as Element | null;
-    const field = target?.closest('fluent-field, fluent-radio') ?? null;
-    if (field === null) return;
-    const radio = field.matches('fluent-radio') ? field : field.querySelector('fluent-radio');
-    const value = (radio as (HTMLElement & { value?: string }) | null)?.value;
-    if (value !== undefined && value.length > 0) apply(value);
-  });
+// A user selection emits a single `change` event carrying the new value — no click delegation needed
+// (unlike the old radio-group, whose label clicks didn't update `value`). `apply` must be idempotent.
+function wireDropdown(group: HTMLElement, apply: (value: string) => void): void {
   group.addEventListener('change', () => {
     const value = readGroupValue(group);
     if (value !== null) apply(value);
@@ -102,6 +93,7 @@ function wireRadioGroup(group: HTMLElement, apply: (value: string) => void): voi
 const titlebarIcon = req<HTMLImageElement>('titlebar-icon');
 const titlebarSubtitle = req('titlebar-subtitle');
 const driveGroup = req('drive-group');
+const driveListbox = req('drive-listbox');
 const driveEmpty = req('drive-empty');
 const editorEl = req('editor');
 const issuesEl = req('issues');
@@ -229,14 +221,14 @@ function renderIssues(issues: readonly ManifestValidationIssue[] | null, text: s
   if (issues === null) {
     issuesEl.classList.add('valid');
     const ok = document.createElement('div');
-    ok.textContent = 'Config is valid.';
+    ok.textContent = translator('configure.configValid');
     issuesEl.append(ok);
     // Changing `id` moves the game's PC stats to a fresh key → a "new" game with zero playtime.
     const id = parseId(text);
     if (loadedId !== null && id !== null && id !== loadedId) {
       const warn = document.createElement('div');
       warn.className = 'warning';
-      warn.textContent = `Warning: id changed (${loadedId} → ${id}). Playtime stats are keyed by id and will reset for the new id.`;
+      warn.textContent = translator('configure.idChangedWarning', { from: loadedId, to: id });
       issuesEl.append(warn);
     }
     return;
@@ -264,9 +256,10 @@ function setStatus(text: string): void {
 
 // ── Confirm modal ─────────────────────────────────────────────────────────────
 let confirmResolve: ((ok: boolean) => void) | null = null;
-function confirmDialog(message: string, okLabel: string): Promise<boolean> {
+// Every confirmation asks a yes/no question; the Yes/No button labels are fixed (localized from
+// common.yes / common.no via localizeDocument), so callers pass only the message — no per-call verb.
+function confirmDialog(message: string): Promise<boolean> {
   confirmMessage.textContent = message;
-  confirmOk.textContent = okLabel;
   confirmVeil.hidden = false;
   confirmOk.focus();
   return new Promise<boolean>((resolve) => {
@@ -286,9 +279,9 @@ confirmVeil.addEventListener('click', (event) => {
 });
 
 // ── Drive picker ─────────────────────────────────────────────────────────────
-// The list is pushed every 2s while the window is visible. Rebuilding the fluent-radio DOM on every push
-// wiped the current selection (fresh elements lose the checked state), so we ONLY rebuild when the list
-// actually changed (signature compare) and reconcile the selection on every push without touching the DOM.
+// The list is pushed every 2s while the window is visible. Rebuilding the option DOM on every push would
+// drop the current selection (fresh elements start unselected), so we ONLY rebuild when the list actually
+// changed (signature compare) and reconcile the selection on every push without touching the DOM.
 let lastDrivesSig = '';
 
 function drivesSignature(list: readonly DriveCandidate[]): string {
@@ -302,7 +295,7 @@ function renderDrives(list: readonly DriveCandidate[]): void {
 
   if (list.length === 0) {
     lastDrivesSig = '';
-    driveGroup.replaceChildren();
+    driveListbox.replaceChildren();
     driveEmpty.hidden = false;
     setDisabled(driveGroup, true);
     // The selected card is gone (or none was ever present) → block editing, keep the text.
@@ -310,48 +303,41 @@ function renderDrives(list: readonly DriveCandidate[]): void {
     return;
   }
   driveEmpty.hidden = true;
+  // Re-enable the picker in case a previous empty tick disabled it (a disabled dropdown can't be reopened).
+  setDisabled(driveGroup, false);
 
   const sig = drivesSignature(list);
   const rebuilt = sig !== lastDrivesSig;
   if (rebuilt) {
     lastDrivesSig = sig;
-    rebuildRadios(list);
+    rebuildOptions(list);
   }
   reconcileSelection(list);
   if (rebuilt) {
-    // fluent-radio-group reconciles freshly-appended children on its own async init, which drops a
-    // selection set during this synchronous render — so on first open the active card only appeared
-    // checked after the next 2s poll. Re-assert on the next frame (after the group settles) so it shows
-    // immediately. Only after a rebuild (first open / genuine change), not on every poll.
+    // The dropdown's listbox processes freshly-appended options on its own async init, which can drop a
+    // value set during this synchronous render. Re-assert on the next frame (after it settles) so the
+    // selection shows immediately. Only after a rebuild (first open / genuine change), not on every poll.
     requestAnimationFrame(() => {
-      if (selectedRoot !== null) checkRadio(driveGroup, selectedRoot);
+      if (selectedRoot !== null) setDropdownValue(driveGroup, selectedRoot);
     });
   }
 }
 
-function rebuildRadios(list: readonly DriveCandidate[]): void {
-  driveGroup.replaceChildren();
-  for (const candidate of list) {
-    const field = document.createElement('fluent-field');
-    field.setAttribute('label-position', 'after');
-    const radio = document.createElement('fluent-radio');
-    radio.setAttribute('slot', 'input');
-    (radio as HTMLElement & { value?: string }).value = candidate.root;
-    const label = document.createElement('label');
-    label.setAttribute('slot', 'label');
-    label.textContent = candidate.label;
-    field.append(radio, label);
-    driveGroup.append(field);
-  }
-  // NB: a lone card is NOT disabled — a disabled fluent-radio-group won't show its selection, which read
-  // as "nothing selected". It's simply auto-selected (and re-clicking it is a harmless no-op).
+function rebuildOptions(list: readonly DriveCandidate[]): void {
+  const options = list.map((candidate) => {
+    const option = document.createElement('fluent-option');
+    (option as HTMLElement & { value?: string }).value = candidate.root;
+    option.textContent = candidate.label;
+    return option;
+  });
+  driveListbox.replaceChildren(...options);
 }
 
 function reconcileSelection(list: readonly DriveCandidate[]): void {
   const stillPresent = selectedRoot !== null && list.some((d) => d.root === selectedRoot);
   if (stillPresent && selectedRoot !== null) {
     // Keep the current selection; a card that had vanished and came back unblocks (text preserved).
-    checkRadio(driveGroup, selectedRoot);
+    setDropdownValue(driveGroup, selectedRoot);
     if (blocked) unblock();
     return;
   }
@@ -363,7 +349,7 @@ function reconcileSelection(list: readonly DriveCandidate[]): void {
   const active = list.find((d) => d.isActive);
   const pick = active ?? list[0];
   if (pick !== undefined) {
-    checkRadio(driveGroup, pick.root);
+    setDropdownValue(driveGroup, pick.root);
     void selectDrive(pick.root, false);
   }
 }
@@ -373,7 +359,7 @@ function onSelectedGone(): void {
   setEditable(false);
   setTemplatesDisabled(true);
   updateSaveEnabled();
-  setStatus('The selected card is no longer available. Your text is kept.');
+  setStatus(translator('configure.cardGone'));
 }
 
 function unblock(): void {
@@ -390,7 +376,7 @@ function setTemplatesDisabled(disabled: boolean): void {
 
 // Switches the active card. `confirmDirty` guards against losing unsaved edits (skipped for the initial
 // auto-selection). Loads the card's game.json (or clears the editor for a blank drive). `switching` guards
-// against the click+change double-fire (see wireRadioGroup) racing two confirm dialogs.
+// against re-entry while a confirm dialog is awaited (a fresh selection racing an in-flight one).
 let switching = false;
 async function selectDrive(root: string, confirmDirty: boolean): Promise<void> {
   if (root === selectedRoot && !blocked) return;
@@ -398,9 +384,9 @@ async function selectDrive(root: string, confirmDirty: boolean): Promise<void> {
   switching = true;
   try {
     if (confirmDirty && dirty) {
-      const ok = await confirmDialog('Discard unsaved changes and switch cards?', 'Discard');
+      const ok = await confirmDialog(translator('configure.confirmSwitch'));
       if (!ok) {
-        if (selectedRoot !== null) checkRadio(driveGroup, selectedRoot); // revert the radio
+        if (selectedRoot !== null) setDropdownValue(driveGroup, selectedRoot); // revert the selection
         return;
       }
     }
@@ -419,13 +405,13 @@ async function loadDrive(root: string): Promise<void> {
     // Blank drive: empty editor, invite a template. loadedId null → no id-change warning.
     loadedId = null;
     setEditorText('', true);
-    setStatus('Blank drive — pick a template to start.');
+    setStatus(translator('configure.blankDrive'));
     return;
   }
   const result = await window.configureApi.readConfig(root);
   if (!result.ok) {
     loadedId = null;
-    setStatus(`Could not read game.json: ${result.message}`);
+    setStatus(translator('configure.couldNotRead', { message: result.message }));
     return;
   }
   loadedId = parseId(result.text);
@@ -445,7 +431,7 @@ async function applyTemplate(kind: keyof ConfigTemplates): Promise<void> {
   const template = templates[kind];
   const current = getEditorText().trim();
   if (current.length > 0 && current !== template.trim()) {
-    const ok = await confirmDialog('Replace current config with the template?', 'Replace');
+    const ok = await confirmDialog(translator('configure.confirmReplace'));
     if (!ok) return;
   }
   setEditorText(template, false);
@@ -467,7 +453,7 @@ function onFormat(): void {
   try {
     parsed = JSON.parse(text);
   } catch {
-    setStatus('Fix the JSON syntax errors before formatting.');
+    setStatus(translator('configure.fixSyntax'));
     return;
   }
   const formatted = JSON.stringify(parsed, null, 2);
@@ -484,10 +470,10 @@ async function onSave(): Promise<void> {
   const root = selectedRoot;
   const text = getEditorText();
   setDisabled(saveBtn, true);
-  setStatus('Saving…');
+  setStatus(translator('configure.saving'));
   const result = await window.configureApi.saveConfig(root, text);
   if (!result.saved) {
-    setStatus(`Not saved: ${result.message}`);
+    setStatus(translator('configure.notSaved', { message: result.message }));
     updateSaveEnabled();
     return;
   }
@@ -495,13 +481,17 @@ async function onSave(): Promise<void> {
   loadedId = parseId(text);
   switch (result.applied) {
     case 'applied':
-      setStatus('Applied. The launcher was updated.');
+      setStatus(translator('configure.applied'));
       break;
     case 'deferred':
-      setStatus('Saved. It will load shortly, or after the active card is removed.');
+      setStatus(translator('configure.deferred'));
       break;
     case 'failed':
-      setStatus(`Saved, but the manifest was rejected: ${result.message ?? 'unknown reason'}`);
+      setStatus(
+        translator('configure.savedRejected', {
+          message: result.message ?? translator('configure.unknownReason'),
+        }),
+      );
       break;
   }
   updateSaveEnabled();
@@ -511,7 +501,7 @@ async function onSave(): Promise<void> {
 async function onReset(): Promise<void> {
   if (selectedRoot === null || blocked) return;
   if (dirty) {
-    const ok = await confirmDialog('Discard unsaved changes and reset from the card?', 'Discard');
+    const ok = await confirmDialog(translator('configure.confirmReset'));
     if (!ok) return;
   }
   await loadDrive(selectedRoot);
@@ -525,8 +515,9 @@ window.configureApi.onEditorCommand((command) => {
   else void onReset();
 });
 
-wireRadioGroup(driveGroup, (root) => {
-  checkRadio(driveGroup, root); // immediate visual feedback (selectDrive may await a confirm)
+// The dropdown updates its own display on user selection; selectDrive reverts it if a dirty-switch
+// confirm is declined.
+wireDropdown(driveGroup, (root) => {
   void selectDrive(root, true);
 });
 
@@ -544,20 +535,40 @@ document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') void refreshTheme();
 });
 
+// The app version, cached so a language change can re-render the "(version) — Configure game" suffix.
+let appVersion = '';
+function renderTitlebarSubtitle(): void {
+  titlebarSubtitle.textContent = translator('configure.titlebarVersion', { version: appVersion });
+}
+
+// A language push (or the initial seed): rebuild the translator, re-localize the static DOM, re-title the
+// window (so the HTML <title> doesn't override the taskbar caption) and refresh the subtitle. The
+// ephemeral status line and issues panel are NOT re-rendered retroactively — they update on the next event
+// (drive labels re-push every 2s; a re-validate happens on the next edit).
+function applyLocale(locale: Locale): void {
+  translator = createTranslator(locale);
+  document.documentElement.lang = locale;
+  // "Playhook" is the product name — not translated.
+  document.title = `Playhook — ${translator('window.configureGame')}`;
+  localizeDocument(translator);
+  renderTitlebarSubtitle();
+}
+
 async function init(): Promise<void> {
   window.configureApi.onDrivesUpdate(renderDrives);
-  const [settings, schema, drivesList, icon, version] = await Promise.all([
+  window.configureApi.onLanguageUpdate(applyLocale);
+  const [settings, schema, drivesList, icon, version, locale] = await Promise.all([
     window.configureApi.getSettings(),
     window.configureApi.getSchema(),
     window.configureApi.getDrives(),
     window.configureApi.getAppIcon(),
     window.configureApi.getAppVersion(),
+    window.configureApi.getLanguage(),
   ]);
   applyTheme(settings.theme);
   if (icon !== '') titlebarIcon.src = icon;
   else titlebarIcon.hidden = true;
-  // Title bar: [icon] Playhook · "(version) — Configure game" (unified with the settings window).
-  titlebarSubtitle.textContent = `(${version}) — Configure game`;
+  appVersion = version;
   // Schema-aware editor when the JSON Schema is available; plain JSON otherwise (graceful degradation —
   // syntax highlighting + parse-linting still work, just without field completion/hover).
   let schemaExt: Extension;
@@ -568,6 +579,8 @@ async function init(): Promise<void> {
   }
   buildEditor('', schemaExt);
   renderDrives(drivesList);
+  // Seed the locale last so it localizes the freshly-populated DOM and title-bar suffix in one pass.
+  applyLocale(locale);
 }
 
 void init();

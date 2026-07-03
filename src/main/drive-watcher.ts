@@ -1,4 +1,4 @@
-// Detecting card insertion/removal (stage 2, A1).
+// Detecting card insertion/removal.
 // The criterion for "our card" is NOT a bare diff over mountpoints (it's unreliable: the
 // mountpoint lags on card readers), but the appearance of a removable/non-system volume that
 // has a `game.json` in the root of one of its mountpoints. While the mountpoint is empty, scan
@@ -7,6 +7,7 @@ import path from 'node:path';
 import fse from 'fs-extra';
 import { list } from 'drivelist';
 import { MANIFEST_FILENAME, type DriveCandidate } from '../shared/types';
+import { type Translator } from '../shared/i18n/index';
 
 const DEFAULT_INTERVAL_MS = 1000;
 
@@ -39,14 +40,15 @@ function isExternalDrive(drive: {
 }
 
 /**
- * Enumerates external removable, non-system mountpoints as Configure-window candidates (stage: init/edit
- * game.json). Unlike scan() it does NOT filter by the presence of game.json — a BLANK drive must be
+ * Enumerates external removable, non-system mountpoints as Configure-window candidates (for initializing
+ * or editing game.json). Unlike scan() it does NOT filter by the presence of game.json — a BLANK drive must be
  * selectable to be initialized (`hasManifest` distinguishes it) — but it DOES exclude internal disks that
  * merely report `isRemovable` (see isExternalDrive). The label is built from the drive root plus the
  * manifest title (drivelist gives no volume label on Windows).
  */
 export async function listDriveCandidates(
   activeRoot: string | null,
+  t: Translator,
 ): Promise<readonly DriveCandidate[]> {
   const drives = await list();
   const candidates: DriveCandidate[] = [];
@@ -63,7 +65,7 @@ export async function listDriveCandidates(
       const hasManifest = await fse.pathExists(manifestPath);
       candidates.push({
         root,
-        label: await buildDriveLabel(root, manifestPath, hasManifest),
+        label: await buildDriveLabel(root, manifestPath, hasManifest, t),
         hasManifest,
         isActive: root === activeRoot,
       });
@@ -81,17 +83,20 @@ async function buildDriveLabel(
   root: string,
   manifestPath: string,
   hasManifest: boolean,
+  t: Translator,
 ): Promise<string> {
-  if (!hasManifest) return `${root} — blank drive`;
+  // The `root — …` shape and the card title (untrusted) stay literal; only the descriptive suffix is
+  // translated. The picker re-pushes every 2s while visible, so a language change is picked up on its own.
+  if (!hasManifest) return `${root} — ${t('drive.blank')}`;
   try {
     const parsed: unknown = await fse.readJson(manifestPath);
     if (typeof parsed === 'object' && parsed !== null && 'title' in parsed) {
       const title = parsed.title;
       if (typeof title === 'string' && title.length > 0) return `${root} — ${title}`;
     }
-    return `${root} — invalid game.json`;
+    return `${root} — ${t('drive.invalid')}`;
   } catch {
-    return `${root} — invalid game.json`;
+    return `${root} — ${t('drive.invalid')}`;
   }
 }
 
@@ -172,7 +177,7 @@ export class DriveWatcher {
     let firstFound: string | null = null;
     for (const drive of drives) {
       if (drive.isRemovable !== true || drive.isSystem === true) continue;
-      // A disk may have several partitions/mountpoints (P7) — we iterate over all of them.
+      // A disk may have several partitions/mountpoints — we iterate over all of them.
       for (const mount of drive.mountpoints) {
         if (typeof mount.path !== 'string' || mount.path.length === 0) continue;
         const manifestPath = path.join(mount.path, MANIFEST_FILENAME);

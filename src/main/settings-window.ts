@@ -11,6 +11,7 @@
 import path from 'node:path';
 import { BrowserWindow, ipcMain, nativeTheme } from 'electron';
 import { APP_NAME, IPC } from '../shared/types';
+import { type Translator } from '../shared/i18n/index';
 import { type UpdaterService } from './updater';
 import { installHideOnClose, type HideOnCloseGuard } from './window-hide-guard';
 
@@ -28,11 +29,26 @@ export class SettingsWindow {
   private window: BrowserWindow | null = null;
   private closeGuard: HideOnCloseGuard | null = null;
 
-  constructor(private readonly updater: UpdaterService) {
+  constructor(
+    private readonly updater: UpdaterService,
+    private readonly getTranslator: () => Translator,
+  ) {
     // The renderer computes the effective (system-resolved) theme and asks us to recolor the native
     // caption buttons to match. Registered once here (SettingsWindow is a singleton); guarded on a live
     // window. Not part of UpdaterService's settings IPC — this is pure window chrome.
     ipcMain.on(IPC.titleBarOverlayUpdate, (_event, dark: boolean) => this.applyOverlay(dark));
+  }
+
+  /** The native window title (taskbar). Re-applied on a language change (the renderer also sets
+   * document.title, otherwise the HTML <title> would override this in the taskbar). */
+  private title(): string {
+    return `${APP_NAME} — ${this.getTranslator()('window.settings')}`;
+  }
+
+  /** Re-titles a live window after a language change. */
+  refreshTitle(): void {
+    const window = this.window;
+    if (window !== null && !window.isDestroyed()) window.setTitle(this.title());
   }
 
   private applyOverlay(dark: boolean): void {
@@ -63,7 +79,7 @@ export class SettingsWindow {
       minHeight: 600,
       show: false,
       // A plain desktop window — no game kiosk/fullscreen. autoHideMenuBar is not needed: main.ts
-      // already does Menu.setApplicationMenu(null) globally (N6).
+      // already does Menu.setApplicationMenu(null) globally.
       // Windows-11-Settings-style chrome: the native title bar is hidden and the app draws its own
       // (icon + "Playhook (version)" on the left, see settings.html), while the native min/max/close
       // buttons are kept via the Window Controls Overlay — recolored to the theme (initial guess from
@@ -75,7 +91,7 @@ export class SettingsWindow {
       },
       resizable: true,
       fullscreen: false,
-      title: `${APP_NAME} — Settings`,
+      title: this.title(),
       icon: path.join(__dirname, '../icon.ico'),
       // Pre-paint background matched to the OS theme (the renderer applies the real Fluent theme on
       // load) — avoids a dark flash on a light system and vice-versa. `system` is the default theme.
@@ -88,7 +104,7 @@ export class SettingsWindow {
       },
     });
 
-    // Closing the window with the X doesn't quit the app — hide it to the tray (like GameWindow, N1).
+    // Closing the window with the X doesn't quit the app — hide it to the tray (like GameWindow).
     // Whether it's a real close or a hide, stop the updater from pushing into this window.
     this.closeGuard = installHideOnClose(window, () => this.updater.detachWindow());
 
@@ -98,7 +114,7 @@ export class SettingsWindow {
 
     this.window = window;
     // Attach BEFORE loadFile so the renderer can subscribe and request the snapshot as soon as it
-    // starts, and any early push has a live window to reach (I3).
+    // starts, and any early push has a live window to reach.
     this.updater.attachWindow(window);
 
     void window.loadFile(path.join(__dirname, '../renderer/settings.html'));

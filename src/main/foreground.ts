@@ -4,7 +4,7 @@
 // raised and focused, but the previous app stays the ACTIVE window (its taskbar shows, our window is
 // merely on top). The documented workaround is to briefly AttachThreadInput to the current foreground
 // window's thread — which lifts the lock for us — then SetForegroundWindow succeeds and the launcher
-// becomes the true active window (taskbar hides, the renderer Gamepad API gets input, R5).
+// becomes the true active window (taskbar hides, the renderer Gamepad API gets input).
 //
 // Read through koffi (same FFI pattern as gamepad-global.ts / game-launcher.ts). DLLs load lazily on
 // first use so dev builds off Windows don't fail at import. Any failure is swallowed (best-effort): the
