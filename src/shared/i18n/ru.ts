@@ -5,6 +5,10 @@
 import type { MessageKey } from './en';
 
 export const ru: Partial<Record<MessageKey, string>> = {
+  // ── Common (shared across windows) ───────────────────────────────────────────
+  'common.yes': 'Да',
+  'common.no': 'Нет',
+
   // ── Tray context menu ────────────────────────────────────────────────────────
   'tray.showLauncher': 'Показать лаунчер',
   'tray.configureGame': 'Настроить игру',
@@ -34,8 +38,6 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'launcher.aria.info': 'Информация',
   'launcher.aria.uninstall': 'Удалить',
   'launcher.aria.hide': 'Скрыть',
-  'launcher.confirm.yes': 'Да',
-  'launcher.confirm.no': 'Нет',
   'launcher.confirm.install': 'Установить игру?',
   'launcher.confirm.uninstall': 'Удалить игру с компьютера?',
   'launcher.confirm.steamInstall': 'Открыть Steam, чтобы установить игру?',
@@ -107,8 +109,6 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'configure.tplExecutable': 'Исполняемый файл',
   'configure.tplInstaller': 'Установщик',
   'configure.save': 'Сохранить и применить',
-  'configure.cancel': 'Отмена',
-  'configure.replace': 'Заменить',
   'configure.titlebarVersion': '({version}) — Настройка игры',
   'configure.configValid': 'Конфигурация корректна.',
   'configure.idChangedWarning':
@@ -118,7 +118,6 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'configure.couldNotRead': 'Не удалось прочитать game.json: {message}',
   'configure.confirmSwitch': 'Отменить несохранённые изменения и переключить карту?',
   'configure.confirmReset': 'Отменить несохранённые изменения и перечитать с карты?',
-  'configure.discard': 'Отменить',
   'configure.confirmReplace': 'Заменить текущую конфигурацию шаблоном?',
   'configure.fixSyntax': 'Исправьте синтаксические ошибки JSON перед форматированием.',
   'configure.saving': 'Сохранение…',

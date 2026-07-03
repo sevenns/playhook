@@ -61,9 +61,11 @@
     <div id="confirm-veil" hidden>
       <div id="confirm-panel">
         <span id="confirm-message"></span>
+        <!-- Every confirm is a yes/no question: No cancels, Yes performs the action. Labels are fixed
+             (common.yes / common.no) — never a context-specific verb. -->
         <div class="button-row">
-          <fluent-button id="confirm-cancel" data-i18n="configure.cancel">Cancel</fluent-button>
-          <fluent-button id="confirm-ok" appearance="accent" data-i18n="configure.replace">Replace</fluent-button>
+          <fluent-button id="confirm-cancel" data-i18n="common.no">No</fluent-button>
+          <fluent-button id="confirm-ok" appearance="accent" data-i18n="common.yes">Yes</fluent-button>
         </div>
       </div>
     </div>

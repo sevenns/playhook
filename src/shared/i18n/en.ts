@@ -7,6 +7,13 @@
 // brace that is NOT a placeholder (e.g. the `{dir}` token inside a manifest message) is left untouched
 // because those messages are translated WITHOUT params — see translateIssueMessage.
 export const en = {
+  // ── Common (shared across windows) ──────────────────────────────────────────
+  // The two answers used by EVERY confirmation dialog (game launcher + configure window). Any confirm,
+  // present or future, must ask a yes/no question and use these — never a context-specific verb like
+  // "Discard"/"Replace", which is easy to confuse with the neighbouring "Cancel".
+  'common.yes': 'Yes',
+  'common.no': 'No',
+
   // ── Tray context menu (tray.ts) ─────────────────────────────────────────────
   'tray.showLauncher': 'Show launcher',
   'tray.configureGame': 'Configure game',
@@ -38,9 +45,7 @@ export const en = {
   'launcher.aria.info': 'Info',
   'launcher.aria.uninstall': 'Uninstall',
   'launcher.aria.hide': 'Hide',
-  // Confirmation popup copy (controls.ts).
-  'launcher.confirm.yes': 'Yes',
-  'launcher.confirm.no': 'No',
+  // Confirmation popup copy (controls.ts). The Yes/No buttons use the shared common.* keys.
   'launcher.confirm.install': 'Do you want to install game?',
   'launcher.confirm.uninstall': 'Do you want to uninstall game from your PC?',
   'launcher.confirm.steamInstall': 'Open Steam to install this game?',
@@ -114,8 +119,6 @@ export const en = {
   'configure.tplExecutable': 'Executable file',
   'configure.tplInstaller': 'Installer',
   'configure.save': 'Save & Apply',
-  'configure.cancel': 'Cancel',
-  'configure.replace': 'Replace',
   'configure.titlebarVersion': '({version}) — Configure game',
   'configure.configValid': 'Config is valid.',
   'configure.idChangedWarning':
@@ -125,7 +128,6 @@ export const en = {
   'configure.couldNotRead': 'Could not read game.json: {message}',
   'configure.confirmSwitch': 'Discard unsaved changes and switch cards?',
   'configure.confirmReset': 'Discard unsaved changes and reset from the card?',
-  'configure.discard': 'Discard',
   'configure.confirmReplace': 'Replace current config with the template?',
   'configure.fixSyntax': 'Fix the JSON syntax errors before formatting.',
   'configure.saving': 'Saving…',

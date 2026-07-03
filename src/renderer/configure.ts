@@ -269,9 +269,10 @@ function setStatus(text: string): void {
 
 // ── Confirm modal ─────────────────────────────────────────────────────────────
 let confirmResolve: ((ok: boolean) => void) | null = null;
-function confirmDialog(message: string, okLabel: string): Promise<boolean> {
+// Every confirmation asks a yes/no question; the Yes/No button labels are fixed (localized from
+// common.yes / common.no via localizeDocument), so callers pass only the message — no per-call verb.
+function confirmDialog(message: string): Promise<boolean> {
   confirmMessage.textContent = message;
-  confirmOk.textContent = okLabel;
   confirmVeil.hidden = false;
   confirmOk.focus();
   return new Promise<boolean>((resolve) => {
@@ -403,7 +404,7 @@ async function selectDrive(root: string, confirmDirty: boolean): Promise<void> {
   switching = true;
   try {
     if (confirmDirty && dirty) {
-      const ok = await confirmDialog(translator('configure.confirmSwitch'), translator('configure.discard'));
+      const ok = await confirmDialog(translator('configure.confirmSwitch'));
       if (!ok) {
         if (selectedRoot !== null) checkRadio(driveGroup, selectedRoot); // revert the radio
         return;
@@ -450,7 +451,7 @@ async function applyTemplate(kind: keyof ConfigTemplates): Promise<void> {
   const template = templates[kind];
   const current = getEditorText().trim();
   if (current.length > 0 && current !== template.trim()) {
-    const ok = await confirmDialog(translator('configure.confirmReplace'), translator('configure.replace'));
+    const ok = await confirmDialog(translator('configure.confirmReplace'));
     if (!ok) return;
   }
   setEditorText(template, false);
@@ -520,7 +521,7 @@ async function onSave(): Promise<void> {
 async function onReset(): Promise<void> {
   if (selectedRoot === null || blocked) return;
   if (dirty) {
-    const ok = await confirmDialog(translator('configure.confirmReset'), translator('configure.discard'));
+    const ok = await confirmDialog(translator('configure.confirmReset'));
     if (!ok) return;
   }
   await loadDrive(selectedRoot);
