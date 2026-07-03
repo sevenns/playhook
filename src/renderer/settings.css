@@ -68,6 +68,10 @@ body {
 fluent-dropdown {
   align-self: flex-start;
   min-inline-size: 260px;
+  /* Suppress the accent underline the control animates in on focus/open (.control::after) — visual noise.
+     The token only feeds that underline in single-select mode (its other use is the multiple-select
+     checkmark border, which these dropdowns never show), so this is a safe, surgical override. */
+  --colorCompoundBrandStroke: transparent;
 }
 
 /* Fluent v3 positions the dropdown's listbox popover with the CSS anchor sides anchor(outside) /
