@@ -95,6 +95,13 @@ describe('resolveLocale', () => {
     expect(resolveLocale('system', ['de-DE'])).toBe('en');
     expect(resolveLocale('system', [])).toBe('en');
   });
+
+  it('scans past unsupported tags to the first supported one (the fix for a non-ru-leading list)', () => {
+    // A Russian system whose candidate list leads with an unsupported (or English-region) tag must still
+    // resolve to ru when ru appears later — e.g. app.getLocale()='ru-RU' after a de/fr preferred entry.
+    expect(resolveLocale('system', ['de-DE', 'ru-RU'])).toBe('ru');
+    expect(resolveLocale('system', ['fr-FR', 'en-US', 'ru-RU'])).toBe('en'); // first supported wins
+  });
 });
 
 describe('translateIssueMessage', () => {
