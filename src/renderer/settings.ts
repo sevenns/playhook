@@ -268,7 +268,8 @@ async function init(): Promise<void> {
   // Title bar: [icon] Playhook (version). Hide the <img> if the icon couldn't be read (empty string).
   if (icon !== '') titlebarIcon.src = icon;
   else titlebarIcon.hidden = true;
-  titlebarVersion.textContent = `(${version})`;
+  // Unified title-bar format across the plain windows: [icon] Playhook · "(version) — Settings".
+  titlebarVersion.textContent = `(${version}) — Settings`;
   applySettings(settings);
   render(status);
 }

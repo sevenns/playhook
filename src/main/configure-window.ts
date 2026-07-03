@@ -80,15 +80,21 @@ export class ConfigureWindow {
       },
     });
 
-    // Right-click editing menu (cut/copy/paste/select-all) for the JSON editor — a sandboxed renderer
-    // has no context menu of its own, so main provides one, enabled per the focused control's editFlags.
+    // Right-click editing menu for the JSON editor — a sandboxed renderer has no context menu of its own,
+    // so main provides one. Clipboard items use native roles (enabled per the focused control's
+    // editFlags); Format / Reset are renderer actions, dispatched back over an IPC command channel.
     window.webContents.on('context-menu', (_event, params) => {
       const menu = Menu.buildFromTemplate([
         { role: 'cut', enabled: params.editFlags.canCut },
         { role: 'copy', enabled: params.editFlags.canCopy },
         { role: 'paste', enabled: params.editFlags.canPaste },
-        { type: 'separator' },
         { role: 'selectAll', enabled: params.editFlags.canSelectAll },
+        { type: 'separator' },
+        {
+          label: 'Format',
+          click: () => window.webContents.send(IPC.configEditorCommand, 'format'),
+        },
+        { label: 'Reset', click: () => window.webContents.send(IPC.configEditorCommand, 'reset') },
       ]);
       menu.popup({ window });
     });

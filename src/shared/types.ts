@@ -410,9 +410,16 @@ export const IPC = {
   configSettingsRequest: 'config:settings-request',
   /** configure-renderer → main (invoke): the app icon as a data URL (for the custom title bar). */
   configIconRequest: 'config:icon',
+  /** configure-renderer → main (invoke): the app version string (for the custom title bar). */
+  configVersionRequest: 'config:version',
+  /** main → configure-renderer: run an editor command from the native context menu (format / reset). */
+  configEditorCommand: 'config:editor-command',
   /** configure-renderer → main: recolor THIS window's native title-bar overlay for the theme. */
   configTitleBarOverlay: 'config:titlebar-overlay',
 } as const;
+
+/** Editor commands dispatched from the Configure window's native right-click menu. */
+export type ConfigEditorCommand = 'format' | 'reset';
 
 /**
  * A removable-drive candidate for the Configure-game window (stage: init/edit game.json). Unlike
@@ -534,6 +541,10 @@ export interface ConfigureApi {
   getSettings(): Promise<AppSettings>;
   /** The app icon as a data URL, shown in the custom title bar (matches the settings window). */
   getAppIcon(): Promise<string>;
+  /** The app version string, shown in the custom title bar (matches the settings window). */
+  getAppVersion(): Promise<string>;
+  /** Editor commands (format / reset) triggered from the native right-click menu. */
+  onEditorCommand(callback: (command: ConfigEditorCommand) => void): void;
   /** Tell main to recolor THIS window's native caption buttons to match the effective theme. */
   setTitleBarDark(dark: boolean): void;
 }

@@ -8,6 +8,7 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
 import type {
   AppSettings,
+  ConfigEditorCommand,
   ConfigureApi,
   ConfigReadResult,
   ConfigSaveResult,
@@ -27,6 +28,8 @@ const CHANNELS = {
   configSchemaRequest: 'config:schema-request',
   configSettingsRequest: 'config:settings-request',
   configIconRequest: 'config:icon',
+  configVersionRequest: 'config:version',
+  configEditorCommand: 'config:editor-command',
   configTitleBarOverlay: 'config:titlebar-overlay',
 } as const satisfies Partial<typeof IPC>;
 
@@ -62,6 +65,17 @@ const api: ConfigureApi = {
   },
   getAppIcon(): Promise<string> {
     return ipcRenderer.invoke(CHANNELS.configIconRequest) as Promise<string>;
+  },
+  getAppVersion(): Promise<string> {
+    return ipcRenderer.invoke(CHANNELS.configVersionRequest) as Promise<string>;
+  },
+  onEditorCommand(callback: (command: ConfigEditorCommand) => void): void {
+    ipcRenderer.on(
+      CHANNELS.configEditorCommand,
+      (_event: IpcRendererEvent, command: ConfigEditorCommand) => {
+        callback(command);
+      },
+    );
   },
   setTitleBarDark(dark: boolean): void {
     ipcRenderer.send(CHANNELS.configTitleBarOverlay, dark);

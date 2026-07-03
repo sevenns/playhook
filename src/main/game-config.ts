@@ -11,7 +11,7 @@
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import fse from 'fs-extra';
-import { ipcMain, type BrowserWindow } from 'electron';
+import { app, ipcMain, type BrowserWindow } from 'electron';
 import {
   IPC,
   MANIFEST_FILENAME,
@@ -73,6 +73,7 @@ export class GameConfigService {
       this.deps.settings.read(),
     );
     ipcMain.handle(IPC.configIconRequest, (): Promise<string> => this.readIconDataUrl());
+    ipcMain.handle(IPC.configVersionRequest, (): string => app.getVersion());
   }
 
   // The window shows the app icon in its custom title bar. CSP there is `img-src data:`, so we hand the

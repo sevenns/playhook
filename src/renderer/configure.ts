@@ -74,13 +74,12 @@ function readGroupValue(el: HTMLElement): string | null {
 }
 
 const titlebarIcon = req<HTMLImageElement>('titlebar-icon');
+const titlebarSubtitle = req('titlebar-subtitle');
 const driveGroup = req('drive-group');
 const driveEmpty = req('drive-empty');
 const editorEl = req('editor');
 const issuesEl = req('issues');
 const saveBtn = req('save');
-const formatBtn = req('format');
-const resetBtn = req('reset');
 const statusEl = req('status');
 const tplExecutable = req('tpl-executable');
 const tplInstaller = req('tpl-installer');
@@ -113,15 +112,17 @@ function cmTheme(dark: boolean): Extension {
       },
       '.cm-activeLine': { backgroundColor: 'var(--colorNeutralBackground1Hover)' },
       '.cm-activeLineGutter': { backgroundColor: 'var(--colorNeutralBackground2Hover)' },
-      // Selection highlight (double-click word select, drag select). basicSetup draws the selection via
-      // its own layer, so without an explicit background it's invisible on a dark theme — which read as
-      // "double-click doesn't select". Use the Fluent brand tint (fallback covers the pre-theme flash).
-      '.cm-selectionBackground, ::selection': {
-        backgroundColor: 'var(--colorBrandBackground2, rgba(56, 134, 222, 0.4))',
+      // Selection highlight (double-click word select, drag select). basicSetup draws the selection on its
+      // own layer BEHIND the text, so it needs an explicit, opaque-enough background or it's invisible.
+      // A fixed semi-transparent blue reads clearly on BOTH themes (a Fluent brand token was too pale) and
+      // `!important` beats CodeMirror's baseTheme default. The text stays readable (the layer is behind it).
+      '.cm-selectionLayer .cm-selectionBackground, .cm-selectionBackground': {
+        background: 'rgba(51, 144, 236, 0.4) !important',
       },
-      '&.cm-focused .cm-selectionBackground, &.cm-focused ::selection': {
-        backgroundColor: 'var(--colorBrandBackgroundSelected, rgba(56, 134, 222, 0.55))',
-      },
+      '&.cm-focused .cm-selectionLayer .cm-selectionBackground, &.cm-focused .cm-selectionBackground':
+        {
+          background: 'rgba(51, 144, 236, 0.55) !important',
+        },
       '&.cm-focused': { outline: 'none' },
     },
     { dark },
@@ -343,7 +344,6 @@ function reconcileSelection(list: readonly DriveCandidate[]): void {
 function onSelectedGone(): void {
   blocked = true;
   setEditable(false);
-  setDisabled(resetBtn, true);
   setTemplatesDisabled(true);
   updateSaveEnabled();
   setStatus('The selected card is no longer available. Your text is kept.');
@@ -352,7 +352,6 @@ function onSelectedGone(): void {
 function unblock(): void {
   blocked = false;
   setEditable(true);
-  setDisabled(resetBtn, false);
   setTemplatesDisabled(false);
   updateSaveEnabled();
   setStatus('');
@@ -484,8 +483,12 @@ async function onReset(): Promise<void> {
 }
 
 saveBtn.addEventListener('click', () => void onSave());
-formatBtn.addEventListener('click', () => onFormat());
-resetBtn.addEventListener('click', () => void onReset());
+
+// Format / Reset are driven from the editor's native right-click menu (configure-window.ts) via IPC.
+window.configureApi.onEditorCommand((command) => {
+  if (command === 'format') onFormat();
+  else void onReset();
+});
 
 driveGroup.addEventListener('change', () => {
   const value = readGroupValue(driveGroup);
@@ -508,15 +511,18 @@ document.addEventListener('visibilitychange', () => {
 
 async function init(): Promise<void> {
   window.configureApi.onDrivesUpdate(renderDrives);
-  const [settings, schema, drivesList, icon] = await Promise.all([
+  const [settings, schema, drivesList, icon, version] = await Promise.all([
     window.configureApi.getSettings(),
     window.configureApi.getSchema(),
     window.configureApi.getDrives(),
     window.configureApi.getAppIcon(),
+    window.configureApi.getAppVersion(),
   ]);
   applyTheme(settings.theme);
   if (icon !== '') titlebarIcon.src = icon;
   else titlebarIcon.hidden = true;
+  // Title bar: [icon] Playhook · "(version) — Configure game" (unified with the settings window).
+  titlebarSubtitle.textContent = `(${version}) — Configure game`;
   // Schema-aware editor when the JSON Schema is available; plain JSON otherwise (graceful degradation —
   // syntax highlighting + parse-linting still work, just without field completion/hover).
   let schemaExt: Extension;

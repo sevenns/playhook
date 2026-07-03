@@ -55,6 +55,10 @@ export async function listDriveCandidates(
     for (const mount of drive.mountpoints) {
       if (typeof mount.path !== 'string' || mount.path.length === 0) continue;
       const root = mount.path;
+      // An EMPTY card-reader slot still owns a drive letter but has no media — accessing its root fails
+      // ("device not ready"), so pathExists(root) is false. Skip it: only slots with actual media (a real
+      // blank drive the user can initialize, or a card with game.json) should appear in the picker.
+      if (!(await fse.pathExists(root))) continue;
       const manifestPath = path.join(root, MANIFEST_FILENAME);
       const hasManifest = await fse.pathExists(manifestPath);
       candidates.push({
