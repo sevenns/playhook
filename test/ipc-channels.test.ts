@@ -11,6 +11,7 @@ import { IPC } from '../src/shared/types';
 const PRELOAD_FILES = [
   path.resolve(__dirname, '../src/preload/preload.ts'),
   path.resolve(__dirname, '../src/preload/settings-preload.ts'),
+  path.resolve(__dirname, '../src/preload/configure-preload.ts'),
 ];
 
 /** Extracts the string values of the `const CHANNELS = { … }` object literal from a preload source. */
@@ -36,10 +37,17 @@ describe('IPC channel contract (preload ↔ shared/types)', () => {
     expect(extra).toEqual([]);
   });
 
-  it('partitions channels between the two preloads with no overlap', () => {
-    const [game, settings] = perFile;
-    const overlap = game!.values.filter((v) => settings!.values.includes(v));
-    expect(overlap).toEqual([]);
+  it('partitions channels across the preloads with no overlap between any pair', () => {
+    // Pairwise over N preloads (a hard destructuring of exactly two would silently skip a third slice —
+    // the project invariant is "every channel is exposed by EXACTLY one preload").
+    for (let i = 0; i < perFile.length; i += 1) {
+      for (let j = i + 1; j < perFile.length; j += 1) {
+        const a = perFile[i]!;
+        const b = perFile[j]!;
+        const overlap = a.values.filter((v) => b.values.includes(v));
+        expect(overlap, `overlap between ${a.name} and ${b.name}`).toEqual([]);
+      }
+    }
   });
 
   it('has no duplicate channel literals within a single preload', () => {

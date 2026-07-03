@@ -390,7 +390,89 @@ export const IPC = {
   openLogs: 'app:open-logs',
   /** settings-renderer → main: open the app-controlled games install folder in the OS file manager. */
   openGamesFolder: 'app:open-games-folder',
+
+  // ── Configure-game window: edit/init a card's game.json (own namespace, own preload) ──
+  /** configure-renderer → main (invoke): snapshot of removable-drive candidates (incl. blank drives). */
+  configDrivesRequest: 'config:drives-request',
+  /** main → configure-renderer: pushed drive-candidate list (only while the window is visible). */
+  configDrivesUpdate: 'config:drives-update',
+  /** configure-renderer → main (invoke): read a card's game.json text (payload root). */
+  configRead: 'config:read',
+  /** configure-renderer → main (invoke): static validation of manifest text (payload text). */
+  configValidate: 'config:validate',
+  /** configure-renderer → main (invoke): write game.json + try to apply without a restart (payload {root,text}). */
+  configSave: 'config:save',
+  /** configure-renderer → main (invoke): the three starter templates as JSON strings. */
+  configTemplatesRequest: 'config:templates-request',
+  /** configure-renderer → main (invoke): the manifest JSON Schema for the editor's completions/hover. */
+  configSchemaRequest: 'config:schema-request',
+  /** configure-renderer → main (invoke): the current AppSettings (for the window theme). */
+  configSettingsRequest: 'config:settings-request',
+  /** configure-renderer → main (invoke): the app icon as a data URL (for the custom title bar). */
+  configIconRequest: 'config:icon',
+  /** configure-renderer → main (invoke): the app version string (for the custom title bar). */
+  configVersionRequest: 'config:version',
+  /** main → configure-renderer: run an editor command from the native context menu (format / reset). */
+  configEditorCommand: 'config:editor-command',
+  /** configure-renderer → main: recolor THIS window's native title-bar overlay for the theme. */
+  configTitleBarOverlay: 'config:titlebar-overlay',
 } as const;
+
+/** Editor commands dispatched from the Configure window's native right-click menu. */
+export type ConfigEditorCommand = 'format' | 'reset';
+
+/**
+ * A removable-drive candidate for the Configure-game window (stage: init/edit game.json). Unlike
+ * DriveWatcher.scan (which only sees cards WITH a game.json), this lists ALL removable/non-system
+ * mountpoints so a BLANK drive can be initialized — `hasManifest` distinguishes them.
+ */
+export interface DriveCandidate {
+  /** Mountpoint / card root, e.g. "E:\\". */
+  readonly root: string;
+  /** Display label: "E:\\ — Hollow Knight" | "E:\\ — invalid game.json" | "E:\\ — blank drive". */
+  readonly label: string;
+  /** True when a game.json exists in the root of this mountpoint. */
+  readonly hasManifest: boolean;
+  /** True when this root is the launcher's currently-active card (driveWatcher.getActiveRoot()). */
+  readonly isActive: boolean;
+}
+
+/** A single static-validation problem in the manifest text, mapped to a field path for the UI. */
+export interface ManifestValidationIssue {
+  /** Dotted field path, e.g. "install.args"; "(root)" for a root/syntax error. */
+  readonly path: string;
+  readonly message: string;
+}
+
+/** Result of the static (fs-free) manifest validation — the verdict that blocks/allows Save. */
+export type ConfigValidationResult =
+  | { readonly ok: true }
+  | { readonly ok: false; readonly issues: readonly ManifestValidationIssue[] };
+
+/** Result of reading a card's game.json for the editor. */
+export type ConfigReadResult =
+  { readonly ok: true; readonly text: string } | { readonly ok: false; readonly message: string };
+
+/**
+ * Result of Save & Apply. `saved` false → nothing was written (message tells why). When written,
+ * `applied` says what happened to the running launcher: `applied` (reloaded in place), `deferred`
+ * (a blank/other card — DriveWatcher will pick it up, or it loads after the active card is removed),
+ * or `failed` (written, but re-reading the manifest was rejected — message carries the reason).
+ */
+export type ConfigSaveResult =
+  | {
+      readonly saved: true;
+      readonly applied: 'applied' | 'deferred' | 'failed';
+      readonly message?: string;
+    }
+  | { readonly saved: false; readonly message: string };
+
+/** The three starter templates (valid JSON strings) offered when initializing a card. */
+export interface ConfigTemplates {
+  readonly executable: string;
+  readonly installer: string;
+  readonly steam: string;
+}
 
 /** API that preload exposes on `window.api`. */
 export interface RendererApi {
@@ -439,9 +521,38 @@ export interface SettingsApi {
   installUpdate(): void;
 }
 
+/** API that the configure preload exposes on `window.configureApi` (separate from game/settings). */
+export interface ConfigureApi {
+  /** Snapshot of removable-drive candidates (incl. blank drives) for the picker. */
+  getDrives(): Promise<readonly DriveCandidate[]>;
+  /** Live candidate-list updates, pushed while the window is visible. */
+  onDrivesUpdate(callback: (drives: readonly DriveCandidate[]) => void): void;
+  /** Read a card's game.json text into the editor. */
+  readConfig(root: string): Promise<ConfigReadResult>;
+  /** Static (fs-free) validation of the current editor text — the Save verdict. */
+  validateConfig(text: string): Promise<ConfigValidationResult>;
+  /** Write game.json to the card and try to apply it without a restart. */
+  saveConfig(root: string, text: string): Promise<ConfigSaveResult>;
+  /** The three starter templates as JSON strings. */
+  getTemplates(): Promise<ConfigTemplates>;
+  /** The manifest JSON Schema, fed to the editor for completions/hover. */
+  getSchema(): Promise<unknown>;
+  /** The current AppSettings (for the window theme). */
+  getSettings(): Promise<AppSettings>;
+  /** The app icon as a data URL, shown in the custom title bar (matches the settings window). */
+  getAppIcon(): Promise<string>;
+  /** The app version string, shown in the custom title bar (matches the settings window). */
+  getAppVersion(): Promise<string>;
+  /** Editor commands (format / reset) triggered from the native right-click menu. */
+  onEditorCommand(callback: (command: ConfigEditorCommand) => void): void;
+  /** Tell main to recolor THIS window's native caption buttons to match the effective theme. */
+  setTitleBarDark(dark: boolean): void;
+}
+
 declare global {
   interface Window {
     readonly api: RendererApi;
     readonly settingsApi: SettingsApi;
+    readonly configureApi: ConfigureApi;
   }
 }

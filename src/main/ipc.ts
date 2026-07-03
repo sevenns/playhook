@@ -223,6 +223,12 @@ export class GameController {
   private current: ResolvedManifest | null = null;
   private cardPresent = false;
   private launchInFlight = false;
+  // A manifest reload from the Configure-game window is in flight. Unlike launchInFlight it does NOT
+  // gate on state kind (the reload runs from `ready`), so onLaunchRequested/onUninstallRequested check
+  // it explicitly: during the reload's awaits (readManifest + hero/audio on a slow SD — hundreds of ms)
+  // the state stays `ready`, and a gamepad Play would otherwise start a game mid-reload (enterReady over
+  // launching). Only the reload path is raced like this — an ordinary insert never is.
+  private reloadInFlight = false;
   private abort: AbortController | null = null;
   // A card swapped in WHILE a launch/install was in flight (E1): DriveWatcher can swap without an
   // empty tick, so we stash the new root, abort the in-flight sequence, and replay onInsert from its
@@ -318,6 +324,20 @@ export class GameController {
       this.abort?.abort();
       return;
     }
+    await this.loadCard(root, { focus: true });
+  }
+
+  /**
+   * Reads a card at `root` and drives the launcher to `ready` (or `error`) — the shared body of an
+   * ordinary insert AND a Configure-window reload. `focus` controls whether the launcher pops to the
+   * front: true for a real insertion (unchanged behaviour), false for a reload so an Apply from the
+   * Configure window doesn't steal focus from the editor. Returns the readManifest verdict so the
+   * caller (reloadManifest) can report it; onInsert ignores it.
+   */
+  private async loadCard(
+    root: string,
+    opts: { readonly focus: boolean },
+  ): Promise<{ ok: true } | { ok: false; message: string }> {
     this.cardPresent = true;
     log.info(`[insert] card detected at root="${root}"`);
     // Documents is resolved via the system Known Folder API (the same one the game uses),
@@ -334,7 +354,7 @@ export class GameController {
       this.setHero(null);
       this.deps.state.set({ kind: 'error', message: result.message });
       this.deps.window.hide();
-      return;
+      return { ok: false, message: result.message };
     }
     const manifest = result.manifest;
     this.current = manifest;
@@ -361,7 +381,33 @@ export class GameController {
 
     const info = await this.buildGameInfo(manifest, stats);
     this.enterReady(info);
-    this.deps.window.showAndFocus();
+    if (opts.focus) this.deps.window.showAndFocus();
+    return { ok: true };
+  }
+
+  /**
+   * Applies an edited game.json to the ACTIVE card without restarting the app (Configure-game window).
+   * Re-reads the manifest through the same loadCard path an insert uses (readManifest → stats reconcile
+   * → audio/hero → buildGameInfo → enterReady | error), so nothing is duplicated and the steam poller's
+   * stale-guard still holds. Focus is NOT taken (opts.focus=false), so the editor keeps it.
+   *
+   * Two guards: (1) on ENTRY — refuse unless idle/ready/error and not launchInFlight (busy guard, like
+   * UpdaterService.install; also prevents killing an in-flight sequence, since onInsert would abort it);
+   * (2) reloadInFlight for the DURATION — checked by onLaunchRequested/onUninstallRequested so a gamepad
+   * Play/Uninstall can't slip in during the reload's awaits.
+   */
+  async reloadManifest(root: string): Promise<{ ok: true } | { ok: false; message: string }> {
+    const kind = this.deps.state.get().kind;
+    if ((kind !== 'ready' && kind !== 'error' && kind !== 'idle') || this.launchInFlight) {
+      return { ok: false, message: 'Finish what’s running before applying the config' };
+    }
+    if (this.reloadInFlight) return { ok: false, message: 'a reload is already in progress' };
+    this.reloadInFlight = true;
+    try {
+      return await this.loadCard(root, { focus: false });
+    } finally {
+      this.reloadInFlight = false;
+    }
   }
 
   private async flushPendingIfAny(manifest: ResolvedManifest): Promise<void> {
@@ -412,7 +458,7 @@ export class GameController {
     // Ignore input outside the ready state — this is the "ignore-gamepad" during play
     // (harmless under any interpretation of the Gamepad API focus bug, R5).
     const snapshot = this.deps.state.get();
-    if (snapshot.kind !== 'ready' || this.launchInFlight) return;
+    if (snapshot.kind !== 'ready' || this.launchInFlight || this.reloadInFlight) return;
     const manifest = this.current;
     if (manifest === null) return;
     // Steam mode: not yet installed → open steam://install (fire-and-forget); otherwise launch via
@@ -437,7 +483,7 @@ export class GameController {
   /** "Uninstall" action (the user confirmed in the popup). Only for an installed install-mode game. */
   private onUninstallRequested(): void {
     const snapshot = this.deps.state.get();
-    if (snapshot.kind !== 'ready' || this.launchInFlight) return;
+    if (snapshot.kind !== 'ready' || this.launchInFlight || this.reloadInFlight) return;
     const manifest = this.current;
     if (manifest === null) return;
     if (!snapshot.game.canUninstall) return; // nothing installed to remove
