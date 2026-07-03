@@ -64,13 +64,39 @@ function setDisabled(el: HTMLElement, disabled: boolean): void {
   else el.removeAttribute('disabled');
 }
 
-function setGroupValue(el: HTMLElement, value: string): void {
-  (el as HTMLElement & { value?: string }).value = value;
-}
-
 function readGroupValue(el: HTMLElement): string | null {
   const raw = (el as HTMLElement & { value?: unknown }).value;
   return typeof raw === 'string' && raw.length > 0 ? raw : null;
+}
+
+// Reliably reflect the selected radio. Setting only the group's `value` was flaky on freshly-built /
+// disabled radios (the dot didn't move), so we set each fluent-radio's `checked` property directly (FAST
+// preserves properties set before upgrade) AND the group value.
+function checkRadio(group: HTMLElement, value: string): void {
+  for (const radio of group.querySelectorAll('fluent-radio')) {
+    (radio as HTMLElement & { checked?: boolean; value?: string }).checked =
+      (radio as HTMLElement & { value?: string }).value === value;
+  }
+  (group as HTMLElement & { value?: string }).value = value;
+}
+
+// fluent-radio-group's own change/value handling is unreliable when the LABEL or the gap next to the radio
+// is clicked (the dot moves visually but `value`/`change` don't update — the selection is visual-only). So
+// we drive selection deterministically: on any click inside the group, resolve the clicked row's radio and
+// apply its value; `change` still covers keyboard arrows. `apply` must be idempotent (guarded by callers).
+function wireRadioGroup(group: HTMLElement, apply: (value: string) => void): void {
+  group.addEventListener('click', (event) => {
+    const target = event.target as Element | null;
+    const field = target?.closest('fluent-field, fluent-radio') ?? null;
+    if (field === null) return;
+    const radio = field.matches('fluent-radio') ? field : field.querySelector('fluent-radio');
+    const value = (radio as (HTMLElement & { value?: string }) | null)?.value;
+    if (value !== undefined && value.length > 0) apply(value);
+  });
+  group.addEventListener('change', () => {
+    const value = readGroupValue(group);
+    if (value !== null) apply(value);
+  });
 }
 
 const titlebarIcon = req<HTMLImageElement>('titlebar-icon');
@@ -112,17 +138,8 @@ function cmTheme(dark: boolean): Extension {
       },
       '.cm-activeLine': { backgroundColor: 'var(--colorNeutralBackground1Hover)' },
       '.cm-activeLineGutter': { backgroundColor: 'var(--colorNeutralBackground2Hover)' },
-      // Selection highlight (double-click word select, drag select). basicSetup draws the selection on its
-      // own layer BEHIND the text, so it needs an explicit, opaque-enough background or it's invisible.
-      // A fixed semi-transparent blue reads clearly on BOTH themes (a Fluent brand token was too pale) and
-      // `!important` beats CodeMirror's baseTheme default. The text stays readable (the layer is behind it).
-      '.cm-selectionLayer .cm-selectionBackground, .cm-selectionBackground': {
-        background: 'rgba(51, 144, 236, 0.4) !important',
-      },
-      '&.cm-focused .cm-selectionLayer .cm-selectionBackground, &.cm-focused .cm-selectionBackground':
-        {
-          background: 'rgba(51, 144, 236, 0.55) !important',
-        },
+      // NB: the selection-highlight color is set in configure.css (#editor + !important), NOT here —
+      // CodeMirror's baseTheme uses a very specific focused selector that a plain theme rule can't beat.
       '&.cm-focused': { outline: 'none' },
     },
     { dark },
@@ -316,15 +333,15 @@ function rebuildRadios(list: readonly DriveCandidate[]): void {
     field.append(radio, label);
     driveGroup.append(field);
   }
-  // A lone card auto-selects and the group is disabled (nothing to choose).
-  setDisabled(driveGroup, list.length === 1);
+  // NB: a lone card is NOT disabled — a disabled fluent-radio-group won't show its selection, which read
+  // as "nothing selected". It's simply auto-selected (and re-clicking it is a harmless no-op).
 }
 
 function reconcileSelection(list: readonly DriveCandidate[]): void {
   const stillPresent = selectedRoot !== null && list.some((d) => d.root === selectedRoot);
   if (stillPresent && selectedRoot !== null) {
     // Keep the current selection; a card that had vanished and came back unblocks (text preserved).
-    setGroupValue(driveGroup, selectedRoot);
+    checkRadio(driveGroup, selectedRoot);
     if (blocked) unblock();
     return;
   }
@@ -336,7 +353,7 @@ function reconcileSelection(list: readonly DriveCandidate[]): void {
   const active = list.find((d) => d.isActive);
   const pick = active ?? list[0];
   if (pick !== undefined) {
-    setGroupValue(driveGroup, pick.root);
+    checkRadio(driveGroup, pick.root);
     void selectDrive(pick.root, false);
   }
 }
@@ -362,19 +379,27 @@ function setTemplatesDisabled(disabled: boolean): void {
 }
 
 // Switches the active card. `confirmDirty` guards against losing unsaved edits (skipped for the initial
-// auto-selection). Loads the card's game.json (or clears the editor for a blank drive).
+// auto-selection). Loads the card's game.json (or clears the editor for a blank drive). `switching` guards
+// against the click+change double-fire (see wireRadioGroup) racing two confirm dialogs.
+let switching = false;
 async function selectDrive(root: string, confirmDirty: boolean): Promise<void> {
   if (root === selectedRoot && !blocked) return;
-  if (confirmDirty && dirty) {
-    const ok = await confirmDialog('Discard unsaved changes and switch cards?', 'Discard');
-    if (!ok) {
-      if (selectedRoot !== null) setGroupValue(driveGroup, selectedRoot); // revert the radio
-      return;
+  if (switching) return;
+  switching = true;
+  try {
+    if (confirmDirty && dirty) {
+      const ok = await confirmDialog('Discard unsaved changes and switch cards?', 'Discard');
+      if (!ok) {
+        if (selectedRoot !== null) checkRadio(driveGroup, selectedRoot); // revert the radio
+        return;
+      }
     }
+    selectedRoot = root;
+    if (blocked) unblock();
+    await loadDrive(root);
+  } finally {
+    switching = false;
   }
-  selectedRoot = root;
-  if (blocked) unblock();
-  await loadDrive(root);
 }
 
 async function loadDrive(root: string): Promise<void> {
@@ -490,9 +515,9 @@ window.configureApi.onEditorCommand((command) => {
   else void onReset();
 });
 
-driveGroup.addEventListener('change', () => {
-  const value = readGroupValue(driveGroup);
-  if (value !== null) void selectDrive(value, true);
+wireRadioGroup(driveGroup, (root) => {
+  checkRadio(driveGroup, root); // immediate visual feedback (selectDrive may await a confirm)
+  void selectDrive(root, true);
 });
 
 // ── Init ─────────────────────────────────────────────────────────────────────

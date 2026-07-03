@@ -91,7 +91,29 @@ function readThemeValue(el: HTMLElement): ThemeMode | null {
 }
 
 function setGroupValue(el: HTMLElement, value: string): void {
+  // Set each fluent-radio's `checked` directly (reliable visual state) plus the group value — setting only
+  // the group value could leave the dot on the wrong radio on some interactions.
+  for (const radio of el.querySelectorAll('fluent-radio')) {
+    (radio as HTMLElement & { checked?: boolean; value?: string }).checked =
+      (radio as HTMLElement & { value?: string }).value === value;
+  }
   (el as HTMLElement & { value?: string }).value = value;
+}
+
+// fluent-radio-group leaves selection visual-only when the label or the gap beside a radio is clicked
+// (`value`/`change` don't update). Delegate clicks: resolve the clicked row's radio value, force it as the
+// group value and run `apply`. `change` (kept below) still covers keyboard; both paths are idempotent.
+function wireRadioGroup(group: HTMLElement, apply: () => void): void {
+  group.addEventListener('click', (event) => {
+    const target = event.target as Element | null;
+    const field = target?.closest('fluent-field, fluent-radio') ?? null;
+    if (field === null) return;
+    const radio = field.matches('fluent-radio') ? field : field.querySelector('fluent-radio');
+    const value = (radio as (HTMLElement & { value?: string }) | null)?.value;
+    if (value === undefined || value.length === 0) return;
+    setGroupValue(group, value);
+    apply();
+  });
 }
 
 // fluent-switch exposes a `checked` property; fluent-slider a numeric `valueAsNumber` / string `value`.
@@ -211,18 +233,22 @@ actionBtn.addEventListener('click', () => {
   currentAction?.();
 });
 
-radioGroup.addEventListener('change', () => {
+function applyAutoUpdate(): void {
   const value = readAutoUpdateValue(radioGroup);
   if (value !== null) window.settingsApi.setAutoUpdate(value);
-});
+}
+radioGroup.addEventListener('change', applyAutoUpdate);
+wireRadioGroup(radioGroup, applyAutoUpdate);
 
-themeGroup.addEventListener('change', () => {
+function applyThemeChoice(): void {
   const value = readThemeValue(themeGroup);
   if (value !== null) {
     applyTheme(value); // apply live for instant feedback
     window.settingsApi.setTheme(value); // and persist
   }
-});
+}
+themeGroup.addEventListener('change', applyThemeChoice);
+wireRadioGroup(themeGroup, applyThemeChoice);
 
 prereleaseSwitch.addEventListener('change', () => {
   window.settingsApi.setPrerelease(readChecked(prereleaseSwitch));

@@ -115,6 +115,18 @@ fluent-radio-group#drive-group {
   font-size: 13px;
 }
 
+/* Text selection highlight. CodeMirror's baseTheme colours the selection with a very specific focused
+   selector that a plain EditorView.theme rule (and even !important via style-mod) failed to override — so
+   we win it from a real stylesheet: the #editor id gives high specificity and !important beats CM's
+   non-important rules. A fixed semi-transparent blue reads clearly on both light and dark themes; the
+   layer sits behind the glyphs, so the text stays readable. Covers both drawn selection and native
+   ::selection (whichever CodeMirror uses). */
+#editor .cm-selectionLayer .cm-selectionBackground,
+#editor .cm-selectionBackground,
+#editor .cm-content ::selection {
+  background-color: rgba(51, 144, 236, 0.45) !important;
+}
+
 /* Issues panel: a short scrollable list under the editor. */
 #issues {
   flex: none;
