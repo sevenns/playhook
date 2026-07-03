@@ -84,7 +84,8 @@ export const en = {
   'settings.themeLight': 'Light',
   'settings.themeDark': 'Dark',
   'settings.sectionLanguage': 'Language',
-  'settings.languageSystem': 'System',
+  // Same wording as the Appearance "Match system" option, for consistency across the two selectors.
+  'settings.languageSystem': 'Match system',
   'settings.sectionGeneral': 'General',
   'settings.summonHotkey': 'Show the launcher with a gamepad shortcut',
   'settings.summonHintPre': 'Hold',

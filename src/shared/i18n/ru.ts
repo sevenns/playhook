@@ -75,7 +75,7 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'settings.themeLight': 'Светлая',
   'settings.themeDark': 'Тёмная',
   'settings.sectionLanguage': 'Язык',
-  'settings.languageSystem': 'Системный',
+  'settings.languageSystem': 'Как в системе',
   'settings.sectionGeneral': 'Общие',
   'settings.summonHotkey': 'Показывать лаунчер сочетанием на геймпаде',
   'settings.summonHintPre': 'Зажмите',
