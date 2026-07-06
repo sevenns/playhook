@@ -224,12 +224,12 @@ export function createControls(deps: ControlsDeps): Controls {
   // it wakes again only on an explicit gamepad move or a mouse hover. `wasActive` tracks the edge.
   let focusRevealed = true;
   let wasActive = false;
-  // Idle timeout: while the bar highlight is shown with nothing open, it goes dormant on its own after
-  // 30s of no bar activity (gamepad move / mouse hover restart the countdown). `wasFocusShown` tracks
-  // the shown↔hidden edge so the countdown arms on appearance and isn't reset by unrelated re-renders.
-  const FOCUS_IDLE_MS = 30_000;
+  // Idle timeout, shared by the bar focus and the mouse cursor: after 30s with no input the bar
+  // highlight goes dormant AND the cursor hides. Any input restarts the countdown; the gamepad hides the
+  // cursor at once (the user switched to the pad), a real mouse move shows it (see the note* helpers).
+  const IDLE_MS = 30_000;
   let idleTimer = 0;
-  let wasFocusShown = false;
+  let cursorHidden = false;
 
   function mainFocusables(): readonly HTMLButtonElement[] {
     // Steam install/uninstall indicator up (phase stays 'ready'): the gear opens Steam's Downloads page
@@ -256,41 +256,42 @@ export function createControls(deps: ControlsDeps): Controls {
       const idx = items.indexOf(btn);
       btn.classList.toggle('is-focused', active && idx !== -1 && idx === focusIndex);
     });
-    syncIdleTimer();
   }
 
-  function cancelIdleTimer(): void {
-    if (idleTimer !== 0) {
-      window.clearTimeout(idleTimer);
-      idleTimer = 0;
-    }
+  function setCursorHidden(hidden: boolean): void {
+    if (cursorHidden === hidden) return;
+    cursorHidden = hidden;
+    document.documentElement.classList.toggle('cursor-hidden', hidden);
   }
 
-  // (Re)start the 30s countdown; on expiry the bar highlight goes dormant if it's still shown & idle.
+  // (Re)start the 30s countdown. On expiry (no input for 30s) the cursor hides and the bar highlight
+  // goes dormant if it's shown with nothing open — both "went idle" at the same moment.
   function armIdleTimer(): void {
-    cancelIdleTimer();
+    if (idleTimer !== 0) window.clearTimeout(idleTimer);
     idleTimer = window.setTimeout(() => {
       idleTimer = 0;
+      setCursorHidden(true);
       if (focusRevealed && focusActive()) {
         focusRevealed = false;
         applyFocus();
       }
-    }, FOCUS_IDLE_MS);
+    }, IDLE_MS);
   }
 
-  // Arm the countdown when the highlight becomes visible, cancel it when it hides — driven off the
-  // shown↔hidden edge so ordinary re-renders (which keep it shown) don't reset the timer. Bar activity
-  // resets it separately via armIdleTimer(). Called from applyFocus (the single focus-visibility sink).
-  function syncIdleTimer(): void {
-    const shown = focusRevealed && focusActive();
-    if (shown && !wasFocusShown) armIdleTimer();
-    else if (!shown) cancelIdleTimer();
-    wasFocusShown = shown;
+  // Gamepad input = activity: hide the cursor at once (the user switched to the pad) + restart the idle.
+  function noteGamepadActivity(): void {
+    setCursorHidden(true);
+    armIdleTimer();
+  }
+
+  // Real mouse movement = activity: show the cursor + restart the idle.
+  function noteMouseActivity(): void {
+    setCursorHidden(false);
+    armIdleTimer();
   }
 
   function moveFocus(delta: number): void {
     if (!focusActive()) return;
-    armIdleTimer(); // any d-pad press on the bar counts as activity — restart the idle countdown
     // Dormant (an active state or the idle timeout cleared the highlight): the first d-pad press only
     // WAKES the highlight at the current button — it doesn't move — so control returns without a jump.
     if (!focusRevealed) {
@@ -503,23 +504,28 @@ export function createControls(deps: ControlsDeps): Controls {
     });
   });
 
-  // Mouse hover moves the gamepad focus too (and wakes a dormant highlight), so A always activates what's
-  // highlighted. mousemove (not just mouseenter) also counts as activity, so keeping the cursor moving on
-  // a button holds off the idle timeout even without leaving/re-entering it.
-  function noteBarHover(btn: HTMLButtonElement): void {
+  // One window-level mouse handler, guarded against SYNTHETIC moves (Chromium fires mousemove with
+  // unchanged coordinates when an element shifts under a still pointer — e.g. the busy title-slide — and
+  // that must not undo a gamepad cursor-hide). A real move shows the cursor, counts as activity, and —
+  // when it's over a bar button — wakes/moves the bar focus so A activates what's highlighted.
+  let lastMouseX = -1;
+  let lastMouseY = -1;
+  window.addEventListener('mousemove', (event) => {
+    if (event.clientX === lastMouseX && event.clientY === lastMouseY) return; // synthetic — ignore
+    lastMouseX = event.clientX;
+    lastMouseY = event.clientY;
+    noteMouseActivity();
     if (!focusActive()) return;
-    const idx = mainFocusables().indexOf(btn);
+    const target =
+      event.target instanceof Element ? event.target.closest<HTMLButtonElement>('#play-button, #more-button') : null;
+    if (target === null) return;
+    const idx = mainFocusables().indexOf(target);
     if (idx === -1) return;
-    armIdleTimer(); // activity — restart the idle countdown
     if (!focusRevealed || focusIndex !== idx) {
       focusRevealed = true;
       focusIndex = idx;
       applyFocus();
     }
-  }
-  ALL_MAIN_BUTTONS.forEach((btn) => {
-    btn.addEventListener('mouseenter', () => noteBarHover(btn));
-    btn.addEventListener('mousemove', () => noteBarHover(btn));
   });
   ALL_STACK_BUTTONS.forEach((btn) => {
     btn.addEventListener('mouseenter', () => {
@@ -532,27 +538,34 @@ export function createControls(deps: ControlsDeps): Controls {
   });
 
   const gamepad = createGamepadController({
-    // With a popup open, left/right are a no-op (the stacks are vertical); the bar uses them otherwise.
+    // Every gamepad edge hides the cursor and restarts the idle countdown (noteGamepadActivity), then
+    // does its normal job. With a popup open, left/right are a no-op (the stacks are vertical).
     onLeft: () => {
+      noteGamepadActivity();
       if (popupView === 'none') moveFocus(-1);
     },
     onRight: () => {
+      noteGamepadActivity();
       if (popupView === 'none') moveFocus(1);
     },
     // Up/down drive the vertical popup stack; ignored on the bar (which has no vertical axis).
     onUp: () => {
+      noteGamepadActivity();
       if (popupView !== 'none') moveStackFocus(-1);
     },
     onDown: () => {
+      noteGamepadActivity();
       if (popupView !== 'none') moveStackFocus(1);
     },
     // On the empty / idle screen the only action is Hide; otherwise A activates the focused control.
     onA: () => {
+      noteGamepadActivity();
       if (popupView !== 'none') activateStack();
       else if (onMessageScreen()) window.api.requestHide();
       else activateFocused();
     },
     onB: () => {
+      noteGamepadActivity();
       if (popupView !== 'none') back();
       else if (onMessageScreen()) window.api.requestHide();
     },
@@ -600,6 +613,9 @@ export function createControls(deps: ControlsDeps): Controls {
     clearGameButtons,
     refresh,
     showError: openError,
-    start: () => gamepad.start(),
+    start: () => {
+      gamepad.start();
+      armIdleTimer(); // begin the countdown so an untouched launcher hides its cursor after 30s
+    },
   };
 }
