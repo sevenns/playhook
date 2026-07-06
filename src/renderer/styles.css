@@ -368,7 +368,7 @@ body {
   font-weight: 800;
   font-size: calc(32 * var(--px));
   line-height: calc(48 * var(--px));
-  color: var(--d2);
+  color: var(--fg);
   transition: transform 0.45s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
@@ -402,7 +402,7 @@ body {
   font-weight: 400;
   font-size: calc(24 * var(--px));
   line-height: calc(36 * var(--px));
-  color: var(--d2);
+  color: var(--fg);
   /* Pre-positioned below center so it forms the second line under the lifted title; only opacity
      animates (it's invisible outside busy anyway). */
   transform: translateY(calc(18 * var(--px)));
@@ -494,22 +494,21 @@ body {
   font-weight: 300;
   font-size: calc(24 * var(--px));
   line-height: calc(36 * var(--px));
-  /* Muted d2 (keeps the label lighter than its value, but in the accent hue). */
-  color: color-mix(in srgb, var(--d2) 75%, transparent);
+  color: color-mix(in srgb, var(--fg) 75%, transparent);
 }
 
 .info-value {
   font-weight: 500;
   font-size: calc(24 * var(--px));
   line-height: calc(36 * var(--px));
-  color: var(--d2);
+  color: var(--fg);
 }
 
-/* Error detail: muted d2 (alpha поверх hero), и перенос произвольного текста ошибки (сырой
-   describe(cause) может дать длинный токен без пробелов, напр. путь/URL) — при right-align он иначе
-   вылезет за правый край. */
+/* Error detail: muted, полупрозрачный белый (как на макете — alpha поверх hero), и перенос
+   произвольного текста ошибки (сырой describe(cause) может дать длинный токен без пробелов, напр.
+   путь/URL) — при right-align он иначе вылезет за правый край. */
 #error-message {
-  color: color-mix(in srgb, var(--d2) 75%, transparent);
+  color: color-mix(in srgb, var(--fg) 75%, transparent);
   overflow-wrap: anywhere;
 }
 
@@ -518,7 +517,7 @@ body {
   font-weight: 500;
   font-size: calc(32 * var(--px));
   line-height: calc(44 * var(--px));
-  color: var(--d2);
+  color: var(--fg);
 }
 
 /* Popup detail line under the heading. Visible by default (error always shows its detail); confirm
@@ -528,7 +527,7 @@ body {
   font-weight: 300;
   font-size: calc(24 * var(--px));
   line-height: calc(36 * var(--px));
-  color: var(--d2);
+  color: var(--fg);
 }
 
 /* Install-only description with the destination path. Hidden by default; shown only in confirm view for
