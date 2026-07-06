@@ -103,7 +103,7 @@ export function createControls(deps: ControlsDeps): Controls {
 
   // Details menu (from More): game stats on top + Shutdown / Install|Uninstall / Close stack.
   function openDetails(): void {
-    if (phaseOf(state()) !== 'ready') return;
+    if (!onGameScreen()) return;
     applyMenuInstallToggle(); // keep the toggle's text/visibility fresh for the current game
     setView('details');
     focusStackBottom(); // default focus: Close
@@ -112,7 +112,7 @@ export function createControls(deps: ControlsDeps): Controls {
 
   // Power submenu (from Details → Shutdown): Shutdown / Reboot / Sleep. Each opens a Yes/No confirm.
   function openPower(): void {
-    if (phaseOf(state()) !== 'ready') return;
+    if (!onGameScreen()) return;
     setView('power');
     focusStackBottom(); // default focus: Sleep
     applyFocus();
@@ -121,7 +121,7 @@ export function createControls(deps: ControlsDeps): Controls {
   // Confirm view — install/uninstall (from Details) or a power action (from Power). Yes runs the action
   // and closes the whole stack; No/back returns to where it came from.
   function openConfirm(mode: ConfirmMode): void {
-    if (phaseOf(state()) !== 'ready') return;
+    if (!onGameScreen()) return;
     if (mode === 'install' || mode === 'uninstall') {
       const game = gameOf(state());
       if (game === undefined) return;
@@ -200,8 +200,11 @@ export function createControls(deps: ControlsDeps): Controls {
   // "Uninstall" when installed & removable, hidden entirely for a plain executable (no install block).
   function applyMenuInstallToggle(): void {
     const game = gameOf(state());
-    const showInstall = game?.requiresInstall === true;
-    const showUninstall = game?.canUninstall === true;
+    // While an install/uninstall (card or Steam) is in flight, the Install/Uninstall item is hidden —
+    // acting on it mid-operation makes no sense (Details still opens for the stats + power actions).
+    const busy = phaseOf(state()) === 'busy' || steamBusy(state());
+    const showInstall = !busy && game?.requiresInstall === true;
+    const showUninstall = !busy && game?.canUninstall === true;
     const show = showInstall || showUninstall;
     menuInstallToggle.classList.toggle('is-hidden', !show);
     if (show) {
@@ -217,17 +220,20 @@ export function createControls(deps: ControlsDeps): Controls {
   let focusIndex = 0;
 
   function mainFocusables(): readonly HTMLButtonElement[] {
-    // Steam install/uninstall indicator up: only the gear (playButton) is focusable — its click opens
-    // Steam's Downloads page (see triggerPlay). The right-side More is hidden.
-    if (steamBusy(state())) return [playButton];
+    // Steam install/uninstall indicator up (phase stays 'ready'): the gear opens Steam's Downloads page
+    // and More opens Details — both focusable.
+    if (steamBusy(state())) return [playButton, moreButton];
+    // Hard busy (install / uninstall / launch / running): the Play button is a non-interactive activity
+    // indicator (spinner/gear), so only More is focusable — it still opens Details.
+    if (phaseOf(state()) === 'busy') return [moreButton];
     // no-play layout: a requiresInstall installer/steam game hides Play → only More.
     if (gameOf(state())?.requiresInstall === true) return [moreButton];
     return [playButton, moreButton];
   }
 
-  // Main focus is only meaningful on the ready screen with the popup closed.
+  // Main focus is meaningful on any game screen (ready or busy) with the popup closed.
   function focusActive(): boolean {
-    return phaseOf(state()) === 'ready' && popupView === 'none';
+    return onGameScreen() && popupView === 'none';
   }
 
   function applyFocus(): void {
@@ -286,7 +292,7 @@ export function createControls(deps: ControlsDeps): Controls {
   }
 
   function stackActive(): boolean {
-    return phaseOf(state()) === 'ready' && popupView !== 'none';
+    return onGameScreen() && popupView !== 'none';
   }
 
   function applyStackFocus(): void {
@@ -330,6 +336,8 @@ export function createControls(deps: ControlsDeps): Controls {
     }
     // Steam uninstall in progress (gear) → nothing useful to do, ignore the press.
     if (game?.steamUninstalling === true) return;
+    // In a hard-busy phase the Play button is just an activity indicator (spinner/gear) — no launch.
+    if (phaseOf(state()) !== 'ready') return;
     audio.play('play');
     window.api.requestLaunch();
   }
@@ -417,6 +425,13 @@ export function createControls(deps: ControlsDeps): Controls {
     return phase === 'idle' || phase === 'error';
   }
 
+  // A game screen (ready or busy) — where the bar (More) and the popup are usable. The launch/install/
+  // uninstall busy states keep More live (it opens Details); only the empty screens shut the popup out.
+  function onGameScreen(): boolean {
+    const phase = phaseOf(state());
+    return phase === 'ready' || phase === 'busy';
+  }
+
   // ── Wiring ────────────────────────────────────────────────────────────────
 
   playButton.addEventListener('click', () => triggerPlay());
@@ -501,12 +516,11 @@ export function createControls(deps: ControlsDeps): Controls {
   }
 
   function refresh(): void {
-    // The popup only makes sense on the ready screen with no steam-busy indicator; force-close it
-    // otherwise. A failed launch returns to 'ready' first, THEN opens the error popup (separate IPC),
-    // so the error survives this. Closing also matters for a card swap/pull WHILE the popup is open,
-    // and for a steam download/uninstall that starts externally (SteamInstallWatch) under an open
-    // Details with Install/Uninstall items.
-    if (phaseOf(state()) !== 'ready' || steamBusy(state())) {
+    // The popup lives on any game screen (ready or busy) — More opens Details even mid-install/launch.
+    // Force-close it only when we leave the game screens for the empty idle/error screen (e.g. the card
+    // is pulled): there's no game to describe there. A failed launch returns to 'ready' first, THEN
+    // opens the error popup (separate IPC), so the error survives this.
+    if (!onGameScreen()) {
       closePopup();
     }
     applyFocus();

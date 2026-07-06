@@ -39,6 +39,7 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'launcher.menu.close': 'Закрыть',
   'launcher.menu.install': 'Установить',
   'launcher.menu.uninstall': 'Удалить',
+  'launcher.menu.system': 'Система',
   'launcher.menu.shutdown': 'Выключить',
   'launcher.menu.reboot': 'Перезагрузить',
   'launcher.menu.sleep': 'Спящий режим',

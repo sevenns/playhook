@@ -168,7 +168,10 @@ body {
   height: calc(92 * var(--px));
 }
 
-/* ── Play button — special: rounded square, bg d2, content d1, pulsing ring on hover/focus ── */
+/* ── Play button — a normal button (like .rect-button): transparent with d2 content, inverts to a d2
+   fill with d1 content on hover/focus. Its ONLY distinction is the pulsing ring on hover/focus. The
+   same visual model holds in every state — idle (triangle), game busy (spinner), system busy (gear):
+   inactive = icon only, active = fill + icon. */
 
 .play-button {
   position: absolute;
@@ -182,11 +185,16 @@ body {
   padding: 0;
   border: none;
   border-radius: calc(10 * var(--px));
+  background: transparent;
+  color: var(--d2);
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease, transform 0.12s ease;
+}
+
+.play-button:hover,
+.play-button.is-focused {
   background: var(--d2);
   color: var(--d1);
-  cursor: pointer;
-  /* background/color transition so the switch to the transparent d2 gear (system busy) is smooth. */
-  transition: background 0.2s ease, color 0.2s ease, transform 0.12s ease;
 }
 
 /* Press feedback (mouse :active, or gamepad A via .is-pressed): smooth scale down. */
@@ -293,34 +301,33 @@ body {
   fill: currentColor;
 }
 
-/* More: three dots, 56×16 in the mockup, centered in the 92×92 button. */
+/* More: three dots, 56×16 in the mockup, centered in the 92×92 button. overflow:visible so the last
+   dot (its right edge sits exactly on the viewBox boundary) isn't clipped by the SVG viewport. */
 .icon-more {
   width: calc(56 * var(--px));
   height: calc(16 * var(--px));
   fill: currentColor;
+  overflow: visible;
 }
 
-/* The More button disappears while busy (launch flow) and while a Steam install/uninstall indicator
-   is up (which stays on the ready screen, hence the separate data-steam-busy selector). */
-#app[data-phase='busy'] .rect-button,
-#app[data-steam-busy='true'] .rect-button {
-  opacity: 0;
-  transform: translateX(calc(20 * var(--px)));
-  pointer-events: none;
-}
+/* The More button stays visible AND interactive while busy / during a Steam install-uninstall (it opens
+   the Details menu there too). Only the empty-screen phases hide it (that's handled by the per-phase
+   display rules above), so there is no busy fade-out here anymore. */
 
 /* ── Play-button busy visuals (spinner vs gear) ────────────────────────────
-   Two busy variants on the same button, chosen by #app[data-busy] (set from app.ts):
-   • 'game'   (launch / save-sync / running) → the loader arc (d1) spins over the d2 square.
-   • 'system' (install / uninstall / Steam)  → a transparent button with a slowly spinning d2 gear.
+   Two busy variants on the same normal (transparent) button, chosen by #app[data-busy] (set from
+   app.ts). Both the loader arc and the gear use currentColor, so they invert with the button on
+   hover/focus just like the triangle (inactive = icon only, active = fill + icon):
+   • 'game'   (launch / save-sync / running) → the loader arc spins in place of the triangle.
+   • 'system' (install / uninstall / Steam)  → a slowly spinning gear.
    The split follows the design's semantics: gear = system activity, spinner = game phases. */
 
 .loader {
   display: none;
   width: calc(40 * var(--px));
   height: calc(40 * var(--px));
-  border: calc(4 * var(--px)) solid color-mix(in srgb, var(--d1) 30%, transparent);
-  border-top-color: var(--d1);
+  border: calc(4 * var(--px)) solid color-mix(in srgb, currentColor 30%, transparent);
+  border-top-color: currentColor;
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }
@@ -331,7 +338,7 @@ body {
   }
 }
 
-/* Game busy: the play triangle gives way to the loader arc (background stays d2). */
+/* Game busy: the play triangle gives way to the loader arc. */
 #app[data-busy='game'] .icon-play {
   display: none;
 }
@@ -339,11 +346,7 @@ body {
   display: block;
 }
 
-/* System busy: transparent button + d2 gear rotating slowly; triangle and loader hidden. */
-#app[data-busy='system'] #play-button {
-  background: transparent;
-  color: var(--d2);
-}
+/* System busy: the triangle gives way to a slowly spinning gear. */
 #app[data-busy='system'] .icon-play {
   display: none;
 }

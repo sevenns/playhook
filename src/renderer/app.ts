@@ -20,6 +20,8 @@ const titleEl = req('title');
 const statusEl = req('status');
 const infoPanel = req('info-panel');
 const barContent = reqQuery<HTMLElement>('.bar-content');
+// Read for the busy title-slide: the title now stops before the (still-visible) More button.
+const moreButton = req('more-button');
 
 let currentState: AppState = { kind: 'idle' };
 // UI locale + translator (both refreshed on a language push). The HTML ships English fallback text, so
@@ -95,7 +97,11 @@ function applyTitleSlide(toRight: boolean): void {
   titleSlideRaf = requestAnimationFrame(() => {
     titleSlideRaf = 0;
     if (!shouldSlideTitle()) return; // state changed before the frame — don't slide
-    const shift = barContent.clientWidth - titleEl.scrollWidth - titleEl.offsetLeft;
+    // The title slides right but must stop a gap short of the More button (which now stays visible
+    // while busy). More sits at the right edge, so its offsetLeft marks where the title must end;
+    // back off one 32px design gap. (One design px = the bar's height / 92 design-px.)
+    const gap = (32 * barContent.clientHeight) / 92;
+    const shift = moreButton.offsetLeft - gap - titleEl.scrollWidth - titleEl.offsetLeft;
     titleEl.style.setProperty('--title-x', `${Math.max(0, Math.round(shift))}px`);
   });
 }
@@ -226,3 +232,15 @@ controls.start();
 window.addEventListener('resize', () => {
   if (shouldSlideTitle()) applyTitleSlide(true);
 });
+
+// Wake-from-sleep guard for background music. JS timers don't advance while the machine is suspended,
+// so a ballooned gap between heartbeats means we just resumed — and the OS may have torn down the audio
+// session, leaving the looping music silent while UI sounds (fresh clones) still work. Re-sync to
+// re-issue play(). visibilitychange doesn't cover this: the window can stay visible across sleep.
+let lastHeartbeat = Date.now();
+window.setInterval(() => {
+  const now = Date.now();
+  const resumedFromSleep = now - lastHeartbeat > 5000;
+  lastHeartbeat = now;
+  if (resumedFromSleep) syncMusic();
+}, 2000);

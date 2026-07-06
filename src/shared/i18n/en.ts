@@ -47,6 +47,9 @@ export const en = {
   'launcher.menu.close': 'Close',
   'launcher.menu.install': 'Install',
   'launcher.menu.uninstall': 'Uninstall',
+  // Details entry that opens the Power submenu — named "System" so it doesn't duplicate the submenu's
+  // own "Shutdown" action.
+  'launcher.menu.system': 'System',
   'launcher.menu.shutdown': 'Shutdown',
   'launcher.menu.reboot': 'Reboot',
   'launcher.menu.sleep': 'Sleep',

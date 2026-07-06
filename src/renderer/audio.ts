@@ -59,6 +59,13 @@ export function createAudioController(): AudioController {
         el.loop = true;
         el.volume = musicVolume;
         el.preload = 'auto';
+        // The OS can pause our looping music with no user intent — most notably on resume from sleep,
+        // where the audio session is torn down (UI sounds are unaffected: each is a fresh clone.play()).
+        // Resume if we still want it playing. setMusicPlaying(false) clears musicWanted BEFORE pausing,
+        // and clearMusic nulls `music`, so this never fights an intentional stop nor a swapped-out asset.
+        el.addEventListener('pause', () => {
+          if (musicWanted && music === el) void el.play().catch(() => undefined);
+        });
         music = el;
         if (musicWanted) void el.play().catch(() => undefined);
       }
