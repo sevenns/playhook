@@ -224,6 +224,12 @@ export function createControls(deps: ControlsDeps): Controls {
   // it wakes again only on an explicit gamepad move or a mouse hover. `wasActive` tracks the edge.
   let focusRevealed = true;
   let wasActive = false;
+  // Idle timeout: while the bar highlight is shown with nothing open, it goes dormant on its own after
+  // 30s of no bar activity (gamepad move / mouse hover restart the countdown). `wasFocusShown` tracks
+  // the shown↔hidden edge so the countdown arms on appearance and isn't reset by unrelated re-renders.
+  const FOCUS_IDLE_MS = 30_000;
+  let idleTimer = 0;
+  let wasFocusShown = false;
 
   function mainFocusables(): readonly HTMLButtonElement[] {
     // Steam install/uninstall indicator up (phase stays 'ready'): the gear opens Steam's Downloads page
@@ -250,12 +256,43 @@ export function createControls(deps: ControlsDeps): Controls {
       const idx = items.indexOf(btn);
       btn.classList.toggle('is-focused', active && idx !== -1 && idx === focusIndex);
     });
+    syncIdleTimer();
+  }
+
+  function cancelIdleTimer(): void {
+    if (idleTimer !== 0) {
+      window.clearTimeout(idleTimer);
+      idleTimer = 0;
+    }
+  }
+
+  // (Re)start the 30s countdown; on expiry the bar highlight goes dormant if it's still shown & idle.
+  function armIdleTimer(): void {
+    cancelIdleTimer();
+    idleTimer = window.setTimeout(() => {
+      idleTimer = 0;
+      if (focusRevealed && focusActive()) {
+        focusRevealed = false;
+        applyFocus();
+      }
+    }, FOCUS_IDLE_MS);
+  }
+
+  // Arm the countdown when the highlight becomes visible, cancel it when it hides — driven off the
+  // shown↔hidden edge so ordinary re-renders (which keep it shown) don't reset the timer. Bar activity
+  // resets it separately via armIdleTimer(). Called from applyFocus (the single focus-visibility sink).
+  function syncIdleTimer(): void {
+    const shown = focusRevealed && focusActive();
+    if (shown && !wasFocusShown) armIdleTimer();
+    else if (!shown) cancelIdleTimer();
+    wasFocusShown = shown;
   }
 
   function moveFocus(delta: number): void {
     if (!focusActive()) return;
-    // Dormant (an active state just cleared the highlight): the first d-pad press only WAKES the
-    // highlight at the current button — it doesn't move — so control returns without a surprise jump.
+    armIdleTimer(); // any d-pad press on the bar counts as activity — restart the idle countdown
+    // Dormant (an active state or the idle timeout cleared the highlight): the first d-pad press only
+    // WAKES the highlight at the current button — it doesn't move — so control returns without a jump.
     if (!focusRevealed) {
       focusRevealed = true;
       audio.play('navigate');
@@ -380,8 +417,10 @@ export function createControls(deps: ControlsDeps): Controls {
     } else if (btn === menuInstallToggle) {
       audio.play('button');
       openConfirm(menuInstallToggle.dataset['action'] === 'install' ? 'install' : 'uninstall');
-    } else if (btn === menuClose || btn === errorClose) {
-      back(); // closes Details / Error
+    } else if (btn === menuClose || btn === errorClose || btn === powerClose) {
+      // back() dispatches by the current view: Details/Error → close the popup; Power → step back to
+      // the Details menu (so "Close" in the Power submenu returns you one level up, like the B gesture).
+      back();
     } else if (btn === powerShutdown) {
       audio.play('button');
       openConfirm('shutdown');
@@ -391,10 +430,6 @@ export function createControls(deps: ControlsDeps): Controls {
     } else if (btn === powerSleep) {
       audio.play('button');
       openConfirm('sleep');
-    } else if (btn === powerClose) {
-      // Like Details/Error "Close": dismiss the whole popup (B/Esc/veil still step back to Details).
-      audio.play('back');
-      closePopup();
     } else if (btn === confirmYes) {
       acceptConfirm();
     } else if (btn === confirmNo) {
@@ -468,17 +503,23 @@ export function createControls(deps: ControlsDeps): Controls {
     });
   });
 
-  // Mouse hover moves the gamepad focus too (and wakes a dormant highlight), so A always activates
-  // what's highlighted.
-  ALL_MAIN_BUTTONS.forEach((btn) => {
-    btn.addEventListener('mouseenter', () => {
-      if (!focusActive()) return;
-      const idx = mainFocusables().indexOf(btn);
-      if (idx === -1) return;
+  // Mouse hover moves the gamepad focus too (and wakes a dormant highlight), so A always activates what's
+  // highlighted. mousemove (not just mouseenter) also counts as activity, so keeping the cursor moving on
+  // a button holds off the idle timeout even without leaving/re-entering it.
+  function noteBarHover(btn: HTMLButtonElement): void {
+    if (!focusActive()) return;
+    const idx = mainFocusables().indexOf(btn);
+    if (idx === -1) return;
+    armIdleTimer(); // activity — restart the idle countdown
+    if (!focusRevealed || focusIndex !== idx) {
       focusRevealed = true;
       focusIndex = idx;
       applyFocus();
-    });
+    }
+  }
+  ALL_MAIN_BUTTONS.forEach((btn) => {
+    btn.addEventListener('mouseenter', () => noteBarHover(btn));
+    btn.addEventListener('mousemove', () => noteBarHover(btn));
   });
   ALL_STACK_BUTTONS.forEach((btn) => {
     btn.addEventListener('mouseenter', () => {
