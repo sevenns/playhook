@@ -13,15 +13,12 @@ import { createHeroController } from './hero.js';
 import { createControls } from './controls.js';
 import { formatDate, formatPlaytime } from './format.js';
 import { busyKindOf, gameOf, phaseOf, statusOf, steamBusy } from './state-view.js';
-import { req, reqQuery } from './dom.js';
+import { req } from './dom.js';
 
 const app = req('app');
 const titleEl = req('title');
 const statusEl = req('status');
 const infoPanel = req('info-panel');
-const barContent = reqQuery<HTMLElement>('.bar-content');
-// Read for the busy title-slide: the title now stops before the (still-visible) More button.
-const moreButton = req('more-button');
 
 let currentState: AppState = { kind: 'idle' };
 // UI locale + translator (both refreshed on a language push). The HTML ships English fallback text, so
@@ -73,38 +70,11 @@ function buildInfoPanel(game: GameInfo): void {
   );
 }
 
-// ── Title slide (left → right while busy) ───────────────────────────────────
-
-// The title slides right (making room for the status) while busy OR while a Steam install/uninstall
-// shows its non-blocking indicator on the ready screen.
-function shouldSlideTitle(): boolean {
-  return phaseOf(currentState) === 'busy' || steamBusy(currentState);
-}
-
-let titleSlideRaf = 0;
-function applyTitleSlide(toRight: boolean): void {
-  // Cancel any pending measure: otherwise a busy-state rAF can fire AFTER we've returned to 'ready'
-  // (e.g. a launch that failed fast) and wrongly re-slide the title right. This was the stuck-title bug.
-  if (titleSlideRaf !== 0) {
-    cancelAnimationFrame(titleSlideRaf);
-    titleSlideRaf = 0;
-  }
-  if (!toRight) {
-    titleEl.style.setProperty('--title-x', '0px');
-    return;
-  }
-  // Measure after layout so scrollWidth/offsetLeft are correct.
-  titleSlideRaf = requestAnimationFrame(() => {
-    titleSlideRaf = 0;
-    if (!shouldSlideTitle()) return; // state changed before the frame — don't slide
-    // The title slides right but must stop a gap short of the More button (which now stays visible
-    // while busy). More sits at the right edge, so its offsetLeft marks where the title must end;
-    // back off one 32px design gap. (One design px = the bar's height / 92 design-px.)
-    const gap = (32 * barContent.clientHeight) / 92;
-    const shift = moreButton.offsetLeft - gap - titleEl.scrollWidth - titleEl.offsetLeft;
-    titleEl.style.setProperty('--title-x', `${Math.max(0, Math.round(shift))}px`);
-  });
-}
+// ── Title / status busy layout ──────────────────────────────────────────────
+// While busy (or during a Steam install/uninstall indicator) the title lifts UP and the status line
+// fades in below it — a two-line block that keeps the long title fully visible (it no longer slides
+// right into the More button). Both moves are pure CSS, keyed off #app[data-phase]/[data-steam-busy]
+// (see styles.css), so there's no JS measurement here anymore.
 
 // ── Background music gating ──────────────────────────────────────────────────
 
@@ -162,7 +132,6 @@ function render(state: AppState): void {
   else delete app.dataset['layout'];
 
   statusEl.textContent = statusOf(state, translator);
-  applyTitleSlide(phase === 'busy' || busySteam);
 
   // Force-close popups off the ready screen, then re-apply the focus highlight (see controls.refresh).
   controls.refresh();
@@ -227,11 +196,6 @@ document.addEventListener('visibilitychange', () => {
 });
 
 controls.start();
-
-// Re-measure the title slide on resize while busy / steam-installing (keeps right-alignment correct).
-window.addEventListener('resize', () => {
-  if (shouldSlideTitle()) applyTitleSlide(true);
-});
 
 // Wake-from-sleep guard for background music. JS timers don't advance while the machine is suspended,
 // so a ballooned gap between heartbeats means we just resumed — and the OS may have torn down the audio

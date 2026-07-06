@@ -369,8 +369,15 @@ body {
   font-size: calc(32 * var(--px));
   line-height: calc(48 * var(--px));
   color: var(--fg);
-  transform: translateX(var(--title-x, 0px));
   transition: transform 0.45s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Busy / steam-busy: the title lifts UP (instead of sliding right) so the status line fades in below
+   it — a two-line block that keeps a long title fully visible. The status sits pre-positioned below
+   center (see .status) and only its opacity animates. */
+#app[data-phase='busy'] .title,
+#app[data-steam-busy='true'] .title {
+  transform: translateY(calc(-18 * var(--px)));
 }
 
 /* no-play layout (requiresInstall installer/steam game, not steam-busy): the left slot is empty (Play
@@ -396,12 +403,15 @@ body {
   font-size: calc(24 * var(--px));
   line-height: calc(36 * var(--px));
   color: var(--fg);
+  /* Pre-positioned below center so it forms the second line under the lifted title; only opacity
+     animates (it's invisible outside busy anyway). */
+  transform: translateY(calc(18 * var(--px)));
   opacity: 0;
   transition: opacity 0.3s ease;
 }
 
-/* Status fades in only after the title has slid to the right (busy flow, and the Steam non-blocking
-   "Installing… X%" / "Uninstalling…" indicators which stay on the ready screen). */
+/* Status fades in just after the title starts lifting (the delay sequences the two moves: title up,
+   then status in). Covers busy and the Steam non-blocking "Installing… X%" / "Uninstalling…" indicators. */
 #app[data-phase='busy'] .status,
 #app[data-steam-busy='true'] .status {
   opacity: 1;

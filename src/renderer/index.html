@@ -30,8 +30,10 @@
                (see styles.css, driven by #app[data-busy]): the play triangle (idle/ready), the loader
                arc (game phases: launch/sync/run), or a spinning gear (system activity: install/steam). -->
           <button id="play-button" class="play-button" type="button" aria-label="Play" data-i18n-aria-label="launcher.aria.play">
+            <!-- Play triangle with rounded corners (quadratic beziers through each vertex, ~6-unit
+                 edge offset) so it matches the 10px-radius language of the rest of the UI. -->
             <svg class="icon-play" viewBox="0 0 36 48" aria-hidden="true">
-              <path d="M2 2 L34 24 L2 46 Z" />
+              <path d="M6.94 5.4 L29.06 20.6 Q34 24 29.06 27.4 L6.94 42.6 Q2 46 2 40 L2 8 Q2 2 6.94 5.4 Z" />
             </svg>
             <!-- Gear: shown (transparent button, d2 gear, slow spin) during system activity —
                  installing / uninstalling / a Steam download or removal. -->
@@ -76,7 +78,7 @@
            switch by data-view (details / power / confirm / error) — a mirror of the popup state machine in
            controls.ts. A single veil (vs one per section) avoids the cross-fade flicker of two identical
            blur veils when moving Details ↔ Power: the veil stays, only the content changes.
-           Default focus in every stack is the BOTTOM button (Close / No / Sleep) — see controls.ts. -->
+           Default focus in every stack is the BOTTOM button (Close / No) — see controls.ts. -->
       <section id="popup" class="popup" aria-hidden="true" data-view="details">
         <div class="popup-veil"></div>
         <div class="popup-column">
@@ -118,6 +120,7 @@
               <button id="power-shutdown" class="text-button" type="button" data-i18n="launcher.menu.shutdown">Shutdown</button>
               <button id="power-reboot" class="text-button" type="button" data-i18n="launcher.menu.reboot">Reboot</button>
               <button id="power-sleep" class="text-button" type="button" data-i18n="launcher.menu.sleep">Sleep</button>
+              <button id="power-close" class="text-button" type="button" data-i18n="launcher.menu.close">Close</button>
             </div>
             <div class="actions-group" data-group="confirm">
               <button id="confirm-yes" class="text-button" type="button" data-i18n="common.yes">Yes</button>

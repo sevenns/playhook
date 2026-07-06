@@ -71,6 +71,7 @@ export function createControls(deps: ControlsDeps): Controls {
   const powerShutdown = req<HTMLButtonElement>('power-shutdown');
   const powerReboot = req<HTMLButtonElement>('power-reboot');
   const powerSleep = req<HTMLButtonElement>('power-sleep');
+  const powerClose = req<HTMLButtonElement>('power-close');
   const confirmYes = req<HTMLButtonElement>('confirm-yes');
   const confirmNo = req<HTMLButtonElement>('confirm-no');
   const errorClose = req<HTMLButtonElement>('error-close');
@@ -114,7 +115,7 @@ export function createControls(deps: ControlsDeps): Controls {
   function openPower(): void {
     if (!onGameScreen()) return;
     setView('power');
-    focusStackBottom(); // default focus: Sleep
+    focusStackBottom(); // default focus: Close (bottom) — a safe non-destructive default
     applyFocus();
   }
 
@@ -218,6 +219,11 @@ export function createControls(deps: ControlsDeps): Controls {
 
   const ALL_MAIN_BUTTONS: readonly HTMLButtonElement[] = [playButton, moreButton];
   let focusIndex = 0;
+  // Whether the bar's focus highlight is "awake". It goes dormant when an active state (install / launch
+  // / uninstall / steam) appears, so the highlight doesn't auto-jump onto a button the user didn't pick;
+  // it wakes again only on an explicit gamepad move or a mouse hover. `wasActive` tracks the edge.
+  let focusRevealed = true;
+  let wasActive = false;
 
   function mainFocusables(): readonly HTMLButtonElement[] {
     // Steam install/uninstall indicator up (phase stays 'ready'): the gear opens Steam's Downloads page
@@ -239,7 +245,7 @@ export function createControls(deps: ControlsDeps): Controls {
   function applyFocus(): void {
     const items = mainFocusables();
     focusIndex = Math.min(items.length - 1, Math.max(0, focusIndex));
-    const active = focusActive();
+    const active = focusActive() && focusRevealed;
     ALL_MAIN_BUTTONS.forEach((btn) => {
       const idx = items.indexOf(btn);
       btn.classList.toggle('is-focused', active && idx !== -1 && idx === focusIndex);
@@ -248,6 +254,14 @@ export function createControls(deps: ControlsDeps): Controls {
 
   function moveFocus(delta: number): void {
     if (!focusActive()) return;
+    // Dormant (an active state just cleared the highlight): the first d-pad press only WAKES the
+    // highlight at the current button — it doesn't move — so control returns without a surprise jump.
+    if (!focusRevealed) {
+      focusRevealed = true;
+      audio.play('navigate');
+      applyFocus();
+      return;
+    }
     const items = mainFocusables();
     const next = Math.min(items.length - 1, Math.max(0, focusIndex + delta));
     if (next === focusIndex) return; // already at the edge — no move, no sound
@@ -266,6 +280,7 @@ export function createControls(deps: ControlsDeps): Controls {
     powerShutdown,
     powerReboot,
     powerSleep,
+    powerClose,
     confirmYes,
     confirmNo,
     errorClose,
@@ -281,7 +296,7 @@ export function createControls(deps: ControlsDeps): Controls {
         return items;
       }
       case 'power':
-        return [powerShutdown, powerReboot, powerSleep];
+        return [powerShutdown, powerReboot, powerSleep, powerClose];
       case 'confirm':
         return [confirmYes, confirmNo];
       case 'error':
@@ -348,7 +363,8 @@ export function createControls(deps: ControlsDeps): Controls {
   }
 
   function activateFocused(): void {
-    if (!focusActive()) return;
+    // Nothing is selected while the highlight is dormant — the user must wake it (d-pad / hover) first.
+    if (!focusActive() || !focusRevealed) return;
     const btn = mainFocusables()[focusIndex];
     if (btn === undefined) return;
     pressFlash(btn);
@@ -375,6 +391,10 @@ export function createControls(deps: ControlsDeps): Controls {
     } else if (btn === powerSleep) {
       audio.play('button');
       openConfirm('sleep');
+    } else if (btn === powerClose) {
+      // Like Details/Error "Close": dismiss the whole popup (B/Esc/veil still step back to Details).
+      audio.play('back');
+      closePopup();
     } else if (btn === confirmYes) {
       acceptConfirm();
     } else if (btn === confirmNo) {
@@ -448,12 +468,14 @@ export function createControls(deps: ControlsDeps): Controls {
     });
   });
 
-  // Mouse hover moves the gamepad focus too, so A always activates what's highlighted.
+  // Mouse hover moves the gamepad focus too (and wakes a dormant highlight), so A always activates
+  // what's highlighted.
   ALL_MAIN_BUTTONS.forEach((btn) => {
     btn.addEventListener('mouseenter', () => {
       if (!focusActive()) return;
       const idx = mainFocusables().indexOf(btn);
       if (idx === -1) return;
+      focusRevealed = true;
       focusIndex = idx;
       applyFocus();
     });
@@ -523,6 +545,11 @@ export function createControls(deps: ControlsDeps): Controls {
     if (!onGameScreen()) {
       closePopup();
     }
+    // When an active state (install / launch / uninstall / steam) APPEARS, drop the bar highlight so it
+    // doesn't sit on a button the user didn't choose. It wakes again on a gamepad move or a mouse hover.
+    const active = phaseOf(state()) === 'busy' || steamBusy(state());
+    if (active && !wasActive) focusRevealed = false;
+    wasActive = active;
     applyFocus();
     applyStackFocus();
   }
