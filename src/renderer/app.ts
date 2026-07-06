@@ -12,7 +12,7 @@ import { createAudioController } from './audio.js';
 import { createHeroController } from './hero.js';
 import { createControls } from './controls.js';
 import { formatDate, formatPlaytime } from './format.js';
-import { gameOf, phaseOf, statusOf, steamBusy } from './state-view.js';
+import { busyKindOf, gameOf, phaseOf, statusOf, steamBusy } from './state-view.js';
 import { req, reqQuery } from './dom.js';
 
 const app = req('app');
@@ -126,7 +126,7 @@ function render(state: AppState): void {
     hero.repaint();
     titleEl.textContent = game.title;
     buildInfoPanel(game);
-    controls.applyGameButtons(game);
+    controls.applyGameButtons();
   } else {
     // idle / no-game error → the empty "Insert a game card" screen (wallpaper background).
     hero.applyEmptyScreen();
@@ -142,6 +142,18 @@ function render(state: AppState): void {
   const busySteam = steamBusy(state);
   if (busySteam) app.dataset['steamBusy'] = 'true';
   else delete app.dataset['steamBusy'];
+
+  // Play-button busy visual: gear (system activity) vs spinner (game phases). Absent when not busy.
+  const busyKind = busyKindOf(state);
+  if (busyKind !== 'none') app.dataset['busy'] = busyKind;
+  else delete app.dataset['busy'];
+
+  // no-play layout: a requiresInstall installer/steam game on the ready screen (and NOT steam-busy, when
+  // the gear must stay visible) hides Play and moves the title to x=50. Set here by phase so it is cleared
+  // in every other state, including idle/error — a stale attribute would push the title over Hide.
+  const noPlay = phase === 'ready' && game?.requiresInstall === true && !busySteam;
+  if (noPlay) app.dataset['layout'] = 'no-play';
+  else delete app.dataset['layout'];
 
   statusEl.textContent = statusOf(state, translator);
   applyTitleSlide(phase === 'busy' || busySteam);

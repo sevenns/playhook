@@ -20,22 +20,26 @@
         <div class="hero-layer"></div>
       </div>
 
-      <!-- Bottom bar (same layout for every screen): play / title / status, and on the right either
-           the Info button (game screens) or the Hide button (empty / idle screen). -->
+      <!-- Bottom bar (same layout for every screen): play / title / status, and on the right the More
+           button (game screens); the Hide button replaces it on the empty / idle screen (moved to the
+           LEFT slot there, see styles.css). -->
       <footer id="bottom-bar">
         <div class="bar-content">
-          <!-- aria-label is DYNAMIC (Play/Install), set from JS via t() — no data-i18n-aria-label here. -->
-          <button id="play-button" class="circle-button" type="button" aria-label="Play" data-action="play">
+          <!-- Play is a rounded square now; aria is STATIC ("Play") — the install action moved into the
+               Details menu, so this button never relabels. It shows one of three visuals per state
+               (see styles.css, driven by #app[data-busy]): the play triangle (idle/ready), the loader
+               arc (game phases: launch/sync/run), or a spinning gear (system activity: install/steam). -->
+          <button id="play-button" class="play-button" type="button" aria-label="Play" data-i18n-aria-label="launcher.aria.play">
             <svg class="icon-play" viewBox="0 0 36 48" aria-hidden="true">
               <path d="M2 2 L34 24 L2 46 Z" />
             </svg>
-            <!-- Install mode: gear-over-tray icon, shown instead of the play triangle when the game
-                 isn't installed yet (toggled via the button's data-action). -->
-            <svg class="icon-install" viewBox="0 0 48 48" aria-hidden="true">
-              <path d="M7.07715 33.1289V39.2832C7.07723 40.1308 7.76612 40.8212 8.61523 40.8213H39.3848C40.2339 40.8212 40.9228 40.1308 40.9229 39.2832V33.1289H44V39.2832C43.9999 41.8308 41.9323 43.8984 39.3848 43.8984H8.61523C6.06766 43.8984 4.00008 41.8308 4 39.2832V33.1289H7.07715Z" />
+            <!-- Gear: shown (transparent button, d2 gear, slow spin) during system activity —
+                 installing / uninstalling / a Steam download or removal. -->
+            <svg class="icon-gear" viewBox="0 0 48 48" aria-hidden="true">
               <path
                 fill-rule="evenodd"
-                d="M25.8799 4L26.6738 8.52441C27.7568 8.79209 28.7769 9.22311 29.7061 9.78613L33.4355 7.10449L36.1367 9.80469L33.4863 13.583C34.0447 14.5122 34.4665 15.5243 34.7373 16.5996L39.2832 17.3418V21.165L34.7354 21.96C34.4677 23.0383 34.0451 24.0523 33.4883 24.9814L36.1787 28.7188L33.4785 31.4219L29.708 28.7734C28.7788 29.3381 27.7601 29.7681 26.6816 30.042L25.8799 34.5664H22.0586L21.3076 30.0527C20.2217 29.7866 19.2019 29.3602 18.2666 28.7988L14.5215 31.4199L11.8203 28.7168L14.4707 25.0107C13.9046 24.0723 13.4739 23.0493 13.2031 21.957L8.7168 21.1631V17.3418L13.208 16.5957C13.4818 15.5036 13.9105 14.4817 14.4766 13.5449L11.8613 9.80469L14.5635 7.10449L18.2812 9.75977C19.2136 9.19977 20.2371 8.7769 21.3232 8.51074L22.0586 4H25.8799ZM24 13.9551C21.057 13.9551 18.6709 16.3417 18.6709 19.2832C18.671 22.2277 21.057 24.6122 24 24.6123C26.943 24.6123 29.3296 22.2278 29.3281 19.2832C29.3281 16.3417 26.9431 13.9551 24 13.9551Z"
+                clip-rule="evenodd"
+                d="M28.7031 6.19052C30.2696 6.66089 31.766 7.33913 33.1523 8.20713L35.5469 5.79971C36.1032 5.24603 36.8559 4.93522 37.6406 4.93522C38.4253 4.93522 39.1781 5.24603 39.7344 5.79971L42.1875 8.26575C42.7409 8.82232 43.0516 9.57546 43.0516 10.3605C43.0516 11.1456 42.7409 11.8987 42.1875 12.4553L39.6094 15.0347C40.3525 16.3812 40.9221 17.8165 41.3047 19.3063H45.0234C45.414 19.3053 45.8008 19.3813 46.1619 19.5301C46.523 19.679 46.8512 19.8976 47.1277 20.1735C47.4042 20.4494 47.6236 20.7772 47.7733 21.138C47.923 21.4989 48 21.8858 48 22.2765V25.7548C47.9979 26.5398 47.6853 27.2921 47.1305 27.8472C46.5756 28.4023 45.8237 28.7151 45.0391 28.7171H41.2852C40.8943 30.191 40.3208 31.6103 39.5781 32.9419L42.1875 35.5642C42.7409 36.1208 43.0516 36.8739 43.0516 37.659C43.0516 38.4441 42.7409 39.1972 42.1875 39.7538L39.7383 42.2081C39.1813 42.762 38.4279 43.0729 37.6426 43.0729C36.8573 43.0729 36.1038 42.762 35.5469 42.2081L33.0703 39.7264C31.7043 40.565 30.2349 41.2219 28.6992 41.6805V45.0376C28.6972 45.8227 28.3845 46.575 27.8297 47.1301C27.2749 47.6852 26.5229 47.9979 25.7383 48H22.2656C21.481 47.9979 20.729 47.6852 20.1742 47.1301C19.6194 46.575 19.3067 45.8227 19.3047 45.0376V42.0049C17.6192 41.6235 15.9953 41.0078 14.4805 40.1759L12.4492 42.2081C11.8919 42.7599 11.1395 43.0694 10.3555 43.0694C9.57141 43.0694 8.81901 42.7599 8.26172 42.2081L5.79688 39.7421C5.24441 39.185 4.93441 38.432 4.93441 37.6473C4.93441 36.8625 5.24441 36.1096 5.79688 35.5525L7.64062 33.7079C6.67489 32.1604 5.94303 30.4787 5.46875 28.7171H2.96094C2.17628 28.7151 1.42435 28.4023 0.869516 27.8472C0.314679 27.2921 0.00206218 26.5398 0 25.7548L0 22.2765C-2.72163e-06 21.4901 0.311703 20.7358 0.866763 20.179C1.42182 19.6222 2.17493 19.3084 2.96094 19.3063H5.44141C5.90239 17.5225 6.62789 15.8179 7.59375 14.2491L5.79688 12.4553C5.24536 11.8977 4.936 11.145 4.936 10.3605C4.936 9.57609 5.24536 8.82332 5.79688 8.26575L8.26172 5.79971C8.81802 5.24603 9.57079 4.93522 10.3555 4.93522C11.1402 4.93522 11.8929 5.24603 12.4492 5.79971L14.4023 7.75379C15.934 6.89009 17.5826 6.25296 19.2969 5.86224V2.96238C19.2989 2.17599 19.6126 1.42252 20.1692 0.867186C20.7257 0.311855 21.4796 -2.72296e-06 22.2656 0L25.7422 0C26.5268 0.00206319 27.2788 0.314833 27.8336 0.869941C28.3884 1.42505 28.7011 2.17735 28.7031 2.96238V6.19052ZM23.3828 14.3351C25.2835 14.3351 27.1416 14.8991 28.7219 15.9557C30.3022 17.0122 31.5339 18.514 32.2611 20.271C32.9883 22.0279 33.1784 23.9612 32.8073 25.8262C32.4362 27.6913 31.5206 29.4044 30.1763 30.7487C28.832 32.0931 27.1194 33.0085 25.2551 33.379C23.3908 33.7495 21.4586 33.5586 19.7028 32.8303C17.9469 32.102 16.4464 30.8692 15.391 29.2876C14.3356 27.7061 13.7727 25.8469 13.7734 23.9453C13.7734 22.6829 14.022 21.4329 14.505 20.2667C14.9879 19.1005 15.6958 18.0409 16.5882 17.1485C17.4806 16.2561 18.5399 15.5483 19.7058 15.0655C20.8716 14.5828 22.1211 14.3346 23.3828 14.3351Z"
               />
             </svg>
             <span class="loader" aria-hidden="true"></span>
@@ -44,30 +48,19 @@
           <div id="status" class="status"></div>
           <div id="title" class="title"></div>
 
-          <button id="info-button" class="rect-button" type="button" aria-label="Info" data-i18n-aria-label="launcher.aria.info">
-            <!-- Filled ⓘ disc with the "i" cut OUT (fill-rule evenodd) so the button background
-                 shows through the hole — which makes the hover color inversion automatic. -->
-            <svg class="icon-info" viewBox="0 0 40 40" aria-hidden="true">
-              <path
-                fill-rule="evenodd"
-                d="M0,20 a20,20 0 1,0 40,0 a20,20 0 1,0 -40,0 Z
-                   M16.3,11.5 a3.7,3.7 0 1,0 7.4,0 a3.7,3.7 0 1,0 -7.4,0 Z
-                   M16.5,18 a3.5,3.5 0 0,1 7,0 L23.5,30 a3.5,3.5 0 0,1 -7,0 L16.5,18 Z"
-              />
+          <!-- More button: same rect-button component (invert-on-hover), three dots. Opens the Details
+               menu popup. Hidden on the empty screen; fades out while busy (like the old Info button). -->
+          <button id="more-button" class="rect-button" type="button" aria-label="More" data-i18n-aria-label="launcher.aria.more">
+            <svg class="icon-more" viewBox="0 0 56 16" aria-hidden="true">
+              <path d="M8 0C12.4183 0 16 3.58172 16 8C16 12.4183 12.4183 16 8 16C3.58172 16 0 12.4183 0 8C0 3.58172 3.58172 0 8 0Z" />
+              <path d="M28 0C32.4183 0 36 3.58172 36 8C36 12.4183 32.4183 16 28 16C23.5817 16 20 12.4183 20 8C20 3.58172 23.5817 0 28 0Z" />
+              <path d="M48 0C52.4183 0 56 3.58172 56 8C56 12.4183 52.4183 16 48 16C43.5817 16 40 12.4183 40 8C40 3.58172 43.5817 0 48 0Z" />
             </svg>
           </button>
 
-          <!-- Uninstall button: same rect-button component as Info, a disc with a trash bin cut out
-               (fill-rule nonzero). Shown only for an installed install-mode game (toggled via the
-               .is-available class from JS); opens the uninstall confirmation popup. -->
-          <button id="uninstall-button" class="rect-button" type="button" aria-label="Uninstall" data-i18n-aria-label="launcher.aria.uninstall">
-            <svg class="icon-uninstall" viewBox="0 0 40 40" aria-hidden="true">
-              <path d="M20 0C31.0457 0 40 8.9543 40 20C40 31.0457 31.0457 40 20 40C8.9543 40 0 31.0457 0 20C0 8.9543 8.9543 0 20 0ZM11.0146 29C11.0147 30.105 11.9097 31 13.0146 31L27.0146 31C28.1195 30.9998 29.0146 30.1049 29.0146 29L29.0146 13L11.0146 13L11.0146 29ZM18.0146 8C17.8822 7.9982 17.7499 8.02282 17.627 8.07227C17.5042 8.12171 17.3921 8.19515 17.2979 8.28809C17.2037 8.38107 17.1292 8.49215 17.0781 8.61426C17.027 8.73646 17.001 8.86755 17.001 9L11.0146 9C10.8821 8.99813 10.7499 9.02285 10.627 9.07227C10.5041 9.12168 10.3921 9.19512 10.2979 9.28809C10.2036 9.38109 10.1283 9.49208 10.0771 9.61426C10.0261 9.73641 10 9.8676 10 10C10 10.1324 10.0261 10.2636 10.0771 10.3857C10.1283 10.5079 10.2036 10.6189 10.2979 10.7119C10.3921 10.8049 10.5041 10.8783 10.627 10.9277C10.7499 10.9771 10.8821 11.0019 11.0146 11L29.0146 11C29.147 11.0018 29.2785 10.9771 29.4014 10.9277C29.5243 10.8783 29.6361 10.8049 29.7305 10.7119C29.8248 10.6189 29.9 10.508 29.9512 10.3857C30.0022 10.2636 30.0283 10.1324 30.0283 10C30.0283 9.86758 30.0022 9.73643 29.9512 9.61426C29.9 9.49204 29.8248 9.38111 29.7305 9.28809C29.6361 9.19508 29.5243 9.12168 29.4014 9.07227C29.2785 9.0229 29.147 8.99818 29.0146 9L23.0283 9C23.0283 8.86753 23.0013 8.73647 22.9502 8.61426C22.8991 8.49212 22.8247 8.38109 22.7305 8.28809C22.6362 8.19511 22.5242 8.12171 22.4014 8.07227C22.2786 8.02287 22.147 7.99826 22.0146 8L18.0146 8Z" />
-            </svg>
-          </button>
-
-          <!-- Hide button: same rect-button component as Info, but a disc with an X cut out
-               (fill-rule evenodd). Shown only on the empty / idle screen; hides the window. -->
+          <!-- Hide button: same rect-button component, a disc with an X cut out (fill-rule evenodd).
+               Shown only on the empty / idle screen; hides the window. On that screen it sits in the
+               LEFT slot (x=50) instead of the right (see styles.css). Icon/behaviour unchanged. -->
           <button id="hide-button" class="rect-button" type="button" aria-label="Hide" data-i18n-aria-label="launcher.aria.hide">
             <svg class="icon-hide" viewBox="0 0 40 40" aria-hidden="true">
               <path
@@ -79,43 +72,61 @@
         </div>
       </footer>
 
-      <!-- Info popup: right-side frosted veil + right-aligned column of game stats. -->
-      <section id="info-popup" class="popup" aria-hidden="true">
+      <!-- Unified popup: ONE frosted veil + ONE right-side column (450px), whose content and action stack
+           switch by data-view (details / power / confirm / error) — a mirror of the popup state machine in
+           controls.ts. A single veil (vs one per section) avoids the cross-fade flicker of two identical
+           blur veils when moving Details ↔ Power: the veil stays, only the content changes.
+           Default focus in every stack is the BOTTOM button (Close / No / Sleep) — see controls.ts. -->
+      <section id="popup" class="popup" aria-hidden="true" data-view="details">
         <div class="popup-veil"></div>
-        <div class="popup-panel" id="info-panel"></div>
-      </section>
-
-      <!-- Error popup: same component, shown when a launch fails (over the ready screen). -->
-      <section id="error-popup" class="popup" aria-hidden="true">
-        <div class="popup-veil"></div>
-        <div class="popup-panel">
-          <div class="popup-message" data-i18n="launcher.errorTitle">Something went wrong</div>
-          <div class="popup-detail" id="error-message"></div>
-        </div>
-      </section>
-
-      <!-- Confirmation popup: the same .popup component (veil + a question), plus a row of two
-           TextButtons (No / Yes) pinned to the bottom bar. Shared by Install and Uninstall — the
-           question text is set from JS, and the install path description is shown only for Install
-           (data-mode='install'). The actions live OUTSIDE .popup-panel (they sit in the bottom strip,
-           not the right column), so they carry their own opacity gate. -->
-      <section id="confirm-popup" class="popup" aria-hidden="true">
-        <div class="popup-veil"></div>
-        <div class="popup-panel">
-          <div class="popup-message" id="confirm-message"></div>
-          <!-- Install mode only: the destination path (filled from JS), shown in case the installer
-               opens a non-silent folder picker. Selectable so it can be copied. -->
-          <!-- Mixed markup: only the leading TEXT is localized via its own [data-i18n] span; the <br/>
-               and #confirm-path (filled from JS) stay untouched — no textContent on the parent. -->
-          <div class="popup-detail" id="confirm-description">
-            <span data-i18n="launcher.installPathNote"
-              >Since not all installers support silent mode, during installation you need to specify the following path:</span
-            ><br /><span class="confirm-path" id="confirm-path"></span>
+        <div class="popup-column">
+          <!-- Top content — only the block for the active view shows (CSS). -->
+          <div class="popup-content">
+            <!-- details: game stats (built from JS, same #info-panel id/styles as before). -->
+            <div class="popup-info" id="info-panel"></div>
+            <!-- confirm: question + (install-only) destination path note. data-mode/data-install-via on
+                 #popup drive the note's visibility, exactly as the old confirm popup did. -->
+            <div class="popup-confirm">
+              <div class="popup-message" id="confirm-message"></div>
+              <!-- Mixed markup: only the leading TEXT is localized via its own [data-i18n] span; the
+                   <br/> and #confirm-path (filled from JS) stay untouched — no textContent on the parent. -->
+              <div class="popup-detail" id="confirm-description">
+                <span data-i18n="launcher.installPathNote"
+                  >Since not all installers support silent mode, during installation you need to specify the following path:</span
+                ><br /><span class="confirm-path" id="confirm-path"></span>
+              </div>
+            </div>
+            <!-- error: title + detail (arbitrary error text from main). -->
+            <div class="popup-error">
+              <div class="popup-message" data-i18n="launcher.errorTitle">Something went wrong</div>
+              <div class="popup-detail" id="error-message"></div>
+            </div>
           </div>
-        </div>
-        <div class="confirm-actions">
-          <button id="confirm-yes" class="text-button" type="button" data-i18n="common.yes">Yes</button>
-          <button id="confirm-no" class="text-button" type="button" data-i18n="common.no">No</button>
+
+          <!-- Bottom action stacks — one group per view; only the active view's group shows (CSS).
+               Each group is a vertical stack (align-items: flex-end): a longer localized label grows
+               to the LEFT, the right edge stays fixed. -->
+          <div class="popup-actions">
+            <div class="actions-group" data-group="details">
+              <button id="menu-shutdown" class="text-button" type="button" data-i18n="launcher.menu.shutdown">Shutdown</button>
+              <!-- Install/Uninstall — one button; its text + visibility come from JS (executable games
+                   have no install block, so the button is hidden entirely). -->
+              <button id="menu-install-toggle" class="text-button" type="button"></button>
+              <button id="menu-close" class="text-button" type="button" data-i18n="launcher.menu.close">Close</button>
+            </div>
+            <div class="actions-group" data-group="power">
+              <button id="power-shutdown" class="text-button" type="button" data-i18n="launcher.menu.shutdown">Shutdown</button>
+              <button id="power-reboot" class="text-button" type="button" data-i18n="launcher.menu.reboot">Reboot</button>
+              <button id="power-sleep" class="text-button" type="button" data-i18n="launcher.menu.sleep">Sleep</button>
+            </div>
+            <div class="actions-group" data-group="confirm">
+              <button id="confirm-yes" class="text-button" type="button" data-i18n="common.yes">Yes</button>
+              <button id="confirm-no" class="text-button" type="button" data-i18n="common.no">No</button>
+            </div>
+            <div class="actions-group" data-group="error">
+              <button id="error-close" class="text-button" type="button" data-i18n="launcher.menu.close">Close</button>
+            </div>
+          </div>
         </div>
       </section>
     </main>

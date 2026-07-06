@@ -344,6 +344,12 @@ export const IPC = {
   /** renderer → main: open Steam's Downloads page (steam://open/downloads) — used by the Play button
    * while a Steam download is in progress, so the user can pause/resume it in Steam itself. */
   actionOpenSteamDownloads: 'action:open-steam-downloads',
+  /** renderer → main: the user confirmed "Shutdown" in the power menu — power off the PC. */
+  actionShutdown: 'action:shutdown',
+  /** renderer → main: the user confirmed "Reboot" in the power menu — restart the PC. */
+  actionReboot: 'action:reboot',
+  /** renderer → main: the user confirmed "Sleep" in the power menu — put the PC to sleep. */
+  actionSleep: 'action:sleep',
   /** main → renderer: a transient error to surface in the error popup (e.g. a failed launch). */
   errorShow: 'error:show',
   /** main → renderer: audio assets for the current game (or null when no card). */
@@ -507,6 +513,12 @@ export interface RendererApi {
   requestHide(): void;
   /** Open Steam's Downloads page so the user can pause/resume a Steam download from Steam itself. */
   openSteamDownloads(): void;
+  /** Power off the PC (after the in-launcher confirm). */
+  requestShutdown(): void;
+  /** Restart the PC (after the in-launcher confirm). */
+  requestReboot(): void;
+  /** Put the PC to sleep (after the in-launcher confirm). */
+  requestSleep(): void;
   onError(callback: (message: string) => void): void;
   onAudioUpdate(callback: (assets: AudioAssets | null) => void): void;
   requestAudio(): Promise<AudioAssets | null>;

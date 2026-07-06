@@ -38,18 +38,27 @@ export const en = {
   'launcher.info.lastPlayed': 'Last Played',
   'launcher.info.playtime': 'Playtime',
   'launcher.info.launches': 'Launches',
-  // Button aria-labels. Play/Install are dynamic (set from JS per game state); Info/Uninstall/Hide are
-  // static (localized via data-i18n-aria-label in the HTML).
+  // Button aria-labels. Play is static now (the install action moved into the Details menu, so Play
+  // never relabels); More/Hide are static too (localized via data-i18n-aria-label in the HTML).
   'launcher.aria.play': 'Play',
-  'launcher.aria.install': 'Install',
-  'launcher.aria.info': 'Info',
-  'launcher.aria.uninstall': 'Uninstall',
+  'launcher.aria.more': 'More',
   'launcher.aria.hide': 'Hide',
+  // Details / Power menu items (controls.ts). These are TextButtons with visible text — no aria needed.
+  'launcher.menu.close': 'Close',
+  'launcher.menu.install': 'Install',
+  'launcher.menu.uninstall': 'Uninstall',
+  'launcher.menu.shutdown': 'Shutdown',
+  'launcher.menu.reboot': 'Reboot',
+  'launcher.menu.sleep': 'Sleep',
   // Confirmation popup copy (controls.ts). The Yes/No buttons use the shared common.* keys.
   'launcher.confirm.install': 'Do you want to install game?',
   'launcher.confirm.uninstall': 'Do you want to uninstall game from your PC?',
   'launcher.confirm.steamInstall': 'Open Steam to install this game?',
   'launcher.confirm.steamUninstall': 'Open Steam to uninstall this game?',
+  // Power-action confirmations — single-question form, matching the installer confirm convention.
+  'launcher.confirm.shutdown': 'Shut down the PC?',
+  'launcher.confirm.reboot': 'Reboot the PC?',
+  'launcher.confirm.sleep': 'Put the PC to sleep?',
   'launcher.installPathNote':
     'Since not all installers support silent mode, during installation you need to specify the following path:',
   // Status labels (state-view.ts). Plain "..." (not the "…" glyph) on purpose — see state-view.ts.
@@ -157,6 +166,8 @@ export const en = {
   'errors.cannotReadManifest': 'cannot read {file}: {cause}',
   'errors.cannotWriteManifest': 'failed to write {file}: {cause}',
   'errors.configInvalid': 'the config is invalid',
+  'errors.powerUnsupported': 'power actions are only available on Windows',
+  'errors.powerFailed': 'power command failed: {cause}',
 
   // ── Manifest validation (manifest.ts) ───────────────────────────────────────
   // Schema-level custom messages: stored in the schema AS THESE KEYS; translated at the issue-mapping

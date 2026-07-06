@@ -1,19 +1,26 @@
-// Interaction layer (split out of app.ts). Owns the popups (Info / Error / Confirm), the two
-// focus groups (main buttons + the confirm modal's No/Yes) and the user actions they trigger, plus all
-// their wiring: button/veil clicks, mouse hover, the gamepad controller and the keyboard Esc handler.
-// These are bidirectionally coupled (popups call applyFocus; focus reads the popup-open flags), so they
-// live together as one cohesive controller rather than two half-modules with fragile circular wiring.
-// It reaches back into app.ts only through the narrow `deps` seam (current state + the audio controller);
-// app.ts drives it via applyGameButtons/clearGameButtons/refresh/showError and starts it with start().
-import type { AppState, GameInfo } from '../shared/types';
+// Interaction layer (split out of app.ts). Owns the single popup (Details / Power / Confirm / Error),
+// the two focus groups (the main bar + the popup's vertical action stack) and the user actions they
+// trigger, plus all their wiring: button/veil clicks, mouse hover, the gamepad controller and the
+// keyboard Esc handler. These are bidirectionally coupled (popups call applyFocus; focus reads the
+// popup-open flag), so they live together as one cohesive controller rather than two half-modules with
+// fragile circular wiring. It reaches back into app.ts only through the narrow `deps` seam (current
+// state + the audio controller); app.ts drives it via applyGameButtons/clearGameButtons/refresh/
+// showError and starts it with start().
+//
+// The popup is a state machine: one #popup element whose content + action stack switch by data-view.
+// Navigation is vertical (up/down) inside a stack; the default focus is always the BOTTOM button
+// (Close / No / Sleep), which the mockup draws filled. B/Esc/veil step BACK one level.
+import type { AppState } from '../shared/types';
 import type { Translator } from '../shared/i18n/index.js';
 import { createGamepadController } from './gamepad.js';
 import { type AudioController } from './audio.js';
 import { gameOf, phaseOf, steamBusy } from './state-view.js';
 import { req, reqQuery } from './dom.js';
 
-// Which action the confirmation popup is asking about (only meaningful while confirmOpen).
-type ConfirmMode = 'install' | 'uninstall';
+// The current popup view (mutually exclusive; 'none' = closed). Mirrors the data-view on #popup.
+type PopupView = 'none' | 'details' | 'power' | 'confirm' | 'error';
+// Which action the confirm view is asking about (only meaningful while popupView === 'confirm').
+type ConfirmMode = 'install' | 'uninstall' | 'shutdown' | 'reboot' | 'sleep';
 // Gamepad A doesn't trigger :active, so flash a press class to play the scale-down animation.
 const PRESS_MS = 130;
 
@@ -23,16 +30,16 @@ export interface ControlsDeps {
   getState(): AppState;
   /** The shared audio controller (UI sounds). */
   audio: AudioController;
-  /** The current translator (read live so confirm copy / Play aria follow the language). */
+  /** The current translator (read live so menu/confirm copy follows the language). */
   getTranslator(): Translator;
 }
 
 export interface Controls {
-  /** Renders the Play/Install + Uninstall buttons for the given game (render's game branch). */
-  applyGameButtons(game: GameInfo): void;
-  /** Clears the Uninstall button + its Info sibling shift for the idle/no-game screen. */
+  /** Refreshes the game-dependent menu item (Install/Uninstall text + visibility) from the current state. */
+  applyGameButtons(): void;
+  /** Clears the game-dependent menu item for the idle/no-game screen. */
   clearGameButtons(): void;
-  /** Per-render refresh: force-close popups when off the ready screen, then re-apply the focus highlight. */
+  /** Per-render refresh: force-close the popup off the ready screen (or while steam-busy), then re-apply focus. */
   refresh(): void;
   /** Opens the error popup with the given message (a failed launch/action from main). */
   showError(message: string): void;
@@ -45,161 +52,186 @@ export function createControls(deps: ControlsDeps): Controls {
   const state = (): AppState => deps.getState();
   const t = (): Translator => deps.getTranslator();
 
+  // Bar buttons.
   const hideButton = req<HTMLButtonElement>('hide-button');
   const playButton = req<HTMLButtonElement>('play-button');
-  const infoButton = req<HTMLButtonElement>('info-button');
-  const uninstallButton = req<HTMLButtonElement>('uninstall-button');
-  const infoPopup = req('info-popup');
-  const infoVeil = reqQuery<HTMLElement>('#info-popup .popup-veil');
-  const errorPopup = req('error-popup');
-  const errorMessageEl = req('error-message');
-  const errorVeil = reqQuery<HTMLElement>('#error-popup .popup-veil');
-  const confirmPopup = req('confirm-popup');
+  const moreButton = req<HTMLButtonElement>('more-button');
+
+  // The single popup + its veil, plus the content fields set from JS.
+  const popup = req('popup');
+  const popupVeil = reqQuery<HTMLElement>('#popup .popup-veil');
   const confirmMessage = req('confirm-message');
   const confirmPath = req('confirm-path');
-  const confirmNo = req<HTMLButtonElement>('confirm-no');
+  const errorMessageEl = req('error-message');
+
+  // Action-stack buttons (grouped by view in the HTML).
+  const menuShutdown = req<HTMLButtonElement>('menu-shutdown');
+  const menuInstallToggle = req<HTMLButtonElement>('menu-install-toggle');
+  const menuClose = req<HTMLButtonElement>('menu-close');
+  const powerShutdown = req<HTMLButtonElement>('power-shutdown');
+  const powerReboot = req<HTMLButtonElement>('power-reboot');
+  const powerSleep = req<HTMLButtonElement>('power-sleep');
   const confirmYes = req<HTMLButtonElement>('confirm-yes');
-  const confirmVeil = reqQuery<HTMLElement>('#confirm-popup .popup-veil');
+  const confirmNo = req<HTMLButtonElement>('confirm-no');
+  const errorClose = req<HTMLButtonElement>('error-close');
 
-  let infoOpen = false;
-  let errorOpen = false;
-  let confirmOpen = false;
+  let popupView: PopupView = 'none';
   let confirmMode: ConfirmMode = 'uninstall';
+  // Where B/Esc/veil returns FROM the confirm view: install/uninstall come from Details, the power
+  // actions come from Power.
+  let confirmReturnTo: 'details' | 'power' = 'details';
 
-  // ── Popups (Info / Error) ───────────────────────────────────────────────────
-  // Both share the same component (.popup): a right-side frosted veil + a right-aligned panel,
-  // toggled with the .is-open class. They are mutually exclusive.
+  // ── Popup machine ────────────────────────────────────────────────────────────
+  // One #popup element; opening = add .is-open + set data-view; switching views keeps .is-open (so the
+  // shared veil never cross-fades). Closing removes .is-open.
 
-  function openInfo(): void {
-    if (infoOpen || phaseOf(state()) !== 'ready') return;
-    closeError();
-    closeConfirm();
-    infoOpen = true;
-    infoPopup.classList.add('is-open');
-    infoPopup.setAttribute('aria-hidden', 'false');
+  function setView(view: Exclude<PopupView, 'none'>): void {
+    popupView = view;
+    popup.dataset['view'] = view;
+    popup.classList.add('is-open');
+    popup.setAttribute('aria-hidden', 'false');
+  }
+
+  function closePopup(): void {
+    if (popupView === 'none') return;
+    popupView = 'none';
+    popup.classList.remove('is-open');
+    popup.setAttribute('aria-hidden', 'true');
+    applyStackFocus(); // clear the stack highlight (stackActive becomes false)
+    applyFocus(); // restore the main bar highlight
+  }
+
+  // Details menu (from More): game stats on top + Shutdown / Install|Uninstall / Close stack.
+  function openDetails(): void {
+    if (phaseOf(state()) !== 'ready') return;
+    applyMenuInstallToggle(); // keep the toggle's text/visibility fresh for the current game
+    setView('details');
+    focusStackBottom(); // default focus: Close
+    applyFocus(); // main highlight clears (focusActive false with a popup open)
+  }
+
+  // Power submenu (from Details → Shutdown): Shutdown / Reboot / Sleep. Each opens a Yes/No confirm.
+  function openPower(): void {
+    if (phaseOf(state()) !== 'ready') return;
+    setView('power');
+    focusStackBottom(); // default focus: Sleep
     applyFocus();
   }
 
-  function closeInfo(): void {
-    if (!infoOpen) return;
-    infoOpen = false;
-    infoPopup.classList.remove('is-open');
-    infoPopup.setAttribute('aria-hidden', 'true');
-    applyFocus();
-  }
-
-  function openError(messageText: string): void {
-    closeInfo();
-    closeConfirm();
-    errorMessageEl.textContent = messageText;
-    errorOpen = true;
-    errorPopup.classList.add('is-open');
-    errorPopup.setAttribute('aria-hidden', 'false');
-    applyFocus();
-  }
-
-  function closeError(): void {
-    if (!errorOpen) return;
-    errorOpen = false;
-    errorPopup.classList.remove('is-open');
-    errorPopup.setAttribute('aria-hidden', 'true');
-    applyFocus();
-  }
-
-  // Confirmation popup — same .popup component, shared by Install and Uninstall, with its own No/Yes
-  // focus group (confirmIndex). Mutually exclusive with Info/Error (each opener closes the others). The
-  // install variant also shows the destination path (so it can be copied if the installer isn't silent).
+  // Confirm view — install/uninstall (from Details) or a power action (from Power). Yes runs the action
+  // and closes the whole stack; No/back returns to where it came from.
   function openConfirm(mode: ConfirmMode): void {
-    if (confirmOpen || phaseOf(state()) !== 'ready') return;
-    const game = gameOf(state());
-    if (game === undefined) return;
-    if (mode === 'install' && !game.requiresInstall) return; // nothing to install
-    if (mode === 'uninstall' && !game.canUninstall) return; // nothing to uninstall
-    closeInfo();
-    closeError();
+    if (phaseOf(state()) !== 'ready') return;
+    if (mode === 'install' || mode === 'uninstall') {
+      const game = gameOf(state());
+      if (game === undefined) return;
+      if (mode === 'install' && !game.requiresInstall) return; // nothing to install
+      if (mode === 'uninstall' && !game.canUninstall) return; // nothing to uninstall
+      confirmReturnTo = 'details';
+      const isSteam = game.installVia === 'steam';
+      const isSteamInstall = mode === 'install' && isSteam;
+      popup.dataset['mode'] = mode; // 'install' shows the path note (card install only, see styles.css)
+      if (isSteamInstall) popup.dataset['installVia'] = 'steam';
+      else delete popup.dataset['installVia'];
+      if (isSteam) {
+        confirmMessage.textContent = t()(
+          mode === 'install' ? 'launcher.confirm.steamInstall' : 'launcher.confirm.steamUninstall',
+        );
+      } else {
+        confirmMessage.textContent = t()(
+          mode === 'install' ? 'launcher.confirm.install' : 'launcher.confirm.uninstall',
+        );
+      }
+      // Card path only for a card-installer install (empty for steam — there is no install dir).
+      if (mode === 'install') confirmPath.textContent = isSteamInstall ? '' : (game.installDir ?? '');
+    } else {
+      // Power action: a single-question confirm, no path note (data-mode ≠ 'install' hides it).
+      confirmReturnTo = 'power';
+      popup.dataset['mode'] = mode;
+      delete popup.dataset['installVia'];
+      const key =
+        mode === 'shutdown'
+          ? 'launcher.confirm.shutdown'
+          : mode === 'reboot'
+            ? 'launcher.confirm.reboot'
+            : 'launcher.confirm.sleep';
+      confirmMessage.textContent = t()(key);
+    }
     confirmMode = mode;
-    confirmPopup.dataset['mode'] = mode; // drives the description's visibility (install only)
-    // Steam install has no card path and no silent-mode note: a more specific CSS selector
-    // (data-install-via='steam') hides the description, and the copy differs (both install & uninstall).
-    const isSteam = game.installVia === 'steam';
-    const isSteamInstall = mode === 'install' && isSteam;
-    if (isSteamInstall) {
-      confirmPopup.dataset['installVia'] = 'steam';
-    } else {
-      delete confirmPopup.dataset['installVia'];
+    setView('confirm');
+    focusStackBottom(); // default focus: No (safe default)
+    applyFocus();
+  }
+
+  // Error popup — opened by main via showError (a failed launch/action). A single Close button.
+  function openError(messageText: string): void {
+    errorMessageEl.textContent = messageText;
+    setView('error');
+    focusStackBottom(); // the sole button (Close)
+    applyFocus();
+  }
+
+  // B / Esc / veil: step BACK one level. power → details, confirm → wherever it was opened from,
+  // details / error → close. Default focus lands on the bottom button of the destination stack.
+  function back(): void {
+    switch (popupView) {
+      case 'power':
+        audio.play('back');
+        setView('details');
+        focusStackBottom();
+        break;
+      case 'confirm':
+        audio.play('back');
+        setView(confirmReturnTo);
+        focusStackBottom();
+        break;
+      case 'details':
+      case 'error':
+        audio.play('back');
+        closePopup();
+        break;
+      default:
+        break;
     }
-    if (isSteam) {
-      confirmMessage.textContent = t()(
-        mode === 'install' ? 'launcher.confirm.steamInstall' : 'launcher.confirm.steamUninstall',
-      );
-    } else {
-      confirmMessage.textContent = t()(
-        mode === 'install' ? 'launcher.confirm.install' : 'launcher.confirm.uninstall',
-      );
+  }
+
+  // ── Menu item: Install / Uninstall (game-dependent) ──────────────────────────
+  // One button whose text + visibility follow the current game: "Install" when it needs installing,
+  // "Uninstall" when installed & removable, hidden entirely for a plain executable (no install block).
+  function applyMenuInstallToggle(): void {
+    const game = gameOf(state());
+    const showInstall = game?.requiresInstall === true;
+    const showUninstall = game?.canUninstall === true;
+    const show = showInstall || showUninstall;
+    menuInstallToggle.classList.toggle('is-hidden', !show);
+    if (show) {
+      menuInstallToggle.textContent = t()(showInstall ? 'launcher.menu.install' : 'launcher.menu.uninstall');
+      // Which action Yes will run — read back in the stack trigger.
+      menuInstallToggle.dataset['action'] = showInstall ? 'install' : 'uninstall';
     }
-    // Card path only for a card-installer game (empty for steam — there is no install dir).
-    if (mode === 'install') confirmPath.textContent = isSteamInstall ? '' : (game.installDir ?? '');
-    confirmOpen = true;
-    confirmPopup.classList.add('is-open');
-    confirmPopup.setAttribute('aria-hidden', 'false');
-    confirmIndex = confirmButtons.indexOf(confirmNo); // default focus on "No" (safe default)
-    applyFocus(); // main highlight clears (focusActive becomes false with confirmOpen)
-    applyConfirmFocus();
   }
 
-  function closeConfirm(): void {
-    if (!confirmOpen) return;
-    confirmOpen = false;
-    confirmPopup.classList.remove('is-open');
-    confirmPopup.setAttribute('aria-hidden', 'true');
-    applyConfirmFocus(); // clears the No/Yes highlight (confirmFocusActive becomes false)
-    applyFocus(); // restore the main focus highlight
-  }
+  // ── Main bar focus (gamepad / mouse) ─────────────────────────────────────────
 
-  // ── Play / Install + Uninstall buttons ──────────────────────────────────────
-
-  // Install mode: an uninstalled game shows "Install" instead of "Play" (the action is the same —
-  // main decides install vs launch). The HTML hardcodes aria-label="Play", so we set it from JS here.
-  function applyPlayButton(game: GameInfo): void {
-    const install = game.requiresInstall;
-    playButton.dataset['action'] = install ? 'install' : 'play';
-    playButton.setAttribute('aria-label', t()(install ? 'launcher.aria.install' : 'launcher.aria.play'));
-  }
-
-  // The Uninstall button is shown only for an installed install-mode game (canUninstall), via a per-game
-  // class (visibility is a game property, not a phase). In busy it stays in layout but fades out like Info.
-  function applyUninstallButton(game: GameInfo): void {
-    uninstallButton.classList.toggle('is-available', game.canUninstall);
-    // Info shifts left to make room for the rightmost Uninstall button (see styles.css).
-    infoButton.classList.toggle('has-uninstall-sibling', game.canUninstall);
-  }
-
-  // ── Focus navigation (gamepad / mouse) ──────────────────────────────────────
-
-  // Main navigation group (left → right). Uninstall joins it only for an installed install-mode game, so
-  // the focusable set is DYNAMIC; the full set is iterated to clear stale highlights.
-  const ALL_MAIN_BUTTONS: readonly HTMLButtonElement[] = [playButton, infoButton, uninstallButton];
+  const ALL_MAIN_BUTTONS: readonly HTMLButtonElement[] = [playButton, moreButton];
   let focusIndex = 0;
 
   function mainFocusables(): readonly HTMLButtonElement[] {
-    // While a Steam install/uninstall indicator is up, the right-side buttons are hidden — keep only Play
-    // focusable/clickable (during a download its click opens Steam's Downloads page; see triggerPlay).
+    // Steam install/uninstall indicator up: only the gear (playButton) is focusable — its click opens
+    // Steam's Downloads page (see triggerPlay). The right-side More is hidden.
     if (steamBusy(state())) return [playButton];
-    return gameOf(state())?.canUninstall === true
-      ? [playButton, infoButton, uninstallButton]
-      : [playButton, infoButton];
+    // no-play layout: a requiresInstall installer/steam game hides Play → only More.
+    if (gameOf(state())?.requiresInstall === true) return [moreButton];
+    return [playButton, moreButton];
   }
 
-  // Main focus is only meaningful on the ready screen with no popup open — including the confirm modal:
-  // with confirmOpen this returns false, so triggerPlay/triggerInfo/moveFocus/activateFocused/mouseenter
-  // (all guarded by focusActive) go quiet naturally while the modal is up.
+  // Main focus is only meaningful on the ready screen with the popup closed.
   function focusActive(): boolean {
-    return phaseOf(state()) === 'ready' && !infoOpen && !errorOpen && !confirmOpen;
+    return phaseOf(state()) === 'ready' && popupView === 'none';
   }
 
   function applyFocus(): void {
     const items = mainFocusables();
-    // Clamp: the set length changes with canUninstall, so a prior index may now be out of range.
     focusIndex = Math.min(items.length - 1, Math.max(0, focusIndex));
     const active = focusActive();
     ALL_MAIN_BUTTONS.forEach((btn) => {
@@ -218,29 +250,65 @@ export function createControls(deps: ControlsDeps): Controls {
     applyFocus();
   }
 
-  // Confirm modal focus group — fully separate from the main group (No / Yes), so it can never disturb
-  // the main focusIndex. Active only while the confirm modal is open on the ready screen.
-  // Visual order, left → right: Yes on the left, No on the right (per design). Navigation/default-focus
-  // key off button identity, not a fixed index, so this order can change without touching the logic.
-  const confirmButtons: readonly HTMLButtonElement[] = [confirmYes, confirmNo];
-  let confirmIndex = 0;
+  // ── Popup stack focus (vertical) ─────────────────────────────────────────────
+  // A single dynamic group covering all four views; the visible buttons depend on the view (and, for
+  // Details, whether the Install/Uninstall item is present). Default focus is the BOTTOM button.
+  const ALL_STACK_BUTTONS: readonly HTMLButtonElement[] = [
+    menuShutdown,
+    menuInstallToggle,
+    menuClose,
+    powerShutdown,
+    powerReboot,
+    powerSleep,
+    confirmYes,
+    confirmNo,
+    errorClose,
+  ];
+  let stackIndex = 0;
 
-  function confirmFocusActive(): boolean {
-    return phaseOf(state()) === 'ready' && confirmOpen;
+  function stackFocusables(): readonly HTMLButtonElement[] {
+    switch (popupView) {
+      case 'details': {
+        const items: HTMLButtonElement[] = [menuShutdown];
+        if (!menuInstallToggle.classList.contains('is-hidden')) items.push(menuInstallToggle);
+        items.push(menuClose);
+        return items;
+      }
+      case 'power':
+        return [powerShutdown, powerReboot, powerSleep];
+      case 'confirm':
+        return [confirmYes, confirmNo];
+      case 'error':
+        return [errorClose];
+      default:
+        return [];
+    }
   }
 
-  function applyConfirmFocus(): void {
-    const active = confirmFocusActive();
-    confirmButtons.forEach((btn, i) => btn.classList.toggle('is-focused', active && i === confirmIndex));
+  function stackActive(): boolean {
+    return phaseOf(state()) === 'ready' && popupView !== 'none';
   }
 
-  function moveConfirmFocus(delta: number): void {
-    if (!confirmFocusActive()) return;
-    const next = Math.min(confirmButtons.length - 1, Math.max(0, confirmIndex + delta));
-    if (next === confirmIndex) return;
-    confirmIndex = next;
+  function applyStackFocus(): void {
+    const items = stackFocusables();
+    stackIndex = Math.min(items.length - 1, Math.max(0, stackIndex));
+    const focused = stackActive() ? items[stackIndex] : undefined;
+    ALL_STACK_BUTTONS.forEach((btn) => btn.classList.toggle('is-focused', btn === focused));
+  }
+
+  function focusStackBottom(): void {
+    stackIndex = Math.max(0, stackFocusables().length - 1);
+    applyStackFocus();
+  }
+
+  function moveStackFocus(delta: number): void {
+    if (!stackActive()) return;
+    const items = stackFocusables();
+    const next = Math.min(items.length - 1, Math.max(0, stackIndex + delta));
+    if (next === stackIndex) return;
+    stackIndex = next;
     audio.play('navigate');
-    applyConfirmFocus();
+    applyStackFocus();
   }
 
   function pressFlash(btn: HTMLElement): void {
@@ -248,89 +316,98 @@ export function createControls(deps: ControlsDeps): Controls {
     window.setTimeout(() => btn.classList.remove('is-pressed'), PRESS_MS);
   }
 
-  function activateFocused(): void {
-    if (!focusActive()) return;
-    const btn = mainFocusables()[focusIndex];
-    if (btn === undefined) return;
-    pressFlash(btn);
-    if (btn === infoButton) triggerInfo();
-    else if (btn === uninstallButton) triggerUninstall();
-    else triggerPlay();
-  }
-
-  // Confirm modal: gamepad A activates the focused No/Yes; No cancels, Yes runs the confirmed action.
-  function activateConfirm(): void {
-    if (!confirmFocusActive()) return;
-    const btn = confirmButtons[confirmIndex];
-    if (btn === undefined) return;
-    pressFlash(btn);
-    if (btn === confirmNo) cancelConfirm();
-    else acceptConfirm();
-  }
-
-  // ── User-initiated actions (shared by mouse clicks and gamepad A/B) ──────────
+  // ── User-initiated actions ───────────────────────────────────────────────────
 
   function triggerPlay(): void {
     if (!focusActive()) return;
     const game = gameOf(state());
-    // Steam download in progress: the Play button shows a loader and can't launch — repurpose the click to
-    // open Steam's Downloads page, where the user can pause/resume (we can't control that programmatically).
+    // Steam download in progress: the gear opens Steam's Downloads page, where the user can
+    // pause/resume (we can't control that programmatically).
     if (game?.steamInstalling === true) {
       audio.play('button');
       window.api.openSteamDownloads();
       return;
     }
-    // Steam uninstall in progress (loader) → nothing useful to do, ignore the press.
+    // Steam uninstall in progress (gear) → nothing useful to do, ignore the press.
     if (game?.steamUninstalling === true) return;
-    // Install mode (button reads "Install"): confirm first and show the destination path. main still
-    // decides install vs launch from requiresInstall, so the confirmed request goes through requestLaunch.
-    if (game?.requiresInstall === true) {
-      audio.play('button');
-      openConfirm('install');
-      return;
-    }
     audio.play('play');
     window.api.requestLaunch();
   }
 
-  function triggerInfo(): void {
+  function triggerMore(): void {
     audio.play('button');
-    openInfo();
+    openDetails();
   }
 
-  // Uninstall button → open the destructive confirmation. The actual removal waits for "Yes".
-  function triggerUninstall(): void {
-    audio.play('button');
-    openConfirm('uninstall');
+  function activateFocused(): void {
+    if (!focusActive()) return;
+    const btn = mainFocusables()[focusIndex];
+    if (btn === undefined) return;
+    pressFlash(btn);
+    if (btn === moreButton) triggerMore();
+    else triggerPlay();
   }
 
-  function cancelConfirm(): void {
-    audio.play('back');
-    closeConfirm();
-  }
-
-  // "Yes" — dispatch by the confirmed mode. Install → run the installer (main still decides install vs
-  // launch from requiresInstall); Uninstall → remove the game. Capture the mode before closeConfirm.
-  function acceptConfirm(): void {
-    const mode = confirmMode;
-    closeConfirm();
-    if (mode === 'install') {
-      audio.play('play');
-      window.api.requestLaunch();
-    } else {
-      audio.play('button'); // neutral button sound for the destructive confirm
-      window.api.requestUninstall();
+  // Dispatch a stack button (shared by gamepad A and mouse click). Each opener/back plays its own sound.
+  function triggerStackButton(btn: HTMLButtonElement): void {
+    if (btn === menuShutdown) {
+      audio.play('button');
+      openPower();
+    } else if (btn === menuInstallToggle) {
+      audio.play('button');
+      openConfirm(menuInstallToggle.dataset['action'] === 'install' ? 'install' : 'uninstall');
+    } else if (btn === menuClose || btn === errorClose) {
+      back(); // closes Details / Error
+    } else if (btn === powerShutdown) {
+      audio.play('button');
+      openConfirm('shutdown');
+    } else if (btn === powerReboot) {
+      audio.play('button');
+      openConfirm('reboot');
+    } else if (btn === powerSleep) {
+      audio.play('button');
+      openConfirm('sleep');
+    } else if (btn === confirmYes) {
+      acceptConfirm();
+    } else if (btn === confirmNo) {
+      back(); // cancel → returns to Details / Power
     }
   }
 
-  // Gamepad B / veil click closes whichever popup is open (Info or Error).
-  function triggerClosePopup(): void {
-    if (infoOpen) {
-      audio.play('back');
-      closeInfo();
-    } else if (errorOpen) {
-      audio.play('back');
-      closeError();
+  function activateStack(): void {
+    if (!stackActive()) return;
+    const btn = stackFocusables()[stackIndex];
+    if (btn === undefined) return;
+    pressFlash(btn);
+    triggerStackButton(btn);
+  }
+
+  // "Yes" — closes the ENTIRE popup stack (→ 'none') and runs the action. Closing first is critical for
+  // steam-install: after Yes the state stays 'ready', so the popup wouldn't self-close on a state change.
+  function acceptConfirm(): void {
+    const mode = confirmMode;
+    closePopup();
+    switch (mode) {
+      case 'install':
+        audio.play('play');
+        window.api.requestLaunch(); // main decides install vs launch from requiresInstall
+        break;
+      case 'uninstall':
+        audio.play('button'); // neutral sound for the destructive confirm
+        window.api.requestUninstall();
+        break;
+      case 'shutdown':
+        audio.play('button');
+        window.api.requestShutdown();
+        break;
+      case 'reboot':
+        audio.play('button');
+        window.api.requestReboot();
+        break;
+      case 'sleep':
+        audio.play('button');
+        window.api.requestSleep();
+        break;
     }
   }
 
@@ -343,17 +420,20 @@ export function createControls(deps: ControlsDeps): Controls {
   // ── Wiring ────────────────────────────────────────────────────────────────
 
   playButton.addEventListener('click', () => triggerPlay());
-  infoButton.addEventListener('click', () => triggerInfo());
-  uninstallButton.addEventListener('click', () => triggerUninstall());
-  infoVeil.addEventListener('click', () => triggerClosePopup());
-  errorVeil.addEventListener('click', () => triggerClosePopup());
-  confirmNo.addEventListener('click', () => cancelConfirm());
-  confirmYes.addEventListener('click', () => acceptConfirm());
-  confirmVeil.addEventListener('click', () => cancelConfirm());
+  moreButton.addEventListener('click', () => triggerMore());
   hideButton.addEventListener('click', () => window.api.requestHide());
+  popupVeil.addEventListener('click', () => back());
 
-  // Mouse hover moves the gamepad focus too, so A always activates what's highlighted. The main buttons
-  // use focusActive (quiet while the modal is open); the modal's No/Yes use their own confirm group.
+  // A mouse click on a stack button triggers THAT button (regardless of the current highlight); only the
+  // active view's group is visible/clickable, so a click can't reach a hidden view's button.
+  ALL_STACK_BUTTONS.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      pressFlash(btn);
+      triggerStackButton(btn);
+    });
+  });
+
+  // Mouse hover moves the gamepad focus too, so A always activates what's highlighted.
   ALL_MAIN_BUTTONS.forEach((btn) => {
     btn.addEventListener('mouseenter', () => {
       if (!focusActive()) return;
@@ -363,64 +443,74 @@ export function createControls(deps: ControlsDeps): Controls {
       applyFocus();
     });
   });
-  confirmButtons.forEach((btn, i) => {
+  ALL_STACK_BUTTONS.forEach((btn) => {
     btn.addEventListener('mouseenter', () => {
-      if (!confirmFocusActive()) return;
-      confirmIndex = i;
-      applyConfirmFocus();
+      if (!stackActive()) return;
+      const idx = stackFocusables().indexOf(btn);
+      if (idx === -1) return;
+      stackIndex = idx;
+      applyStackFocus();
     });
   });
 
   const gamepad = createGamepadController({
-    // The confirm modal is a separate branch BEFORE the main one, so its No/Yes navigation/activation
-    // never touches the main controls while it's open.
-    onLeft: () => (confirmOpen ? moveConfirmFocus(-1) : moveFocus(-1)),
-    onRight: () => (confirmOpen ? moveConfirmFocus(1) : moveFocus(1)),
-    // On the empty / idle screen the only action is Hide; otherwise A activates the focused button.
+    // With a popup open, left/right are a no-op (the stacks are vertical); the bar uses them otherwise.
+    onLeft: () => {
+      if (popupView === 'none') moveFocus(-1);
+    },
+    onRight: () => {
+      if (popupView === 'none') moveFocus(1);
+    },
+    // Up/down drive the vertical popup stack; ignored on the bar (which has no vertical axis).
+    onUp: () => {
+      if (popupView !== 'none') moveStackFocus(-1);
+    },
+    onDown: () => {
+      if (popupView !== 'none') moveStackFocus(1);
+    },
+    // On the empty / idle screen the only action is Hide; otherwise A activates the focused control.
     onA: () => {
-      if (confirmOpen) activateConfirm();
+      if (popupView !== 'none') activateStack();
       else if (onMessageScreen()) window.api.requestHide();
       else activateFocused();
     },
     onB: () => {
-      if (confirmOpen) cancelConfirm();
+      if (popupView !== 'none') back();
       else if (onMessageScreen()) window.api.requestHide();
-      else triggerClosePopup();
     },
   });
 
-  // Keyboard Esc: close an open popup first (no hide), otherwise hide the launcher to tray from any
-  // screen — mirrors the Hide button. Intentionally keyboard-only; the gamepad routing is left as is.
+  // Keyboard Esc: step back through the popup first, otherwise hide the launcher to tray from any screen
+  // — mirrors the Hide button. Intentionally keyboard-only; the gamepad routing is left as is.
   window.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape') return;
-    if (confirmOpen) cancelConfirm();
-    else if (infoOpen || errorOpen) triggerClosePopup();
+    if (popupView !== 'none') back();
     else window.api.requestHide();
   });
 
-  function applyGameButtons(game: GameInfo): void {
-    applyPlayButton(game);
-    applyUninstallButton(game);
+  function applyGameButtons(): void {
+    // The only game-dependent control now is the Details menu's Install/Uninstall item (the popup's
+    // other buttons are static). Refreshed every render so it stays correct if the game state changes
+    // while Details is open (a ready→ready update doesn't force-close the popup).
+    applyMenuInstallToggle();
   }
 
   function clearGameButtons(): void {
-    // The idle branch doesn't touch the Uninstall button, so clear a stale .is-available from a prior
-    // ready state explicitly (don't rely on CSS specificity alone).
-    uninstallButton.classList.remove('is-available');
-    infoButton.classList.remove('has-uninstall-sibling');
+    // No game → no Install/Uninstall item (the popup is force-closed off the ready screen anyway).
+    menuInstallToggle.classList.add('is-hidden');
   }
 
   function refresh(): void {
-    // Popups only make sense on the ready screen; force-close them on any other state. (A failed
-    // launch returns to 'ready' first, then opens the error popup — so it survives this.) closeConfirm
-    // is critical for a card swap/pull WHILE the confirm modal is open — without it the modal would hang
-    // over the busy/idle screen.
-    if (phaseOf(state()) !== 'ready') {
-      closeInfo();
-      closeError();
-      closeConfirm();
+    // The popup only makes sense on the ready screen with no steam-busy indicator; force-close it
+    // otherwise. A failed launch returns to 'ready' first, THEN opens the error popup (separate IPC),
+    // so the error survives this. Closing also matters for a card swap/pull WHILE the popup is open,
+    // and for a steam download/uninstall that starts externally (SteamInstallWatch) under an open
+    // Details with Install/Uninstall items.
+    if (phaseOf(state()) !== 'ready' || steamBusy(state())) {
+      closePopup();
     }
     applyFocus();
+    applyStackFocus();
   }
 
   return {
