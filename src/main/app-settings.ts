@@ -30,6 +30,9 @@ const settingsSchema = z.object({
   // File name of the custom Empty-screen wallpaper in userData, or null for the bundled default.
   // `.default(null)` migrates an older settings.json without the field (no schemaVersion bump).
   customWallpaper: z.string().nullable().default(null),
+  // Keep the empty "no card" screen visible instead of hiding to the tray. `.default(false)` keeps the
+  // original background-app behaviour for an older settings.json without the field.
+  alwaysShowEmptyScreen: z.boolean().default(false),
 });
 
 // Default preserves the pre-settings behaviour (silent download + install on next quit), so the
@@ -44,6 +47,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   musicVolume: 0.5,
   sfxVolume: 1,
   customWallpaper: null,
+  alwaysShowEmptyScreen: false,
 };
 
 export class AppSettingsStore {

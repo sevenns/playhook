@@ -27,6 +27,7 @@ const CHANNELS = {
   updateInstall: 'update:install',
   settingsRequest: 'settings:request',
   settingsSetAutoUpdate: 'settings:set-auto-update',
+  settingsSetAlwaysShowEmptyScreen: 'settings:set-always-show-empty-screen',
   settingsSetTheme: 'settings:set-theme',
   settingsSetPrerelease: 'settings:set-prerelease',
   settingsSetSummonHotkey: 'settings:set-summon-hotkey',
@@ -62,6 +63,9 @@ const api: SettingsApi = {
   },
   setAutoUpdate(mode: AutoUpdateMode): void {
     ipcRenderer.send(CHANNELS.settingsSetAutoUpdate, mode);
+  },
+  setAlwaysShowEmptyScreen(on: boolean): void {
+    ipcRenderer.send(CHANNELS.settingsSetAlwaysShowEmptyScreen, on);
   },
   setTheme(mode: ThemeMode): void {
     ipcRenderer.send(CHANNELS.settingsSetTheme, mode);

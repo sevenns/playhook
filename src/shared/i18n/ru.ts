@@ -89,6 +89,7 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'settings.summonHotkey': 'Показывать лаунчер сочетанием на геймпаде',
   'settings.summonHintPre': 'Зажмите',
   'settings.summonHintPost': 'на геймпаде в любой момент, чтобы вывести лаунчер на передний план.',
+  'settings.alwaysShowEmpty': 'Всегда показывать экран без карты',
   'settings.wallpaperLabel': 'Фон пустого экрана',
   'settings.wallpaperChoose': 'Выбрать изображение…',
   'settings.wallpaperReset': 'Сбросить',

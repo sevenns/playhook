@@ -327,6 +327,12 @@ export interface AppSettings {
    * user's original path or the bytes (settings.json is rewritten whole on each patch). Default null.
    */
   readonly customWallpaper: string | null;
+  /**
+   * Keep the launcher visible on the empty "no card" screen instead of hiding to the tray when no card
+   * is present. Default false (the background-app behaviour: hidden until a card is detected). When true
+   * the empty screen stays on card removal AND is shown at startup.
+   */
+  readonly alwaysShowEmptyScreen: boolean;
 }
 
 /**
@@ -405,6 +411,8 @@ export const IPC = {
   settingsRequest: 'settings:request',
   /** settings-renderer → main: change the auto-update mode (payload AutoUpdateMode). */
   settingsSetAutoUpdate: 'settings:set-auto-update',
+  /** settings-renderer → main: toggle keeping the empty "no card" screen visible (payload boolean). */
+  settingsSetAlwaysShowEmptyScreen: 'settings:set-always-show-empty-screen',
   /** settings-renderer → main: change the UI theme (payload ThemeMode). */
   settingsSetTheme: 'settings:set-theme',
   /** settings-renderer → main: toggle pre-release (beta) updates (payload boolean). */
@@ -570,6 +578,8 @@ export interface SettingsApi {
   getMoveSound(): Promise<string>;
   getSettings(): Promise<AppSettings>;
   setAutoUpdate(mode: AutoUpdateMode): void;
+  /** Toggle keeping the empty "no card" screen visible instead of hiding to the tray. */
+  setAlwaysShowEmptyScreen(on: boolean): void;
   setTheme(mode: ThemeMode): void;
   setPrerelease(on: boolean): void;
   setSummonHotkey(on: boolean): void;

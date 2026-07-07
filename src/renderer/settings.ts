@@ -73,6 +73,7 @@ const themeGroup = req('theme');
 const languageGroup = req('language');
 const prereleaseSwitch = req('prerelease');
 const summonSwitch = req('summon-hotkey');
+const alwaysShowEmptySwitch = req('always-show-empty');
 const musicSlider = req('music-volume');
 const musicValue = req('music-volume-value');
 const sfxSlider = req('sfx-volume');
@@ -281,6 +282,10 @@ summonSwitch.addEventListener('change', () => {
   window.settingsApi.setSummonHotkey(readChecked(summonSwitch));
 });
 
+alwaysShowEmptySwitch.addEventListener('change', () => {
+  window.settingsApi.setAlwaysShowEmptyScreen(readChecked(alwaysShowEmptySwitch));
+});
+
 wireVolumeSlider(musicSlider, musicValue, (v) => window.settingsApi.setMusicVolume(v));
 wireVolumeSlider(sfxSlider, sfxValue, (v) => window.settingsApi.setSfxVolume(v));
 
@@ -344,6 +349,7 @@ function applySettings(settings: AppSettings): void {
   setDropdownValue(languageGroup, settings.language);
   setChecked(prereleaseSwitch, settings.allowPrerelease);
   setChecked(summonSwitch, settings.summonHotkeyEnabled);
+  setChecked(alwaysShowEmptySwitch, settings.alwaysShowEmptyScreen);
   const musicPercent = Math.round(settings.musicVolume * 100);
   const sfxPercent = Math.round(settings.sfxVolume * 100);
   setSliderPercent(musicSlider, musicPercent);

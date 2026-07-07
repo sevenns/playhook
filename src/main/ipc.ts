@@ -231,6 +231,9 @@ async function removeWithRetry(dir: string, signal?: AbortSignal): Promise<void>
 export class GameController {
   private current: ResolvedManifest | null = null;
   private cardPresent = false;
+  // Mirror of AppSettings.alwaysShowEmptyScreen (seeded at startup, toggled live from the settings
+  // window): when true the launcher stays on the empty "no card" screen instead of hiding to the tray.
+  private alwaysShowEmptyScreen = false;
   private launchInFlight = false;
   // A manifest reload from the Configure-game window is in flight. Unlike launchInFlight it does NOT
   // gate on state kind (the reload runs from `ready`), so onLaunchRequested/onUninstallRequested check
@@ -471,15 +474,35 @@ export class GameController {
       // = false and goes idle + hide on its own.
       return;
     }
-    // ready / error / idle → no card, hide the window. Stop any Steam re-detect poller (the card is gone;
-    // a Steam game in `ready` reaches here since its kind is never running/installing).
+    // ready / error / idle → no card. Stop any Steam re-detect poller (the card is gone; a Steam game in
+    // `ready` reaches here since its kind is never running/installing).
     this.steamWatch.stop();
     this.steamWatch.clearUninstallRequest();
     this.current = null;
     this.setAudio(null);
     this.setHero(null);
     this.deps.state.set({ kind: 'idle' });
-    this.deps.window.hide();
+    // Normally the background app hides to the tray when no card is present. With "always show the no-card
+    // screen" on, keep the launcher up on the empty screen instead — BUT only if it's currently on screen.
+    // If the user minimized it to the tray, pulling the card must not pop it back up (respect that intent).
+    if (this.alwaysShowEmptyScreen) {
+      if (this.deps.window.isShown()) this.deps.window.showAndFocus();
+    } else {
+      this.deps.window.hide();
+    }
+  }
+
+  /**
+   * Applies the "always show the no-card screen" setting (seeded at startup, toggled live from the
+   * settings window). Besides caching the flag it reconciles the launcher NOW when we're idle with no
+   * card: show the empty screen when turning it on, or hide back to the tray when turning it off. When a
+   * card is present (ready/busy) nothing changes — the launcher is already visible for the game.
+   */
+  setAlwaysShowEmptyScreen(on: boolean): void {
+    this.alwaysShowEmptyScreen = on;
+    if (this.cardPresent || this.deps.state.get().kind !== 'idle') return;
+    if (on) this.deps.window.showAndFocus();
+    else this.deps.window.hide();
   }
 
   // ── "Launch" action (the A button / click) ──────────────────────────────
