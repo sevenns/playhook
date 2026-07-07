@@ -12,14 +12,13 @@ import { createAudioController } from './audio.js';
 import { createHeroController } from './hero.js';
 import { createControls } from './controls.js';
 import { formatDate, formatPlaytime } from './format.js';
-import { gameOf, phaseOf, statusOf, steamBusy } from './state-view.js';
-import { req, reqQuery } from './dom.js';
+import { busyKindOf, gameOf, phaseOf, statusOf, steamBusy } from './state-view.js';
+import { req } from './dom.js';
 
 const app = req('app');
 const titleEl = req('title');
 const statusEl = req('status');
 const infoPanel = req('info-panel');
-const barContent = reqQuery<HTMLElement>('.bar-content');
 
 let currentState: AppState = { kind: 'idle' };
 // UI locale + translator (both refreshed on a language push). The HTML ships English fallback text, so
@@ -71,34 +70,11 @@ function buildInfoPanel(game: GameInfo): void {
   );
 }
 
-// ── Title slide (left → right while busy) ───────────────────────────────────
-
-// The title slides right (making room for the status) while busy OR while a Steam install/uninstall
-// shows its non-blocking indicator on the ready screen.
-function shouldSlideTitle(): boolean {
-  return phaseOf(currentState) === 'busy' || steamBusy(currentState);
-}
-
-let titleSlideRaf = 0;
-function applyTitleSlide(toRight: boolean): void {
-  // Cancel any pending measure: otherwise a busy-state rAF can fire AFTER we've returned to 'ready'
-  // (e.g. a launch that failed fast) and wrongly re-slide the title right. This was the stuck-title bug.
-  if (titleSlideRaf !== 0) {
-    cancelAnimationFrame(titleSlideRaf);
-    titleSlideRaf = 0;
-  }
-  if (!toRight) {
-    titleEl.style.setProperty('--title-x', '0px');
-    return;
-  }
-  // Measure after layout so scrollWidth/offsetLeft are correct.
-  titleSlideRaf = requestAnimationFrame(() => {
-    titleSlideRaf = 0;
-    if (!shouldSlideTitle()) return; // state changed before the frame — don't slide
-    const shift = barContent.clientWidth - titleEl.scrollWidth - titleEl.offsetLeft;
-    titleEl.style.setProperty('--title-x', `${Math.max(0, Math.round(shift))}px`);
-  });
-}
+// ── Title / status busy layout ──────────────────────────────────────────────
+// While busy (or during a Steam install/uninstall indicator) the title lifts UP and the status line
+// fades in below it — a two-line block that keeps the long title fully visible (it no longer slides
+// right into the More button). Both moves are pure CSS, keyed off #app[data-phase]/[data-steam-busy]
+// (see styles.css), so there's no JS measurement here anymore.
 
 // ── Background music gating ──────────────────────────────────────────────────
 
@@ -126,10 +102,12 @@ function render(state: AppState): void {
     hero.repaint();
     titleEl.textContent = game.title;
     buildInfoPanel(game);
-    controls.applyGameButtons(game);
+    controls.applyGameButtons();
   } else {
-    // idle / no-game error → the empty "Insert a game card" screen (wallpaper background).
+    // idle / no-game error → the empty "Insert a game card" screen (wallpaper background). Clear any
+    // stale stats so the empty screen's Details menu (opened via More) shows just System + Close.
     hero.applyEmptyScreen();
+    while (infoPanel.firstChild !== null) infoPanel.removeChild(infoPanel.firstChild);
     controls.clearGameButtons();
   }
 
@@ -143,8 +121,19 @@ function render(state: AppState): void {
   if (busySteam) app.dataset['steamBusy'] = 'true';
   else delete app.dataset['steamBusy'];
 
+  // Play-button busy visual: gear (system activity) vs spinner (game phases). Absent when not busy.
+  const busyKind = busyKindOf(state);
+  if (busyKind !== 'none') app.dataset['busy'] = busyKind;
+  else delete app.dataset['busy'];
+
+  // no-play layout: a requiresInstall installer/steam game on the ready screen (and NOT steam-busy, when
+  // the gear must stay visible) hides Play and moves the title to x=50. Set here by phase so it is cleared
+  // in every other state (idle/error move the title via their own per-phase rule).
+  const noPlay = phase === 'ready' && game?.requiresInstall === true && !busySteam;
+  if (noPlay) app.dataset['layout'] = 'no-play';
+  else delete app.dataset['layout'];
+
   statusEl.textContent = statusOf(state, translator);
-  applyTitleSlide(phase === 'busy' || busySteam);
 
   // Force-close popups off the ready screen, then re-apply the focus highlight (see controls.refresh).
   controls.refresh();
@@ -210,7 +199,14 @@ document.addEventListener('visibilitychange', () => {
 
 controls.start();
 
-// Re-measure the title slide on resize while busy / steam-installing (keeps right-alignment correct).
-window.addEventListener('resize', () => {
-  if (shouldSlideTitle()) applyTitleSlide(true);
-});
+// Wake-from-sleep guard for background music. JS timers don't advance while the machine is suspended,
+// so a ballooned gap between heartbeats means we just resumed — and the OS may have torn down the audio
+// session, leaving the looping music silent while UI sounds (fresh clones) still work. Re-sync to
+// re-issue play(). visibilitychange doesn't cover this: the window can stay visible across sleep.
+let lastHeartbeat = Date.now();
+window.setInterval(() => {
+  const now = Date.now();
+  const resumedFromSleep = now - lastHeartbeat > 5000;
+  lastHeartbeat = now;
+  if (resumedFromSleep) syncMusic();
+}, 2000);

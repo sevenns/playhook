@@ -58,6 +58,29 @@ export function statusOf(state: AppState, t: Translator): string {
   }
 }
 
+// Which busy visual the Play button shows, by the design's semantics: a rotating GEAR for system
+// activity (install/uninstall, incl. Steam), a SPINNER arc for game phases (launch/save-sync/running).
+// 'none' → not busy (the play triangle). Drives #app[data-busy] in app.ts. (steamBusy is hoisted.)
+export type BusyKind = 'none' | 'system' | 'game';
+
+export function busyKindOf(state: AppState): BusyKind {
+  switch (state.kind) {
+    case 'installing':
+    case 'uninstalling':
+      return 'system';
+    case 'syncing-in':
+    case 'launching':
+    case 'running':
+    case 'syncing-out':
+      return 'game';
+    case 'ready':
+      // Steam download/uninstall is non-blocking system activity on the (still) ready screen.
+      return steamBusy(state) ? 'system' : 'none';
+    default:
+      return 'none';
+  }
+}
+
 // True while a Steam install (download) or uninstall is in progress: a non-blocking indicator on the
 // (still) ready screen — the busy visuals (loader + status + slid title) are reused via
 // #app[data-steam-busy], NOT the busy phase.

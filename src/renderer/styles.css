@@ -47,6 +47,14 @@
   cursor: default;
 }
 
+/* Cursor hidden while the gamepad is in use, or after 30s idle (class toggled from controls.ts). The
+   descendant selector's specificity beats the per-element cursor rules (buttons' pointer, the copyable
+   path's text); a real mouse move restores it. */
+html.cursor-hidden,
+html.cursor-hidden * {
+  cursor: none;
+}
+
 html,
 body {
   margin: 0;
@@ -114,43 +122,18 @@ body {
 }
 
 /* ── Per-screen bottom-bar controls ────────────────────────────────────────
-   The bottom bar is the same on every screen. Game screens (ready / busy) show Play + title +
-   Info. The empty screen (idle, and the no-game error) shows no Play, "Insert a game card" as the
-   title, and the Hide (X) button in place of Info. */
+   The bottom bar is the same on every screen. Game screens (ready / busy) show Play + title + More.
+   The empty screen (idle, and the no-game error) shows no Play — just the title "Insert a game card"
+   (moved to x=50, the empty left slot) and More on the right (System + Close). */
 
-#hide-button {
-  display: none;
-}
-
-/* Uninstall: hidden by default, shown (display:flex) only when JS adds .is-available for an installed
-   install-mode game. In busy it is NOT display-toggled — like Info it only fades via opacity below, so
-   .is-available and the busy opacity-gate don't conflict. */
-#uninstall-button {
-  display: none;
-}
-#uninstall-button.is-available {
-  display: flex;
-}
-
-/* When Uninstall is present it takes the rightmost slot (right:0 from .rect-button); Info shifts left
-   to sit next to it (92px button + 32px gap). Without Uninstall, Info stays rightmost. The class is
-   toggled from JS in sync with .is-available. */
-#info-button.has-uninstall-sibling {
-  right: calc(124 * var(--px));
-}
-
+/* Empty / idle screen (and the no-game error): no Play; the title fills the empty left slot (x=50). */
 #app[data-phase='idle'] #play-button,
-#app[data-phase='error'] #play-button,
-#app[data-phase='idle'] #info-button,
-#app[data-phase='error'] #info-button,
-#app[data-phase='idle'] #uninstall-button,
-#app[data-phase='error'] #uninstall-button {
+#app[data-phase='error'] #play-button {
   display: none;
 }
-
-#app[data-phase='idle'] #hide-button,
-#app[data-phase='error'] #hide-button {
-  display: flex;
+#app[data-phase='idle'] .title,
+#app[data-phase='error'] .title {
+  left: 0;
 }
 
 /* ── Bottom bar ──────────────────────────────────────────────────────────── */
@@ -182,9 +165,12 @@ body {
   height: calc(92 * var(--px));
 }
 
-/* ── Circle (Play) button — special: bg d2, content d1, pulsing ring on hover/focus ── */
+/* ── Play button — a normal button (like .rect-button): transparent with d2 content, inverts to a d2
+   fill with d1 content on hover/focus. Its ONLY distinction is the pulsing ring on hover/focus. The
+   same visual model holds in every state — idle (triangle), game busy (spinner), system busy (gear):
+   inactive = icon only, active = fill + icon. */
 
-.circle-button {
+.play-button {
   position: absolute;
   left: 0;
   top: 0;
@@ -195,33 +181,40 @@ body {
   justify-content: center;
   padding: 0;
   border: none;
-  border-radius: 50%;
+  border-radius: calc(10 * var(--px));
+  background: transparent;
+  color: var(--d2);
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease, transform 0.12s ease;
+}
+
+.play-button:hover,
+.play-button.is-focused {
   background: var(--d2);
   color: var(--d1);
-  cursor: pointer;
-  transition: transform 0.12s ease;
 }
 
 /* Press feedback (mouse :active, or gamepad A via .is-pressed): smooth scale down. */
-.circle-button:active,
-.circle-button.is-pressed,
+.play-button:active,
+.play-button.is-pressed,
 .rect-button:active,
 .rect-button.is-pressed {
   transform: scale(0.9);
 }
 
-.circle-button::after {
+/* Pulse ring — a rounded square echoing the button (kept on hover/focus per design). */
+.play-button::after {
   content: '';
   position: absolute;
   inset: calc(-7 * var(--px));
   border: calc(3 * var(--px)) solid var(--d2);
-  border-radius: 50%;
+  border-radius: calc(17 * var(--px));
   opacity: 0;
   transition: opacity 0.2s ease;
 }
 
-.circle-button:hover::after,
-.circle-button.is-focused::after {
+.play-button:hover::after,
+.play-button.is-focused::after {
   opacity: 1;
   animation: pulse-ring 1.1s ease-in-out infinite;
 }
@@ -245,30 +238,19 @@ body {
   transform: translateX(calc(4 * var(--px)));
 }
 
-.icon-install {
-  width: calc(40 * var(--px));
-  height: calc(40 * var(--px));
+/* Gear (system busy): hidden by default; shown by the data-busy='system' rule below. */
+.icon-gear {
+  width: calc(48 * var(--px));
+  height: calc(48 * var(--px));
   fill: currentColor;
-}
-
-/* The circle button shows ONE icon at a time, chosen by its data-action (Play vs Install). */
-.icon-install {
   display: none;
-}
-#play-button[data-action='install'] .icon-play {
-  display: none;
-}
-#play-button[data-action='install'] .icon-install {
-  display: block;
 }
 
 /* Icons don't intercept pointer events, so hover/click target the button itself (otherwise the
    global `* { cursor: default }` would override the button's pointer cursor over the icon). */
 .icon-play,
-.icon-install,
-.icon-info,
-.icon-hide,
-.icon-uninstall,
+.icon-gear,
+.icon-more,
 .loader {
   pointer-events: none;
 }
@@ -303,37 +285,39 @@ body {
    keyboard focus ring is redundant. It also lingered as a stray outline after closing a popup with Esc:
    the button kept DOM focus from the opening mouse click, and Esc flipped Chromium into keyboard
    modality, painting the :focus-visible ring. Suppress it — .is-focused is the single focus visual. */
-.circle-button,
+.play-button,
 .rect-button,
 .text-button {
   outline: none;
 }
 
-.icon-info,
-.icon-hide,
-.icon-uninstall {
-  width: calc(40 * var(--px));
-  height: calc(40 * var(--px));
+/* More: three dots, 56×16 in the mockup, centered in the 92×92 button. overflow:visible so the last
+   dot (its right edge sits exactly on the viewBox boundary) isn't clipped by the SVG viewport. */
+.icon-more {
+  width: calc(56 * var(--px));
+  height: calc(16 * var(--px));
   fill: currentColor;
+  overflow: visible;
 }
 
-/* Info / Uninstall buttons disappear while busy (launch flow) and while a Steam install/uninstall
-   indicator is up (which stays on the ready screen, hence the separate data-steam-busy selector). */
-#app[data-phase='busy'] .rect-button,
-#app[data-steam-busy='true'] .rect-button {
-  opacity: 0;
-  transform: translateX(calc(20 * var(--px)));
-  pointer-events: none;
-}
+/* The More button stays visible AND interactive while busy / during a Steam install-uninstall (it opens
+   the Details menu there too). Only the empty-screen phases hide it (that's handled by the per-phase
+   display rules above), so there is no busy fade-out here anymore. */
 
-/* ── Loader (shown inside the circle button while busy) ─────────────────── */
+/* ── Play-button busy visuals (spinner vs gear) ────────────────────────────
+   Two busy variants on the same normal (transparent) button, chosen by #app[data-busy] (set from
+   app.ts). Both the loader arc and the gear use currentColor, so they invert with the button on
+   hover/focus just like the triangle (inactive = icon only, active = fill + icon):
+   • 'game'   (launch / save-sync / running) → the loader arc spins in place of the triangle.
+   • 'system' (install / uninstall / Steam)  → a slowly spinning gear.
+   The split follows the design's semantics: gear = system activity, spinner = game phases. */
 
 .loader {
   display: none;
   width: calc(40 * var(--px));
   height: calc(40 * var(--px));
-  border: calc(4 * var(--px)) solid color-mix(in srgb, var(--d1) 30%, transparent);
-  border-top-color: var(--d1);
+  border: calc(4 * var(--px)) solid color-mix(in srgb, currentColor 30%, transparent);
+  border-top-color: currentColor;
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }
@@ -344,17 +328,21 @@ body {
   }
 }
 
-/* While busy (launch / install flow) neither action icon shows — the loader takes over. Declared
-   after the data-action swap so it wins at equal specificity. */
-#app[data-phase='busy'] .icon-play,
-#app[data-phase='busy'] .icon-install,
-#app[data-steam-busy='true'] .icon-play,
-#app[data-steam-busy='true'] .icon-install {
+/* Game busy: the play triangle gives way to the loader arc. */
+#app[data-busy='game'] .icon-play {
   display: none;
 }
-#app[data-phase='busy'] .loader,
-#app[data-steam-busy='true'] .loader {
+#app[data-busy='game'] .loader {
   display: block;
+}
+
+/* System busy: the triangle gives way to a slowly spinning gear. */
+#app[data-busy='system'] .icon-play {
+  display: none;
+}
+#app[data-busy='system'] .icon-gear {
+  display: block;
+  animation: spin 4s linear infinite;
 }
 
 /* ── Title & status ─────────────────────────────────────────────────────── */
@@ -371,8 +359,26 @@ body {
   font-size: calc(32 * var(--px));
   line-height: calc(48 * var(--px));
   color: var(--fg);
-  transform: translateX(var(--title-x, 0px));
   transition: transform 0.45s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Busy / steam-busy: the title lifts UP (instead of sliding right) so the status line fades in below
+   it — a two-line block that keeps a long title fully visible. The status sits pre-positioned below
+   center (see .status) and only its opacity animates. */
+#app[data-phase='busy'] .title,
+#app[data-steam-busy='true'] .title {
+  transform: translateY(calc(-18 * var(--px)));
+}
+
+/* no-play layout (requiresInstall installer/steam game, not steam-busy): the left slot is empty (Play
+   hidden), so the title moves to x=50 (left:0 in .bar-content). Set from render() by phase, and cleared
+   in every other state. (During steam-busy the attribute is cleared, so Play shows as the gear — matrix
+   p4.) The empty idle/error screens move the title the same way via their own per-phase rule above. */
+#app[data-layout='no-play'] #play-button {
+  display: none;
+}
+#app[data-layout='no-play'] .title {
+  left: 0;
 }
 
 .status {
@@ -387,20 +393,25 @@ body {
   font-size: calc(24 * var(--px));
   line-height: calc(36 * var(--px));
   color: var(--fg);
+  /* Pre-positioned below center so it forms the second line under the lifted title; only opacity
+     animates (it's invisible outside busy anyway). */
+  transform: translateY(calc(18 * var(--px)));
   opacity: 0;
   transition: opacity 0.3s ease;
 }
 
-/* Status fades in only after the title has slid to the right (busy flow, and the Steam non-blocking
-   "Installing… X%" / "Uninstalling…" indicators which stay on the ready screen). */
+/* Status fades in just after the title starts lifting (the delay sequences the two moves: title up,
+   then status in). Covers busy and the Steam non-blocking "Installing… X%" / "Uninstalling…" indicators. */
 #app[data-phase='busy'] .status,
 #app[data-steam-busy='true'] .status {
   opacity: 1;
   transition-delay: 0.35s;
 }
 
-/* ── Popups (Info / Error) ──────────────────────────────────────────────────
-   Shared component: a right-side frosted veil + a right-aligned panel, toggled with .is-open. */
+/* ── Popup (unified: Details / Power / Confirm / Error) ─────────────────────
+   ONE frosted veil + ONE right-side column (450px). The top content and the bottom action stack both
+   switch by #popup[data-view]; the veil stays put across view changes, so Details ↔ Power doesn't
+   cross-fade two identical blur veils. Toggled open with .is-open. */
 
 .popup {
   position: absolute;
@@ -421,13 +432,16 @@ body {
   transition: opacity 0.35s ease;
 }
 
-.popup-panel {
+/* Right column: 450px wide, inset 50px on right/top/bottom. Content sits at the top; the action stack
+   is pushed to the bottom (margin-top:auto on .popup-actions). Slides in + fades with the veil. */
+.popup-column {
   position: absolute;
-  top: calc(400 * var(--px));
-  right: calc(32 * var(--px));
+  right: calc(50 * var(--px));
+  top: calc(50 * var(--px));
+  bottom: calc(50 * var(--px));
+  width: calc(450 * var(--px));
   display: flex;
   flex-direction: column;
-  gap: calc(32 * var(--px));
   text-align: right;
   transform: translateX(calc(40 * var(--px)));
   opacity: 0;
@@ -440,9 +454,25 @@ body {
 .popup.is-open .popup-veil {
   opacity: 1;
 }
-.popup.is-open .popup-panel {
+.popup.is-open .popup-column {
   transform: none;
   opacity: 1;
+}
+
+/* Top content — inset 100 from the column top. Only the active view's block shows; each is a column
+   with a gap (info stats / confirm question+note / error title+detail). */
+.popup-content {
+  margin-top: calc(100 * var(--px));
+}
+.popup-content > * {
+  display: none;
+  flex-direction: column;
+  gap: calc(32 * var(--px));
+}
+#popup[data-view='details'] .popup-info,
+#popup[data-view='confirm'] .popup-confirm,
+#popup[data-view='error'] .popup-error {
+  display: flex;
 }
 
 .info-item {
@@ -474,7 +504,6 @@ body {
 
 /* Popup heading (Error / Confirmation question) — larger heading per the updated mockup. */
 .popup-message {
-  max-width: calc(450 * var(--px));
   font-weight: 500;
   font-size: calc(32 * var(--px));
   line-height: calc(44 * var(--px));
@@ -485,23 +514,22 @@ body {
    scopes its own conditional visibility below. */
 .popup-detail {
   display: block;
-  max-width: calc(450 * var(--px));
   font-weight: 300;
   font-size: calc(24 * var(--px));
   line-height: calc(36 * var(--px));
   color: var(--fg);
 }
 
-/* Install-only description with the destination path. Hidden by default; shown for data-mode='install'. */
-#confirm-popup .popup-detail {
+/* Install-only description with the destination path. Hidden by default; shown only in confirm view for
+   the card-installer install (data-mode='install'). Steam install has no card path / silent-mode note,
+   so a more specific selector (data-install-via='steam') hides it again for the steam variant. */
+.popup-confirm .popup-detail {
   display: none;
 }
-#confirm-popup[data-mode='install'] .popup-detail {
+#popup[data-view='confirm'][data-mode='install'] .popup-confirm .popup-detail {
   display: block;
 }
-/* Steam install has no card path / silent-mode note. One extra attribute → higher specificity than the
-   rule above, so it wins and hides the description for the steam variant. */
-#confirm-popup[data-mode='install'][data-install-via='steam'] .popup-detail {
+#popup[data-view='confirm'][data-mode='install'][data-install-via='steam'] .popup-confirm .popup-detail {
   display: none;
 }
 
@@ -514,22 +542,30 @@ body {
   cursor: text;
 }
 
-/* The confirmation & error panels (title + subtitle) are centered vertically on screen — unlike Info,
-   which sits at a fixed top. translateY(-50%) must be kept in BOTH the closed (slid-in) and open
-   transforms, so override them at higher specificity than the shared .popup rules. */
-#confirm-popup .popup-panel,
-#error-popup .popup-panel {
-  top: 50%;
-  bottom: auto;
-  transform: translateY(-50%) translateX(calc(40 * var(--px)));
-}
-#confirm-popup.is-open .popup-panel,
-#error-popup.is-open .popup-panel {
-  transform: translateY(-50%);
+/* ── Action stacks ──────────────────────────────────────────────────────────
+   Pinned to the column bottom (margin-top:auto). One group per view; only the active view's group
+   shows, as a vertical stack aligned to the right edge — a longer localized label grows LEFT, the
+   right edge stays fixed. Default focus is the BOTTOM button (set from controls.ts). */
+.popup-actions {
+  margin-top: auto;
 }
 
-/* ── TextButton (No / Yes) — textual sibling of .rect-button ────────────────
-   Transparent with d2 text; inverts to a d2 fill with d1 text on hover/focus. */
+.actions-group {
+  display: none;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: calc(8 * var(--px));
+}
+#popup[data-view='details'] .actions-group[data-group='details'],
+#popup[data-view='power'] .actions-group[data-group='power'],
+#popup[data-view='confirm'] .actions-group[data-group='confirm'],
+#popup[data-view='error'] .actions-group[data-group='error'] {
+  display: flex;
+}
+
+/* ── TextButton — textual sibling of .rect-button ───────────────────────────
+   Transparent with d2 text; inverts to a d2 fill with d1 text on hover/focus (the design's "Active"
+   variant — the mockup's filled bottom button is just the default focus, not a persistent state). */
 
 .text-button {
   height: calc(92 * var(--px));
@@ -545,6 +581,7 @@ body {
   font-family: inherit;
   font-weight: 500;
   font-size: calc(28 * var(--px));
+  white-space: nowrap;
   cursor: pointer;
   transition: background 0.2s ease, color 0.2s ease, transform 0.12s ease;
 }
@@ -560,22 +597,8 @@ body {
   transform: scale(0.9);
 }
 
-/* ── Confirmation actions (No / Yes row) ────────────────────────────────────
-   Pinned to the bottom strip (aligned to .bar-content's 50px inset), so they sit OUTSIDE
-   .popup-panel and need their OWN opacity/pointer-events gate — without it the buttons would be
-   visible and clickable over the ready screen at all times. Fades in together with the veil/panel. */
-.confirm-actions {
-  position: absolute;
-  right: calc(50 * var(--px));
-  bottom: calc(50 * var(--px));
-  display: flex;
-  gap: calc(32 * var(--px));
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.35s ease;
-}
-
-.popup.is-open .confirm-actions {
-  opacity: 1;
-  pointer-events: auto;
+/* Install/Uninstall menu item is removed entirely for an executable game (no install block) — JS adds
+   this class. Author rule needed: .text-button's display:flex would otherwise beat the UA [hidden]. */
+.text-button.is-hidden {
+  display: none;
 }

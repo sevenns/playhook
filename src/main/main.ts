@@ -3,6 +3,8 @@
 // no game it stays hidden in the tray. Closing the window hides it to the tray, not quits.
 import path from 'node:path';
 import fs from 'node:fs';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { app, ipcMain, Menu, shell, type Tray } from 'electron';
 import { log, logFilePath } from './logger';
 import { StateManager } from './state';
@@ -19,8 +21,12 @@ import { SettingsWindow } from './settings-window';
 import { GameConfigService } from './game-config';
 import { ConfigureWindow } from './configure-window';
 import { LocaleService } from './locale';
+import { createPowerService } from './power';
+import { suspendToSleep } from './power-native';
 import { IPC } from '../shared/types';
 import { type Locale } from '../shared/i18n/index';
+
+const execFileAsync = promisify(execFile);
 
 // Keep-alive reference so the Tray (and its icon) isn't garbage-collected; also read to rebuild the
 // context menu on a language change (setContextMenu in applyLanguage).
@@ -162,6 +168,26 @@ async function bootstrap(): Promise<void> {
   ipcMain.handle(IPC.languageRequest, (): Locale => localeService.current());
   ipcMain.handle(IPC.settingsLanguageRequest, (): Locale => localeService.current());
   ipcMain.handle(IPC.configLanguageRequest, (): Locale => localeService.current());
+
+  // Power menu (Shutdown/Reboot/Sleep). Wired here, NOT in GameController, so the game controller stays
+  // free of power concerns. The renderer confirms each action before sending; shutdown/reboot quit via
+  // the bootstrap quit() (drops the window close-guards), sleep suspends in place.
+  const power = createPowerService({
+    platform: process.platform,
+    exec: async (file, args) => {
+      await execFileAsync(file, [...args], { windowsHide: true });
+    },
+    suspend: suspendToSleep,
+    quit: () => quit(),
+    showError: (message) => {
+      const bw = window.browserWindow;
+      if (bw !== null && !bw.isDestroyed()) bw.webContents.send(IPC.errorShow, message);
+    },
+    getTranslator,
+  });
+  ipcMain.on(IPC.actionShutdown, () => void power.perform('shutdown'));
+  ipcMain.on(IPC.actionReboot, () => void power.perform('reboot'));
+  ipcMain.on(IPC.actionSleep, () => void power.perform('sleep'));
 
   // Applies a language change everywhere: re-resolve the locale, rebuild the tray menu, re-title the plain
   // windows, and push the effective locale to every live webContents (game/settings/configure). Called
