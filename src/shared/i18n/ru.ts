@@ -34,6 +34,7 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'launcher.info.playtime': 'Время в игре',
   'launcher.info.launches': 'Запусков',
   'launcher.aria.play': 'Играть',
+  'launcher.aria.returnToGame': 'Вернуться в игру',
   'launcher.aria.more': 'Ещё',
   'launcher.menu.close': 'Закрыть',
   'launcher.menu.install': 'Установить',
@@ -88,6 +89,10 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'settings.summonHotkey': 'Показывать лаунчер сочетанием на геймпаде',
   'settings.summonHintPre': 'Зажмите',
   'settings.summonHintPost': 'на геймпаде в любой момент, чтобы вывести лаунчер на передний план.',
+  'settings.alwaysShowEmpty': 'Всегда показывать экран без карты',
+  'settings.wallpaperLabel': 'Фон пустого экрана',
+  'settings.wallpaperChoose': 'Выбрать изображение…',
+  'settings.wallpaperReset': 'Сбросить',
   'settings.sectionAudio': 'Звук',
   'settings.musicVolume': 'Громкость музыки',
   'settings.sfxVolume': 'Громкость звуков интерфейса',
@@ -154,6 +159,9 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'errors.configInvalid': 'конфигурация некорректна',
   'errors.powerUnsupported': 'действия питания доступны только в Windows',
   'errors.powerFailed': 'команда питания не выполнена: {cause}',
+  'errors.wallpaperTooLarge': 'Изображение слишком большое (больше 8 МБ). Выберите файл поменьше.',
+  'errors.wallpaperNotImage': 'Это не поддерживаемое изображение (PNG, JPEG, WebP или GIF).',
+  'errors.wallpaperFailed': 'Не удалось установить фоновое изображение.',
 
   // ── Manifest validation (JSON field names stay latin identifiers) ────────────
   'manifest.idPattern': 'id должен соответствовать [A-Za-z0-9._-]',

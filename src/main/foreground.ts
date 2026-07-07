@@ -82,16 +82,17 @@ function handleToBigInt(handle: Buffer): bigint {
 }
 
 /**
- * Forces the window with the given native handle to the true foreground (Windows only). Attaches to the
- * current foreground window's input thread to lift the foreground lock, then activates our window and
- * detaches again. No-op off Windows; best-effort on any FFI failure.
+ * Activates the window with the given HWND (as BigInt) to the true foreground (Windows only). Attaches
+ * to the current foreground window's input thread to lift the foreground lock, then brings the target
+ * window to the top and makes it foreground, and detaches again. Shared by the launcher-summon path
+ * (forceForegroundWindow) and the return-to-game path (window-finder). No-op off Windows; best-effort on
+ * any FFI failure.
  */
-export function forceForegroundWindow(handle: Buffer): void {
+export function activateHwnd(hwnd: bigint): void {
   if (process.platform !== 'win32') return;
   try {
     const u = loadUser32();
     const k = loadKernel32();
-    const hwnd = handleToBigInt(handle);
     const foreground = u.GetForegroundWindow();
     const foregroundThread = u.GetWindowThreadProcessId(foreground, null);
     const ourThread = k.GetCurrentThreadId();
@@ -103,6 +104,14 @@ export function forceForegroundWindow(handle: Buffer): void {
     u.SetForegroundWindow(hwnd);
     if (attach) u.AttachThreadInput(ourThread, foregroundThread, 0);
   } catch (cause) {
-    log.warn('[foreground] native force-foreground failed:', cause);
+    log.warn('[foreground] native activate failed:', cause);
   }
+}
+
+/**
+ * Forces OUR window (given its native handle Buffer from getNativeWindowHandle) to the true foreground.
+ * A thin wrapper over activateHwnd. No-op off Windows; best-effort on any FFI failure.
+ */
+export function forceForegroundWindow(handle: Buffer): void {
+  activateHwnd(handleToBigInt(handle));
 }

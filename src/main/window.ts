@@ -102,6 +102,16 @@ export class GameWindow {
     this.window?.hide();
   }
 
+  /**
+   * Whether the launcher is currently on screen (not hidden to the tray or minimized). Used to decide,
+   * on card removal with "always show the no-card screen" on, whether to keep the empty screen up: if the
+   * user put the launcher away, pulling the card must not pop it back up.
+   */
+  isShown(): boolean {
+    const window = this.window;
+    return window !== null && window.isVisible() && !window.isMinimized();
+  }
+
   /** Allows the window to actually close (when quitting the app). */
   allowClose(): void {
     this.closeGuard?.allowClose();

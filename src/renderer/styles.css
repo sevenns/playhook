@@ -336,6 +336,13 @@ body {
   display: block;
 }
 
+/* Running (launcher summoned over the game): Play stays the play triangle — pressing it returns to the
+   game. No hide rule is needed (only 'game'/'system' hide the triangle and show the loader/gear); this
+   block exists to document that 'running' deliberately keeps the default triangle. */
+#app[data-busy='running'] .icon-play {
+  display: block;
+}
+
 /* System busy: the triangle gives way to a slowly spinning gear. */
 #app[data-busy='system'] .icon-play {
   display: none;

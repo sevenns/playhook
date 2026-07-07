@@ -234,7 +234,9 @@ export function createControls(deps: ControlsDeps): Controls {
     // Steam install/uninstall indicator up (phase stays 'ready'): the gear opens Steam's Downloads page
     // and More opens Details — both focusable.
     if (steamBusy(state())) return [playButton, moreButton];
-    // Hard busy (install / uninstall / launch / running): the Play button is a non-interactive activity
+    // Running with the launcher summoned over the game: Play returns to the game, so it's focusable too.
+    if (state().kind === 'running') return [playButton, moreButton];
+    // Hard busy (install / uninstall / launch / save-sync): the Play button is a non-interactive activity
     // indicator (spinner/gear), so only More is focusable — it still opens Details.
     if (phaseOf(state()) === 'busy') return [moreButton];
     // Empty screen (no card) or a requiresInstall installer/steam game → Play is hidden, only More.
@@ -256,6 +258,14 @@ export function createControls(deps: ControlsDeps): Controls {
       const idx = items.indexOf(btn);
       btn.classList.toggle('is-focused', active && idx !== -1 && idx === focusIndex);
     });
+  }
+
+  // The Play button's aria-label follows the state: "Return to game" while a game is running (the
+  // launcher was summoned over it), "Play" otherwise. Set at render time via the translator (not the
+  // static data-i18n-aria-label, which only re-applies on a language change) — see plan F1-5.
+  function applyPlayAria(): void {
+    const key = state().kind === 'running' ? 'launcher.aria.returnToGame' : 'launcher.aria.play';
+    playButton.setAttribute('aria-label', t()(key));
   }
 
   function setCursorHidden(hidden: boolean): void {
@@ -391,7 +401,9 @@ export function createControls(deps: ControlsDeps): Controls {
     // Steam uninstall in progress (gear) → nothing useful to do, ignore the press.
     if (game?.steamUninstalling === true) return;
     // In a hard-busy phase the Play button is just an activity indicator (spinner/gear) — no launch.
-    if (phaseOf(state()) !== 'ready') return;
+    // EXCEPT `running`: the launcher was summoned over the game and Play returns to it (main branches on
+    // the running state and raises the game's window instead of launching).
+    if (phaseOf(state()) !== 'ready' && state().kind !== 'running') return;
     audio.play('play');
     window.api.requestLaunch();
   }
@@ -601,6 +613,7 @@ export function createControls(deps: ControlsDeps): Controls {
     wasActive = active;
     applyFocus();
     applyStackFocus();
+    applyPlayAria();
   }
 
   return {

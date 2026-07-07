@@ -27,6 +27,7 @@ const CHANNELS = {
   heroUpdate: 'hero:update',
   heroRequest: 'hero:request',
   wallpaperRequest: 'wallpaper:request',
+  wallpaperUpdate: 'wallpaper:update',
   volumeRequest: 'volume:request',
   volumeUpdate: 'volume:update',
   languageRequest: 'app:language-request',
@@ -86,6 +87,11 @@ const api: RendererApi = {
   },
   requestWallpaper(): Promise<string | null> {
     return ipcRenderer.invoke(CHANNELS.wallpaperRequest) as Promise<string | null>;
+  },
+  onWallpaperUpdate(callback: (url: string) => void): void {
+    ipcRenderer.on(CHANNELS.wallpaperUpdate, (_event: IpcRendererEvent, url: string) => {
+      callback(url);
+    });
   },
   requestVolumes(): Promise<AudioVolumes> {
     return ipcRenderer.invoke(CHANNELS.volumeRequest) as Promise<AudioVolumes>;

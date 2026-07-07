@@ -56,8 +56,12 @@ export interface UpdaterDeps {
   readonly openGamesFolder: () => void;
   /** Applies the Start+Back summon-hotkey toggle to the running global gamepad listener. */
   readonly onSummonHotkeyChanged: (enabled: boolean) => void;
+  /** Applies the "always show the no-card screen" toggle (reconciles the launcher's visibility). */
+  readonly onAlwaysShowEmptyScreenChanged: (enabled: boolean) => void;
   /** Pushes new audio volumes to the game renderer so they apply live. */
   readonly onVolumesChanged: (volumes: AudioVolumes) => void;
+  /** Deletes the custom Empty-screen wallpaper file and pushes the default (general Reset only). */
+  readonly onWallpaperReset: () => Promise<void>;
   /** Applies a UI-language change (re-resolve locale, rebuild tray/titles, push to live windows). */
   readonly onLanguageChanged: (mode: LanguageMode) => void;
   /** The current translator (for the install-busy soft error rendered in the settings window). */
@@ -159,6 +163,12 @@ export class UpdaterService {
         .then(() => this.deps.onSummonHotkeyChanged(on))
         .catch((cause: unknown) => log.error('[updater] failed to persist summon hotkey:', cause));
     });
+    ipcMain.on(IPC.settingsSetAlwaysShowEmptyScreen, (_event, on: boolean) => {
+      void this.deps.settings
+        .patch({ alwaysShowEmptyScreen: on })
+        .then(() => this.deps.onAlwaysShowEmptyScreenChanged(on))
+        .catch((cause: unknown) => log.error('[updater] failed to persist always-show-empty-screen:', cause));
+    });
     ipcMain.on(IPC.settingsSetMusicVolume, (_event, volume: number) => {
       void this.setVolume({ musicVolume: volume });
     });
@@ -198,7 +208,10 @@ export class UpdaterService {
       this.applyMode(next.autoUpdate);
     }
     this.deps.onSummonHotkeyChanged(next.summonHotkeyEnabled);
+    this.deps.onAlwaysShowEmptyScreenChanged(next.alwaysShowEmptyScreen);
     this.deps.onVolumesChanged({ music: next.musicVolume, sfx: next.sfxVolume });
+    // reset() already wrote customWallpaper=null; this deletes the copied file and pushes the default.
+    await this.deps.onWallpaperReset();
     this.deps.onLanguageChanged(next.language);
     return next;
   }

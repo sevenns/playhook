@@ -4,7 +4,7 @@
 // and replicates AppState to the window. All FS/process work happens only here (in main).
 import path from 'node:path';
 import fse from 'fs-extra';
-import { app, ipcMain } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, type WebContents } from 'electron';
 import {
   IPC,
   type AppState,
@@ -15,6 +15,7 @@ import {
   type LaunchTarget,
   type ResolvedManifest,
   type Stats,
+  type WallpaperResult,
 } from '../shared/types';
 import { type Translator } from '../shared/i18n/index';
 import { type StateManager } from './state';
@@ -38,6 +39,9 @@ import {
 import { findUninstallEntry, getSteamPath } from './registry';
 import { steamInstallStatus, openSteamUri } from './steam';
 import { AssetReader } from './asset-reader';
+import { type AppSettingsStore } from './app-settings';
+import { focusGameWindow } from './window-finder';
+import { normalizeImageNames } from './image-names';
 import { SteamInstallWatch } from './steam-install-watch';
 import { describe, delay } from './util';
 import { log } from './logger';
@@ -48,6 +52,8 @@ export interface ControllerDeps {
   readonly store: PcStore;
   readonly stats: StatsService;
   readonly watcher: DriveWatcher;
+  /** App-wide settings store — read/patched by the custom-wallpaper handlers (they own AssetReader). */
+  readonly settings: AppSettingsStore;
   /** The current translator (read live so a language change applies to freshly-generated messages). */
   readonly getTranslator: () => Translator;
 }
@@ -225,6 +231,9 @@ async function removeWithRetry(dir: string, signal?: AbortSignal): Promise<void>
 export class GameController {
   private current: ResolvedManifest | null = null;
   private cardPresent = false;
+  // Mirror of AppSettings.alwaysShowEmptyScreen (seeded at startup, toggled live from the settings
+  // window): when true the launcher stays on the empty "no card" screen instead of hiding to the tray.
+  private alwaysShowEmptyScreen = false;
   private launchInFlight = false;
   // A manifest reload from the Configure-game window is in flight. Unlike launchInFlight it does NOT
   // gate on state kind (the reload runs from `ready`), so onLaunchRequested/onUninstallRequested check
@@ -237,12 +246,21 @@ export class GameController {
   // empty tick, so we stash the new root, abort the in-flight sequence, and replay onInsert from its
   // finally (after launchInFlight clears) — otherwise the aborted sequence could set state over the new card.
   private pendingRoot: string | null = null;
+  // Image names (lower-case *.exe basenames) of the currently-running game, captured on entry to
+  // `running` so a Play press in that state can find and raise the game's window (return-to-game). Null
+  // whenever no game is running; reset in the launch sequence's finally. Matched by image name rather than
+  // pid so it covers all backends uniformly, incl. elevated games a non-elevated tasklist can't see.
+  private runningImageNames: readonly string[] | null = null;
   // Audio for the current card, sent on its own channel (not on every AppState) — see AudioAssets.
   private currentAudio: AudioAssets | null = null;
   // Hero images for the current card, sent on their own channel (not on every AppState) — see HeroAssets.
   private currentHero: HeroAssets | null = null;
-  // Reads card assets (hero/audio/wallpaper) into data URLs; owns the bundled-wallpaper cache.
-  private readonly assets = new AssetReader();
+  // Reads card assets (hero/audio/wallpaper) into data URLs; owns the effective-wallpaper cache and the
+  // custom Empty-screen wallpaper (needs userData + the live custom-file name from settings via DI).
+  private readonly assets = new AssetReader({
+    userData: app.getPath('userData'),
+    getCustomWallpaperName: async () => (await this.deps.settings.read()).customWallpaper,
+  });
   // Steam-mode background re-detect poller (timer + tick + optimistic uninstall request), extracted from
   // this controller. Reaches back only through the narrow accessor seam below.
   private readonly steamWatch = new SteamInstallWatch({
@@ -279,6 +297,13 @@ export class GameController {
     ipcMain.handle(IPC.audioRequest, (): AudioAssets | null => this.currentAudio);
     ipcMain.handle(IPC.heroRequest, (): HeroAssets | null => this.currentHero);
     ipcMain.handle(IPC.wallpaperRequest, (): Promise<string | null> => this.assets.readWallpaperDataUrl());
+    // Custom Empty-screen wallpaper (invoked from the settings window; the handlers live here because they
+    // own the AssetReader + the game window — see plan F2.2 p.6). preview-request feeds the settings preview.
+    ipcMain.handle(IPC.wallpaperPick, (event): Promise<WallpaperResult> => this.pickWallpaper(event.sender));
+    ipcMain.handle(IPC.wallpaperClear, (): Promise<{ dataUrl: string }> => this.clearWallpaper());
+    ipcMain.handle(IPC.wallpaperPreviewRequest, async (): Promise<{ dataUrl: string }> => ({
+      dataUrl: (await this.assets.readWallpaperDataUrl()) ?? '',
+    }));
     ipcMain.on(IPC.actionLaunch, () => void this.onLaunchRequested());
     ipcMain.on(IPC.actionUninstall, () => void this.onUninstallRequested());
     ipcMain.on(IPC.actionHide, () => this.deps.window.hide());
@@ -449,23 +474,50 @@ export class GameController {
       // = false and goes idle + hide on its own.
       return;
     }
-    // ready / error / idle → no card, hide the window. Stop any Steam re-detect poller (the card is gone;
-    // a Steam game in `ready` reaches here since its kind is never running/installing).
+    // ready / error / idle → no card. Stop any Steam re-detect poller (the card is gone; a Steam game in
+    // `ready` reaches here since its kind is never running/installing).
     this.steamWatch.stop();
     this.steamWatch.clearUninstallRequest();
     this.current = null;
     this.setAudio(null);
     this.setHero(null);
     this.deps.state.set({ kind: 'idle' });
-    this.deps.window.hide();
+    // Normally the background app hides to the tray when no card is present. With "always show the no-card
+    // screen" on, keep the launcher up on the empty screen instead — BUT only if it's currently on screen.
+    // If the user minimized it to the tray, pulling the card must not pop it back up (respect that intent).
+    if (this.alwaysShowEmptyScreen) {
+      if (this.deps.window.isShown()) this.deps.window.showAndFocus();
+    } else {
+      this.deps.window.hide();
+    }
+  }
+
+  /**
+   * Applies the "always show the no-card screen" setting (seeded at startup, toggled live from the
+   * settings window). Besides caching the flag it reconciles the launcher NOW when we're idle with no
+   * card: show the empty screen when turning it on, or hide back to the tray when turning it off. When a
+   * card is present (ready/busy) nothing changes — the launcher is already visible for the game.
+   */
+  setAlwaysShowEmptyScreen(on: boolean): void {
+    this.alwaysShowEmptyScreen = on;
+    if (this.cardPresent || this.deps.state.get().kind !== 'idle') return;
+    if (on) this.deps.window.showAndFocus();
+    else this.deps.window.hide();
   }
 
   // ── "Launch" action (the A button / click) ──────────────────────────────
 
   private onLaunchRequested(): void {
+    const snapshot = this.deps.state.get();
+    // Play pressed while a game is running (the launcher was summoned over it via the tray): return to the
+    // game instead of launching. Checked BEFORE the ready-guard — launchInFlight is true during running,
+    // but we never reach its check. No-op if we don't have the image names yet.
+    if (snapshot.kind === 'running') {
+      this.resumeRunningGame();
+      return;
+    }
     // Ignore input outside the ready state — this is the "ignore-gamepad" during play
     // (harmless under any interpretation of the Gamepad API focus bug).
-    const snapshot = this.deps.state.get();
     if (snapshot.kind !== 'ready' || this.launchInFlight || this.reloadInFlight) return;
     const manifest = this.current;
     if (manifest === null) return;
@@ -485,6 +537,19 @@ export class GameController {
       void this.runInstallSequence(manifest, snapshot.game);
     } else {
       void this.runLaunchSequence(manifest, snapshot.game);
+    }
+  }
+
+  /**
+   * Return-to-game: raise the running game's own window to the foreground (restoring it if it minimized
+   * when it lost focus). Best-effort — if the window isn't found (the game is already closing, a race with
+   * waitForExit) it's a silent no-op; the state machine will move to syncing-out → ready on its own.
+   */
+  private resumeRunningGame(): void {
+    const names = this.runningImageNames;
+    if (names === null) return;
+    if (!focusGameWindow(names)) {
+      log.info('[resume] running game window not found — no-op (it may be closing)');
     }
   }
 
@@ -633,6 +698,7 @@ export class GameController {
           return;
         }
         since = Date.now();
+        this.runningImageNames = normalizeImageNames(watchProcesses ?? []);
         state.set({ kind: 'running', game: info, since });
         log.info(`[launch] running (steam) id=${manifest.raw.id} appid=${manifest.steam.appid}`);
         await waitForWatchedExit(watchProcesses ?? [], abort.signal);
@@ -661,6 +727,7 @@ export class GameController {
           }
           // The watched game is up: start the clock now (more accurate than the launcher's spawn time).
           since = Date.now();
+          this.runningImageNames = normalizeImageNames(watchProcesses);
           state.set({ kind: 'running', game: info, since });
           log.info(`[launch] running (watched) id=${manifest.raw.id} watch=${watchProcesses.join(',')}`);
           await waitForWatchedExit(watchProcesses, abort.signal);
@@ -672,6 +739,9 @@ export class GameController {
             return;
           }
           since = Date.now();
+          // normal AND elevated share this branch (differing only by manifest.raw.runAsAdmin): the game
+          // IS the spawned exe, so its image name is the executable's basename.
+          this.runningImageNames = normalizeImageNames([manifest.executablePath]);
           state.set({ kind: 'running', game: info, since });
           log.info(`[launch] running id=${manifest.raw.id} pid=${proc.pid}`);
           await waitForExit(proc, abort.signal);
@@ -701,6 +771,8 @@ export class GameController {
       proc?.dispose();
       this.launchInFlight = false;
       this.abort = null;
+      // The game is no longer running → forget its image names (return-to-game only applies while running).
+      this.runningImageNames = null;
       // Replay a card that was swapped in mid-flight, now that launchInFlight has cleared.
       this.resumePendingInsert();
     }
@@ -981,6 +1053,68 @@ export class GameController {
       ...(steamPaused ? { steamPaused: true } : {}),
       ...(steamPausedProgress !== undefined ? { steamPausedProgress } : {}),
     };
+  }
+
+  // ── Custom Empty-screen wallpaper ────────────────────────────────────────
+
+  /**
+   * Picks an image via the OS file dialog (parented to the settings window), copies it in as the custom
+   * Empty-screen wallpaper, persists its file name, and pushes the new data URL to the launcher so the
+   * Empty screen updates live. Cancellation and validation failures come back as a Result-union.
+   */
+  private async pickWallpaper(sender: WebContents): Promise<WallpaperResult> {
+    const parent = BrowserWindow.fromWebContents(sender);
+    const options: Electron.OpenDialogOptions = {
+      properties: ['openFile'],
+      filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif'] }],
+    };
+    const result =
+      parent !== null ? await dialog.showOpenDialog(parent, options) : await dialog.showOpenDialog(options);
+    const sourcePath = result.filePaths[0];
+    if (result.canceled || sourcePath === undefined) return { ok: false, cancelled: true };
+    const set = await this.assets.setCustomWallpaper(sourcePath);
+    if (!set.ok) return { ok: false, message: this.wallpaperErrorMessage(set.reason) };
+    await this.deps.settings.patch({ customWallpaper: set.fileName });
+    this.pushWallpaper(set.dataUrl);
+    return { ok: true, dataUrl: set.dataUrl };
+  }
+
+  /** Clears the custom wallpaper (settings + file), returns and pushes the default wallpaper data URL. */
+  private async clearWallpaper(): Promise<{ dataUrl: string }> {
+    const { dataUrl } = await this.assets.clearCustomWallpaper();
+    await this.deps.settings.patch({ customWallpaper: null });
+    this.pushWallpaper(dataUrl);
+    return { dataUrl };
+  }
+
+  /**
+   * Removes the custom wallpaper file and pushes the default to the launcher, for the general settings
+   * Reset: reset() already wrote customWallpaper=null, but the FILE must still be deleted separately (see
+   * plan F2.2 p.7). Called from main via the UpdaterService onWallpaperReset callback.
+   */
+  async resetCustomWallpaper(): Promise<void> {
+    const { dataUrl } = await this.assets.clearCustomWallpaper();
+    this.pushWallpaper(dataUrl);
+  }
+
+  /** Pushes the Empty-screen wallpaper data URL to the game window so it repaints the Empty screen live. */
+  private pushWallpaper(dataUrl: string): void {
+    const browserWindow = this.deps.window.browserWindow;
+    if (browserWindow !== null && !browserWindow.isDestroyed()) {
+      browserWindow.webContents.send(IPC.wallpaperUpdate, dataUrl);
+    }
+  }
+
+  /** Maps an AssetReader failure reason to a localized, user-facing message for the settings window. */
+  private wallpaperErrorMessage(reason: 'too-large' | 'not-image' | 'io'): string {
+    switch (reason) {
+      case 'too-large':
+        return this.t('errors.wallpaperTooLarge');
+      case 'not-image':
+        return this.t('errors.wallpaperNotImage');
+      case 'io':
+        return this.t('errors.wallpaperFailed');
+    }
   }
 
   // ── Hero images (delivered once per card, rotated in the renderer) ───────

@@ -73,6 +73,7 @@ const themeGroup = req('theme');
 const languageGroup = req('language');
 const prereleaseSwitch = req('prerelease');
 const summonSwitch = req('summon-hotkey');
+const alwaysShowEmptySwitch = req('always-show-empty');
 const musicSlider = req('music-volume');
 const musicValue = req('music-volume-value');
 const sfxSlider = req('sfx-volume');
@@ -80,6 +81,10 @@ const sfxValue = req('sfx-volume-value');
 const openLogsBtn = req('open-logs');
 const openGamesBtn = req('open-games');
 const resetBtn = req('reset-defaults');
+const wallpaperPreview = req<HTMLImageElement>('wallpaper-preview');
+const wallpaperChooseBtn = req('wallpaper-choose');
+const wallpaperResetBtn = req('wallpaper-reset');
+const wallpaperError = req('wallpaper-error');
 
 // Fluent custom elements reflect `disabled` / `value` as attributes/properties not present on the
 // HTMLElement type; narrow casts (never `any`) keep this typed without pulling the element classes in.
@@ -277,6 +282,10 @@ summonSwitch.addEventListener('change', () => {
   window.settingsApi.setSummonHotkey(readChecked(summonSwitch));
 });
 
+alwaysShowEmptySwitch.addEventListener('change', () => {
+  window.settingsApi.setAlwaysShowEmptyScreen(readChecked(alwaysShowEmptySwitch));
+});
+
 wireVolumeSlider(musicSlider, musicValue, (v) => window.settingsApi.setMusicVolume(v));
 wireVolumeSlider(sfxSlider, sfxValue, (v) => window.settingsApi.setSfxVolume(v));
 
@@ -286,6 +295,53 @@ resetBtn.addEventListener('click', () => {
   void window.settingsApi.reset().then(applySettings);
 });
 
+// ── Empty-screen wallpaper ─────────────────────────────────────────────────
+// Shows the preview thumbnail for the current data URL (empty string → hide the <img>, no broken icon).
+function showWallpaperPreview(dataUrl: string): void {
+  if (dataUrl !== '') {
+    wallpaperPreview.src = dataUrl;
+    wallpaperPreview.hidden = false;
+  } else {
+    wallpaperPreview.removeAttribute('src');
+    wallpaperPreview.hidden = true;
+  }
+}
+
+function showWallpaperError(message: string): void {
+  wallpaperError.textContent = message;
+  wallpaperError.hidden = false;
+}
+
+function clearWallpaperError(): void {
+  wallpaperError.textContent = '';
+  wallpaperError.hidden = true;
+}
+
+// Refreshes the preview from main's current effective wallpaper (on open and after a general Reset).
+async function refreshWallpaperPreview(): Promise<void> {
+  clearWallpaperError();
+  const { dataUrl } = await window.settingsApi.requestWallpaperPreview();
+  showWallpaperPreview(dataUrl);
+}
+
+wallpaperChooseBtn.addEventListener('click', () => {
+  void window.settingsApi.pickWallpaper().then((result) => {
+    if (result.ok) {
+      clearWallpaperError();
+      showWallpaperPreview(result.dataUrl);
+    } else if (!('cancelled' in result)) {
+      showWallpaperError(result.message); // dismissed dialog → nothing; a real failure → message
+    }
+  });
+});
+
+wallpaperResetBtn.addEventListener('click', () => {
+  void window.settingsApi.clearWallpaper().then(({ dataUrl }) => {
+    clearWallpaperError();
+    showWallpaperPreview(dataUrl);
+  });
+});
+
 // Reflects the full settings state onto every control (used on startup and after "Reset to defaults").
 function applySettings(settings: AppSettings): void {
   setDropdownValue(autoUpdateGroup, settings.autoUpdate);
@@ -293,6 +349,7 @@ function applySettings(settings: AppSettings): void {
   setDropdownValue(languageGroup, settings.language);
   setChecked(prereleaseSwitch, settings.allowPrerelease);
   setChecked(summonSwitch, settings.summonHotkeyEnabled);
+  setChecked(alwaysShowEmptySwitch, settings.alwaysShowEmptyScreen);
   const musicPercent = Math.round(settings.musicVolume * 100);
   const sfxPercent = Math.round(settings.sfxVolume * 100);
   setSliderPercent(musicSlider, musicPercent);
@@ -300,6 +357,9 @@ function applySettings(settings: AppSettings): void {
   musicValue.textContent = `${musicPercent}%`;
   sfxValue.textContent = `${sfxPercent}%`;
   applyTheme(settings.theme);
+  // The wallpaper preview isn't derivable from the scalar settings (it needs the image bytes) — pull the
+  // current effective wallpaper from main. Covers both startup and post-Reset (the file is gone by now).
+  void refreshWallpaperPreview();
 }
 
 // The app version, cached so a language change can re-render the "(version) — Settings" suffix.

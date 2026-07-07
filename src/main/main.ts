@@ -103,7 +103,7 @@ async function bootstrap(): Promise<void> {
   const watcher = new DriveWatcher();
 
   windowRef = window;
-  const controller = new GameController({ state, window, store, stats, watcher, getTranslator });
+  const controller = new GameController({ state, window, store, stats, watcher, settings, getTranslator });
   controllerRef = controller;
   controller.init();
 
@@ -127,10 +127,14 @@ async function bootstrap(): Promise<void> {
     onSummonHotkeyChanged: (enabled) => {
       summonHotkeyEnabled = enabled;
     },
+    onAlwaysShowEmptyScreenChanged: (enabled) => controller.setAlwaysShowEmptyScreen(enabled),
     onVolumesChanged: (volumes) => {
       const bw = window.browserWindow;
       if (bw !== null && !bw.isDestroyed()) bw.webContents.send(IPC.volumeUpdate, volumes);
     },
+    // A general "Reset to defaults" writes customWallpaper=null, but the copied file must be deleted
+    // separately — delegate to the controller (it owns the AssetReader + the game window push).
+    onWallpaperReset: () => controller.resetCustomWallpaper(),
     onLanguageChanged: (mode) => applyLanguage(mode),
     getTranslator,
   });
@@ -150,8 +154,10 @@ async function bootstrap(): Promise<void> {
   configureWindowRef = configureWindow;
 
   window.create();
-  // Always start hidden in the tray — the window appears only when a valid game card is detected
-  // (GameController shows it on the 'ready' state). No black "Insert a game card" screen on launch.
+  // Normally start hidden in the tray — the window appears only when a valid game card is detected
+  // (GameController shows it on the 'ready' state). But if "always show the no-card screen" is enabled,
+  // seed the controller with it now so it shows the empty screen at startup (reconciles: idle + no card).
+  controller.setAlwaysShowEmptyScreen(initialSettings.alwaysShowEmptyScreen);
 
   const trayCallbacks: TrayCallbacks = {
     onShow: () => window.showAndFocus(),

@@ -14,6 +14,7 @@ import type {
   SettingsApi,
   ThemeMode,
   UpdateStatus,
+  WallpaperResult,
 } from '../shared/types';
 import type { IPC } from '../shared/types';
 import type { Locale } from '../shared/i18n/index';
@@ -26,6 +27,7 @@ const CHANNELS = {
   updateInstall: 'update:install',
   settingsRequest: 'settings:request',
   settingsSetAutoUpdate: 'settings:set-auto-update',
+  settingsSetAlwaysShowEmptyScreen: 'settings:set-always-show-empty-screen',
   settingsSetTheme: 'settings:set-theme',
   settingsSetPrerelease: 'settings:set-prerelease',
   settingsSetSummonHotkey: 'settings:set-summon-hotkey',
@@ -41,6 +43,9 @@ const CHANNELS = {
   moveSoundRequest: 'app:move-sound',
   openLogs: 'app:open-logs',
   openGamesFolder: 'app:open-games-folder',
+  wallpaperPick: 'wallpaper:pick',
+  wallpaperClear: 'wallpaper:clear',
+  wallpaperPreviewRequest: 'wallpaper:preview-request',
 } as const satisfies Partial<typeof IPC>;
 
 const api: SettingsApi = {
@@ -58,6 +63,9 @@ const api: SettingsApi = {
   },
   setAutoUpdate(mode: AutoUpdateMode): void {
     ipcRenderer.send(CHANNELS.settingsSetAutoUpdate, mode);
+  },
+  setAlwaysShowEmptyScreen(on: boolean): void {
+    ipcRenderer.send(CHANNELS.settingsSetAlwaysShowEmptyScreen, on);
   },
   setTheme(mode: ThemeMode): void {
     ipcRenderer.send(CHANNELS.settingsSetTheme, mode);
@@ -96,6 +104,15 @@ const api: SettingsApi = {
   },
   openGamesFolder(): void {
     ipcRenderer.send(CHANNELS.openGamesFolder);
+  },
+  pickWallpaper(): Promise<WallpaperResult> {
+    return ipcRenderer.invoke(CHANNELS.wallpaperPick) as Promise<WallpaperResult>;
+  },
+  clearWallpaper(): Promise<{ dataUrl: string }> {
+    return ipcRenderer.invoke(CHANNELS.wallpaperClear) as Promise<{ dataUrl: string }>;
+  },
+  requestWallpaperPreview(): Promise<{ dataUrl: string }> {
+    return ipcRenderer.invoke(CHANNELS.wallpaperPreviewRequest) as Promise<{ dataUrl: string }>;
   },
   onUpdateStatus(callback: (status: UpdateStatus) => void): void {
     ipcRenderer.on(CHANNELS.updateStatusUpdate, (_event: IpcRendererEvent, status: UpdateStatus) => {
