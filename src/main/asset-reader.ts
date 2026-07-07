@@ -47,9 +47,51 @@ function defaultSfxPath(name: SfxName): string {
 // Fallback hero background (bundled by copy-assets into dist/wallpaper.png). __dirname is dist/main.
 const WALLPAPER_PATH = path.join(__dirname, '../wallpaper.png');
 
+// Custom Empty-screen wallpaper: hard file-size cap (a bigger file is refused rather than downscaled —
+// see plan F2.2). 8 MB as base64 is ~11 MB of string in the renderer, which is tolerable for a one-off.
+const MAX_WALLPAPER_BYTES = 8 * 1024 * 1024;
+// The custom wallpaper is stored in userData under this base name plus the source extension (kept so the
+// data-URI MIME resolves correctly for jpg/png/webp/gif).
+const CUSTOM_WALLPAPER_BASE = 'wallpaper-custom';
+
+/** Dependencies for the custom Empty-screen wallpaper (kept electron-free: plain string + getter). */
+export interface AssetReaderDeps {
+  /** app.getPath('userData') — where the copied custom wallpaper file lives. */
+  readonly userData: string;
+  /** The current custom wallpaper file name from settings (null = bundled default). Read live. */
+  readonly getCustomWallpaperName: () => Promise<string | null>;
+}
+
+/**
+ * Result of copying a picked file in as the custom wallpaper. On failure the `reason` is a code the
+ * caller (GameController) maps to a localized message — AssetReader stays translator-free.
+ */
+export type SetWallpaperResult =
+  | { readonly ok: true; readonly dataUrl: string; readonly fileName: string }
+  | { readonly ok: false; readonly reason: 'too-large' | 'not-image' | 'io' };
+
+/** Sniffs the first bytes for a supported image signature (png / jpeg / gif / webp). */
+function isSupportedImage(buffer: Buffer): boolean {
+  if (buffer.length < 12) return false;
+  // PNG: 89 50 4E 47 0D 0A 1A 0A
+  if (buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return true;
+  // JPEG: FF D8 FF
+  if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) return true;
+  // GIF: "GIF8"
+  if (buffer.subarray(0, 4).toString('latin1') === 'GIF8') return true;
+  // WEBP: "RIFF"????"WEBP"
+  if (buffer.subarray(0, 4).toString('latin1') === 'RIFF' && buffer.subarray(8, 12).toString('latin1') === 'WEBP') {
+    return true;
+  }
+  return false;
+}
+
 export class AssetReader {
-  // Bundled fallback wallpaper as a data URL: undefined = not read yet, null = unavailable.
+  // The EFFECTIVE Empty-screen wallpaper (custom if set & present, else bundled) as a data URL:
+  // undefined = not read yet, null = unavailable. Invalidated on any custom-wallpaper change.
   private wallpaperDataUrl: string | null | undefined;
+
+  constructor(private readonly deps: AssetReaderDeps) {}
 
   async readImageDataUrl(filePath: string): Promise<string | undefined> {
     try {
@@ -62,12 +104,81 @@ export class AssetReader {
     }
   }
 
-  /** Bundled fallback wallpaper as a data URL (read once and cached). null if it can't be read. */
+  /**
+   * The effective Empty-screen wallpaper as a data URL (read once and cached): the user's custom image
+   * when set and still present on disk, otherwise the bundled default. null if nothing can be read. Also
+   * used as the per-game hero fallback, so a custom wallpaper flows into both (see readHeroAssets).
+   */
   async readWallpaperDataUrl(): Promise<string | null> {
     if (this.wallpaperDataUrl !== undefined) return this.wallpaperDataUrl;
-    const url = await this.readImageDataUrl(WALLPAPER_PATH);
-    this.wallpaperDataUrl = url ?? null;
+    const customName = await this.deps.getCustomWallpaperName();
+    if (customName !== null) {
+      const customPath = path.join(this.deps.userData, customName);
+      if (await fse.pathExists(customPath)) {
+        const url = await this.readImageDataUrl(customPath);
+        if (url !== undefined) {
+          this.wallpaperDataUrl = url;
+          return url;
+        }
+      }
+      // The setting points at a missing/unreadable file → fall back to the bundled default (no crash).
+      log.warn(`[wallpaper] custom wallpaper "${customName}" missing/unreadable — using the bundled default`);
+    }
+    const fallback = await this.readImageDataUrl(WALLPAPER_PATH);
+    this.wallpaperDataUrl = fallback ?? null;
     return this.wallpaperDataUrl;
+  }
+
+  /**
+   * Copies a picked image in as the custom Empty-screen wallpaper: refuses a file over the size cap or
+   * one that doesn't sniff as a supported image, writes it into userData (raw bytes — no re-encode),
+   * removes any previous custom file, and invalidates the cache. Returns the new data URL + file name.
+   */
+  async setCustomWallpaper(sourcePath: string): Promise<SetWallpaperResult> {
+    try {
+      const stat = await fse.stat(sourcePath);
+      if (stat.size > MAX_WALLPAPER_BYTES) return { ok: false, reason: 'too-large' };
+      const buffer = await fse.readFile(sourcePath);
+      if (!isSupportedImage(buffer)) return { ok: false, reason: 'not-image' };
+      const ext = path.extname(sourcePath).toLowerCase();
+      const mime = IMAGE_MIME[ext];
+      if (mime === undefined) return { ok: false, reason: 'not-image' };
+      const fileName = `${CUSTOM_WALLPAPER_BASE}${ext}`;
+      // Drop any previous custom file first (a different extension would otherwise leak on disk), then
+      // write the new one — independent of the settings value, which the caller patches afterwards.
+      await this.removeCustomFiles(fileName);
+      await fse.ensureDir(this.deps.userData);
+      await fse.writeFile(path.join(this.deps.userData, fileName), buffer);
+      this.wallpaperDataUrl = undefined; // invalidate: the next read reflects the new custom image
+      return { ok: true, dataUrl: `data:${mime};base64,${buffer.toString('base64')}`, fileName };
+    } catch (cause) {
+      log.warn('[wallpaper] failed to set custom wallpaper:', describe(cause));
+      return { ok: false, reason: 'io' };
+    }
+  }
+
+  /**
+   * Removes the custom wallpaper file(s) and invalidates the cache, so the Empty screen falls back to
+   * the bundled default. Deletion is by the fixed base name (NOT the settings value), so it works even
+   * from the general Reset — which writes customWallpaper=null BEFORE this runs. Returns the default data
+   * URL (empty string when the bundle can't be read).
+   */
+  async clearCustomWallpaper(): Promise<{ dataUrl: string }> {
+    await this.removeCustomFiles();
+    this.wallpaperDataUrl = undefined;
+    const fallback = await this.readImageDataUrl(WALLPAPER_PATH);
+    this.wallpaperDataUrl = fallback ?? null;
+    return { dataUrl: fallback ?? '' };
+  }
+
+  /** Best-effort removal of every `wallpaper-custom.<ext>` in userData, optionally keeping one. */
+  private async removeCustomFiles(keep?: string): Promise<void> {
+    await Promise.all(
+      Object.keys(IMAGE_MIME)
+        .map((ext) => `${CUSTOM_WALLPAPER_BASE}${ext}`)
+        .filter((name) => name !== keep)
+        .map((name) => fse.remove(path.join(this.deps.userData, name)).catch(() => undefined)),
+    );
   }
 
   /**

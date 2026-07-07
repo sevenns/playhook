@@ -89,6 +89,15 @@
           <span data-i18n="settings.summonHintPre">Hold</span> <b>Menu + View</b>
           <span data-i18n="settings.summonHintPost">on your gamepad at any time to bring the launcher to the front.</span>
         </fluent-text>
+        <!-- Empty-screen background: a preview of the current wallpaper + Choose / Reset. The preview is a
+             data-URI (CSP img-src data:). -->
+        <label data-i18n="settings.wallpaperLabel">Empty screen background</label>
+        <img id="wallpaper-preview" class="wallpaper-preview" alt="" hidden />
+        <div class="button-row">
+          <fluent-button id="wallpaper-choose" data-i18n="settings.wallpaperChoose">Choose image…</fluent-button>
+          <fluent-button id="wallpaper-reset" data-i18n="settings.wallpaperReset">Reset</fluent-button>
+        </div>
+        <fluent-text id="wallpaper-error" appearance="secondary" size="200" block hidden></fluent-text>
       </section>
 
       <!-- Audio -->

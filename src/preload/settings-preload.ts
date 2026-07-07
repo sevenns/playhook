@@ -14,6 +14,7 @@ import type {
   SettingsApi,
   ThemeMode,
   UpdateStatus,
+  WallpaperResult,
 } from '../shared/types';
 import type { IPC } from '../shared/types';
 import type { Locale } from '../shared/i18n/index';
@@ -41,6 +42,9 @@ const CHANNELS = {
   moveSoundRequest: 'app:move-sound',
   openLogs: 'app:open-logs',
   openGamesFolder: 'app:open-games-folder',
+  wallpaperPick: 'wallpaper:pick',
+  wallpaperClear: 'wallpaper:clear',
+  wallpaperPreviewRequest: 'wallpaper:preview-request',
 } as const satisfies Partial<typeof IPC>;
 
 const api: SettingsApi = {
@@ -96,6 +100,15 @@ const api: SettingsApi = {
   },
   openGamesFolder(): void {
     ipcRenderer.send(CHANNELS.openGamesFolder);
+  },
+  pickWallpaper(): Promise<WallpaperResult> {
+    return ipcRenderer.invoke(CHANNELS.wallpaperPick) as Promise<WallpaperResult>;
+  },
+  clearWallpaper(): Promise<{ dataUrl: string }> {
+    return ipcRenderer.invoke(CHANNELS.wallpaperClear) as Promise<{ dataUrl: string }>;
+  },
+  requestWallpaperPreview(): Promise<{ dataUrl: string }> {
+    return ipcRenderer.invoke(CHANNELS.wallpaperPreviewRequest) as Promise<{ dataUrl: string }>;
   },
   onUpdateStatus(callback: (status: UpdateStatus) => void): void {
     ipcRenderer.on(CHANNELS.updateStatusUpdate, (_event: IpcRendererEvent, status: UpdateStatus) => {

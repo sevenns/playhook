@@ -103,7 +103,7 @@ async function bootstrap(): Promise<void> {
   const watcher = new DriveWatcher();
 
   windowRef = window;
-  const controller = new GameController({ state, window, store, stats, watcher, getTranslator });
+  const controller = new GameController({ state, window, store, stats, watcher, settings, getTranslator });
   controllerRef = controller;
   controller.init();
 
@@ -131,6 +131,9 @@ async function bootstrap(): Promise<void> {
       const bw = window.browserWindow;
       if (bw !== null && !bw.isDestroyed()) bw.webContents.send(IPC.volumeUpdate, volumes);
     },
+    // A general "Reset to defaults" writes customWallpaper=null, but the copied file must be deleted
+    // separately — delegate to the controller (it owns the AssetReader + the game window push).
+    onWallpaperReset: () => controller.resetCustomWallpaper(),
     onLanguageChanged: (mode) => applyLanguage(mode),
     getTranslator,
   });

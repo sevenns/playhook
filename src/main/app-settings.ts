@@ -27,6 +27,9 @@ const settingsSchema = z.object({
   summonHotkeyEnabled: z.boolean().default(true),
   musicVolume: z.number().min(0).max(1).default(0.5),
   sfxVolume: z.number().min(0).max(1).default(1),
+  // File name of the custom Empty-screen wallpaper in userData, or null for the bundled default.
+  // `.default(null)` migrates an older settings.json without the field (no schemaVersion bump).
+  customWallpaper: z.string().nullable().default(null),
 });
 
 // Default preserves the pre-settings behaviour (silent download + install on next quit), so the
@@ -40,6 +43,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   summonHotkeyEnabled: true,
   musicVolume: 0.5,
   sfxVolume: 1,
+  customWallpaper: null,
 };
 
 export class AppSettingsStore {

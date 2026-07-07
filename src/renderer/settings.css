@@ -90,6 +90,17 @@ fluent-listbox[popover] {
   gap: 8px;
 }
 
+/* Empty-screen wallpaper preview: a small 16:9 thumbnail of the current background. */
+.wallpaper-preview {
+  display: block;
+  width: 220px;
+  max-width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid var(--colorNeutralStroke2, #3d3d3d);
+}
+
 /* Slider row: label + live value on the first line, the slider spanning full width below it. */
 .slider-row {
   display: grid;

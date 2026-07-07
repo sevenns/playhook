@@ -41,6 +41,8 @@ export const en = {
   // Button aria-labels. Play is static now (the install action moved into the Details menu, so Play
   // never relabels); More is static too (localized via data-i18n-aria-label in the HTML).
   'launcher.aria.play': 'Play',
+  // Set at render time on the Play button while a game is running (the launcher was summoned over it).
+  'launcher.aria.returnToGame': 'Return to game',
   'launcher.aria.more': 'More',
   // Details / Power menu items (controls.ts). These are TextButtons with visible text — no aria needed.
   'launcher.menu.close': 'Close',
@@ -102,6 +104,9 @@ export const en = {
   'settings.summonHotkey': 'Show the launcher with a gamepad shortcut',
   'settings.summonHintPre': 'Hold',
   'settings.summonHintPost': 'on your gamepad at any time to bring the launcher to the front.',
+  'settings.wallpaperLabel': 'Empty screen background',
+  'settings.wallpaperChoose': 'Choose image…',
+  'settings.wallpaperReset': 'Reset',
   'settings.sectionAudio': 'Audio',
   'settings.musicVolume': 'Music volume',
   'settings.sfxVolume': 'UI sounds volume',
@@ -171,6 +176,9 @@ export const en = {
   'errors.configInvalid': 'the config is invalid',
   'errors.powerUnsupported': 'power actions are only available on Windows',
   'errors.powerFailed': 'power command failed: {cause}',
+  'errors.wallpaperTooLarge': 'The image is too large (over 8 MB). Choose a smaller file.',
+  'errors.wallpaperNotImage': 'That file is not a supported image (PNG, JPEG, WebP or GIF).',
+  'errors.wallpaperFailed': 'Failed to set the background image.',
 
   // ── Manifest validation (manifest.ts) ───────────────────────────────────────
   // Schema-level custom messages: stored in the schema AS THESE KEYS; translated at the issue-mapping

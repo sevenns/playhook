@@ -167,6 +167,13 @@ void window.api.requestWallpaper().then((url) => {
   if (gameOf(currentState) === undefined) hero.applyEmptyScreen();
 });
 
+// Live custom-wallpaper updates (settings window changed the Empty-screen background). An empty string
+// means "no custom / bundle unreadable" → treat as null. Repaint immediately if we're on the Empty screen.
+window.api.onWallpaperUpdate((url) => {
+  hero.setWallpaper(url === '' ? null : url);
+  if (gameOf(currentState) === undefined) hero.applyEmptyScreen();
+});
+
 // Audio assets are delivered on their own channel (not in AppState); load them and keep music in sync.
 window.api.onAudioUpdate((assets) => {
   audio.setAssets(assets);

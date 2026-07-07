@@ -321,7 +321,24 @@ export interface AppSettings {
   readonly musicVolume: number;
   /** Launcher UI sound-effects volume, 0..1. Default 1. */
   readonly sfxVolume: number;
+  /**
+   * Custom Empty-screen wallpaper: the file name of the user's image copied into userData (e.g.
+   * `wallpaper-custom.png`), or `null` for the bundled default. We store only the file name — never the
+   * user's original path or the bytes (settings.json is rewritten whole on each patch). Default null.
+   */
+  readonly customWallpaper: string | null;
 }
+
+/**
+ * Result of picking a custom Empty-screen wallpaper (wallpaper:pick). A discriminated union so the
+ * settings renderer handles each outcome explicitly (untrusted external data → Result-union): the image
+ * data URL on success, a localized message on rejection (too large / not an image / copy failed), or a
+ * plain cancellation when the OS dialog was dismissed.
+ */
+export type WallpaperResult =
+  | { readonly ok: true; readonly dataUrl: string }
+  | { readonly ok: false; readonly message: string }
+  | { readonly ok: false; readonly cancelled: true };
 
 /** Launcher audio volumes (0..1), applied in the game renderer's AudioController. */
 export interface AudioVolumes {
@@ -362,6 +379,8 @@ export const IPC = {
   heroRequest: 'hero:request',
   /** renderer → main: request the fallback wallpaper data URL (for the idle / empty screen). */
   wallpaperRequest: 'wallpaper:request',
+  /** main → game-renderer: updated Empty-screen wallpaper data URL (pushed when changed in settings). */
+  wallpaperUpdate: 'wallpaper:update',
   /** game-renderer → main (invoke): request the current audio volumes (on window startup). */
   volumeRequest: 'volume:request',
   /** main → game-renderer: updated audio volumes (pushed when changed in the settings window). */
@@ -416,6 +435,12 @@ export const IPC = {
   openLogs: 'app:open-logs',
   /** settings-renderer → main: open the app-controlled games install folder in the OS file manager. */
   openGamesFolder: 'app:open-games-folder',
+  /** settings-renderer → main (invoke): pick a custom Empty-screen wallpaper via a file dialog → WallpaperResult. */
+  wallpaperPick: 'wallpaper:pick',
+  /** settings-renderer → main (invoke): clear the custom Empty-screen wallpaper → the default data URL. */
+  wallpaperClear: 'wallpaper:clear',
+  /** settings-renderer → main (invoke): current Empty-screen wallpaper data URL (for the settings preview). */
+  wallpaperPreviewRequest: 'wallpaper:preview-request',
 
   // ── Configure-game window: edit/init a card's game.json (own namespace, own preload) ──
   /** configure-renderer → main (invoke): snapshot of removable-drive candidates (incl. blank drives). */
@@ -525,6 +550,8 @@ export interface RendererApi {
   onHeroUpdate(callback: (assets: HeroAssets | null) => void): void;
   requestHero(): Promise<HeroAssets | null>;
   requestWallpaper(): Promise<string | null>;
+  /** Live Empty-screen wallpaper updates, pushed when the custom wallpaper changes in the settings window. */
+  onWallpaperUpdate(callback: (url: string) => void): void;
   /** Current launcher audio volumes (on window startup). */
   requestVolumes(): Promise<AudioVolumes>;
   /** Live audio-volume updates, pushed when changed in the settings window. */
@@ -560,6 +587,12 @@ export interface SettingsApi {
   setTitleBarDark(dark: boolean): void;
   openLogs(): void;
   openGamesFolder(): void;
+  /** Pick a custom Empty-screen wallpaper via a file dialog; resolves with the outcome (image / error / cancel). */
+  pickWallpaper(): Promise<WallpaperResult>;
+  /** Clear the custom Empty-screen wallpaper; resolves with the default wallpaper data URL for the preview. */
+  clearWallpaper(): Promise<{ dataUrl: string }>;
+  /** Current Empty-screen wallpaper data URL, for the settings preview (on open and after a general Reset). */
+  requestWallpaperPreview(): Promise<{ dataUrl: string }>;
   onUpdateStatus(cb: (status: UpdateStatus) => void): void;
   requestUpdateStatus(): Promise<UpdateStatus>;
   checkForUpdates(): void;
