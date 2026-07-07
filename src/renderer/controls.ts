@@ -53,7 +53,6 @@ export function createControls(deps: ControlsDeps): Controls {
   const t = (): Translator => deps.getTranslator();
 
   // Bar buttons.
-  const hideButton = req<HTMLButtonElement>('hide-button');
   const playButton = req<HTMLButtonElement>('play-button');
   const moreButton = req<HTMLButtonElement>('more-button');
 
@@ -103,9 +102,10 @@ export function createControls(deps: ControlsDeps): Controls {
     applyFocus(); // restore the main bar highlight
   }
 
-  // Details menu (from More): game stats on top + Shutdown / Install|Uninstall / Close stack.
+  // Details menu (from More): game stats on top + Shutdown / Install|Uninstall / Close stack. Works on
+  // every screen — on the empty (no-card) screen there are no stats and no Install/Uninstall, so it
+  // degrades to just System + Close.
   function openDetails(): void {
-    if (!onGameScreen()) return;
     applyMenuInstallToggle(); // keep the toggle's text/visibility fresh for the current game
     setView('details');
     focusStackBottom(); // default focus: Close
@@ -114,7 +114,6 @@ export function createControls(deps: ControlsDeps): Controls {
 
   // Power submenu (from Details → Shutdown): Shutdown / Reboot / Sleep. Each opens a Yes/No confirm.
   function openPower(): void {
-    if (!onGameScreen()) return;
     setView('power');
     focusStackBottom(); // default focus: Close (bottom) — a safe non-destructive default
     applyFocus();
@@ -123,7 +122,6 @@ export function createControls(deps: ControlsDeps): Controls {
   // Confirm view — install/uninstall (from Details) or a power action (from Power). Yes runs the action
   // and closes the whole stack; No/back returns to where it came from.
   function openConfirm(mode: ConfirmMode): void {
-    if (!onGameScreen()) return;
     if (mode === 'install' || mode === 'uninstall') {
       const game = gameOf(state());
       if (game === undefined) return;
@@ -239,14 +237,15 @@ export function createControls(deps: ControlsDeps): Controls {
     // Hard busy (install / uninstall / launch / running): the Play button is a non-interactive activity
     // indicator (spinner/gear), so only More is focusable — it still opens Details.
     if (phaseOf(state()) === 'busy') return [moreButton];
-    // no-play layout: a requiresInstall installer/steam game hides Play → only More.
-    if (gameOf(state())?.requiresInstall === true) return [moreButton];
+    // Empty screen (no card) or a requiresInstall installer/steam game → Play is hidden, only More.
+    const game = gameOf(state());
+    if (game === undefined || game.requiresInstall === true) return [moreButton];
     return [playButton, moreButton];
   }
 
-  // Main focus is meaningful on any game screen (ready or busy) with the popup closed.
+  // Main focus is meaningful on every screen (the More button is always present) with the popup closed.
   function focusActive(): boolean {
-    return onGameScreen() && popupView === 'none';
+    return popupView === 'none';
   }
 
   function applyFocus(): void {
@@ -347,7 +346,7 @@ export function createControls(deps: ControlsDeps): Controls {
   }
 
   function stackActive(): boolean {
-    return onGameScreen() && popupView !== 'none';
+    return popupView !== 'none';
   }
 
   function applyStackFocus(): void {
@@ -483,24 +482,10 @@ export function createControls(deps: ControlsDeps): Controls {
     }
   }
 
-  // The empty / idle screen, where the only action is "Hide" (back to tray).
-  function onMessageScreen(): boolean {
-    const phase = phaseOf(state());
-    return phase === 'idle' || phase === 'error';
-  }
-
-  // A game screen (ready or busy) — where the bar (More) and the popup are usable. The launch/install/
-  // uninstall busy states keep More live (it opens Details); only the empty screens shut the popup out.
-  function onGameScreen(): boolean {
-    const phase = phaseOf(state());
-    return phase === 'ready' || phase === 'busy';
-  }
-
   // ── Wiring ────────────────────────────────────────────────────────────────
 
   playButton.addEventListener('click', () => triggerPlay());
   moreButton.addEventListener('click', () => triggerMore());
-  hideButton.addEventListener('click', () => window.api.requestHide());
   popupVeil.addEventListener('click', () => back());
 
   // A mouse click on a stack button triggers THAT button (regardless of the current highlight); only the
@@ -565,17 +550,16 @@ export function createControls(deps: ControlsDeps): Controls {
       noteGamepadActivity();
       if (popupView !== 'none') moveStackFocus(1);
     },
-    // On the empty / idle screen the only action is Hide; otherwise A activates the focused control.
+    // A activates the focused control (Play/More) or the focused stack button; B steps back through the
+    // popup. Minimizing is no longer a bar gesture — it's the System menu's "Minimize Playhook".
     onA: () => {
       noteGamepadActivity();
       if (popupView !== 'none') activateStack();
-      else if (onMessageScreen()) window.api.requestHide();
       else activateFocused();
     },
     onB: () => {
       noteGamepadActivity();
       if (popupView !== 'none') back();
-      else if (onMessageScreen()) window.api.requestHide();
     },
   });
 
@@ -599,11 +583,15 @@ export function createControls(deps: ControlsDeps): Controls {
   }
 
   function refresh(): void {
-    // The popup lives on any game screen (ready or busy) — More opens Details even mid-install/launch.
-    // Force-close it only when we leave the game screens for the empty idle/error screen (e.g. the card
-    // is pulled): there's no game to describe there. A failed launch returns to 'ready' first, THEN
-    // opens the error popup (separate IPC), so the error survives this.
-    if (!onGameScreen()) {
+    // The popup lives on every screen now (empty included — More there offers System + Close). Only a
+    // game-specific install/uninstall Confirm is void once the card is pulled (no game), so close that
+    // one; Details/Power/power-Confirm/Error all remain valid with or without a card. A failed launch
+    // returns to 'ready' first, THEN opens the error popup (separate IPC), so the error survives.
+    if (
+      popupView === 'confirm' &&
+      (confirmMode === 'install' || confirmMode === 'uninstall') &&
+      gameOf(state()) === undefined
+    ) {
       closePopup();
     }
     // When an active state (install / launch / uninstall / steam) APPEARS, drop the bar highlight so it

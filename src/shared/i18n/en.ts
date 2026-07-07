@@ -39,10 +39,9 @@ export const en = {
   'launcher.info.playtime': 'Playtime',
   'launcher.info.launches': 'Launches',
   // Button aria-labels. Play is static now (the install action moved into the Details menu, so Play
-  // never relabels); More/Hide are static too (localized via data-i18n-aria-label in the HTML).
+  // never relabels); More is static too (localized via data-i18n-aria-label in the HTML).
   'launcher.aria.play': 'Play',
   'launcher.aria.more': 'More',
-  'launcher.aria.hide': 'Hide',
   // Details / Power menu items (controls.ts). These are TextButtons with visible text — no aria needed.
   'launcher.menu.close': 'Close',
   'launcher.menu.install': 'Install',

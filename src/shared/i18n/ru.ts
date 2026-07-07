@@ -35,7 +35,6 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'launcher.info.launches': 'Запусков',
   'launcher.aria.play': 'Играть',
   'launcher.aria.more': 'Ещё',
-  'launcher.aria.hide': 'Скрыть',
   'launcher.menu.close': 'Закрыть',
   'launcher.menu.install': 'Установить',
   'launcher.menu.uninstall': 'Удалить',

@@ -104,8 +104,10 @@ function render(state: AppState): void {
     buildInfoPanel(game);
     controls.applyGameButtons();
   } else {
-    // idle / no-game error → the empty "Insert a game card" screen (wallpaper background).
+    // idle / no-game error → the empty "Insert a game card" screen (wallpaper background). Clear any
+    // stale stats so the empty screen's Details menu (opened via More) shows just System + Close.
     hero.applyEmptyScreen();
+    while (infoPanel.firstChild !== null) infoPanel.removeChild(infoPanel.firstChild);
     controls.clearGameButtons();
   }
 
@@ -126,7 +128,7 @@ function render(state: AppState): void {
 
   // no-play layout: a requiresInstall installer/steam game on the ready screen (and NOT steam-busy, when
   // the gear must stay visible) hides Play and moves the title to x=50. Set here by phase so it is cleared
-  // in every other state, including idle/error — a stale attribute would push the title over Hide.
+  // in every other state (idle/error move the title via their own per-phase rule).
   const noPlay = phase === 'ready' && game?.requiresInstall === true && !busySteam;
   if (noPlay) app.dataset['layout'] = 'no-play';
   else delete app.dataset['layout'];

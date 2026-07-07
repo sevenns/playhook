@@ -122,29 +122,18 @@ body {
 }
 
 /* ── Per-screen bottom-bar controls ────────────────────────────────────────
-   The bottom bar is the same on every screen. Game screens (ready / busy) show Play + title +
-   More. The empty screen (idle, and the no-game error) shows no Play, "Insert a game card" as the
-   title, and the Hide (X) button — moved to the LEFT slot there. */
+   The bottom bar is the same on every screen. Game screens (ready / busy) show Play + title + More.
+   The empty screen (idle, and the no-game error) shows no Play — just the title "Insert a game card"
+   (moved to x=50, the empty left slot) and More on the right (System + Close). */
 
-#hide-button {
-  display: none;
-}
-
-/* Empty / idle screen (and the no-game error): no Play, no More. */
+/* Empty / idle screen (and the no-game error): no Play; the title fills the empty left slot (x=50). */
 #app[data-phase='idle'] #play-button,
-#app[data-phase='error'] #play-button,
-#app[data-phase='idle'] #more-button,
-#app[data-phase='error'] #more-button {
+#app[data-phase='error'] #play-button {
   display: none;
 }
-
-/* Hide is shown there and sits in the LEFT slot (x=50, i.e. left:0 in .bar-content) instead of the
-   right — the title stays at x=174, so there's no overlap (see the no-play title rule below). */
-#app[data-phase='idle'] #hide-button,
-#app[data-phase='error'] #hide-button {
-  display: flex;
+#app[data-phase='idle'] .title,
+#app[data-phase='error'] .title {
   left: 0;
-  right: auto;
 }
 
 /* ── Bottom bar ──────────────────────────────────────────────────────────── */
@@ -262,7 +251,6 @@ body {
 .icon-play,
 .icon-gear,
 .icon-more,
-.icon-hide,
 .loader {
   pointer-events: none;
 }
@@ -301,12 +289,6 @@ body {
 .rect-button,
 .text-button {
   outline: none;
-}
-
-.icon-hide {
-  width: calc(40 * var(--px));
-  height: calc(40 * var(--px));
-  fill: currentColor;
 }
 
 /* More: three dots, 56×16 in the mockup, centered in the 92×92 button. overflow:visible so the last
@@ -390,8 +372,8 @@ body {
 
 /* no-play layout (requiresInstall installer/steam game, not steam-busy): the left slot is empty (Play
    hidden), so the title moves to x=50 (left:0 in .bar-content). Set from render() by phase, and cleared
-   in every other state — a stale attribute on the empty screen would push the title over the left-slot
-   Hide button. (During steam-busy the attribute is cleared, so Play shows as the gear — matrix p4.) */
+   in every other state. (During steam-busy the attribute is cleared, so Play shows as the gear — matrix
+   p4.) The empty idle/error screens move the title the same way via their own per-phase rule above. */
 #app[data-layout='no-play'] #play-button {
   display: none;
 }
