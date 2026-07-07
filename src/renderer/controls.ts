@@ -434,9 +434,10 @@ export function createControls(deps: ControlsDeps): Controls {
       audio.play('button');
       openConfirm('sleep');
     } else if (btn === powerMinimize) {
-      // Hide the launcher to the tray — the same effect as Esc / the empty-screen Hide button. No
-      // confirm (it's non-destructive); the window just disappears.
+      // Hide the launcher to the tray (same effect as the empty-screen Hide button). No confirm — it's
+      // non-destructive. Close the popup first so a re-summoned launcher shows a clean bar, not this menu.
       audio.play('back');
+      closePopup();
       window.api.requestHide();
     } else if (btn === confirmYes) {
       acceptConfirm();
