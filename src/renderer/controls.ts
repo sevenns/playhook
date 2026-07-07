@@ -71,6 +71,7 @@ export function createControls(deps: ControlsDeps): Controls {
   const powerShutdown = req<HTMLButtonElement>('power-shutdown');
   const powerReboot = req<HTMLButtonElement>('power-reboot');
   const powerSleep = req<HTMLButtonElement>('power-sleep');
+  const powerMinimize = req<HTMLButtonElement>('power-minimize');
   const powerClose = req<HTMLButtonElement>('power-close');
   const confirmYes = req<HTMLButtonElement>('confirm-yes');
   const confirmNo = req<HTMLButtonElement>('confirm-no');
@@ -318,6 +319,7 @@ export function createControls(deps: ControlsDeps): Controls {
     powerShutdown,
     powerReboot,
     powerSleep,
+    powerMinimize,
     powerClose,
     confirmYes,
     confirmNo,
@@ -334,7 +336,7 @@ export function createControls(deps: ControlsDeps): Controls {
         return items;
       }
       case 'power':
-        return [powerShutdown, powerReboot, powerSleep, powerClose];
+        return [powerShutdown, powerReboot, powerSleep, powerMinimize, powerClose];
       case 'confirm':
         return [confirmYes, confirmNo];
       case 'error':
@@ -431,6 +433,11 @@ export function createControls(deps: ControlsDeps): Controls {
     } else if (btn === powerSleep) {
       audio.play('button');
       openConfirm('sleep');
+    } else if (btn === powerMinimize) {
+      // Hide the launcher to the tray — the same effect as Esc / the empty-screen Hide button. No
+      // confirm (it's non-destructive); the window just disappears.
+      audio.play('back');
+      window.api.requestHide();
     } else if (btn === confirmYes) {
       acceptConfirm();
     } else if (btn === confirmNo) {
@@ -571,12 +578,11 @@ export function createControls(deps: ControlsDeps): Controls {
     },
   });
 
-  // Keyboard Esc: step back through the popup first, otherwise hide the launcher to tray from any screen
-  // — mirrors the Hide button. Intentionally keyboard-only; the gamepad routing is left as is.
+  // Keyboard Esc: step back through the popup. It no longer hides the launcher — minimizing moved to the
+  // System menu's "Minimize Playhook" — so with no popup open Esc is a no-op.
   window.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape') return;
     if (popupView !== 'none') back();
-    else window.api.requestHide();
   });
 
   function applyGameButtons(): void {

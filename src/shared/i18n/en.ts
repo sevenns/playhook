@@ -53,6 +53,7 @@ export const en = {
   'launcher.menu.shutdown': 'Shutdown',
   'launcher.menu.reboot': 'Reboot',
   'launcher.menu.sleep': 'Sleep',
+  'launcher.menu.minimize': 'Minimize Playhook',
   // Confirmation popup copy (controls.ts). The Yes/No buttons use the shared common.* keys.
   'launcher.confirm.install': 'Do you want to install game?',
   'launcher.confirm.uninstall': 'Do you want to uninstall game from your PC?',

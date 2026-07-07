@@ -43,6 +43,7 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'launcher.menu.shutdown': 'Выключить',
   'launcher.menu.reboot': 'Перезагрузить',
   'launcher.menu.sleep': 'Спящий режим',
+  'launcher.menu.minimize': 'Свернуть Playhook',
   'launcher.confirm.install': 'Установить игру?',
   'launcher.confirm.uninstall': 'Удалить игру с компьютера?',
   'launcher.confirm.steamInstall': 'Открыть Steam, чтобы установить игру?',
