@@ -178,8 +178,7 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'configure.browse': 'Обзор…',
   'configure.add': 'Добавить',
   'configure.remove': 'Удалить',
-  'configure.moveUp': 'Вверх',
-  'configure.moveDown': 'Вниз',
+  'configure.dragReorder': 'Перетащите для изменения порядка',
   'configure.corruptField': 'Поле содержит недопустимое значение; при редактировании оно будет заменено.',
   'configure.fixSyntaxSwitch': 'Исправьте синтаксические ошибки JSON перед переключением на форму.',
   'configure.mixedLaunchModes':

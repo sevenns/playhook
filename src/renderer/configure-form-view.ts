@@ -244,6 +244,7 @@ export class FormView {
       browseKind: 'image',
       preview: true,
       reorder: true,
+      noAdd: true,
     });
     this.addSection('hero', [this.heroList.wrapper]);
 
@@ -610,13 +611,8 @@ export class FormView {
         this.deps.onPickError(result.message);
       }
     });
-    const clear = this.iconButton('configure.remove', '✕', () => {
-      input.value = '';
-      this.clearCorrupt(corruptKey);
-      refresh();
-      this.deps.onChange();
-    });
-    row.append(input, browse, clear);
+    // No separate clear button: selecting "Default" in the dropdown clears the field and omits it.
+    row.append(input, browse);
 
     const hint = document.createElement('div');
     hint.className = 'field-hint';
@@ -663,7 +659,7 @@ export class FormView {
         refresh();
       },
       setDisabled: (disabled) => {
-        for (const el of [input, browse, clear, modeSelect]) setElDisabled(el, disabled);
+        for (const el of [input, browse, modeSelect]) setElDisabled(el, disabled);
       },
     };
   }
@@ -671,7 +667,12 @@ export class FormView {
   private dynamicList(
     corruptKey: string,
     labelKey: MessageKey,
-    opts: { readonly browseKind?: ConfigPickKind; readonly preview?: boolean; readonly reorder?: boolean } = {},
+    opts: {
+      readonly browseKind?: ConfigPickKind;
+      readonly preview?: boolean;
+      readonly reorder?: boolean;
+      readonly noAdd?: boolean;
+    } = {},
   ): DynamicList {
     const wrapper = document.createElement('div');
     wrapper.className = 'field';
@@ -680,9 +681,52 @@ export class FormView {
     const buttonRow = document.createElement('div');
     buttonRow.className = 'button-row';
 
+    // Drag-and-drop reordering (native HTML5 DnD, no dependency): a grip handle per row starts the drag,
+    // and dragover on the container live-repositions the dragged row. The handle is hidden with a single
+    // row (nothing to reorder). onChange fires once on dragend.
+    let draggingRow: HTMLElement | null = null;
+    const refreshHandles = (): void => {
+      if (opts.reorder !== true) return;
+      const many = rows.children.length > 1;
+      for (const handle of rows.querySelectorAll<HTMLElement>('.drag-handle')) handle.hidden = !many;
+    };
+    if (opts.reorder === true) {
+      rows.addEventListener('dragover', (event) => {
+        if (draggingRow === null) return;
+        event.preventDefault();
+        const after = dragAfterElement(rows, event.clientY, draggingRow);
+        if (after === null) rows.append(draggingRow);
+        else if (after !== draggingRow) rows.insertBefore(draggingRow, after);
+      });
+      rows.addEventListener('drop', (event) => event.preventDefault());
+    }
+
     const addRow = (value: string): void => {
       const row = document.createElement('div');
       row.className = 'list-row';
+      // Drag handle (grip) — the row is reordered by dragging this, not the whole row (so the text field
+      // stays selectable). Hidden when there's a single row (see refreshHandles).
+      if (opts.reorder === true) {
+        const handle = document.createElement('span');
+        handle.className = 'drag-handle';
+        handle.textContent = '⠿';
+        handle.setAttribute('draggable', 'true');
+        handle.setAttribute('role', 'button');
+        handle.setAttribute('data-i18n-aria-label-key', 'configure.dragReorder');
+        handle.addEventListener('dragstart', (event) => {
+          draggingRow = row;
+          row.classList.add('dragging');
+          event.dataTransfer?.setData('text/plain', ''); // some browsers need data to start a drag
+          if (event.dataTransfer !== null) event.dataTransfer.effectAllowed = 'move';
+        });
+        handle.addEventListener('dragend', () => {
+          row.classList.remove('dragging');
+          draggingRow = null;
+          refreshHandles();
+          this.deps.onChange();
+        });
+        row.append(handle);
+      }
       const input = document.createElement('fluent-text-input') as ValueEl;
       input.setAttribute('type', 'text');
       input.value = value;
@@ -712,6 +756,11 @@ export class FormView {
         thumb.className = 'hero-thumb';
         thumb.alt = '';
         thumb.hidden = true;
+        // Click the thumbnail → open a full-size lightbox of the same (already-loaded) data URL.
+        thumb.addEventListener('click', () => {
+          const src = thumb?.getAttribute('src');
+          if (src !== null && src !== undefined && src !== '') this.openImagePreview(src);
+        });
         row.append(thumb);
       }
 
@@ -721,39 +770,26 @@ export class FormView {
       });
       if (opts.preview === true) input.addEventListener('change', () => refreshThumb());
       row.append(input);
-      // Reorder controls (order matters for args / heroImage / install.args).
-      if (opts.reorder === true) {
-        const up = this.iconButton('configure.moveUp', '▲', () => {
-          const prev = row.previousElementSibling;
-          if (prev !== null) {
-            rows.insertBefore(row, prev);
-            this.deps.onChange();
-          }
-        });
-        const down = this.iconButton('configure.moveDown', '▼', () => {
-          const next = row.nextElementSibling;
-          if (next !== null) {
-            rows.insertBefore(next, row);
-            this.deps.onChange();
-          }
-        });
-        row.append(up, down);
-      }
       const remove = this.iconButton('configure.remove', '✕', () => {
         row.remove();
+        refreshHandles();
         this.clearCorrupt(corruptKey);
         this.deps.onChange();
       });
       row.append(remove);
       rows.append(row);
+      refreshHandles();
       refreshThumb();
     };
 
-    const addBtn = this.textButton('configure.add', () => {
-      addRow('');
-      this.deps.onChange();
-    });
-    buttonRow.append(addBtn);
+    // Hero images are added via Browse… (multi-select) — no manual "Add" row there (opts.noAdd).
+    if (opts.noAdd !== true) {
+      const addBtn = this.textButton('configure.add', () => {
+        addRow('');
+        this.deps.onChange();
+      });
+      buttonRow.append(addBtn);
+    }
     if (opts.browseKind !== undefined) {
       const kind = opts.browseKind;
       const browse = this.textButton('configure.browse', async () => {
@@ -785,6 +821,11 @@ export class FormView {
         for (const el of rows.querySelectorAll('fluent-text-input, fluent-button')) {
           setElDisabled(el as HTMLElement, disabled);
         }
+        // Disable dragging while blocked; re-assert single-row handle visibility when re-enabling.
+        for (const handle of rows.querySelectorAll<HTMLElement>('.drag-handle')) {
+          handle.setAttribute('draggable', disabled ? 'false' : 'true');
+        }
+        if (!disabled) refreshHandles();
       },
     };
   }
@@ -850,6 +891,28 @@ export class FormView {
     return button;
   }
 
+  // Opens a full-size lightbox of a hero image (the data URL already loaded in the thumbnail). Click
+  // anywhere (or Escape) closes it. Self-contained — CSP allows img-src data:.
+  private openImagePreview(url: string): void {
+    const veil = document.createElement('div');
+    veil.className = 'image-preview-veil';
+    const image = document.createElement('img');
+    image.className = 'image-preview-img';
+    image.alt = '';
+    image.src = url;
+    veil.append(image);
+    const close = (): void => {
+      veil.remove();
+      document.removeEventListener('keydown', onKey);
+    };
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') close();
+    };
+    veil.addEventListener('click', close);
+    document.addEventListener('keydown', onKey);
+    document.body.append(veil);
+  }
+
   private iconButton(labelKey: MessageKey, glyph: string, onClick: () => void): HTMLElement {
     const button = document.createElement('fluent-button');
     button.className = 'icon-button';
@@ -881,6 +944,17 @@ export class FormView {
 function setElDisabled(el: HTMLElement, disabled: boolean): void {
   if (disabled) el.setAttribute('disabled', '');
   else el.removeAttribute('disabled');
+}
+
+/** During a drag, finds the row the dragged one should be inserted BEFORE for a given pointer Y (the first
+ * row whose vertical midpoint is below the cursor), or null to append at the end. Skips the dragged row. */
+function dragAfterElement(container: HTMLElement, y: number, dragging: HTMLElement): HTMLElement | null {
+  const rows = [...container.children].filter((el): el is HTMLElement => el instanceof HTMLElement && el !== dragging);
+  for (const row of rows) {
+    const box = row.getBoundingClientRect();
+    if (y < box.top + box.height / 2) return row;
+  }
+  return null;
 }
 
 /** Narrows the install-type dropdown value to the enum (defaults to nsis for any unexpected value). */

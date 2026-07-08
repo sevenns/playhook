@@ -208,8 +208,7 @@ export const en = {
   'configure.browse': 'Browse…',
   'configure.add': 'Add',
   'configure.remove': 'Remove',
-  'configure.moveUp': 'Move up',
-  'configure.moveDown': 'Move down',
+  'configure.dragReorder': 'Drag to reorder',
   // Banners / hints.
   'configure.corruptField': 'This field contains an invalid value; editing it replaces the value.',
   'configure.fixSyntaxSwitch': 'Fix the JSON syntax errors before switching to the form.',
