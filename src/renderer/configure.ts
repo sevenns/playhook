@@ -664,7 +664,7 @@ wireDropdown(driveGroup, (root) => {
 // translator (re-applied on a language change via applyLocale → relabelTabs).
 function buildEditTabs(): void {
   applyingTab = true; // ignore the tablist's own auto-select `change` during construction
-  tablist = document.createElement('fluent-tablist') as TablistEl;
+  tablist = document.createElement('fluent-tablist');
   for (const tab of TAB_ORDER) {
     const el = document.createElement('fluent-tab');
     el.setAttribute('slot', 'tab');
