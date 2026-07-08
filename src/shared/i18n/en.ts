@@ -207,6 +207,8 @@ export const en = {
   // Dynamic-list + picker buttons.
   'configure.browse': 'Browse…',
   'configure.add': 'Add',
+  'configure.addFile': 'Add…',
+  'configure.replace': 'Replace…',
   'configure.remove': 'Remove',
   'configure.dragReorder': 'Drag to reorder',
   // Banners / hints.

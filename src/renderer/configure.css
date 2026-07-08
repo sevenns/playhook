@@ -143,10 +143,20 @@ fluent-listbox[popover] {
   min-inline-size: 160px;
 }
 
-/* Compact icon buttons in list rows (remove ✕). */
+/* Compact icon buttons in list rows (remove). */
 .icon-button {
   flex: none;
   min-width: 32px;
+}
+
+/* Trash/bin icon for the remove-row button — red per request. */
+.trash-icon {
+  width: 16px;
+  height: 16px;
+}
+
+.trash-icon path {
+  stroke: #a80000;
 }
 
 /* Drag handle (grip) for reordering list rows via native drag-and-drop. */

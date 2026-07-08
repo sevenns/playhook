@@ -177,6 +177,8 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'configure.fieldLaunchTimeout': 'Таймаут запуска (секунды)',
   'configure.browse': 'Обзор…',
   'configure.add': 'Добавить',
+  'configure.addFile': 'Добавить…',
+  'configure.replace': 'Заменить…',
   'configure.remove': 'Удалить',
   'configure.dragReorder': 'Перетащите для изменения порядка',
   'configure.corruptField': 'Поле содержит недопустимое значение; при редактировании оно будет заменено.',

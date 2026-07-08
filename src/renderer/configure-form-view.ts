@@ -184,7 +184,7 @@ export class FormView {
     this.execSection = this.group([
       this.fieldWithBrowse('configure.fieldExecutable', 'executable', this.executableInput, 'executable'),
       this.argsList.wrapper,
-      this.field('configure.fieldRunAsAdmin', 'runAsAdmin', this.runAsAdminSwitch),
+      this.switchField('configure.fieldRunAsAdmin', 'runAsAdmin', this.runAsAdminSwitch),
     ]);
 
     this.installInstallerInput = this.textInput('install');
@@ -208,7 +208,7 @@ export class FormView {
         'installer',
       ),
       this.field('configure.fieldInstallType', 'install.type', this.installType),
-      this.field('configure.fieldRunAsAdmin', 'install.runAsAdmin', this.installRunAsAdminSwitch),
+      this.switchField('configure.fieldRunAsAdmin', 'install.runAsAdmin', this.installRunAsAdminSwitch),
       this.installArgsList.wrapper,
     ]);
 
@@ -242,6 +242,8 @@ export class FormView {
     // ── Hero images (with thumbnails) ────────────────────────────────────────
     this.heroList = this.dynamicList('heroImage', 'configure.sectionHero', {
       browseKind: 'image',
+      browseLabelKey: 'configure.addFile', // the bottom "Add…" button (multi-select adds rows)
+      replaceKind: 'image', // each row gets a "Replace…" button to swap its file
       preview: true,
       reorder: true,
       noAdd: true,
@@ -550,6 +552,26 @@ export class FormView {
     return wrapper;
   }
 
+  // A switch field laid out like the Settings window: the label sits to the LEFT of the switch, via
+  // fluent-field (label-position="after" + slotted switch/label). An error slot sits below.
+  private switchField(labelKey: MessageKey, errorKey: FieldKey, control: CheckedEl): HTMLElement {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'field';
+    const field = document.createElement('fluent-field');
+    field.setAttribute('label-position', 'after');
+    const id = `sw-${errorKey.replace(/\W/g, '-')}`;
+    control.setAttribute('slot', 'input');
+    control.id = id;
+    const label = document.createElement('label');
+    label.setAttribute('slot', 'label');
+    label.setAttribute('for', id);
+    this.labelRefs.push({ el: label, key: labelKey });
+    field.append(control, label);
+    wrapper.append(field, this.errorSlot(errorKey));
+    this.registerContainer(errorKey, wrapper);
+    return wrapper;
+  }
+
   // A labelled control with a trailing Browse… button that fills it from a picked path.
   private fieldWithBrowse(
     labelKey: MessageKey,
@@ -669,6 +691,8 @@ export class FormView {
     labelKey: MessageKey,
     opts: {
       readonly browseKind?: ConfigPickKind;
+      readonly browseLabelKey?: MessageKey;
+      readonly replaceKind?: ConfigPickKind;
       readonly preview?: boolean;
       readonly reorder?: boolean;
       readonly noAdd?: boolean;
@@ -770,7 +794,26 @@ export class FormView {
       });
       if (opts.preview === true) input.addEventListener('change', () => refreshThumb());
       row.append(input);
-      const remove = this.iconButton('configure.remove', '✕', () => {
+      // Per-row "Replace…" — pick a file and swap THIS row's value (hero images).
+      if (opts.replaceKind !== undefined) {
+        const kind = opts.replaceKind;
+        const replace = this.textButton('configure.replace', async () => {
+          const result = await this.deps.pickPath(kind);
+          if (result.ok) {
+            const picked = result.paths[0];
+            if (picked !== undefined) {
+              input.value = picked;
+              this.clearCorrupt(corruptKey);
+              refreshThumb();
+              this.deps.onChange();
+            }
+          } else if (!('cancelled' in result)) {
+            this.deps.onPickError(result.message);
+          }
+        });
+        row.append(replace);
+      }
+      const remove = this.iconButton('configure.remove', trashIcon(), () => {
         row.remove();
         refreshHandles();
         this.clearCorrupt(corruptKey);
@@ -792,7 +835,7 @@ export class FormView {
     }
     if (opts.browseKind !== undefined) {
       const kind = opts.browseKind;
-      const browse = this.textButton('configure.browse', async () => {
+      const browse = this.textButton(opts.browseLabelKey ?? 'configure.browse', async () => {
         const result = await this.deps.pickPath(kind);
         if (result.ok) {
           for (const p of result.paths) addRow(p);
@@ -913,10 +956,12 @@ export class FormView {
     document.body.append(veil);
   }
 
-  private iconButton(labelKey: MessageKey, glyph: string, onClick: () => void): HTMLElement {
+  private iconButton(labelKey: MessageKey, content: string | Node, onClick: () => void): HTMLElement {
     const button = document.createElement('fluent-button');
     button.className = 'icon-button';
-    button.textContent = glyph;
+    button.setAttribute('appearance', 'outline'); // just the icon + a thin border — less chrome per row
+    if (typeof content === 'string') button.textContent = content;
+    else button.append(content);
     button.setAttribute('data-i18n-aria-label-key', labelKey); // aria label re-applied in applyLabels
     button.addEventListener('click', onClick);
     return button;
@@ -944,6 +989,31 @@ export class FormView {
 function setElDisabled(el: HTMLElement, disabled: boolean): void {
   if (disabled) el.setAttribute('disabled', '');
   else el.removeAttribute('disabled');
+}
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
+// Trash/bin icon (from the supplied SVG) for the remove-row button. Built via DOM (no innerHTML); the
+// stroke colour is set in CSS (.trash-icon path → #A80000).
+const TRASH_PATHS = [
+  'M3 6H21M5 6V20C5 21.1046 5.89543 22 7 22H17C18.1046 22 19 21.1046 19 20V6M8 6V4C8 2.89543 8.89543 2 10 2H14C15.1046 2 16 2.89543 16 4V6',
+  'M14 11V17',
+  'M10 11V17',
+];
+function trashIcon(): SVGSVGElement {
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  svg.setAttribute('class', 'trash-icon');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('fill', 'none');
+  svg.setAttribute('aria-hidden', 'true');
+  for (const d of TRASH_PATHS) {
+    const path = document.createElementNS(SVG_NS, 'path');
+    path.setAttribute('d', d);
+    path.setAttribute('stroke-width', '2');
+    path.setAttribute('stroke-linecap', 'round');
+    path.setAttribute('stroke-linejoin', 'round');
+    svg.append(path);
+  }
+  return svg;
 }
 
 /** During a drag, finds the row the dragged one should be inserted BEFORE for a given pointer Y (the first
