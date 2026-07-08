@@ -179,7 +179,7 @@ export class FormView {
     this.launchType.addEventListener('change', () => this.onLaunchTypeChange());
 
     this.executableInput = this.textInput('executable');
-    this.argsList = this.dynamicList('args', 'configure.fieldArgs');
+    this.argsList = this.dynamicList('args', 'configure.fieldArgs', { reorder: true });
     this.runAsAdminSwitch = this.switchControl('runAsAdmin');
     this.execSection = this.group([
       this.fieldWithBrowse('configure.fieldExecutable', 'executable', this.executableInput, 'executable'),
@@ -195,7 +195,7 @@ export class FormView {
     ]);
     this.installType.addEventListener('change', () => this.onInstallTypeChange());
     this.installRunAsAdminSwitch = this.switchControl('install');
-    this.installArgsList = this.dynamicList('install', 'configure.fieldInstallArgs');
+    this.installArgsList = this.dynamicList('install', 'configure.fieldInstallArgs', { reorder: true });
     const installArgsHint = document.createElement('div');
     installArgsHint.className = 'field-hint';
     this.labelRefs.push({ el: installArgsHint, key: 'configure.installArgsDirHint' });
@@ -243,6 +243,7 @@ export class FormView {
     this.heroList = this.dynamicList('heroImage', 'configure.sectionHero', {
       browseKind: 'image',
       preview: true,
+      reorder: true,
     });
     this.addSection('hero', [this.heroList.wrapper]);
 
@@ -587,13 +588,12 @@ export class FormView {
     const wrapper = document.createElement('div');
     wrapper.className = 'field';
 
-    const toggle = document.createElement('div');
-    toggle.className = 'audio-toggle';
-    const defaultBtn = document.createElement('fluent-button');
-    const customBtn = document.createElement('fluent-button');
-    this.labelRefs.push({ el: defaultBtn, key: 'configure.audioDefault' });
-    this.labelRefs.push({ el: customBtn, key: 'configure.audioCustom' });
-    toggle.append(defaultBtn, customBtn);
+    // Default → the field is omitted from game.json (built-in sound / no music); Custom → a path field.
+    const modeSelect = this.dropdown([
+      ['default', 'configure.audioDefault'],
+      ['custom', 'configure.audioCustom'],
+    ]);
+    modeSelect.classList.add('audio-mode');
 
     const row = document.createElement('div');
     row.className = 'field-row';
@@ -610,7 +610,7 @@ export class FormView {
         this.deps.onPickError(result.message);
       }
     });
-    const clear = this.iconButton('configure.remove', () => {
+    const clear = this.iconButton('configure.remove', '✕', () => {
       input.value = '';
       this.clearCorrupt(corruptKey);
       refresh();
@@ -622,7 +622,7 @@ export class FormView {
     hint.className = 'field-hint';
     this.labelRefs.push({ el: hint, key: hintKey });
 
-    wrapper.append(this.fieldLabel(labelKey), toggle, row, hint, this.errorSlot(errorKey));
+    wrapper.append(this.fieldLabel(labelKey), modeSelect, row, hint, this.errorSlot(errorKey));
     this.registerContainer(errorKey, wrapper);
 
     let mode: 'default' | 'custom' = 'default';
@@ -630,20 +630,24 @@ export class FormView {
       const empty = getValue(input) === '';
       row.hidden = mode === 'default';
       hint.hidden = !(mode === 'default' || empty);
-      setActive(defaultBtn, mode === 'default');
-      setActive(customBtn, mode === 'custom');
+      modeSelect.value = mode;
     };
     const setMode = (next: 'default' | 'custom'): void => {
       mode = next;
       if (next === 'default') input.value = '';
       refresh();
     };
-    defaultBtn.addEventListener('click', () => {
-      setMode('default');
-      this.clearCorrupt(corruptKey);
-      this.deps.onChange();
+    modeSelect.addEventListener('change', () => {
+      const next = getValue(modeSelect) === 'custom' ? 'custom' : 'default';
+      const clearedValue = next === 'default' && getValue(input) !== '';
+      setMode(next);
+      // Only a real content change (clearing a set path) marks dirty/re-validates; merely revealing the
+      // empty Custom input does not.
+      if (clearedValue) {
+        this.clearCorrupt(corruptKey);
+        this.deps.onChange();
+      }
     });
-    customBtn.addEventListener('click', () => setMode('custom'));
     input.addEventListener('input', () => {
       this.clearCorrupt(corruptKey);
       refresh();
@@ -659,7 +663,7 @@ export class FormView {
         refresh();
       },
       setDisabled: (disabled) => {
-        for (const el of [input, browse, clear, defaultBtn, customBtn]) setElDisabled(el, disabled);
+        for (const el of [input, browse, clear, modeSelect]) setElDisabled(el, disabled);
       },
     };
   }
@@ -667,7 +671,7 @@ export class FormView {
   private dynamicList(
     corruptKey: string,
     labelKey: MessageKey,
-    opts: { readonly browseKind?: ConfigPickKind; readonly preview?: boolean } = {},
+    opts: { readonly browseKind?: ConfigPickKind; readonly preview?: boolean; readonly reorder?: boolean } = {},
   ): DynamicList {
     const wrapper = document.createElement('div');
     wrapper.className = 'field';
@@ -716,12 +720,31 @@ export class FormView {
         this.deps.onChange();
       });
       if (opts.preview === true) input.addEventListener('change', () => refreshThumb());
-      const remove = this.iconButton('configure.remove', () => {
+      row.append(input);
+      // Reorder controls (order matters for args / heroImage / install.args).
+      if (opts.reorder === true) {
+        const up = this.iconButton('configure.moveUp', '▲', () => {
+          const prev = row.previousElementSibling;
+          if (prev !== null) {
+            rows.insertBefore(row, prev);
+            this.deps.onChange();
+          }
+        });
+        const down = this.iconButton('configure.moveDown', '▼', () => {
+          const next = row.nextElementSibling;
+          if (next !== null) {
+            rows.insertBefore(next, row);
+            this.deps.onChange();
+          }
+        });
+        row.append(up, down);
+      }
+      const remove = this.iconButton('configure.remove', '✕', () => {
         row.remove();
         this.clearCorrupt(corruptKey);
         this.deps.onChange();
       });
-      row.append(input, remove);
+      row.append(remove);
       rows.append(row);
       refreshThumb();
     };
@@ -827,9 +850,10 @@ export class FormView {
     return button;
   }
 
-  private iconButton(labelKey: MessageKey, onClick: () => void): HTMLElement {
+  private iconButton(labelKey: MessageKey, glyph: string, onClick: () => void): HTMLElement {
     const button = document.createElement('fluent-button');
-    button.textContent = '✕';
+    button.className = 'icon-button';
+    button.textContent = glyph;
     button.setAttribute('data-i18n-aria-label-key', labelKey); // aria label re-applied in applyLabels
     button.addEventListener('click', onClick);
     return button;
@@ -857,12 +881,6 @@ export class FormView {
 function setElDisabled(el: HTMLElement, disabled: boolean): void {
   if (disabled) el.setAttribute('disabled', '');
   else el.removeAttribute('disabled');
-}
-
-/** Marks a segmented button active (accent) or not — used by the audio Default/Custom toggle. */
-function setActive(button: HTMLElement, active: boolean): void {
-  if (active) button.setAttribute('appearance', 'accent');
-  else button.removeAttribute('appearance');
 }
 
 /** Narrows the install-type dropdown value to the enum (defaults to nsis for any unexpected value). */

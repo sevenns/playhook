@@ -129,10 +129,16 @@ fluent-listbox[popover] {
   gap: 16px;
 }
 
-/* Audio Default/Custom selector — a small segmented pair above the (optional) input row. */
-.audio-toggle {
-  display: flex;
-  gap: 4px;
+/* Audio Default/Custom selector — a compact dropdown above the (optional) input row (narrower than the
+   default dropdown width). */
+.audio-mode {
+  min-inline-size: 160px;
+}
+
+/* Compact icon buttons in list rows (reorder ▲▼, remove ✕) and the audio clear button. */
+.icon-button {
+  flex: none;
+  min-width: 32px;
 }
 
 /* Hero image thumbnail next to each path row (data: URL only — CSP-safe). */

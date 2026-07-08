@@ -13,6 +13,8 @@ import '@fluentui/web-components/option/define.js';
 import '@fluentui/web-components/field/define.js';
 import '@fluentui/web-components/switch/define.js';
 import '@fluentui/web-components/text-input/define.js';
+import '@fluentui/web-components/tablist/define.js';
+import '@fluentui/web-components/tab/define.js';
 import { setTheme } from '@fluentui/web-components';
 import { webDarkTheme, webLightTheme } from '@fluentui/tokens';
 import { EditorView, basicSetup } from 'codemirror';
@@ -31,9 +33,10 @@ import { localizeDocument } from './i18n-dom.js';
 import { FormView, FORM_SECTIONS, type SectionId } from './configure-form-view.js';
 import { emptyFormModel, formModelToText, textToFormModel } from './configure-form-model.js';
 
-// The active edit tab: one of the form sections, or the raw JSON editor (advanced). The window is a
-// hide-on-close singleton, so this module-level state survives hiding (plan R1/D7 — no AppSettings needed).
-type EditTab = SectionId | 'json';
+// The active edit tab: the Templates launcher, one of the form sections, or the raw JSON editor
+// (advanced). The window is a hide-on-close singleton, so this module-level state survives hiding
+// (plan R1/D7 — no AppSettings needed).
+type EditTab = 'templates' | SectionId | 'json';
 
 // Translator, refreshed on a language push. The HTML ships English fallback (no blank flash).
 let translator: Translator = createTranslator('en');
@@ -110,6 +113,7 @@ const editorEl = req('editor');
 const editorSection = req('editor-section');
 const formViewEl = req('form-view');
 const editTabsEl = req('edit-tabs');
+const templatesPanel = req('templates-panel');
 const issuesEl = req('issues');
 const saveBtn = req('save');
 const resetBtn = req('reset');
@@ -209,10 +213,25 @@ let activeTab: EditTab = 'basics'; // a form section is the default (plan R1); '
 let formBlank = false; // a blank drive → the form is shown empty & disabled until a template is picked
 // Created in init() (after all handlers are defined). Owns the interactive form's DOM + state.
 let formView: FormView;
-// The edit-tab buttons ([Basics][Launch]…[JSON]), built in init() with translator labels.
+// The native fluent-tablist + its fluent-tab children ([Templates][Basics]…[JSON]), built in init().
+type TablistEl = HTMLElement & { activeid?: string };
+let tablist: TablistEl;
 const tabButtons = new Map<EditTab, HTMLElement>();
+// Guards the tablist `change` event against our own programmatic activeid writes (so committing/reverting
+// a tab doesn't re-enter the switch logic).
+let applyingTab = false;
+// Tab order: Templates first (#4), JSON last.
+const TAB_ORDER: readonly EditTab[] = ['templates', ...FORM_SECTIONS.map((s) => s.id), 'json'];
 
-/** True when the raw JSON editor tab is active (vs. one of the form section tabs). */
+function tabDomId(tab: EditTab): string {
+  return `tab-${tab}`;
+}
+function tabFromDomId(id: string | undefined): EditTab | null {
+  if (id === undefined) return null;
+  return TAB_ORDER.find((tab) => tabDomId(tab) === id) ?? null;
+}
+
+/** True when the raw JSON editor tab is active (vs. the Templates or a form section tab). */
 function jsonActive(): boolean {
   return activeTab === 'json';
 }
@@ -472,6 +491,7 @@ async function loadDrive(root: string): Promise<void> {
     dispatchText('');
     formView.load(emptyFormModel(), {}, {}, false);
     applyFormDisabled();
+    showTab('templates'); // a blank card starts on the Templates tab (pick one to begin)
     setStatus(translator('configure.blankDrive'));
     void runValidate();
     return;
@@ -533,6 +553,7 @@ async function applyTemplate(kind: keyof ConfigTemplates): Promise<void> {
   if (parsed.ok) formView.load(parsed.model, parsed.rest, parsed.corrupt, parsed.mixed);
   applyFormDisabled();
   dirty = true;
+  showTab('basics'); // jump into the form so the filled fields are visible
   void runValidate();
 }
 
@@ -629,7 +650,6 @@ saveBtn.addEventListener('click', () => void onSave());
 // Format / Reset are driven from the editor's native right-click menu (configure-window.ts) via IPC.
 window.configureApi.onEditorCommand((command) => {
   if (command === 'format') onFormat();
-  else void onReset();
 });
 
 // The dropdown updates its own display on user selection; selectDrive reverts it if a dirty-switch
@@ -638,56 +658,66 @@ wireDropdown(driveGroup, (root) => {
   void selectDrive(root, true);
 });
 
-// ── Edit tabs ([Basics][Launch][Hero][Saves][Audio][Advanced][JSON]) ─────────────
-// Builds the tab row: one button per form section, then a trailing JSON tab. Labels come from the
+// ── Edit tabs ([Templates][Basics][Launch][Hero][Saves][Audio][Advanced][JSON]) ──
+// A native fluent-tablist: it renders the tab strip (accent indicator, keyboard nav, ARIA) and fires
+// `change` with the new activeid. We manage the panels ourselves in showTab. Labels come from the
 // translator (re-applied on a language change via applyLocale → relabelTabs).
 function buildEditTabs(): void {
-  for (const section of FORM_SECTIONS) {
-    const button = document.createElement('fluent-button');
-    button.addEventListener('click', () => switchTab(section.id));
-    tabButtons.set(section.id, button);
-    editTabsEl.append(button);
+  applyingTab = true; // ignore the tablist's own auto-select `change` during construction
+  tablist = document.createElement('fluent-tablist') as TablistEl;
+  for (const tab of TAB_ORDER) {
+    const el = document.createElement('fluent-tab');
+    el.setAttribute('slot', 'tab');
+    el.id = tabDomId(tab);
+    tabButtons.set(tab, el);
+    tablist.append(el);
   }
-  const jsonButton = document.createElement('fluent-button');
-  jsonButton.textContent = 'JSON'; // relabelled from the dictionary (configure.tabJson) in relabelTabs
-  jsonButton.addEventListener('click', () => switchTab('json'));
-  tabButtons.set('json', jsonButton);
-  editTabsEl.append(jsonButton);
+  tablist.addEventListener('change', () => {
+    if (applyingTab) return; // our own programmatic activeid write
+    const target = tabFromDomId(tablist.activeid);
+    if (target !== null && target !== activeTab) switchTab(target);
+  });
+  editTabsEl.append(tablist);
   relabelTabs();
+  applyingTab = false;
 }
 
 function relabelTabs(): void {
+  tabButtons.get('templates')?.replaceChildren(translator('configure.tabTemplates'));
   for (const section of FORM_SECTIONS) {
-    const button = tabButtons.get(section.id);
-    if (button !== undefined) button.textContent = translator(section.labelKey);
+    tabButtons.get(section.id)?.replaceChildren(translator(section.labelKey));
   }
-  const jsonButton = tabButtons.get('json');
-  if (jsonButton !== undefined) jsonButton.textContent = translator('configure.tabJson');
+  tabButtons.get('json')?.replaceChildren(translator('configure.tabJson'));
 }
 
-function setTabActive(btn: HTMLElement, active: boolean): void {
-  if (active) btn.setAttribute('appearance', 'accent');
-  else btn.removeAttribute('appearance');
+// Points the tablist strip at `tab` without triggering the change→switch logic (a commit or a revert).
+function setStripActive(tab: EditTab): void {
+  applyingTab = true;
+  tablist.activeid = tabDomId(tab);
+  applyingTab = false;
 }
 
-// Reflects `activeTab` onto the DOM: highlight its button, show the form (with the right section) or the
-// JSON editor. Does NOT convert content — that is switchTab's job on a form↔json crossing.
+// Reflects `activeTab` onto the DOM: the right panel (templates / a form section / the JSON editor) plus
+// the tab strip. Does NOT convert content — that is switchTab's job on a form↔json crossing.
 function showTab(target: EditTab): void {
   activeTab = target;
-  const json = target === 'json';
-  formViewEl.hidden = json;
-  editorSection.hidden = !json;
-  if (!json) formView.showSection(target);
-  for (const [id, button] of tabButtons) setTabActive(button, id === target);
+  const isSection = target !== 'templates' && target !== 'json';
+  templatesPanel.hidden = target !== 'templates';
+  formViewEl.hidden = !isSection;
+  editorSection.hidden = target !== 'json';
+  if (isSection) formView.showSection(target);
+  setStripActive(target);
 }
 
-// Switches tabs, converting content across the form↔json boundary. Form → JSON always works (the model
-// serializes). JSON → a form section only when the text parses as JSON (else a status hint — schema errors
-// are fine, the form exists to fix them, plan R4). Section → section is free (same model). Switching never
-// marks dirty (programmatic editor writes are guarded).
+// Switches tabs, converting content across the form↔json boundary. Form/Templates → JSON always works (the
+// model serializes). JSON → a form/Templates tab only when the text parses as JSON (else a status hint and
+// the strip reverts — schema errors are fine, the form exists to fix them, plan R4). Everything else is
+// free (same model). Switching never marks dirty (programmatic editor writes are guarded).
 function switchTab(target: EditTab): void {
-  if (target === activeTab || blocked) return;
-  const wasJson = jsonActive();
+  if (blocked) {
+    setStripActive(activeTab);
+    return;
+  }
   if (target === 'json') {
     dispatchText(formView.serialize());
     formView.setFieldErrors(null);
@@ -696,10 +726,11 @@ function switchTab(target: EditTab): void {
     void runValidate();
     return;
   }
-  if (wasJson) {
+  if (jsonActive()) {
     const parsed = textToFormModel(getEditorText());
     if (!parsed.ok) {
       setStatus(translator('configure.fixSyntaxSwitch'));
+      setStripActive(activeTab); // undo the user's tab click
       return;
     }
     formView.load(parsed.model, parsed.rest, parsed.corrupt, parsed.mixed);
@@ -709,7 +740,7 @@ function switchTab(target: EditTab): void {
     void runValidate();
     return;
   }
-  // Section → section: same model, just swap the visible panel.
+  // Templates ↔ form section, or section ↔ section: same model, just swap the visible panel.
   showTab(target);
 }
 

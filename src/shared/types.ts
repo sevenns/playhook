@@ -490,8 +490,9 @@ export const IPC = {
   configOpenExternal: 'config:open-external',
 } as const;
 
-/** Editor commands dispatched from the Configure window's native right-click menu. */
-export type ConfigEditorCommand = 'format' | 'reset';
+/** Editor commands dispatched from the Configure window's native right-click menu. Reset moved to a
+ * visible button, so `format` is the only remaining command. */
+export type ConfigEditorCommand = 'format';
 
 /**
  * A removable-drive candidate for the Configure-game window (stage: init/edit game.json). Unlike

@@ -142,6 +142,7 @@ export const ru: Partial<Record<MessageKey, string>> = {
 
   // ── Configure-game window: интерактивная форма ───────────────────────────────
   'configure.tabJson': 'JSON',
+  'configure.tabTemplates': 'Шаблоны',
   'configure.reset': 'Сбросить',
   'configure.sectionBasics': 'Основное',
   'configure.sectionLaunch': 'Запуск',
@@ -177,6 +178,8 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'configure.browse': 'Обзор…',
   'configure.add': 'Добавить',
   'configure.remove': 'Удалить',
+  'configure.moveUp': 'Вверх',
+  'configure.moveDown': 'Вниз',
   'configure.corruptField': 'Поле содержит недопустимое значение; при редактировании оно будет заменено.',
   'configure.fixSyntaxSwitch': 'Исправьте синтаксические ошибки JSON перед переключением на форму.',
   'configure.mixedLaunchModes':

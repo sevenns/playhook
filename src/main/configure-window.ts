@@ -114,10 +114,8 @@ export class ConfigureWindow {
           label: t('menu.format'),
           click: () => window.webContents.send(IPC.configEditorCommand, 'format'),
         },
-        {
-          label: t('menu.reset'),
-          click: () => window.webContents.send(IPC.configEditorCommand, 'reset'),
-        },
+        // Reset now lives as a visible button next to Save & Apply (works in both modes), so it is no
+        // longer duplicated in the JSON editor's context menu.
       ]);
       menu.popup({ window });
     });

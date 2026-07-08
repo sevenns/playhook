@@ -159,6 +159,8 @@ export const en = {
   // ── Configure-game window: interactive form (configure-form-view.ts) ─────────
   // The JSON tab label (the section tabs reuse the section headings below); "JSON" is a filename/format.
   'configure.tabJson': 'JSON',
+  // The first tab: the starter-template launcher.
+  'configure.tabTemplates': 'Templates',
   // A visible Reset button next to Save (re-reads game.json from the card, discarding edits).
   'configure.reset': 'Reset',
   // Section headings.
@@ -206,6 +208,8 @@ export const en = {
   'configure.browse': 'Browse…',
   'configure.add': 'Add',
   'configure.remove': 'Remove',
+  'configure.moveUp': 'Move up',
+  'configure.moveDown': 'Move down',
   // Banners / hints.
   'configure.corruptField': 'This field contains an invalid value; editing it replaces the value.',
   'configure.fixSyntaxSwitch': 'Fix the JSON syntax errors before switching to the form.',
