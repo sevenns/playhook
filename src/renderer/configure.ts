@@ -707,6 +707,8 @@ function showTab(target: EditTab): void {
   editorSection.hidden = target !== 'json';
   if (isSection) formView.showSection(target);
   setStripActive(target);
+  // Gate the native "Format" context-menu item: it only applies to the JSON editor.
+  window.configureApi.setJsonEditorActive(target === 'json');
 }
 
 // Switches tabs, converting content across the form↔json boundary. Form/Templates → JSON always works (the

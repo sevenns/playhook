@@ -33,6 +33,7 @@ const CHANNELS = {
   configIconRequest: 'config:icon',
   configVersionRequest: 'config:version',
   configEditorCommand: 'config:editor-command',
+  configEditorActive: 'config:editor-active',
   configTitleBarOverlay: 'config:titlebar-overlay',
   configLanguageRequest: 'config:language-request',
   configLanguageUpdate: 'config:language-update',
@@ -93,6 +94,9 @@ const api: ConfigureApi = {
         callback(command);
       },
     );
+  },
+  setJsonEditorActive(active: boolean): void {
+    ipcRenderer.send(CHANNELS.configEditorActive, active);
   },
   setTitleBarDark(dark: boolean): void {
     ipcRenderer.send(CHANNELS.configTitleBarOverlay, dark);

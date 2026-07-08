@@ -819,10 +819,14 @@ export class FormView {
         this.clearCorrupt(corruptKey);
         this.deps.onChange();
       });
+      remove.classList.add('icon-danger');
       row.append(remove);
       rows.append(row);
       refreshHandles();
       refreshThumb();
+      // Rows are built AFTER the constructor's applyLabels(), so label their fresh elements (the Replace…
+      // text, drag-handle/remove aria) now — otherwise they stay blank until the next language change.
+      this.applyLabels();
     };
 
     // Hero images are added via Browse… (multi-select) — no manual "Add" row there (opts.noAdd).
@@ -959,7 +963,7 @@ export class FormView {
   private iconButton(labelKey: MessageKey, content: string | Node, onClick: () => void): HTMLElement {
     const button = document.createElement('fluent-button');
     button.className = 'icon-button';
-    button.setAttribute('appearance', 'outline'); // just the icon + a thin border — less chrome per row
+    button.setAttribute('appearance', 'transparent'); // chrome-less: just the icon
     if (typeof content === 'string') button.textContent = content;
     else button.append(content);
     button.setAttribute('data-i18n-aria-label-key', labelKey); // aria label re-applied in applyLabels

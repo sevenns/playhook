@@ -471,8 +471,10 @@ export const IPC = {
   configIconRequest: 'config:icon',
   /** configure-renderer → main (invoke): the app version string (for the custom title bar). */
   configVersionRequest: 'config:version',
-  /** main → configure-renderer: run an editor command from the native context menu (format / reset). */
+  /** main → configure-renderer: run an editor command from the native context menu (format). */
   configEditorCommand: 'config:editor-command',
+  /** configure-renderer → main: whether the JSON editor tab is active (gates the Format context-menu item). */
+  configEditorActive: 'config:editor-active',
   /** configure-renderer → main: recolor THIS window's native title-bar overlay for the theme. */
   configTitleBarOverlay: 'config:titlebar-overlay',
   /** configure-renderer → main (invoke): request the current effective UI locale (on window startup). */
@@ -678,8 +680,10 @@ export interface ConfigureApi {
   getAppIcon(): Promise<string>;
   /** The app version string, shown in the custom title bar (matches the settings window). */
   getAppVersion(): Promise<string>;
-  /** Editor commands (format / reset) triggered from the native right-click menu. */
+  /** Editor commands (format) triggered from the native right-click menu. */
   onEditorCommand(callback: (command: ConfigEditorCommand) => void): void;
+  /** Tell main whether the JSON editor tab is active (gates the Format context-menu item). */
+  setJsonEditorActive(active: boolean): void;
   /** Tell main to recolor THIS window's native caption buttons to match the effective theme. */
   setTitleBarDark(dark: boolean): void;
   /** Current effective UI locale (on window startup). */

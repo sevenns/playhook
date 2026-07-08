@@ -149,14 +149,25 @@ fluent-listbox[popover] {
   min-width: 32px;
 }
 
-/* Trash/bin icon for the remove-row button — red per request. */
+/* Danger (destructive) action, the Fluent way: a transparent icon button whose icon uses the danger
+   foreground token and whose hover/pressed use the danger background tokens (Fluent web-components has no
+   built-in "destructive" button appearance, so we express it through the status-danger design tokens). */
+.icon-danger {
+  --colorTransparentBackgroundHover: var(--colorStatusDangerBackground1);
+  --colorTransparentBackgroundPressed: var(--colorStatusDangerBackground2);
+}
+
+/* Trash/bin icon: outline only, danger-red. fill:none must be set here — Fluent's
+   ::slotted(svg){fill:currentColor} overrides the SVG's fill="none" attribute (making the interior follow
+   the theme foreground); a direct fill:none on the paths wins. */
 .trash-icon {
   width: 16px;
   height: 16px;
 }
 
 .trash-icon path {
-  stroke: #a80000;
+  fill: none;
+  stroke: var(--colorStatusDangerForeground1, #d13438);
 }
 
 /* Drag handle (grip) for reordering list rows via native drag-and-drop. */
