@@ -1,7 +1,8 @@
 // Global gamepad hotkey (Windows): hold Start+Back to re-summon the launcher when it's hidden.
 // Unlike the renderer's HTML5 Gamepad API (which only works while our window is focused), this
 // reads the controller natively via XInput in main — so it works GLOBALLY even when our window is
-// hidden in the tray. The handler (main.ts) intentionally ignores the chord while a game is running.
+// hidden in the tray, including while a game is running (the handler in main.ts summons the launcher
+// over the game so the user can return to it or reach the power menu).
 //
 // XInput is read through koffi (FFI): koffi ships prebuilt binaries in the package, so there's
 // no node-gyp/native-compile step (unlike drivelist). We use the documented XInputGetState

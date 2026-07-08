@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  absoluteToPcSavePath,
   expandPcSavePath,
   manifestJsonSchema,
   resolveInside,
@@ -162,6 +163,46 @@ describe('validateManifestText', () => {
     const result = validateManifestText(text, t);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.issues.some((i) => i.message.includes('together'))).toBe(true);
+  });
+});
+
+describe('absoluteToPcSavePath (reverse of expandPcSavePath, for the folder picker)', () => {
+  const docs = path.resolve('docs-base');
+  const home = path.resolve('home-base');
+  const saved = {
+    APPDATA: process.env['APPDATA'],
+    LOCALAPPDATA: process.env['LOCALAPPDATA'],
+    USERPROFILE: process.env['USERPROFILE'],
+  };
+  const env = { documents: docs, t };
+
+  beforeEach(() => {
+    process.env['USERPROFILE'] = home;
+    process.env['APPDATA'] = path.join(home, 'AppData', 'Roaming');
+    process.env['LOCALAPPDATA'] = path.join(home, 'AppData', 'Local');
+  });
+  afterEach(() => {
+    for (const key of ['APPDATA', 'LOCALAPPDATA', 'USERPROFILE'] as const) {
+      if (saved[key] === undefined) delete process.env[key];
+      else process.env[key] = saved[key];
+    }
+  });
+
+  it('maps a folder under %DOCUMENTS%', () => {
+    expect(absoluteToPcSavePath(path.join(docs, 'MyGame', 'Saves'), env)).toBe('%DOCUMENTS%/MyGame/Saves');
+  });
+
+  it('prefers the most specific base (%APPDATA% over %USERPROFILE%)', () => {
+    const abs = path.join(home, 'AppData', 'Roaming', 'MyGame');
+    expect(absoluteToPcSavePath(abs, env)).toBe('%APPDATA%/MyGame');
+  });
+
+  it('maps the base folder itself to the bare prefix', () => {
+    expect(absoluteToPcSavePath(path.join(home, 'AppData', 'Local'), env)).toBe('%LOCALAPPDATA%');
+  });
+
+  it('returns null for a folder under no known base', () => {
+    expect(absoluteToPcSavePath(path.resolve('somewhere', 'else'), env)).toBeNull();
   });
 });
 

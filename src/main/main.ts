@@ -217,13 +217,12 @@ async function bootstrap(): Promise<void> {
   }
 
   // Global Start+Back hotkey: re-summon the launcher when it's hidden (e.g. minimized to the tray
-  // while a card is ready). Deliberately a NO-OP while a game is running: pulling the launcher over
-  // a running game only causes focus trouble, and there's nothing to do mid-game.
+  // while a card is ready). Also works WHILE a game is running — the user can pull the launcher back
+  // over the game (e.g. to return to it or reach the power menu) without alt-tabbing.
   const globalGamepad = new GlobalGamepad();
   globalGamepadRef = globalGamepad;
   globalGamepad.onChord(() => {
     if (!summonHotkeyEnabled) return; // toggled off in the settings window
-    if (state.get().kind === 'running') return;
     window.showAndFocus(true);
   });
   globalGamepad.start();

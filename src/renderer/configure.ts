@@ -28,12 +28,12 @@ import type {
 } from '../shared/types';
 import { createTranslator, type Locale, type Translator } from '../shared/i18n/index.js';
 import { localizeDocument } from './i18n-dom.js';
-import { FormView } from './configure-form-view.js';
+import { FormView, FORM_SECTIONS, type SectionId } from './configure-form-view.js';
 import { emptyFormModel, formModelToText, textToFormModel } from './configure-form-model.js';
 
-// Which editor is showing: the interactive form (default) or the raw JSON (advanced). The window is a
+// The active edit tab: one of the form sections, or the raw JSON editor (advanced). The window is a
 // hide-on-close singleton, so this module-level state survives hiding (plan R1/D7 — no AppSettings needed).
-type EditMode = 'form' | 'json';
+type EditTab = SectionId | 'json';
 
 // Translator, refreshed on a language push. The HTML ships English fallback (no blank flash).
 let translator: Translator = createTranslator('en');
@@ -109,10 +109,10 @@ const driveEmpty = req('drive-empty');
 const editorEl = req('editor');
 const editorSection = req('editor-section');
 const formViewEl = req('form-view');
-const tabFormBtn = req('tab-form');
-const tabJsonBtn = req('tab-json');
+const editTabsEl = req('edit-tabs');
 const issuesEl = req('issues');
 const saveBtn = req('save');
+const resetBtn = req('reset');
 const statusEl = req('status');
 const tplExecutable = req('tpl-executable');
 const tplInstaller = req('tpl-installer');
@@ -205,14 +205,21 @@ let loadedId: string | null = null; // id of the last loaded/saved manifest (for
 let lastValidOk = false;
 let blocked = false; // the selected card vanished → editing/saving disabled
 let templatesCache: ConfigTemplates | null = null;
-let mode: EditMode = 'form'; // the active editor; form is the default (plan R1)
+let activeTab: EditTab = 'basics'; // a form section is the default (plan R1); 'json' is advanced
 let formBlank = false; // a blank drive → the form is shown empty & disabled until a template is picked
 // Created in init() (after all handlers are defined). Owns the interactive form's DOM + state.
 let formView: FormView;
+// The edit-tab buttons ([Basics][Launch]…[JSON]), built in init() with translator labels.
+const tabButtons = new Map<EditTab, HTMLElement>();
+
+/** True when the raw JSON editor tab is active (vs. one of the form section tabs). */
+function jsonActive(): boolean {
+  return activeTab === 'json';
+}
 
 // The manifest text of the currently active editor (form → serialized, json → raw editor text).
 function activeText(): string {
-  return mode === 'form' ? formView.serialize() : getEditorText();
+  return jsonActive() ? getEditorText() : formView.serialize();
 }
 
 // ── Validation + issues panel ──────────────────────────────────────────────────
@@ -242,7 +249,7 @@ async function runValidate(): Promise<void> {
   if (result.ok) {
     formView.setFieldErrors(null);
     renderIssues(null, text);
-  } else if (mode === 'form') {
+  } else if (!jsonActive()) {
     // Issues that map onto a field are shown inline; the rest ((root)/syntax/future keys) go to the panel.
     const unmapped = formView.setFieldErrors(result.issues);
     renderIssues(unmapped, text);
@@ -284,6 +291,9 @@ function renderIssues(issues: readonly ManifestValidationIssue[] | null, text: s
 
 function updateSaveEnabled(): void {
   setDisabled(saveBtn, blocked || selectedRoot === null || !lastValidOk);
+  // Reset re-reads the card and is useful even for an invalid config (to discard edits), so it is NOT
+  // gated by validity — only by having a card that isn't gone.
+  setDisabled(resetBtn, blocked || selectedRoot === null);
 }
 
 // ── Status line ─────────────────────────────────────────────────────────────
@@ -416,7 +426,7 @@ function setTemplatesDisabled(disabled: boolean): void {
 }
 
 function setModeTabsDisabled(disabled: boolean): void {
-  for (const btn of [tabFormBtn, tabJsonBtn]) setDisabled(btn, disabled);
+  for (const btn of tabButtons.values()) setDisabled(btn, disabled);
 }
 
 // The form fields are disabled when the card is gone (blocked) OR the drive is blank (no template picked
@@ -495,12 +505,12 @@ function loadText(text: string): void {
   if (parsed.ok) {
     formView.load(parsed.model, parsed.rest, parsed.corrupt, parsed.mixed);
     applyFormDisabled();
-    showMode(mode);
+    showTab(activeTab);
   } else {
+    // Unparseable JSON → the form can't represent it; auto-activate the JSON tab (plan R4 / cases).
     formView.load(emptyFormModel(), {}, {}, false);
     applyFormDisabled();
-    mode = 'json';
-    showMode('json');
+    showTab('json');
   }
   void runValidate();
 }
@@ -553,7 +563,7 @@ tplSteam.addEventListener('click', () => void applyTemplate('steam'));
 // works on syntactically valid JSON; otherwise it asks the user to fix the errors first.
 function onFormat(): void {
   // Format only makes sense for the raw JSON editor — in form mode it is a no-op (plan R8).
-  if (mode === 'form') return;
+  if (!jsonActive()) return;
   if (blocked || view === null) return;
   const text = getEditorText();
   let parsed: unknown;
@@ -628,13 +638,31 @@ wireDropdown(driveGroup, (root) => {
   void selectDrive(root, true);
 });
 
-// ── Edit-mode tabs (Form / JSON) ────────────────────────────────────────────────
-function showMode(target: EditMode): void {
-  mode = target;
-  formViewEl.hidden = target !== 'form';
-  editorSection.hidden = target !== 'json';
-  setTabActive(tabFormBtn, target === 'form');
-  setTabActive(tabJsonBtn, target === 'json');
+// ── Edit tabs ([Basics][Launch][Hero][Saves][Audio][Advanced][JSON]) ─────────────
+// Builds the tab row: one button per form section, then a trailing JSON tab. Labels come from the
+// translator (re-applied on a language change via applyLocale → relabelTabs).
+function buildEditTabs(): void {
+  for (const section of FORM_SECTIONS) {
+    const button = document.createElement('fluent-button');
+    button.addEventListener('click', () => switchTab(section.id));
+    tabButtons.set(section.id, button);
+    editTabsEl.append(button);
+  }
+  const jsonButton = document.createElement('fluent-button');
+  jsonButton.textContent = 'JSON'; // relabelled from the dictionary (configure.tabJson) in relabelTabs
+  jsonButton.addEventListener('click', () => switchTab('json'));
+  tabButtons.set('json', jsonButton);
+  editTabsEl.append(jsonButton);
+  relabelTabs();
+}
+
+function relabelTabs(): void {
+  for (const section of FORM_SECTIONS) {
+    const button = tabButtons.get(section.id);
+    if (button !== undefined) button.textContent = translator(section.labelKey);
+  }
+  const jsonButton = tabButtons.get('json');
+  if (jsonButton !== undefined) jsonButton.textContent = translator('configure.tabJson');
 }
 
 function setTabActive(btn: HTMLElement, active: boolean): void {
@@ -642,33 +670,50 @@ function setTabActive(btn: HTMLElement, active: boolean): void {
   else btn.removeAttribute('appearance');
 }
 
-// Switches the visible editor, converting the current content across. Form → JSON always works (the model
-// serializes). JSON → Form only when the text parses as JSON (else a status hint — schema errors are fine,
-// the form exists to fix them, plan R4). Switching never marks dirty (programmatic writes are guarded).
-function switchMode(target: EditMode): void {
-  if (target === mode || blocked) return;
+// Reflects `activeTab` onto the DOM: highlight its button, show the form (with the right section) or the
+// JSON editor. Does NOT convert content — that is switchTab's job on a form↔json crossing.
+function showTab(target: EditTab): void {
+  activeTab = target;
+  const json = target === 'json';
+  formViewEl.hidden = json;
+  editorSection.hidden = !json;
+  if (!json) formView.showSection(target);
+  for (const [id, button] of tabButtons) setTabActive(button, id === target);
+}
+
+// Switches tabs, converting content across the form↔json boundary. Form → JSON always works (the model
+// serializes). JSON → a form section only when the text parses as JSON (else a status hint — schema errors
+// are fine, the form exists to fix them, plan R4). Section → section is free (same model). Switching never
+// marks dirty (programmatic editor writes are guarded).
+function switchTab(target: EditTab): void {
+  if (target === activeTab || blocked) return;
+  const wasJson = jsonActive();
   if (target === 'json') {
     dispatchText(formView.serialize());
     formView.setFieldErrors(null);
-    showMode('json');
+    showTab('json');
     setStatus('');
     void runValidate();
     return;
   }
-  const parsed = textToFormModel(getEditorText());
-  if (!parsed.ok) {
-    setStatus(translator('configure.fixSyntaxSwitch'));
+  if (wasJson) {
+    const parsed = textToFormModel(getEditorText());
+    if (!parsed.ok) {
+      setStatus(translator('configure.fixSyntaxSwitch'));
+      return;
+    }
+    formView.load(parsed.model, parsed.rest, parsed.corrupt, parsed.mixed);
+    applyFormDisabled();
+    setStatus('');
+    showTab(target);
+    void runValidate();
     return;
   }
-  formView.load(parsed.model, parsed.rest, parsed.corrupt, parsed.mixed);
-  applyFormDisabled();
-  showMode('form');
-  setStatus('');
-  void runValidate();
+  // Section → section: same model, just swap the visible panel.
+  showTab(target);
 }
 
-tabFormBtn.addEventListener('click', () => switchMode('form'));
-tabJsonBtn.addEventListener('click', () => switchMode('json'));
+resetBtn.addEventListener('click', () => void onReset());
 
 // ── Init ─────────────────────────────────────────────────────────────────────
 applyTheme('system'); // best-guess before settings load, to avoid a flash
@@ -702,6 +747,7 @@ function applyLocale(locale: Locale): void {
   localizeDocument(translator);
   renderTitlebarSubtitle();
   formView.relabel();
+  relabelTabs();
 }
 
 async function init(): Promise<void> {
@@ -728,7 +774,7 @@ async function init(): Promise<void> {
     schemaExt = json();
   }
   buildEditor('', schemaExt);
-  // Build the interactive form and show it (the default mode) before the first drive loads into it.
+  // Build the interactive form and the tab bar, then show the first section before a drive loads into it.
   formView = new FormView({
     root: formViewEl,
     translator: () => translator,
@@ -737,9 +783,12 @@ async function init(): Promise<void> {
       scheduleValidate();
     },
     pickPath: (kind: ConfigPickKind) => window.configureApi.pickPath(selectedRoot ?? '', kind),
+    imagePreview: (relative: string) => window.configureApi.getImagePreview(selectedRoot ?? '', relative),
+    openExternal: (url: string) => window.configureApi.openExternal(url),
     onPickError: (message) => setStatus(message),
   });
-  showMode('form');
+  buildEditTabs();
+  showTab('basics');
   renderDrives(drivesList);
   // Seed the locale last so it localizes the freshly-populated DOM and title-bar suffix in one pass.
   applyLocale(locale);

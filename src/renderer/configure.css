@@ -101,15 +101,17 @@ fluent-listbox[popover] {
   gap: 8px;
 }
 
-/* Edit-mode tabs (Form / JSON). Two buttons acting as a segmented control; the active one is marked
-   accent from the renderer (appearance="accent"). */
-#mode-tabs {
+/* Edit tabs: one row of buttons ([Basics]…[JSON]). The active one is marked accent from the renderer
+   (appearance="accent"). Wraps on a narrow window. */
+#edit-tabs {
   flex: none;
   display: flex;
+  flex-wrap: wrap;
   gap: 4px;
 }
 
-/* Interactive form: grows to fill the remaining height and scrolls vertically inside the flex column. */
+/* Interactive form: grows to fill the remaining height and scrolls vertically inside the flex column.
+   Only one section panel is shown at a time (driven by the tab bar). */
 #form-view {
   flex: 1 1 auto;
   min-height: 0;
@@ -118,6 +120,37 @@ fluent-listbox[popover] {
   flex-direction: column;
   gap: 16px;
   padding-right: 4px; /* keep the scrollbar off the controls */
+}
+
+/* A single section panel (Basics/Launch/…): stacks its fields. */
+.form-section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* Audio Default/Custom selector — a small segmented pair above the (optional) input row. */
+.audio-toggle {
+  display: flex;
+  gap: 4px;
+}
+
+/* Hero image thumbnail next to each path row (data: URL only — CSP-safe). */
+.hero-thumb {
+  flex: none;
+  width: 64px;
+  height: 36px;
+  object-fit: cover;
+  border-radius: 4px;
+  border: 1px solid var(--colorNeutralStroke2, #444);
+}
+
+/* The "find the appid" helper link under the Steam appid field. */
+.help-link {
+  font-size: 12px;
+  color: var(--colorBrandForegroundLink, #479ef5);
+  cursor: pointer;
+  width: fit-content;
 }
 
 /* A launch-mode section wrapper (executable / installer / steam blocks) — stacks its fields. */

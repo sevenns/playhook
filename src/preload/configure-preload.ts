@@ -37,6 +37,8 @@ const CHANNELS = {
   configLanguageRequest: 'config:language-request',
   configLanguageUpdate: 'config:language-update',
   configPickPath: 'config:pick-path',
+  configImagePreview: 'config:image-preview',
+  configOpenExternal: 'config:open-external',
 } as const satisfies Partial<typeof IPC>;
 
 const api: ConfigureApi = {
@@ -65,6 +67,12 @@ const api: ConfigureApi = {
   },
   pickPath(root: string, kind: ConfigPickKind): Promise<ConfigPickResult> {
     return ipcRenderer.invoke(CHANNELS.configPickPath, { root, kind }) as Promise<ConfigPickResult>;
+  },
+  getImagePreview(root: string, path: string): Promise<string | null> {
+    return ipcRenderer.invoke(CHANNELS.configImagePreview, { root, path }) as Promise<string | null>;
+  },
+  openExternal(url: string): void {
+    ipcRenderer.send(CHANNELS.configOpenExternal, url);
   },
   getSchema(): Promise<unknown> {
     return ipcRenderer.invoke(CHANNELS.configSchemaRequest) as Promise<unknown>;

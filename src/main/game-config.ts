@@ -11,7 +11,7 @@
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import fse from 'fs-extra';
-import { app, dialog, ipcMain, BrowserWindow, type WebContents } from 'electron';
+import { app, dialog, ipcMain, shell, BrowserWindow, type WebContents } from 'electron';
 import {
   IPC,
   MANIFEST_FILENAME,
@@ -27,17 +27,17 @@ import {
 } from '../shared/types';
 import { type Translator } from '../shared/i18n/index';
 import { type AppSettingsStore } from './app-settings';
-import { AUDIO_EXTENSIONS, IMAGE_EXTENSIONS } from './asset-reader';
+import { AUDIO_EXTENSIONS, IMAGE_EXTENSIONS, readImageDataUrl } from './asset-reader';
 import { listDriveCandidates } from './drive-watcher';
-import { validateManifestText, manifestJsonSchema } from './manifest';
+import { absoluteToPcSavePath, resolveInside, validateManifestText, manifestJsonSchema } from './manifest';
 import { MANIFEST_TEMPLATES } from './manifest-templates';
 import { writeFileAtomic } from './save-sync';
 import { describe } from './util';
 import { log } from './logger';
 
-/** OS-dialog `properties` for a pick kind: a folder picker for `directory`, multi-file for images. */
+/** OS-dialog `properties` for a pick kind: a folder picker for `directory`/`pc-save`, multi-file for images. */
 function pickProperties(kind: ConfigPickKind): Electron.OpenDialogOptions['properties'] {
-  if (kind === 'directory') return ['openDirectory'];
+  if (kind === 'directory' || kind === 'pc-save') return ['openDirectory'];
   if (kind === 'image') return ['openFile', 'multiSelections'];
   return ['openFile'];
 }
@@ -54,6 +54,7 @@ function pickFilters(kind: ConfigPickKind): Electron.FileFilter[] {
     case 'installer':
       return [{ name: 'Executable', extensions: ['exe'] }];
     case 'directory':
+    case 'pc-save':
       return [];
   }
 }
@@ -103,6 +104,17 @@ export class GameConfigService {
       (event, payload: ConfigPickRequest): Promise<ConfigPickResult> =>
         this.pickPath(event.sender, payload.root, payload.kind),
     );
+    ipcMain.handle(
+      IPC.configImagePreview,
+      (_event, payload: { readonly root: string; readonly path: string }): Promise<string | null> =>
+        this.imagePreview(payload.root, payload.path),
+    );
+    // Fire-and-forget: open a whitelisted https URL (e.g. the SteamDB appid lookup) in the default browser.
+    ipcMain.on(IPC.configOpenExternal, (_event, url: unknown) => {
+      if (typeof url === 'string' && /^https:\/\//i.test(url)) {
+        void shell.openExternal(url).catch((cause) => log.warn('[game-config] openExternal failed:', describe(cause)));
+      }
+    });
     ipcMain.handle(IPC.configSchemaRequest, (): unknown => manifestJsonSchema());
     ipcMain.handle(IPC.configSettingsRequest, (): Promise<AppSettings> =>
       this.deps.settings.read(),
@@ -212,6 +224,18 @@ export class GameConfigService {
       return { ok: false, message: t('errors.driveUnavailable') };
     }
     const parent = BrowserWindow.fromWebContents(sender);
+    // pcSavePath points at a PC folder OUTSIDE the card (env-prefixed), so it has its own dialog: no card
+    // root restriction, and the absolute result is converted back to a %PREFIX%/… form the validator accepts.
+    if (kind === 'pc-save') {
+      const options: Electron.OpenDialogOptions = { properties: ['openDirectory'] };
+      const picked =
+        parent !== null ? await dialog.showOpenDialog(parent, options) : await dialog.showOpenDialog(options);
+      const chosen = picked.filePaths[0];
+      if (picked.canceled || chosen === undefined) return { ok: false, cancelled: true };
+      const pcSavePath = absoluteToPcSavePath(chosen, { documents: app.getPath('documents'), t });
+      if (pcSavePath === null) return { ok: false, message: t('configure.pickPcSaveOutside') };
+      return { ok: true, paths: [pcSavePath] };
+    }
     const filters = pickFilters(kind);
     const options: Electron.OpenDialogOptions = {
       defaultPath: root,
@@ -236,6 +260,19 @@ export class GameConfigService {
       relatives.push(relative.split(path.sep).join('/'));
     }
     return { ok: true, paths: relatives };
+  }
+
+  /**
+   * Reads a card-relative image into a data URL for the hero preview. Reuses the manifest's anti-traversal
+   * (`resolveInside`) and the untrusted-root check, so the preview can only read files INSIDE the card.
+   * Returns null on any rejection/failure (the renderer just shows no thumbnail).
+   */
+  private async imagePreview(root: string, relative: string): Promise<string | null> {
+    if (!(await this.isAllowedRoot(root))) return null;
+    const resolved = resolveInside(root, relative);
+    if (resolved === null) return null;
+    const url = await readImageDataUrl(resolved);
+    return url ?? null;
   }
 
   /** True when `root` is a current removable/non-system mountpoint (anti-arbitrary-write check). */

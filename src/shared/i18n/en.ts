@@ -157,9 +157,10 @@ export const en = {
   'configure.unknownReason': 'unknown reason',
 
   // ── Configure-game window: interactive form (configure-form-view.ts) ─────────
-  // Form/JSON tabs (the two edit modes for the same game.json).
-  'configure.tabForm': 'Form',
+  // The JSON tab label (the section tabs reuse the section headings below); "JSON" is a filename/format.
   'configure.tabJson': 'JSON',
+  // A visible Reset button next to Save (re-reads game.json from the card, discarding edits).
+  'configure.reset': 'Reset',
   // Section headings.
   'configure.sectionBasics': 'Basics',
   'configure.sectionLaunch': 'Launch',
@@ -194,6 +195,13 @@ export const en = {
   'configure.fieldSoundBack': 'Back sound',
   'configure.fieldBackgroundMusic': 'Background music',
   'configure.fieldLaunchTimeout': 'Launch timeout (seconds)',
+  // Audio Default/Custom selector (Default → the field is omitted from game.json).
+  'configure.audioDefault': 'Default',
+  'configure.audioCustom': 'Custom',
+  'configure.soundBuiltinHint': 'The built-in sound will be used.',
+  'configure.musicNoneHint': 'No background music.',
+  // Steam appid helper link (opens SteamDB in the default browser).
+  'configure.appidHelp': 'Find the appid on SteamDB',
   // Dynamic-list + picker buttons.
   'configure.browse': 'Browse…',
   'configure.add': 'Add',
@@ -206,6 +214,8 @@ export const en = {
   // Picker rejections (main → renderer).
   'configure.pickOutsideCard': 'The selected file is outside the card. Choose a file on the card.',
   'configure.pickChooseSubfolder': 'Choose a subfolder of the card, not the card root.',
+  'configure.pickPcSaveOutside':
+    'That folder is not under a known save location (%DOCUMENTS%, %APPDATA%, %LOCALAPPDATA%, %LOCALLOW% or %USERPROFILE%). Pick a folder inside one of those.',
 
   // ── User-facing errors from main (ipc.ts / game-config.ts / updater.ts) ─────
   // The wrapper is translated; the technical cause ({cause}) is inserted as-is (system messages, nested

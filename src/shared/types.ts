@@ -482,6 +482,12 @@ export const IPC = {
   /** configure-renderer → main (invoke): pick file(s)/a folder from the card via a native dialog →
    * ConfigPickResult (paths card-relative). Payload ConfigPickRequest. */
   configPickPath: 'config:pick-path',
+  /** configure-renderer → main (invoke): read a card-relative image into a data URL for the hero
+   * preview (or null when unreadable/outside root). Payload {root, path}. */
+  configImagePreview: 'config:image-preview',
+  /** configure-renderer → main: open an external https URL in the default browser (e.g. the SteamDB
+   * appid lookup). Payload the URL string; main whitelists https. */
+  configOpenExternal: 'config:open-external',
 } as const;
 
 /** Editor commands dispatched from the Configure window's native right-click menu. */
@@ -542,9 +548,16 @@ export interface ConfigTemplates {
 
 /**
  * What the Configure form's Browse button is picking — drives the dialog's filters and mode:
- * file pickers for exe/installer/image/audio (image is multi-select), a folder picker for `directory`.
+ * file pickers for exe/installer/image/audio (image is multi-select), a folder picker for `directory`
+ * (card-relative), and `pc-save` (a PC folder OUTSIDE the card, converted to a %PREFIX%\… save path).
  */
-export type ConfigPickKind = 'executable' | 'installer' | 'image' | 'audio' | 'directory';
+export type ConfigPickKind =
+  | 'executable'
+  | 'installer'
+  | 'image'
+  | 'audio'
+  | 'directory'
+  | 'pc-save';
 
 /** Request payload for config:pick-path: the card root (re-checked in main) and the pick kind. */
 export interface ConfigPickRequest {
@@ -652,6 +665,10 @@ export interface ConfigureApi {
   getTemplates(): Promise<ConfigTemplates>;
   /** Pick file(s)/a folder from the card via a native dialog; resolves with card-relative paths. */
   pickPath(root: string, kind: ConfigPickKind): Promise<ConfigPickResult>;
+  /** Read a card-relative image into a data URL for the hero preview (null when unreadable). */
+  getImagePreview(root: string, path: string): Promise<string | null>;
+  /** Open an external https URL in the default browser (e.g. the SteamDB appid lookup). */
+  openExternal(url: string): void;
   /** The manifest JSON Schema, fed to the editor for completions/hover. */
   getSchema(): Promise<unknown>;
   /** The current AppSettings (for the window theme). */

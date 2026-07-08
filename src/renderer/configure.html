@@ -34,11 +34,9 @@
         <span id="drive-empty" data-i18n="configure.insertCard" hidden>Insert an SD card or flash drive.</span>
       </section>
 
-      <!-- Edit-mode tabs: the interactive Form (default) vs the raw JSON editor (advanced). -->
-      <div id="mode-tabs">
-        <fluent-button id="tab-form" data-i18n="configure.tabForm">Form</fluent-button>
-        <fluent-button id="tab-json" data-i18n="configure.tabJson">JSON</fluent-button>
-      </div>
+      <!-- Edit tabs: one row of the form sections + a trailing JSON tab (built in configure.ts, since the
+           section labels come from the translator). -->
+      <div id="edit-tabs"></div>
 
       <!-- Starter templates (shared by both edit modes) -->
       <section class="section">
@@ -63,9 +61,11 @@
       <!-- Validation results, shared by both modes (unmapped issues + the id-change warning). -->
       <div id="issues"></div>
 
-      <!-- Actions. Format / Reset live in the editor's right-click context menu (see configure-window.ts). -->
+      <!-- Actions. Reset re-reads game.json from the card (discarding edits); Format also lives in the
+           JSON editor's right-click context menu (see configure-window.ts). -->
       <div class="actions">
         <fluent-button id="save" appearance="accent" data-i18n="configure.save">Save &amp; Apply</fluent-button>
+        <fluent-button id="reset" data-i18n="configure.reset">Reset</fluent-button>
         <span id="status"></span>
       </div>
     </main>

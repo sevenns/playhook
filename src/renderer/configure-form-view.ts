@@ -1,11 +1,13 @@
 // The interactive Configure form: builds the field DOM inside #form-view, binds it to a ManifestFormModel
 // and converts to/from game.json TEXT via the pure configure-form-model (the single source of truth stays
 // the text — see plan R2). This module owns only the FORM's DOM + state (rest/corrupt kept across the
-// round-trip); the shared shell (drive picker, templates, Save, status, issues panel, JSON editor) and the
-// validation/dirty/save wiring live in configure.ts.
+// round-trip); the shared shell (drive picker, tabs, Save/Reset, status, issues panel, JSON editor) and
+// the validation/dirty/save wiring live in configure.ts.
 //
-// Fluent components used here (field/switch/text-input/dropdown/listbox/option/button) are registered in
-// configure.ts. Labels come from the translator and are re-applied on a language change via applyLabels().
+// The form is split into SECTIONS (Basics/Launch/Hero/Saves/Audio/Advanced); configure.ts renders a tab
+// bar and shows one section panel at a time via showSection(). Fluent components used here
+// (switch/text-input/dropdown/listbox/option/button) are registered in configure.ts. Labels come from the
+// translator and are re-applied on a language change via applyLabels().
 import {
   formModelToText,
   textToFormModel,
@@ -28,6 +30,22 @@ function getChecked(el: CheckedEl): boolean {
   return el.checked === true;
 }
 
+/** Where the SteamDB appid lookup opens (the #7 helper link). */
+const STEAMDB_URL = 'https://steamdb.info/';
+
+/** The form's section ids (each a tab / a panel shown one at a time). */
+export type SectionId = 'basics' | 'launch' | 'hero' | 'saves' | 'audio' | 'advanced';
+
+/** Section descriptors, consumed by configure.ts to build the tab bar (label = section heading). */
+export const FORM_SECTIONS: ReadonlyArray<{ readonly id: SectionId; readonly labelKey: MessageKey }> = [
+  { id: 'basics', labelKey: 'configure.sectionBasics' },
+  { id: 'launch', labelKey: 'configure.sectionLaunch' },
+  { id: 'hero', labelKey: 'configure.sectionHero' },
+  { id: 'saves', labelKey: 'configure.sectionSaves' },
+  { id: 'audio', labelKey: 'configure.sectionAudio' },
+  { id: 'advanced', labelKey: 'configure.sectionAdvanced' },
+];
+
 export interface FormViewDeps {
   /** The form container (#form-view). */
   readonly root: HTMLElement;
@@ -35,8 +53,12 @@ export interface FormViewDeps {
   readonly translator: () => Translator;
   /** A field changed → the owner re-serializes, validates and marks dirty. */
   readonly onChange: () => void;
-  /** Pick file(s)/a folder from the card for a Browse… button. */
+  /** Pick file(s)/a folder for a Browse… button (root is closed over in configure.ts). */
   readonly pickPath: (kind: ConfigPickKind) => Promise<ConfigPickResult>;
+  /** Read a card-relative image into a data URL for a hero thumbnail (null when unreadable). */
+  readonly imagePreview: (relative: string) => Promise<string | null>;
+  /** Open an external https URL (the appid helper link). */
+  readonly openExternal: (url: string) => void;
   /** Surface a picker rejection message in the status line. */
   readonly onPickError: (message: string) => void;
 }
@@ -73,6 +95,14 @@ interface DynamicList {
   setDisabled(disabled: boolean): void;
 }
 
+/** An audio field with a Default/Custom selector (Default → empty → omitted from game.json). */
+interface AudioField {
+  readonly wrapper: HTMLElement;
+  readonly input: ValueEl;
+  setValue(value: string): void;
+  setDisabled(disabled: boolean): void;
+}
+
 export class FormView {
   private readonly deps: FormViewDeps;
 
@@ -88,8 +118,11 @@ export class FormView {
   private readonly appidInput: ValueEl;
   private readonly saveOnCardInput: ValueEl;
   private readonly pcSavePathInput: ValueEl;
-  private readonly soundInputs: Readonly<Record<'play' | 'navigate' | 'button' | 'back', ValueEl>>;
-  private readonly backgroundMusicInput: ValueEl;
+  private readonly soundPlay: AudioField;
+  private readonly soundNavigate: AudioField;
+  private readonly soundButton: AudioField;
+  private readonly soundBack: AudioField;
+  private readonly music: AudioField;
   private readonly launchTimeoutInput: ValueEl;
 
   private readonly argsList: DynamicList;
@@ -103,6 +136,7 @@ export class FormView {
   private readonly steamSection: HTMLElement;
 
   private readonly mixedBanner: HTMLElement;
+  private readonly sectionPanels = new Map<SectionId, HTMLElement>();
 
   // Error / label / container registries.
   private readonly errorEls = new Map<FieldKey, HTMLElement>();
@@ -130,8 +164,7 @@ export class FormView {
     const schemaLine = document.createElement('div');
     schemaLine.className = 'field-static';
     this.labelRefs.push({ el: schemaLine, key: 'configure.schemaVersion' });
-
-    const basics = this.section('configure.sectionBasics', [
+    this.addSection('basics', [
       this.field('configure.fieldId', 'id', this.idInput),
       this.field('configure.fieldTitle', 'title', this.titleInput),
       schemaLine,
@@ -180,7 +213,17 @@ export class FormView {
     ]);
 
     this.appidInput = this.numberInput('steam');
-    this.steamSection = this.group([this.field('configure.fieldAppid', 'steam.appid', this.appidInput)]);
+    const appidHelp = document.createElement('a');
+    appidHelp.className = 'help-link';
+    appidHelp.href = '#';
+    this.labelRefs.push({ el: appidHelp, key: 'configure.appidHelp' });
+    appidHelp.addEventListener('click', (event) => {
+      event.preventDefault();
+      this.deps.openExternal(STEAMDB_URL);
+    });
+    const appidField = this.field('configure.fieldAppid', 'steam.appid', this.appidInput);
+    appidField.append(appidHelp);
+    this.steamSection = this.group([appidField]);
 
     this.watchList = this.dynamicList('watchProcesses', 'configure.fieldWatchProcesses');
     const watchHint = document.createElement('div');
@@ -188,7 +231,7 @@ export class FormView {
     this.labelRefs.push({ el: watchHint, key: 'configure.watchProcessesHint' });
     this.watchList.wrapper.append(watchHint);
 
-    const launch = this.section('configure.sectionLaunch', [
+    this.addSection('launch', [
       this.field('configure.launchType', null, this.launchType),
       this.execSection,
       this.installSection,
@@ -196,62 +239,63 @@ export class FormView {
       this.watchList.wrapper,
     ]);
 
-    // ── Hero images ────────────────────────────────────────────────────────
-    this.heroList = this.dynamicList('heroImage', 'configure.sectionHero', 'image');
-    const hero = this.section('configure.sectionHero', [this.heroList.wrapper]);
+    // ── Hero images (with thumbnails) ────────────────────────────────────────
+    this.heroList = this.dynamicList('heroImage', 'configure.sectionHero', {
+      browseKind: 'image',
+      preview: true,
+    });
+    this.addSection('hero', [this.heroList.wrapper]);
 
     // ── Saves ───────────────────────────────────────────────────────────────
     this.saveOnCardInput = this.textInput('saveOnCard');
     this.pcSavePathInput = this.textInput('pcSavePath');
     this.placeholderRefs.push({ el: this.pcSavePathInput, key: 'configure.pcSavePathPlaceholder' });
-    const saves = this.section('configure.sectionSaves', [
+    this.addSection('saves', [
       this.fieldWithBrowse('configure.fieldSaveOnCard', 'saveOnCard', this.saveOnCardInput, 'directory'),
-      // pcSavePath is an env-prefixed template (%APPDATA%\…) — a file dialog would yield an absolute path
-      // the validator rejects, so it is a plain text field with a placeholder hint (plan R6). No Browse.
-      this.field('configure.fieldPcSavePath', 'pcSavePath', this.pcSavePathInput),
+      // pcSavePath is an env-prefixed template (%APPDATA%\…). Its Browse picks a PC folder and main
+      // converts it back to a %PREFIX%/… value (plan R6 was reversed per user request #3).
+      this.fieldWithBrowse('configure.fieldPcSavePath', 'pcSavePath', this.pcSavePathInput, 'pc-save'),
     ]);
 
-    // ── Audio ────────────────────────────────────────────────────────────────
-    this.soundInputs = {
-      play: this.textInput('sounds'),
-      navigate: this.textInput('sounds'),
-      button: this.textInput('sounds'),
-      back: this.textInput('sounds'),
-    };
-    this.backgroundMusicInput = this.textInput('backgroundMusic');
-    const audio = this.section('configure.sectionAudio', [
-      this.fieldWithBrowse('configure.fieldSoundPlay', 'sounds.play', this.soundInputs.play, 'audio'),
-      this.fieldWithBrowse(
-        'configure.fieldSoundNavigate',
-        'sounds.navigate',
-        this.soundInputs.navigate,
-        'audio',
-      ),
-      this.fieldWithBrowse('configure.fieldSoundButton', 'sounds.button', this.soundInputs.button, 'audio'),
-      this.fieldWithBrowse('configure.fieldSoundBack', 'sounds.back', this.soundInputs.back, 'audio'),
-      this.fieldWithBrowse(
-        'configure.fieldBackgroundMusic',
-        'backgroundMusic',
-        this.backgroundMusicInput,
-        'audio',
-      ),
+    // ── Audio (Default/Custom per slot) ──────────────────────────────────────
+    this.soundPlay = this.audioField('configure.fieldSoundPlay', 'sounds.play', 'sounds', 'configure.soundBuiltinHint');
+    this.soundNavigate = this.audioField('configure.fieldSoundNavigate', 'sounds.navigate', 'sounds', 'configure.soundBuiltinHint');
+    this.soundButton = this.audioField('configure.fieldSoundButton', 'sounds.button', 'sounds', 'configure.soundBuiltinHint');
+    this.soundBack = this.audioField('configure.fieldSoundBack', 'sounds.back', 'sounds', 'configure.soundBuiltinHint');
+    this.music = this.audioField('configure.fieldBackgroundMusic', 'backgroundMusic', 'backgroundMusic', 'configure.musicNoneHint');
+    this.addSection('audio', [
+      this.soundPlay.wrapper,
+      this.soundNavigate.wrapper,
+      this.soundButton.wrapper,
+      this.soundBack.wrapper,
+      this.music.wrapper,
     ]);
 
     // ── Advanced ──────────────────────────────────────────────────────────────
     this.launchTimeoutInput = this.numberInput('launchTimeoutSec');
-    const advanced = this.section('configure.sectionAdvanced', [
+    this.addSection('advanced', [
       this.field('configure.fieldLaunchTimeout', 'launchTimeoutSec', this.launchTimeoutInput),
     ]);
 
-    deps.root.append(this.mixedBanner, basics, launch, hero, saves, audio, advanced);
     this.applyLabels();
     this.updateSectionVisibility();
+    this.showSection('basics');
   }
 
   // ── Public API ────────────────────────────────────────────────────────────
 
+  /** Shows one section panel (the tab bar in configure.ts drives this); hides the rest. */
+  showSection(id: SectionId): void {
+    for (const [sectionId, panel] of this.sectionPanels) panel.hidden = sectionId !== id;
+  }
+
   /** Populates the form from a parsed manifest (or its constituents), remembering rest/corrupt. */
-  load(model: ManifestFormModel, rest: Readonly<Record<string, unknown>>, corrupt: Readonly<Record<string, unknown>>, mixed: boolean): void {
+  load(
+    model: ManifestFormModel,
+    rest: Readonly<Record<string, unknown>>,
+    corrupt: Readonly<Record<string, unknown>>,
+    mixed: boolean,
+  ): void {
     this.rest = rest;
     this.corrupt = { ...corrupt };
     this.launchMode = model.launchMode;
@@ -263,7 +307,6 @@ export class FormView {
     this.setScalarChecked('runAsAdmin', this.runAsAdminSwitch, model.runAsAdmin);
     this.setScalar('saveOnCard', this.saveOnCardInput, model.saveOnCard);
     this.setScalar('pcSavePath', this.pcSavePathInput, model.pcSavePath);
-    this.setScalar('backgroundMusic', this.backgroundMusicInput, model.backgroundMusic);
     this.setScalar('launchTimeoutSec', this.launchTimeoutInput, model.launchTimeoutSec);
 
     this.setList('args', this.argsList, model.args);
@@ -281,12 +324,13 @@ export class FormView {
     // steam block (corrupt = whole block).
     this.setScalar('steam', this.appidInput, model.steam.appid);
 
-    // sounds block (corrupt = whole block).
+    // audio blocks (sounds corrupt = whole block; backgroundMusic is its own key).
     const soundsCorrupt = 'sounds' in this.corrupt;
-    this.soundInputs.play.value = soundsCorrupt ? '' : model.sounds.play;
-    this.soundInputs.navigate.value = soundsCorrupt ? '' : model.sounds.navigate;
-    this.soundInputs.button.value = soundsCorrupt ? '' : model.sounds.button;
-    this.soundInputs.back.value = soundsCorrupt ? '' : model.sounds.back;
+    this.soundPlay.setValue(soundsCorrupt ? '' : model.sounds.play);
+    this.soundNavigate.setValue(soundsCorrupt ? '' : model.sounds.navigate);
+    this.soundButton.setValue(soundsCorrupt ? '' : model.sounds.button);
+    this.soundBack.setValue(soundsCorrupt ? '' : model.sounds.back);
+    this.music.setValue('backgroundMusic' in this.corrupt ? '' : model.backgroundMusic);
 
     this.mixed = mixed;
     this.updateSectionVisibility();
@@ -311,18 +355,36 @@ export class FormView {
         unmapped.push(issue);
         continue;
       }
-      el.textContent = el.textContent !== null && el.textContent !== '' ? `${el.textContent}; ${issue.message}` : issue.message;
+      el.textContent =
+        el.textContent !== null && el.textContent !== '' ? `${el.textContent}; ${issue.message}` : issue.message;
     }
     return unmapped;
   }
 
   /** Enables/disables every control (blocked when the card is extracted). */
   setDisabled(disabled: boolean): void {
-    for (const el of this.allControls()) setElDisabled(el, disabled);
-    this.argsList.setDisabled(disabled);
-    this.watchList.setDisabled(disabled);
-    this.heroList.setDisabled(disabled);
-    this.installArgsList.setDisabled(disabled);
+    const controls: HTMLElement[] = [
+      this.idInput,
+      this.titleInput,
+      this.launchType,
+      this.executableInput,
+      this.runAsAdminSwitch,
+      this.installInstallerInput,
+      this.installType,
+      this.installRunAsAdminSwitch,
+      this.appidInput,
+      this.saveOnCardInput,
+      this.pcSavePathInput,
+      this.launchTimeoutInput,
+      ...[...this.deps.root.querySelectorAll('.field-row fluent-button')].map((e) => e as HTMLElement),
+    ];
+    for (const el of controls) setElDisabled(el, disabled);
+    for (const list of [this.argsList, this.watchList, this.heroList, this.installArgsList]) {
+      list.setDisabled(disabled);
+    }
+    for (const audio of [this.soundPlay, this.soundNavigate, this.soundButton, this.soundBack, this.music]) {
+      audio.setDisabled(disabled);
+    }
     // Keep the custom-installer rule even while enabling.
     if (!disabled) this.updateInstallRunAsAdminState(toInstallType(getValue(this.installType)));
   }
@@ -350,13 +412,13 @@ export class FormView {
       pcSavePath: getValue(this.pcSavePathInput),
       launchTimeoutSec: getValue(this.launchTimeoutInput),
       sounds: {
-        play: getValue(this.soundInputs.play),
-        navigate: getValue(this.soundInputs.navigate),
-        button: getValue(this.soundInputs.button),
-        back: getValue(this.soundInputs.back),
+        play: getValue(this.soundPlay.input),
+        navigate: getValue(this.soundNavigate.input),
+        button: getValue(this.soundButton.input),
+        back: getValue(this.soundBack.input),
         rest: {},
       },
-      backgroundMusic: getValue(this.backgroundMusicInput),
+      backgroundMusic: getValue(this.music.input),
       install: {
         installer: getValue(this.installInstallerInput),
         type: toInstallType(getValue(this.installType)),
@@ -458,14 +520,12 @@ export class FormView {
 
   // ── DOM builders ────────────────────────────────────────────────────────────
 
-  private section(titleKey: MessageKey, children: readonly HTMLElement[]): HTMLElement {
-    const section = document.createElement('section');
-    section.className = 'section';
-    const label = document.createElement('span');
-    label.className = 'section-label';
-    this.labelRefs.push({ el: label, key: titleKey });
-    section.append(label, ...children);
-    return section;
+  private addSection(id: SectionId, children: readonly HTMLElement[]): void {
+    const panel = document.createElement('section');
+    panel.className = 'form-section';
+    panel.append(...children);
+    this.sectionPanels.set(id, panel);
+    this.deps.root.append(panel);
   }
 
   private group(children: readonly HTMLElement[]): HTMLElement {
@@ -475,26 +535,20 @@ export class FormView {
     return group;
   }
 
-  // A labelled control. `corruptKey` (top-level manifest key) registers the field container so a corrupt
-  // note can be shown; `errorKey` registers the inline error slot.
+  // A labelled control. `errorKey` (when set) registers the inline error slot and the field container so a
+  // corrupt note can be shown.
   private field(labelKey: MessageKey, errorKey: FieldKey | null, control: HTMLElement): HTMLElement {
     const wrapper = document.createElement('div');
     wrapper.className = 'field';
-    const label = document.createElement('span');
-    label.className = 'field-label';
-    this.labelRefs.push({ el: label, key: labelKey });
-    wrapper.append(label, control);
+    wrapper.append(this.fieldLabel(labelKey), control);
     if (errorKey !== null) {
-      const error = document.createElement('div');
-      error.className = 'field-error';
-      this.errorEls.set(errorKey, error);
-      wrapper.append(error);
+      wrapper.append(this.errorSlot(errorKey));
       this.registerContainer(errorKey, wrapper);
     }
     return wrapper;
   }
 
-  // A labelled control with a trailing Browse… button that fills it from a card path.
+  // A labelled control with a trailing Browse… button that fills it from a picked path.
   private fieldWithBrowse(
     labelKey: MessageKey,
     errorKey: FieldKey,
@@ -503,12 +557,9 @@ export class FormView {
   ): HTMLElement {
     const wrapper = document.createElement('div');
     wrapper.className = 'field';
-    const label = document.createElement('span');
-    label.className = 'field-label';
-    this.labelRefs.push({ el: label, key: labelKey });
     const row = document.createElement('div');
     row.className = 'field-row';
-    const browse = this.browseButton(async () => {
+    const browse = this.textButton('configure.browse', async () => {
       const result = await this.deps.pickPath(kind);
       if (result.ok) {
         control.value = result.paths[0] ?? getValue(control);
@@ -519,20 +570,107 @@ export class FormView {
       }
     });
     row.append(control, browse);
-    const error = document.createElement('div');
-    error.className = 'field-error';
-    this.errorEls.set(errorKey, error);
-    wrapper.append(label, row, error);
+    wrapper.append(this.fieldLabel(labelKey), row, this.errorSlot(errorKey));
     this.registerContainer(errorKey, wrapper);
     return wrapper;
   }
 
-  private dynamicList(corruptKey: string, labelKey: MessageKey, browseKind?: ConfigPickKind): DynamicList {
+  // An audio field: a Default/Custom selector plus (in Custom) a text-input + Browse + clear. Default and
+  // Custom-empty both leave the value empty → the field is omitted from game.json (built-in sound / no
+  // music), and a hint says so. Value state IS the model (empty = default); the toggle is pure UI.
+  private audioField(
+    labelKey: MessageKey,
+    errorKey: FieldKey,
+    corruptKey: string,
+    hintKey: MessageKey,
+  ): AudioField {
     const wrapper = document.createElement('div');
     wrapper.className = 'field';
-    const label = document.createElement('span');
-    label.className = 'field-label';
-    this.labelRefs.push({ el: label, key: labelKey });
+
+    const toggle = document.createElement('div');
+    toggle.className = 'audio-toggle';
+    const defaultBtn = document.createElement('fluent-button');
+    const customBtn = document.createElement('fluent-button');
+    this.labelRefs.push({ el: defaultBtn, key: 'configure.audioDefault' });
+    this.labelRefs.push({ el: customBtn, key: 'configure.audioCustom' });
+    toggle.append(defaultBtn, customBtn);
+
+    const row = document.createElement('div');
+    row.className = 'field-row';
+    const input = document.createElement('fluent-text-input') as ValueEl;
+    input.setAttribute('type', 'text');
+    const browse = this.textButton('configure.browse', async () => {
+      const result = await this.deps.pickPath('audio');
+      if (result.ok) {
+        input.value = result.paths[0] ?? getValue(input);
+        setMode('custom');
+        this.clearCorrupt(corruptKey);
+        this.deps.onChange();
+      } else if (!('cancelled' in result)) {
+        this.deps.onPickError(result.message);
+      }
+    });
+    const clear = this.iconButton('configure.remove', () => {
+      input.value = '';
+      this.clearCorrupt(corruptKey);
+      refresh();
+      this.deps.onChange();
+    });
+    row.append(input, browse, clear);
+
+    const hint = document.createElement('div');
+    hint.className = 'field-hint';
+    this.labelRefs.push({ el: hint, key: hintKey });
+
+    wrapper.append(this.fieldLabel(labelKey), toggle, row, hint, this.errorSlot(errorKey));
+    this.registerContainer(errorKey, wrapper);
+
+    let mode: 'default' | 'custom' = 'default';
+    const refresh = (): void => {
+      const empty = getValue(input) === '';
+      row.hidden = mode === 'default';
+      hint.hidden = !(mode === 'default' || empty);
+      setActive(defaultBtn, mode === 'default');
+      setActive(customBtn, mode === 'custom');
+    };
+    const setMode = (next: 'default' | 'custom'): void => {
+      mode = next;
+      if (next === 'default') input.value = '';
+      refresh();
+    };
+    defaultBtn.addEventListener('click', () => {
+      setMode('default');
+      this.clearCorrupt(corruptKey);
+      this.deps.onChange();
+    });
+    customBtn.addEventListener('click', () => setMode('custom'));
+    input.addEventListener('input', () => {
+      this.clearCorrupt(corruptKey);
+      refresh();
+      this.deps.onChange();
+    });
+
+    return {
+      wrapper,
+      input,
+      setValue: (value) => {
+        mode = value === '' ? 'default' : 'custom';
+        input.value = value;
+        refresh();
+      },
+      setDisabled: (disabled) => {
+        for (const el of [input, browse, clear, defaultBtn, customBtn]) setElDisabled(el, disabled);
+      },
+    };
+  }
+
+  private dynamicList(
+    corruptKey: string,
+    labelKey: MessageKey,
+    opts: { readonly browseKind?: ConfigPickKind; readonly preview?: boolean } = {},
+  ): DynamicList {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'field';
     const rows = document.createElement('div');
     rows.className = 'list-rows';
     const buttonRow = document.createElement('div');
@@ -544,10 +682,40 @@ export class FormView {
       const input = document.createElement('fluent-text-input') as ValueEl;
       input.setAttribute('type', 'text');
       input.value = value;
+
+      let thumb: HTMLImageElement | null = null;
+      const refreshThumb = (): void => {
+        const el = thumb;
+        if (el === null) return;
+        const current = getValue(input);
+        if (current === '') {
+          el.hidden = true;
+          el.removeAttribute('src');
+          return;
+        }
+        void this.deps.imagePreview(current).then((url) => {
+          if (url !== null) {
+            el.src = url;
+            el.hidden = false;
+          } else {
+            el.hidden = true;
+            el.removeAttribute('src');
+          }
+        });
+      };
+      if (opts.preview === true) {
+        thumb = document.createElement('img');
+        thumb.className = 'hero-thumb';
+        thumb.alt = '';
+        thumb.hidden = true;
+        row.append(thumb);
+      }
+
       input.addEventListener('input', () => {
         this.clearCorrupt(corruptKey);
         this.deps.onChange();
       });
+      if (opts.preview === true) input.addEventListener('change', () => refreshThumb());
       const remove = this.iconButton('configure.remove', () => {
         row.remove();
         this.clearCorrupt(corruptKey);
@@ -555,6 +723,7 @@ export class FormView {
       });
       row.append(input, remove);
       rows.append(row);
+      refreshThumb();
     };
 
     const addBtn = this.textButton('configure.add', () => {
@@ -562,9 +731,10 @@ export class FormView {
       this.deps.onChange();
     });
     buttonRow.append(addBtn);
-    if (browseKind !== undefined) {
+    if (opts.browseKind !== undefined) {
+      const kind = opts.browseKind;
       const browse = this.textButton('configure.browse', async () => {
-        const result = await this.deps.pickPath(browseKind);
+        const result = await this.deps.pickPath(kind);
         if (result.ok) {
           for (const p of result.paths) addRow(p);
           this.clearCorrupt(corruptKey);
@@ -576,23 +746,18 @@ export class FormView {
       buttonRow.append(browse);
     }
 
-    const error = document.createElement('div');
-    error.className = 'field-error';
-    const errorKey = corruptKey === 'install' ? 'install.args' : (corruptKey as FieldKey);
-    this.errorEls.set(errorKey, error);
-    wrapper.append(label, rows, buttonRow, error);
+    const errorKey: FieldKey = corruptKey === 'install' ? 'install.args' : (corruptKey as FieldKey);
+    wrapper.append(this.fieldLabel(labelKey), rows, buttonRow, this.errorSlot(errorKey));
     this.registerContainer(errorKey, wrapper);
 
     return {
       wrapper,
-      values: () =>
-        [...rows.querySelectorAll('fluent-text-input')].map((el) => getValue(el as ValueEl)),
+      values: () => [...rows.querySelectorAll('fluent-text-input')].map((el) => getValue(el as ValueEl)),
       setValues: (values) => {
         rows.replaceChildren();
         for (const value of values) addRow(value);
       },
       setDisabled: (disabled) => {
-        setElDisabled(addBtn, disabled);
         for (const el of buttonRow.querySelectorAll('fluent-button')) setElDisabled(el as HTMLElement, disabled);
         for (const el of rows.querySelectorAll('fluent-text-input, fluent-button')) {
           setElDisabled(el as HTMLElement, disabled);
@@ -641,8 +806,18 @@ export class FormView {
     return dropdown;
   }
 
-  private browseButton(onClick: () => void | Promise<void>): HTMLElement {
-    return this.textButton('configure.browse', onClick);
+  private fieldLabel(labelKey: MessageKey): HTMLElement {
+    const label = document.createElement('span');
+    label.className = 'field-label';
+    this.labelRefs.push({ el: label, key: labelKey });
+    return label;
+  }
+
+  private errorSlot(errorKey: FieldKey): HTMLElement {
+    const error = document.createElement('div');
+    error.className = 'field-error';
+    this.errorEls.set(errorKey, error);
+    return error;
   }
 
   private textButton(labelKey: MessageKey, onClick: () => void | Promise<void>): HTMLElement {
@@ -675,29 +850,6 @@ export class FormView {
       if (key !== null) button.setAttribute('aria-label', t(key as MessageKey));
     }
   }
-
-  private allControls(): HTMLElement[] {
-    return [
-      this.idInput,
-      this.titleInput,
-      this.launchType,
-      this.executableInput,
-      this.runAsAdminSwitch,
-      this.installInstallerInput,
-      this.installType,
-      this.installRunAsAdminSwitch,
-      this.appidInput,
-      this.saveOnCardInput,
-      this.pcSavePathInput,
-      this.soundInputs.play,
-      this.soundInputs.navigate,
-      this.soundInputs.button,
-      this.soundInputs.back,
-      this.backgroundMusicInput,
-      this.launchTimeoutInput,
-      ...[...this.deps.root.querySelectorAll('.field-row fluent-button')].map((e) => e as HTMLElement),
-    ];
-  }
 }
 
 // ── Free helpers ──────────────────────────────────────────────────────────────
@@ -705,6 +857,12 @@ export class FormView {
 function setElDisabled(el: HTMLElement, disabled: boolean): void {
   if (disabled) el.setAttribute('disabled', '');
   else el.removeAttribute('disabled');
+}
+
+/** Marks a segmented button active (accent) or not — used by the audio Default/Custom toggle. */
+function setActive(button: HTMLElement, active: boolean): void {
+  if (active) button.setAttribute('appearance', 'accent');
+  else button.removeAttribute('appearance');
 }
 
 /** Narrows the install-type dropdown value to the enum (defaults to nsis for any unexpected value). */
