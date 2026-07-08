@@ -1,0 +1,449 @@
+// Pure (DOM-free, electron-free) bridge between the Configure form and game.json TEXT — the single source
+// of truth stays the manifest text (see plan R2), so the form only ever converts to/from a string that the
+// existing config:save pipeline writes verbatim. Testable in vitest.
+//
+// Two escape hatches keep the round-trip lossless and honest:
+//  • `rest`    — UNKNOWN keys (top-level and per-block) that zod would silently strip. The form must not
+//                drop them, so parse stashes them and serialize merges them back.
+//  • `corrupt` — KNOWN keys whose value has the wrong TYPE (e.g. `args: "x"`). We cannot "leniently take
+//                empty": validation runs on the SERIALIZED text, and a field with a default/optional would
+//                make the error vanish (→ green status, silent loss on Save). Instead the raw value is kept
+//                and written back verbatim until the user edits that field — so the server validator sees
+//                the original error, Save stays blocked, and nothing is lost. Granularity is the top-level
+//                key (a bad `sounds.play` marks the whole `sounds` block corrupt).
+
+/** The three mutually-exclusive launch methods (mirrors the manifest superRefine + the three templates). */
+export type LaunchMode = 'executable' | 'installer' | 'steam';
+
+/** Installer family (install.type enum). */
+export type InstallType = 'nsis' | 'inno' | 'custom';
+
+/** The `sounds` block as form state: one string per slot ('' = empty) plus this block's unknown keys. */
+export interface SoundsModel {
+  readonly play: string;
+  readonly navigate: string;
+  readonly button: string;
+  readonly back: string;
+  readonly rest: Readonly<Record<string, unknown>>;
+}
+
+/** The `install` block as form state (numbers/booleans typed; args as a list) plus its unknown keys. */
+export interface InstallModel {
+  readonly installer: string;
+  readonly type: InstallType;
+  readonly runAsAdmin: boolean;
+  readonly args: readonly string[];
+  readonly rest: Readonly<Record<string, unknown>>;
+}
+
+/** The `steam` block as form state (appid kept as numeric TEXT — the control's value is a string). */
+export interface SteamModel {
+  readonly appid: string;
+  readonly rest: Readonly<Record<string, unknown>>;
+}
+
+/**
+ * All form fields, including the sections hidden by the current launch mode (they live here until
+ * serialization, so switching modes and back restores what was typed — see plan R5). Numbers are kept as
+ * TEXT (`launchTimeoutSec`, `steam.appid`) because the Fluent text-input value is a string; serialization
+ * parses them.
+ */
+export interface ManifestFormModel {
+  readonly launchMode: LaunchMode;
+  readonly id: string;
+  readonly title: string;
+  readonly executable: string;
+  readonly args: readonly string[];
+  readonly runAsAdmin: boolean;
+  readonly watchProcesses: readonly string[];
+  readonly heroImage: readonly string[];
+  readonly saveOnCard: string;
+  readonly pcSavePath: string;
+  readonly launchTimeoutSec: string;
+  readonly sounds: SoundsModel;
+  readonly backgroundMusic: string;
+  readonly install: InstallModel;
+  readonly steam: SteamModel;
+}
+
+export type ParseFormResult =
+  | {
+      readonly ok: true;
+      readonly model: ManifestFormModel;
+      /** Unknown top-level keys, preserved across the round-trip. */
+      readonly rest: Readonly<Record<string, unknown>>;
+      /** Known top-level keys with an invalid value type, kept raw and written back verbatim. */
+      readonly corrupt: Readonly<Record<string, unknown>>;
+      /** The source carried blocks for more than one launch mode (steam + install/executable) — the form
+       * activates one and a banner warns that saving drops the others (plan R5). */
+      readonly mixed: boolean;
+    }
+  | { readonly ok: false; readonly message: string };
+
+/** The known top-level manifest keys the form owns. Exported so a unit test can guard it against
+ * `manifestJsonSchema()` properties — a new schema field must be added here (else it silently lands in
+ * `rest`). Order here is NOT the serialization order (see formModelToText). */
+export const KNOWN_MANIFEST_KEYS: readonly string[] = [
+  'schemaVersion',
+  'id',
+  'title',
+  'executable',
+  'args',
+  'runAsAdmin',
+  'watchProcesses',
+  'heroImage',
+  'saveOnCard',
+  'pcSavePath',
+  'launchTimeoutSec',
+  'sounds',
+  'backgroundMusic',
+  'install',
+  'steam',
+];
+
+const KNOWN_KEY_SET = new Set(KNOWN_MANIFEST_KEYS);
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isStringArray(value: unknown): value is readonly string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === 'string');
+}
+
+function emptySounds(): SoundsModel {
+  return { play: '', navigate: '', button: '', back: '', rest: {} };
+}
+
+function emptyInstall(): InstallModel {
+  return { installer: '', type: 'nsis', runAsAdmin: false, args: [], rest: {} };
+}
+
+function emptySteam(): SteamModel {
+  return { appid: '', rest: {} };
+}
+
+/** A pristine, all-empty form model (executable mode) — used for a blank drive and the empty baseline of
+ * the template-replace confirm (plan R8). */
+export function emptyFormModel(): ManifestFormModel {
+  return {
+    launchMode: 'executable',
+    id: '',
+    title: '',
+    executable: '',
+    args: [],
+    runAsAdmin: false,
+    watchProcesses: [],
+    heroImage: [],
+    saveOnCard: '',
+    pcSavePath: '',
+    launchTimeoutSec: '',
+    sounds: emptySounds(),
+    backgroundMusic: '',
+    install: emptyInstall(),
+    steam: emptySteam(),
+  };
+}
+
+/** Parses a `sounds` object; null = a known slot had the wrong type (→ the whole block is corrupt). */
+function parseSounds(source: Record<string, unknown>): SoundsModel | null {
+  const slots: { play: string; navigate: string; button: string; back: string } = {
+    play: '',
+    navigate: '',
+    button: '',
+    back: '',
+  };
+  const rest: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(source)) {
+    if (key === 'play' || key === 'navigate' || key === 'button' || key === 'back') {
+      if (typeof value !== 'string') return null;
+      slots[key] = value;
+    } else {
+      rest[key] = value;
+    }
+  }
+  return { ...slots, rest };
+}
+
+/** Parses an `install` object; null = a known field had the wrong type/enum (→ the block is corrupt). */
+function parseInstall(source: Record<string, unknown>): InstallModel | null {
+  let installer = '';
+  let type: InstallType = 'nsis';
+  let runAsAdmin = false;
+  let args: readonly string[] = [];
+  const rest: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(source)) {
+    switch (key) {
+      case 'installer':
+        if (typeof value !== 'string') return null;
+        installer = value;
+        break;
+      case 'type':
+        if (value !== 'nsis' && value !== 'inno' && value !== 'custom') return null;
+        type = value;
+        break;
+      case 'runAsAdmin':
+        if (typeof value !== 'boolean') return null;
+        runAsAdmin = value;
+        break;
+      case 'args':
+        if (!isStringArray(value)) return null;
+        args = value;
+        break;
+      default:
+        rest[key] = value;
+    }
+  }
+  return { installer, type, runAsAdmin, args, rest };
+}
+
+/** Parses a `steam` object; null = appid had the wrong type (→ the block is corrupt). */
+function parseSteam(source: Record<string, unknown>): SteamModel | null {
+  let appid = '';
+  const rest: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(source)) {
+    if (key === 'appid') {
+      if (typeof value !== 'number') return null;
+      appid = String(value);
+    } else {
+      rest[key] = value;
+    }
+  }
+  return { appid, rest };
+}
+
+/**
+ * Parses manifest TEXT into a form model. ok:false only for a syntax error or a non-object top-level (the
+ * form cannot represent those — the caller keeps the JSON tab, plan R4). A syntactically valid but
+ * schema-invalid manifest still parses: wrong-typed known fields go to `corrupt` and are written back
+ * verbatim so the server validator still reports them.
+ */
+export function textToFormModel(text: string): ParseFormResult {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text) as unknown;
+  } catch (cause) {
+    return { ok: false, message: cause instanceof Error ? cause.message : String(cause) };
+  }
+  if (!isRecord(parsed)) {
+    return { ok: false, message: 'game.json must be a JSON object' };
+  }
+  const source = parsed;
+  const rest: Record<string, unknown> = {};
+  const corrupt: Record<string, unknown> = {};
+
+  // Unknown top-level keys → rest (verbatim).
+  for (const [key, value] of Object.entries(source)) {
+    if (!KNOWN_KEY_SET.has(key)) rest[key] = value;
+  }
+
+  // A known key present with the wrong type → corrupt (raw). `has` tracks presence for launch-mode logic.
+  const has = (key: string): boolean => Object.prototype.hasOwnProperty.call(source, key);
+
+  // schemaVersion is fixed at 1 and re-emitted from the model; only a PRESENT wrong value is corrupt.
+  if (has('schemaVersion') && source['schemaVersion'] !== 1) corrupt['schemaVersion'] = source['schemaVersion'];
+
+  const readString = (key: string): string => {
+    if (!has(key)) return '';
+    const value = source[key];
+    if (typeof value === 'string') return value;
+    corrupt[key] = value;
+    return '';
+  };
+
+  const id = readString('id');
+  const title = readString('title');
+  const executable = readString('executable');
+  const saveOnCard = readString('saveOnCard');
+  const pcSavePath = readString('pcSavePath');
+  const backgroundMusic = readString('backgroundMusic');
+
+  let runAsAdmin = false;
+  if (has('runAsAdmin')) {
+    if (typeof source['runAsAdmin'] === 'boolean') runAsAdmin = source['runAsAdmin'];
+    else corrupt['runAsAdmin'] = source['runAsAdmin'];
+  }
+
+  let args: readonly string[] = [];
+  if (has('args')) {
+    if (isStringArray(source['args'])) args = source['args'];
+    else corrupt['args'] = source['args'];
+  }
+
+  let watchProcesses: readonly string[] = [];
+  if (has('watchProcesses')) {
+    if (isStringArray(source['watchProcesses'])) watchProcesses = source['watchProcesses'];
+    else corrupt['watchProcesses'] = source['watchProcesses'];
+  }
+
+  let heroImage: readonly string[] = [];
+  if (has('heroImage')) {
+    const value = source['heroImage'];
+    if (typeof value === 'string') heroImage = [value];
+    else if (isStringArray(value)) heroImage = value;
+    else corrupt['heroImage'] = value;
+  }
+
+  let launchTimeoutSec = '';
+  if (has('launchTimeoutSec')) {
+    if (typeof source['launchTimeoutSec'] === 'number') launchTimeoutSec = String(source['launchTimeoutSec']);
+    else corrupt['launchTimeoutSec'] = source['launchTimeoutSec'];
+  }
+
+  let sounds = emptySounds();
+  if (has('sounds')) {
+    const value = source['sounds'];
+    const parsedSounds = isRecord(value) ? parseSounds(value) : null;
+    if (parsedSounds !== null) sounds = parsedSounds;
+    else corrupt['sounds'] = value;
+  }
+
+  let install = emptyInstall();
+  if (has('install')) {
+    const value = source['install'];
+    const parsedInstall = isRecord(value) ? parseInstall(value) : null;
+    if (parsedInstall !== null) install = parsedInstall;
+    else corrupt['install'] = value;
+  }
+
+  let steam = emptySteam();
+  if (has('steam')) {
+    const value = source['steam'];
+    const parsedSteam = isRecord(value) ? parseSteam(value) : null;
+    if (parsedSteam !== null) steam = parsedSteam;
+    else corrupt['steam'] = value;
+  }
+
+  // Launch mode: steam > install > executable (plan R5). Presence (not validity) decides — a corrupt
+  // block still selects its mode, and its raw value is re-emitted from `corrupt` so the error shows.
+  const launchMode: LaunchMode = has('steam') ? 'steam' : has('install') ? 'installer' : 'executable';
+  const mixed = has('steam') && (has('install') || has('executable'));
+
+  const model: ManifestFormModel = {
+    launchMode,
+    id,
+    title,
+    executable,
+    args,
+    runAsAdmin,
+    watchProcesses,
+    heroImage,
+    saveOnCard,
+    pcSavePath,
+    launchTimeoutSec,
+    sounds,
+    backgroundMusic,
+    install,
+    steam,
+  };
+  return { ok: true, model, rest, corrupt, mixed };
+}
+
+export function launchModeOf(model: ManifestFormModel): LaunchMode {
+  return model.launchMode;
+}
+
+/** Drops empty/whitespace-only entries from a dynamic list before serialization (plan edge cases). */
+function nonEmpty(list: readonly string[]): string[] {
+  return list.filter((item) => item.trim() !== '');
+}
+
+/** A numeric text field → a JSON value: undefined when blank (→ omitted), a number when parseable, else
+ * the raw trimmed string so the validator reports "expected number" instead of silently dropping it. */
+function numericValue(text: string): number | string | undefined {
+  const trimmed = text.trim();
+  if (trimmed === '') return undefined;
+  const parsed = Number(trimmed);
+  return Number.isFinite(parsed) ? parsed : trimmed;
+}
+
+const DEFAULT_LAUNCH_TIMEOUT = 30;
+
+/** launchTimeoutSec → value or undefined (omit when blank OR equal to the schema default of 30). */
+function timeoutValue(text: string): number | string | undefined {
+  const value = numericValue(text);
+  if (value === undefined) return undefined;
+  if (typeof value === 'number' && value === DEFAULT_LAUNCH_TIMEOUT) return undefined;
+  return value;
+}
+
+function buildInstall(install: InstallModel): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  if (install.installer !== '') out.installer = install.installer;
+  out.type = install.type;
+  if (install.runAsAdmin) out.runAsAdmin = true;
+  const args = nonEmpty(install.args);
+  if (args.length > 0) out.args = args;
+  for (const [key, value] of Object.entries(install.rest)) out[key] = value;
+  return out;
+}
+
+function buildSteam(steam: SteamModel): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  const appid = numericValue(steam.appid);
+  if (appid !== undefined) out.appid = appid;
+  for (const [key, value] of Object.entries(steam.rest)) out[key] = value;
+  return out;
+}
+
+function buildSounds(sounds: SoundsModel): Record<string, unknown> | undefined {
+  const out: Record<string, unknown> = {};
+  if (sounds.play !== '') out.play = sounds.play;
+  if (sounds.navigate !== '') out.navigate = sounds.navigate;
+  if (sounds.button !== '') out.button = sounds.button;
+  if (sounds.back !== '') out.back = sounds.back;
+  for (const [key, value] of Object.entries(sounds.rest)) out[key] = value;
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/**
+ * Serializes a form model back to manifest TEXT (2-space indent, trailing newline). Only the ACTIVE launch
+ * mode's fields are written (writing hidden modes would trip the superRefine exclusivity). Fields equal to
+ * their schema default (args [], runAsAdmin false, launchTimeoutSec 30) are omitted so the manifest stays
+ * minimal. `corrupt` (raw known keys) and `rest` (unknown keys) are overlaid last, verbatim — corrupt wins
+ * over the model value (an unedited broken field) and preserves the original validation error.
+ */
+export function formModelToText(
+  model: ManifestFormModel,
+  rest: Readonly<Record<string, unknown>>,
+  corrupt: Readonly<Record<string, unknown>>,
+): string {
+  const out: Record<string, unknown> = {};
+  out.schemaVersion = 1;
+  if (model.id !== '') out.id = model.id;
+  if (model.title !== '') out.title = model.title;
+
+  if (model.launchMode === 'steam') {
+    out.steam = buildSteam(model.steam);
+  } else {
+    if (model.executable !== '') out.executable = model.executable;
+    const args = nonEmpty(model.args);
+    if (args.length > 0) out.args = args;
+    if (model.runAsAdmin) out.runAsAdmin = true;
+    if (model.launchMode === 'installer') out.install = buildInstall(model.install);
+  }
+
+  const watch = nonEmpty(model.watchProcesses);
+  if (watch.length > 0) out.watchProcesses = watch;
+
+  const hero = nonEmpty(model.heroImage);
+  if (hero.length === 1) out.heroImage = hero[0];
+  else if (hero.length > 1) out.heroImage = hero;
+
+  if (model.saveOnCard !== '') out.saveOnCard = model.saveOnCard;
+  if (model.pcSavePath !== '') out.pcSavePath = model.pcSavePath;
+
+  const sounds = buildSounds(model.sounds);
+  if (sounds !== undefined) out.sounds = sounds;
+  if (model.backgroundMusic !== '') out.backgroundMusic = model.backgroundMusic;
+
+  const timeout = timeoutValue(model.launchTimeoutSec);
+  if (timeout !== undefined) out.launchTimeoutSec = timeout;
+
+  // Overlay raw corrupt values (a broken known key wins over the model until the user edits it) then the
+  // unknown top-level keys — both verbatim, so the round-trip is lossless and errors stay visible.
+  for (const [key, value] of Object.entries(corrupt)) out[key] = value;
+  for (const [key, value] of Object.entries(rest)) out[key] = value;
+
+  return `${JSON.stringify(out, null, 2)}\n`;
+}

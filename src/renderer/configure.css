@@ -101,6 +101,104 @@ fluent-listbox[popover] {
   gap: 8px;
 }
 
+/* Edit-mode tabs (Form / JSON). Two buttons acting as a segmented control; the active one is marked
+   accent from the renderer (appearance="accent"). */
+#mode-tabs {
+  flex: none;
+  display: flex;
+  gap: 4px;
+}
+
+/* Interactive form: grows to fill the remaining height and scrolls vertically inside the flex column. */
+#form-view {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding-right: 4px; /* keep the scrollbar off the controls */
+}
+
+/* A launch-mode section wrapper (executable / installer / steam blocks) — stacks its fields. */
+.field-group {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* One labelled control: a stacked label + input(s) + inline error. */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.field-label {
+  font-size: 12px;
+  color: var(--colorNeutralForeground2, #adadad);
+}
+
+/* A control paired with a trailing Browse… button on the same row. */
+.field-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.field-row fluent-text-input {
+  flex: 1 1 auto;
+}
+
+/* A read-only informational line (e.g. "Schema version: 1"). */
+.field-static {
+  font-size: 13px;
+  color: var(--colorNeutralForeground2, #adadad);
+}
+
+/* Inline per-field validation error (mirrors the issues panel colour). Hidden until it has text. */
+.field-error {
+  font-size: 12px;
+  color: var(--colorStatusDangerForeground1, #f87171);
+}
+
+.field-error:empty {
+  display: none;
+}
+
+/* A per-field hint (the corrupt-value note, the {dir} note, the watchProcesses format note). */
+.field-hint {
+  font-size: 12px;
+  color: var(--colorNeutralForeground3, #8a8a8a);
+}
+
+/* Dynamic string lists (args, watchProcesses, heroImage, install.args): a stack of rows + an Add button. */
+.list-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.list-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.list-row fluent-text-input {
+  flex: 1 1 auto;
+}
+
+/* Warning banner shown when the loaded manifest carries blocks for more than one launch mode. */
+#mixed-banner {
+  flex: none;
+  padding: 8px 12px;
+  border-radius: 4px;
+  font-size: 12px;
+  color: var(--colorStatusWarningForeground1, #e6b800);
+  background: var(--colorNeutralBackground2, #2a2a2a);
+}
+
 /* Editor: grows to fill the remaining height; CodeMirror fills the box. */
 #editor-section {
   flex: 1 1 auto;

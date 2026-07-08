@@ -11,11 +11,14 @@
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import fse from 'fs-extra';
-import { app, ipcMain, type BrowserWindow } from 'electron';
+import { app, dialog, ipcMain, BrowserWindow, type WebContents } from 'electron';
 import {
   IPC,
   MANIFEST_FILENAME,
   type AppSettings,
+  type ConfigPickKind,
+  type ConfigPickRequest,
+  type ConfigPickResult,
   type ConfigReadResult,
   type ConfigSaveResult,
   type ConfigValidationResult,
@@ -24,12 +27,36 @@ import {
 } from '../shared/types';
 import { type Translator } from '../shared/i18n/index';
 import { type AppSettingsStore } from './app-settings';
+import { AUDIO_EXTENSIONS, IMAGE_EXTENSIONS } from './asset-reader';
 import { listDriveCandidates } from './drive-watcher';
 import { validateManifestText, manifestJsonSchema } from './manifest';
 import { MANIFEST_TEMPLATES } from './manifest-templates';
 import { writeFileAtomic } from './save-sync';
 import { describe } from './util';
 import { log } from './logger';
+
+/** OS-dialog `properties` for a pick kind: a folder picker for `directory`, multi-file for images. */
+function pickProperties(kind: ConfigPickKind): Electron.OpenDialogOptions['properties'] {
+  if (kind === 'directory') return ['openDirectory'];
+  if (kind === 'image') return ['openFile', 'multiSelections'];
+  return ['openFile'];
+}
+
+/** Extension filters for a file pick, from the AssetReader single source of truth (dot-less names).
+ * The filter NAMES are shown by the OS as-is; kept in English like the wallpaper picker (ipc.ts). */
+function pickFilters(kind: ConfigPickKind): Electron.FileFilter[] {
+  switch (kind) {
+    case 'image':
+      return [{ name: 'Images', extensions: [...IMAGE_EXTENSIONS] }];
+    case 'audio':
+      return [{ name: 'Audio', extensions: [...AUDIO_EXTENSIONS] }];
+    case 'executable':
+    case 'installer':
+      return [{ name: 'Executable', extensions: ['exe'] }];
+    case 'directory':
+      return [];
+  }
+}
 
 // Blank-drive insertion is only visible via enumeration (DriveWatcher events fire for cards WITH a
 // game.json only), so we poll while the window is visible. 2s is a fine cost for a foreground window.
@@ -71,6 +98,11 @@ export class GameConfigService {
       ): Promise<ConfigSaveResult> => this.save(payload.root, payload.text),
     );
     ipcMain.handle(IPC.configTemplatesRequest, (): ConfigTemplates => MANIFEST_TEMPLATES);
+    ipcMain.handle(
+      IPC.configPickPath,
+      (event, payload: ConfigPickRequest): Promise<ConfigPickResult> =>
+        this.pickPath(event.sender, payload.root, payload.kind),
+    );
     ipcMain.handle(IPC.configSchemaRequest, (): unknown => manifestJsonSchema());
     ipcMain.handle(IPC.configSettingsRequest, (): Promise<AppSettings> =>
       this.deps.settings.read(),
@@ -158,6 +190,52 @@ export class GameConfigService {
         : { saved: true, applied: 'failed', message: applied.message };
     }
     return { saved: true, applied: 'deferred' };
+  }
+
+  // ── File/folder picker for the Configure form (paths card-relative) ─────────
+
+  /**
+   * Picks file(s)/a folder from the card via the native dialog (parented to the Configure window) and
+   * returns card-RELATIVE paths with forward slashes. Mirrors pickWallpaper's shape (ipc.ts) but adds the
+   * two manifest guarantees: the `root` is re-checked against the live candidates (never trusted), and
+   * every picked path is verified to stay INSIDE the root (path.relative without `..`/absolute) — a file
+   * chosen elsewhere is rejected rather than turned into a `..`-escape. For a `directory` pick the card
+   * root itself yields an empty relative, which the manifest's `min(1)` would reject, so it is refused too.
+   */
+  private async pickPath(
+    sender: WebContents,
+    root: string,
+    kind: ConfigPickKind,
+  ): Promise<ConfigPickResult> {
+    const t = this.deps.getTranslator();
+    if (!(await this.isAllowedRoot(root))) {
+      return { ok: false, message: t('errors.driveUnavailable') };
+    }
+    const parent = BrowserWindow.fromWebContents(sender);
+    const filters = pickFilters(kind);
+    const options: Electron.OpenDialogOptions = {
+      defaultPath: root,
+      properties: pickProperties(kind),
+      ...(filters.length > 0 ? { filters } : {}),
+    };
+    const result =
+      parent !== null ? await dialog.showOpenDialog(parent, options) : await dialog.showOpenDialog(options);
+    if (result.canceled || result.filePaths.length === 0) return { ok: false, cancelled: true };
+
+    const relatives: string[] = [];
+    for (const absolute of result.filePaths) {
+      const relative = path.relative(root, absolute);
+      // Outside the card (a `..`-leading or absolute relative) — or the root itself for a folder pick
+      // (empty relative) — is rejected: we never emit an escaping or empty manifest path.
+      if (relative === '' || relative.startsWith('..') || path.isAbsolute(relative)) {
+        return {
+          ok: false,
+          message: t(kind === 'directory' ? 'configure.pickChooseSubfolder' : 'configure.pickOutsideCard'),
+        };
+      }
+      relatives.push(relative.split(path.sep).join('/'));
+    }
+    return { ok: true, paths: relatives };
   }
 
   /** True when `root` is a current removable/non-system mountpoint (anti-arbitrary-write check). */

@@ -479,6 +479,9 @@ export const IPC = {
   configLanguageRequest: 'config:language-request',
   /** main → configure-renderer: updated effective UI locale (pushed when the language changes). */
   configLanguageUpdate: 'config:language-update',
+  /** configure-renderer → main (invoke): pick file(s)/a folder from the card via a native dialog →
+   * ConfigPickResult (paths card-relative). Payload ConfigPickRequest. */
+  configPickPath: 'config:pick-path',
 } as const;
 
 /** Editor commands dispatched from the Configure window's native right-click menu. */
@@ -536,6 +539,29 @@ export interface ConfigTemplates {
   readonly installer: string;
   readonly steam: string;
 }
+
+/**
+ * What the Configure form's Browse button is picking — drives the dialog's filters and mode:
+ * file pickers for exe/installer/image/audio (image is multi-select), a folder picker for `directory`.
+ */
+export type ConfigPickKind = 'executable' | 'installer' | 'image' | 'audio' | 'directory';
+
+/** Request payload for config:pick-path: the card root (re-checked in main) and the pick kind. */
+export interface ConfigPickRequest {
+  readonly root: string;
+  readonly kind: ConfigPickKind;
+}
+
+/**
+ * Result of picking path(s) from the card via the native dialog. On success `paths` are card-RELATIVE
+ * with forward slashes (ready to drop into game.json). A discriminated union (untrusted external action →
+ * Result-union): success (one or more relative paths), a plain cancellation, or a rejection carrying a
+ * localized message (a file outside the card root, the card root itself for a folder pick, …).
+ */
+export type ConfigPickResult =
+  | { readonly ok: true; readonly paths: readonly string[] }
+  | { readonly ok: false; readonly cancelled: true }
+  | { readonly ok: false; readonly message: string };
 
 /** API that preload exposes on `window.api`. */
 export interface RendererApi {
@@ -624,6 +650,8 @@ export interface ConfigureApi {
   saveConfig(root: string, text: string): Promise<ConfigSaveResult>;
   /** The three starter templates as JSON strings. */
   getTemplates(): Promise<ConfigTemplates>;
+  /** Pick file(s)/a folder from the card via a native dialog; resolves with card-relative paths. */
+  pickPath(root: string, kind: ConfigPickKind): Promise<ConfigPickResult>;
   /** The manifest JSON Schema, fed to the editor for completions/hover. */
   getSchema(): Promise<unknown>;
   /** The current AppSettings (for the window theme). */

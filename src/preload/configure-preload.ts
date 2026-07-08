@@ -10,6 +10,8 @@ import type {
   AppSettings,
   ConfigEditorCommand,
   ConfigureApi,
+  ConfigPickKind,
+  ConfigPickResult,
   ConfigReadResult,
   ConfigSaveResult,
   ConfigTemplates,
@@ -34,6 +36,7 @@ const CHANNELS = {
   configTitleBarOverlay: 'config:titlebar-overlay',
   configLanguageRequest: 'config:language-request',
   configLanguageUpdate: 'config:language-update',
+  configPickPath: 'config:pick-path',
 } as const satisfies Partial<typeof IPC>;
 
 const api: ConfigureApi = {
@@ -59,6 +62,9 @@ const api: ConfigureApi = {
   },
   getTemplates(): Promise<ConfigTemplates> {
     return ipcRenderer.invoke(CHANNELS.configTemplatesRequest) as Promise<ConfigTemplates>;
+  },
+  pickPath(root: string, kind: ConfigPickKind): Promise<ConfigPickResult> {
+    return ipcRenderer.invoke(CHANNELS.configPickPath, { root, kind }) as Promise<ConfigPickResult>;
   },
   getSchema(): Promise<unknown> {
     return ipcRenderer.invoke(CHANNELS.configSchemaRequest) as Promise<unknown>;
