@@ -24,7 +24,7 @@ import { type PcStore } from './pc-store';
 import { type StatsService } from './stats';
 import { type DriveWatcher } from './drive-watcher';
 import { readManifest, type ManifestEnv } from './manifest';
-import { syncDir } from './save-sync';
+import { syncDir, syncByChange, snapshotTree } from './save-sync';
 import {
   launchGame,
   launchInstaller,
@@ -475,10 +475,30 @@ export class GameController {
     if (manifest.saveOnCardPath === undefined) return;
     const pending = await this.deps.store.getPending(manifest.raw.id);
     if (pending === null) return;
+    // Direct, NOT change-based (deliberate — see the plan, part B): the snapshot exists precisely because
+    // the card was yanked mid-game and we are OBLIGED to top up the promised PC progress onto the card.
+    // LWW here would silently drop that flush if the card looked "unchanged"/newer, so keep it a plain
+    // snapshot→card replace.
     await syncDir(pending.savesSnapshotDir, manifest.saveOnCardPath);
     const stats = await this.deps.stats.read(manifest.raw.id);
     await this.deps.stats.copyToCard(manifest.root, stats);
     await this.deps.store.clearPending(manifest.raw.id);
+    // The card now holds the flushed progress, so both sides are back in sync. Rebase the baseline from
+    // the real folders (each in its own mtime scale) so the next launch sees them as synced, not as a
+    // spurious card-side change that would trigger a needless card→PC.
+    await this.rebaseSyncStateAfterFlush(manifest);
+  }
+
+  /** Records a fresh sync baseline from both real save folders (used after a direct pending-flush). */
+  private async rebaseSyncStateAfterFlush(manifest: ResolvedManifest): Promise<void> {
+    const cardPath = manifest.saveOnCardPath;
+    const pcPath = manifest.pcSavePath;
+    if (cardPath === undefined || pcPath === undefined) return;
+    await this.deps.store.writeSyncState(manifest.raw.id, {
+      card: await snapshotTree(cardPath),
+      pc: await snapshotTree(pcPath),
+      syncedAt: Date.now(),
+    });
   }
 
   // ── Reaction to card removal ─────────────────────────────────────────────
@@ -780,12 +800,23 @@ export class GameController {
     // Declared before the try so `finally` can dispose the kept HANDLE (elevated path).
     let proc: GameProcess | null = null;
     try {
-      // 1. SD→PC (if sync is configured). A missing card source is normal on first run (no saves yet),
-      // so this direction only logs the attempt — no warning.
+      // 1. Change-based sync before the game (phase = sync-in). No longer a blind card→PC: if the PC
+      // saves changed since the last sync (e.g. played on another PC last, or this PC is newer) they are
+      // NOT overwritten — the changed side wins (see save-sync change-detection). The old card→PC is only
+      // the first-run fallback (no baseline yet).
       state.set({ kind: 'syncing-in', game: info });
       if (manifest.pcSavePath !== undefined && manifest.saveOnCardPath !== undefined) {
-        log.info(`[sync-in] copying saves card→PC "${manifest.saveOnCardPath}" → "${manifest.pcSavePath}"`);
-        await syncDir(manifest.saveOnCardPath, manifest.pcSavePath);
+        // Soft catch: sync-in can now WRITE to the card (change-detection may pick PC→card) — a new
+        // failure point BEFORE launch (a full / write-protected / slow card). The launch never depended
+        // on a card write before, so keep it that way: log and start the game regardless (mirrors sync-out).
+        try {
+          log.info(
+            `[sync-in] change-based sync between card "${manifest.saveOnCardPath}" and PC "${manifest.pcSavePath}"`,
+          );
+          await this.runSaveSync(manifest, 'card-to-pc');
+        } catch (cause) {
+          log.warn('[sync-in] change-based sync failed, launching anyway:', describe(cause));
+        }
       }
 
       // 2/3/4. launch, then wait for the game to appear and to exit. THREE backends:
@@ -1114,6 +1145,36 @@ export class GameController {
     this.deps.window.showAndFocus();
   }
 
+  /**
+   * Runs a bidirectional, change-based save sync (syncByChange) and persists the new baseline. The
+   * `fallback` direction is used only on the FIRST run (no baseline yet): 'card-to-pc' for sync-in,
+   * 'pc-to-card' for sync-out — i.e. the phase's old deterministic direction. Otherwise the direction is
+   * chosen by which side changed since the last sync. A conflict (both changed) and a fallback are logged.
+   * Throws propagate to the caller (sync-in swallows them softly; sync-out defers to pending-flush).
+   */
+  private async runSaveSync(
+    manifest: ResolvedManifest,
+    fallback: 'card-to-pc' | 'pc-to-card',
+  ): Promise<void> {
+    const cardPath = manifest.saveOnCardPath;
+    const pcPath = manifest.pcSavePath;
+    if (cardPath === undefined || pcPath === undefined) return;
+    const id = manifest.raw.id;
+    const baseline = await this.deps.store.readSyncState(id);
+    const result = await syncByChange(cardPath, pcPath, baseline, fallback);
+    if (result.conflict) {
+      // The only branch that can lose data: both sides changed, LWW picked one. The losing side survives
+      // only as syncDir's `<dest>.bak`. Logged loudly so it's visible in the diagnostics.
+      log.warn(
+        `[save-sync] CONFLICT id=${id}: both sides changed since last sync → ${result.direction} by LWW (losing side kept as <dest>.bak)`,
+      );
+    }
+    log.info(
+      `[save-sync] id=${id} direction=${result.direction}${result.usedFallback ? ' (fallback: no baseline)' : ''}`,
+    );
+    await this.deps.store.writeSyncState(id, result.state);
+  }
+
   private async performSyncOut(manifest: ResolvedManifest, stats: Stats): Promise<void> {
     const id = manifest.raw.id;
     // The card is already removed (the expected scenario) → defer PC→SD into pending-flush.
@@ -1133,8 +1194,12 @@ export class GameController {
         );
       } else {
         try {
-          log.info(`[sync-out] copying saves PC→card "${manifest.pcSavePath}" → "${manifest.saveOnCardPath}"`);
-          await syncDir(manifest.pcSavePath, manifest.saveOnCardPath);
+          // Change-based sync after the game (phase = sync-out). The old blind PC→card is only the
+          // first-run fallback; normally the changed side wins (this PC just played → usually PC→card).
+          log.info(
+            `[sync-out] change-based sync between PC "${manifest.pcSavePath}" and card "${manifest.saveOnCardPath}"`,
+          );
+          await this.runSaveSync(manifest, 'pc-to-card');
         } catch (cause) {
           // The card may have been yanked during the sync → saves.bak is intact, we'll finish on insertion.
           log.warn('[sync-out] failed, deferring to pending-flush:', describe(cause));

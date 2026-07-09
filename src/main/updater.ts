@@ -56,6 +56,8 @@ export interface UpdaterDeps {
   readonly openGamesFolder: () => void;
   /** Applies the Start+Back summon-hotkey toggle to the running global gamepad listener. */
   readonly onSummonHotkeyChanged: (enabled: boolean) => void;
+  /** Applies the keep-display-awake toggle (recomputes the powerSaveBlocker in main). */
+  readonly onPreventScreensaverChanged: (enabled: boolean) => void;
   /** Applies the "always show the no-card screen" toggle (reconciles the launcher's visibility). */
   readonly onAlwaysShowEmptyScreenChanged: (enabled: boolean) => void;
   /** Pushes new audio volumes to the game renderer so they apply live. */
@@ -167,6 +169,12 @@ export class UpdaterService {
         .then(() => this.deps.onSummonHotkeyChanged(on))
         .catch((cause: unknown) => log.error('[updater] failed to persist summon hotkey:', cause));
     });
+    ipcMain.on(IPC.settingsSetPreventScreensaver, (_event, on: boolean) => {
+      void this.deps.settings
+        .patch({ preventScreensaver: on })
+        .then(() => this.deps.onPreventScreensaverChanged(on))
+        .catch((cause: unknown) => log.error('[updater] failed to persist prevent-screensaver:', cause));
+    });
     ipcMain.on(IPC.settingsSetAlwaysShowEmptyScreen, (_event, on: boolean) => {
       void this.deps.settings
         .patch({ alwaysShowEmptyScreen: on })
@@ -213,6 +221,7 @@ export class UpdaterService {
       this.applyMode(next.autoUpdate);
     }
     this.deps.onSummonHotkeyChanged(next.summonHotkeyEnabled);
+    this.deps.onPreventScreensaverChanged(next.preventScreensaver);
     this.deps.onAlwaysShowEmptyScreenChanged(next.alwaysShowEmptyScreen);
     this.deps.onVolumesChanged({ music: next.musicVolume, sfx: next.sfxVolume });
     // reset() already wrote customWallpaper=null; this deletes the copied file and pushes the default.

@@ -110,6 +110,7 @@ export const en = {
   'settings.summonHotkey': 'Show the launcher with a gamepad shortcut',
   'settings.summonHintPre': 'Hold',
   'settings.summonHintPost': 'on your gamepad at any time to bring the launcher to the front.',
+  'settings.preventScreensaver': 'Keep the screen awake while the launcher is open',
   'settings.alwaysShowEmpty': 'Always show the no-card screen',
   'settings.wallpaperLabel': 'Empty screen background',
   'settings.wallpaperChoose': 'Choose image…',

@@ -17,7 +17,14 @@ export class GameWindow {
   // The current translator is read live so the "Copy" menu (built per right-click) follows the language.
   constructor(private readonly getTranslator: () => Translator) {}
 
-  create(): BrowserWindow {
+  /**
+   * Creates the (hidden) launcher window. `onVisibilityChanged` is invoked with the current on-screen
+   * state (`isShown()`) whenever the window is shown/hidden/minimized/restored — the keep-awake driver
+   * uses it to recompute the display blocker. Coverage of every transition rests on hide()/showAndFocus()
+   * (all visibility changes go through them → 'hide'/'show'); the minimize/restore listeners are a cheap
+   * guard for the OS minimizing us (e.g. an exclusive-fullscreen game).
+   */
+  create(onVisibilityChanged: (shown: boolean) => void = () => undefined): BrowserWindow {
     const window = new BrowserWindow({
       // width/height act as the windowed fallback if fullscreen is ever toggled off.
       width: 960,
@@ -63,6 +70,14 @@ export class GameWindow {
 
     // Closing the window with the X doesn't quit the app — we hide it to the tray.
     this.closeGuard = installHideOnClose(window);
+
+    // Report on-screen state changes to the keep-awake driver. 'show'/'hide' cover every in-app
+    // transition (hide() / showAndFocus()); 'minimize'/'restore' guard against the OS minimizing us.
+    const reportVisibility = (): void => onVisibilityChanged(this.isShown());
+    window.on('show', reportVisibility);
+    window.on('hide', reportVisibility);
+    window.on('minimize', reportVisibility);
+    window.on('restore', reportVisibility);
 
     void window.loadFile(path.join(__dirname, '../renderer/index.html'));
     this.window = window;

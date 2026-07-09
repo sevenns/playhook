@@ -331,6 +331,12 @@ export interface AppSettings {
   readonly allowPrerelease: boolean;
   /** Enable the global Start+Back gamepad chord that summons the launcher. Default true. */
   readonly summonHotkeyEnabled: boolean;
+  /**
+   * Keep the display awake (no screensaver / display-sleep) while the launcher owns the session — i.e.
+   * while it's on screen or a game is running. Default true. Backed by Electron's powerSaveBlocker
+   * ('prevent-display-sleep'); toggling it live starts/stops the blocker in main.
+   */
+  readonly preventScreensaver: boolean;
   /** Launcher background-music volume, 0..1. Default 0.5. */
   readonly musicVolume: number;
   /** Launcher UI sound-effects volume, 0..1. Default 1. */
@@ -436,6 +442,8 @@ export const IPC = {
   settingsSetPrerelease: 'settings:set-prerelease',
   /** settings-renderer → main: toggle the Start+Back summon hotkey (payload boolean). */
   settingsSetSummonHotkey: 'settings:set-summon-hotkey',
+  /** settings-renderer → main: toggle keeping the display awake (no screensaver) (payload boolean). */
+  settingsSetPreventScreensaver: 'settings:set-prevent-screensaver',
   /** settings-renderer → main: set the background-music volume 0..1 (payload number). */
   settingsSetMusicVolume: 'settings:set-music-volume',
   /** settings-renderer → main: set the UI sound-effects volume 0..1 (payload number). */
@@ -647,6 +655,8 @@ export interface SettingsApi {
   setTheme(mode: ThemeMode): void;
   setPrerelease(on: boolean): void;
   setSummonHotkey(on: boolean): void;
+  /** Toggle keeping the display awake (no screensaver / display-sleep) while the launcher owns the session. */
+  setPreventScreensaver(on: boolean): void;
   setMusicVolume(volume: number): void;
   setSfxVolume(volume: number): void;
   /** Change the UI language (the effective locale comes back via onLanguageUpdate). */

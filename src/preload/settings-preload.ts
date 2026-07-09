@@ -31,6 +31,7 @@ const CHANNELS = {
   settingsSetTheme: 'settings:set-theme',
   settingsSetPrerelease: 'settings:set-prerelease',
   settingsSetSummonHotkey: 'settings:set-summon-hotkey',
+  settingsSetPreventScreensaver: 'settings:set-prevent-screensaver',
   settingsSetMusicVolume: 'settings:set-music-volume',
   settingsSetSfxVolume: 'settings:set-sfx-volume',
   settingsSetLanguage: 'settings:set-language',
@@ -75,6 +76,9 @@ const api: SettingsApi = {
   },
   setSummonHotkey(on: boolean): void {
     ipcRenderer.send(CHANNELS.settingsSetSummonHotkey, on);
+  },
+  setPreventScreensaver(on: boolean): void {
+    ipcRenderer.send(CHANNELS.settingsSetPreventScreensaver, on);
   },
   setMusicVolume(volume: number): void {
     ipcRenderer.send(CHANNELS.settingsSetMusicVolume, volume);

@@ -5,7 +5,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { app, ipcMain, Menu, shell, type Tray } from 'electron';
+import { app, ipcMain, Menu, powerSaveBlocker, shell, type Tray } from 'electron';
 import { log, logFilePath } from './logger';
 import { StateManager } from './state';
 import { GameWindow } from './window';
@@ -23,6 +23,7 @@ import { ConfigureWindow } from './configure-window';
 import { LocaleService } from './locale';
 import { createPowerService } from './power';
 import { suspendToSleep } from './power-native';
+import { createKeepAwakeService, type KeepAwakeService } from './keep-awake';
 import { IPC } from '../shared/types';
 import { type Locale } from '../shared/i18n/index';
 
@@ -36,6 +37,7 @@ let windowRef: GameWindow | null = null;
 let settingsWindowRef: SettingsWindow | null = null;
 let configureWindowRef: ConfigureWindow | null = null;
 let globalGamepadRef: GlobalGamepad | null = null;
+let keepAwakeRef: KeepAwakeService | null = null;
 let quitting = false;
 // Whether the global Start+Back summon chord is active (mirrors AppSettings.summonHotkeyEnabled, toggled
 // live from the settings window). Read inside the chord callback so a toggle takes effect immediately.
@@ -72,6 +74,7 @@ function quit(): void {
   quitting = true;
   controllerRef?.shutdown();
   globalGamepadRef?.stop();
+  keepAwakeRef?.dispose();
   windowRef?.allowClose();
   settingsWindowRef?.allowClose();
   configureWindowRef?.allowClose();
@@ -107,6 +110,27 @@ async function bootstrap(): Promise<void> {
   controllerRef = controller;
   controller.init();
 
+  // Keep the display awake while the launcher owns the session. Single recompute point over two flags
+  // (the setting + whether the window is on screen) plus the running AppState — main is single-threaded,
+  // so the three sources (visibility / setting / state) can't race. The blocker itself is idempotent.
+  const keepAwake = createKeepAwakeService({
+    start: () => powerSaveBlocker.start('prevent-display-sleep'),
+    stop: (id) => powerSaveBlocker.stop(id),
+    isStarted: (id) => powerSaveBlocker.isStarted(id),
+  });
+  keepAwakeRef = keepAwake;
+  let preventScreensaverEnabled = initialSettings.preventScreensaver;
+  let windowVisible = false; // the window is created hidden (show:false); the 'show' event flips this
+  const recomputeKeepAwake = (): void => {
+    // `|| running` holds the blocker even if a game minimized our window into exclusive-fullscreen
+    // (windowVisible would be false there), which is the whole point of covering the running state.
+    const running = state.get().kind === 'running';
+    keepAwake.setActive(preventScreensaverEnabled && (windowVisible || running));
+  };
+  // Recompute on every state change so entering/leaving `running` toggles the blocker (the window-visibility
+  // and setting sources push their own recompute). A second subscriber alongside the controller's replicator.
+  state.subscribe(() => recomputeKeepAwake());
+
   // Update service + settings window. isBusy covers ALL in-flight states (not just a running game),
   // so a manual install can't tear down a save-sync / game install. beforeInstall drops both
   // windows' close-guards synchronously before quitAndInstall.
@@ -126,6 +150,10 @@ async function bootstrap(): Promise<void> {
     openGamesFolder,
     onSummonHotkeyChanged: (enabled) => {
       summonHotkeyEnabled = enabled;
+    },
+    onPreventScreensaverChanged: (enabled) => {
+      preventScreensaverEnabled = enabled;
+      recomputeKeepAwake();
     },
     onAlwaysShowEmptyScreenChanged: (enabled) => controller.setAlwaysShowEmptyScreen(enabled),
     onVolumesChanged: (volumes) => {
@@ -161,7 +189,10 @@ async function bootstrap(): Promise<void> {
   const configureWindow = new ConfigureWindow(gameConfig, getTranslator);
   configureWindowRef = configureWindow;
 
-  window.create();
+  window.create((shown) => {
+    windowVisible = shown;
+    recomputeKeepAwake();
+  });
   // Normally start hidden in the tray — the window appears only when a valid game card is detected
   // (GameController shows it on the 'ready' state). But if "always show the no-card screen" is enabled,
   // seed the controller with it now so it shows the empty screen at startup (reconciles: idle + no card).
@@ -261,6 +292,7 @@ if (!gotSingleInstanceLock) {
     quitting = true;
     controllerRef?.shutdown();
     globalGamepadRef?.stop();
+    keepAwakeRef?.dispose();
     windowRef?.allowClose();
     settingsWindowRef?.allowClose();
     configureWindowRef?.allowClose();
