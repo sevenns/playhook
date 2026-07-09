@@ -82,6 +82,13 @@ export interface GameManifest {
   readonly pcSavePath?: string;
   readonly launchTimeoutSec: number;
   /**
+   * How many seconds a force-close (More → Force close) waits for the game's processes to actually
+   * disappear before reporting a failure. A killed process lingers in `tasklist` for a moment (and a
+   * launcher/wrapper may take longer to tear down), so this is the MAX wait — the wait ends early the
+   * instant every target process is gone. Default 60. Raise it for games that shut down slowly.
+   */
+  readonly killTimeoutSec: number;
+  /**
    * Optional install mode: when set, the card holds an installer and `executable` is interpreted
    * relative to the install directory (controlled by the app), not the card root. See InstallManifest.
    */

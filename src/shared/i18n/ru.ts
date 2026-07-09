@@ -177,6 +177,7 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'configure.fieldSoundBack': 'Звук «Назад»',
   'configure.fieldBackgroundMusic': 'Фоновая музыка',
   'configure.fieldLaunchTimeout': 'Таймаут запуска (секунды)',
+  'configure.fieldKillTimeout': 'Таймаут принудительного закрытия (секунды)',
   'configure.browse': 'Обзор…',
   'configure.add': 'Добавить',
   'configure.addFile': 'Добавить…',

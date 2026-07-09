@@ -63,6 +63,15 @@ export interface ControllerDeps {
 // Grace-poll cadence after the installer exits, waiting for the game executable to appear.
 const INSTALL_POLL_INTERVAL_MS = 1000;
 
+// Force-close verification: after issuing the kills, a `taskkill /F` (or TerminateProcess) returns
+// BEFORE the process actually leaves tasklist — a killed process in teardown still shows for a beat, and
+// a launcher/wrapper can take longer (the very reason the exit waiters debounce). So we don't judge on a
+// single instant snapshot: poll the targets over a window bounded by the manifest's killTimeoutSec
+// (default 60s), succeeding as soon as they're all gone, and only reporting killFailed if something is
+// STILL alive when the window elapses (a genuine failure, e.g. an elevated handle without
+// PROCESS_TERMINATE rights). The poll cadence between snapshots:
+const KILL_VERIFY_INTERVAL_MS = 500;
+
 // Directory removal retries: an Inno uninstaller forks a copy of itself into
 // temp and exits early, so right after waitForExit it may still hold `unins000.*` for a moment — a
 // few backed-off retries let the lock clear before fse.remove succeeds.
@@ -572,9 +581,10 @@ export class GameController {
    * its own. Guarded by the running state + a killInFlight flag (double Yes / repeat is a no-op).
    *
    * Success is judged by FACT, not command exit codes: a "not found" from taskkill just means the target
-   * is already dead (success). After the kills, one control snapshot decides — anything from `targets`
-   * still visible (or the owned elevated process still alive on its HANDLE) → a soft errors.killFailed
-   * with the state left untouched (still running); otherwise success, silently.
+   * is already dead (success). After the kills we verify over a short WINDOW (a killed process lingers in
+   * tasklist for a beat, so a single instant snapshot would false-positive): success as soon as the
+   * targets are gone, and a soft errors.killFailed (state left untouched — still running) only if
+   * something is still alive when the window elapses.
    */
   private async onKillRequested(): Promise<void> {
     const snapshot = this.deps.state.get();
@@ -611,10 +621,10 @@ export class GameController {
         await killImageByName(name);
       }
 
-      // 3. Fact-based verdict: a single control snapshot. Any target image still present, or the owned
-      //    (elevated, taskkill-invisible) process still alive on its HANDLE → the force-close failed.
-      const ownedAlive = proc !== null && (await proc.isAlive());
-      if ((await anyImageAlive(targets)) || ownedAlive) {
+      // 3. Fact-based verdict over a window bounded by killTimeoutSec (a killed process lingers in
+      //    tasklist for a beat — a single instant snapshot would false-positive). killFailed only if
+      //    something is STILL alive when the window elapses.
+      if (await this.killTargetsStillAlive(targets, proc, manifest.raw.killTimeoutSec)) {
         log.warn(`[kill] targets still alive after force-close id=${manifest.raw.id} — reporting killFailed`);
         this.sendError(this.t('errors.killFailed'));
       } else {
@@ -622,6 +632,28 @@ export class GameController {
       }
     } finally {
       this.killInFlight = false;
+    }
+  }
+
+  /**
+   * Polls the kill targets for up to `timeoutSec`, returning false (success — everything is gone) as soon
+   * as no target image is present AND the owned process (elevated HANDLE / normal pid) is dead, OR once an
+   * exit waiter has already advanced the state out of `running` (it saw the exit → definitely killed).
+   * Returns true only if something is still alive when the window elapses — a genuine failure.
+   */
+  private async killTargetsStillAlive(
+    targets: readonly string[],
+    proc: GameProcess | null,
+    timeoutSec: number,
+  ): Promise<boolean> {
+    const deadline = Date.now() + timeoutSec * 1000;
+    for (;;) {
+      // An exit waiter that already left `running` proves the process is gone — treat as killed.
+      if (this.deps.state.get().kind !== 'running') return false;
+      const ownedAlive = proc !== null && (await proc.isAlive());
+      if (!ownedAlive && !(await anyImageAlive(targets))) return false;
+      if (Date.now() >= deadline) return true; // window elapsed and something is still alive → real fail
+      await delay(KILL_VERIFY_INTERVAL_MS);
     }
   }
 

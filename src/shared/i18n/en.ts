@@ -202,6 +202,7 @@ export const en = {
   'configure.fieldSoundBack': 'Back sound',
   'configure.fieldBackgroundMusic': 'Background music',
   'configure.fieldLaunchTimeout': 'Launch timeout (seconds)',
+  'configure.fieldKillTimeout': 'Force-close timeout (seconds)',
   // Audio Default/Custom selector (Default → the field is omitted from game.json).
   'configure.audioDefault': 'Default',
   'configure.audioCustom': 'Custom',

@@ -67,6 +67,27 @@ describe('round-trip on the three starter templates', () => {
   });
 });
 
+describe('killTimeoutSec round-trip (force-close wait)', () => {
+  const withKill = (value: number): string =>
+    `{"schemaVersion":1,"id":"g","title":"G","executable":"g.exe","killTimeoutSec":${value}}`;
+
+  it('preserves a custom killTimeoutSec and keeps the text valid', () => {
+    const text = serialize(withKill(120));
+    expect(JSON.parse(text)).toHaveProperty('killTimeoutSec', 120);
+    expect(validateManifestText(text, t).ok).toBe(true);
+  });
+
+  it('omits killTimeoutSec when it equals the schema default of 60', () => {
+    const parsed = JSON.parse(serialize(withKill(60))) as Record<string, unknown>;
+    expect(parsed).not.toHaveProperty('killTimeoutSec');
+  });
+
+  it('round-trips a non-numeric killTimeoutSec verbatim as a corrupt value (error stays visible)', () => {
+    const text = '{"schemaVersion":1,"id":"g","title":"G","executable":"g.exe","killTimeoutSec":"soon"}';
+    expect(JSON.parse(serialize(text))).toHaveProperty('killTimeoutSec', 'soon');
+  });
+});
+
 describe('unknown keys survive the round-trip (rest)', () => {
   it('preserves an unknown TOP-LEVEL key', () => {
     const text = serialize('{"schemaVersion":1,"id":"g","title":"G","executable":"g.exe","future":42}');
