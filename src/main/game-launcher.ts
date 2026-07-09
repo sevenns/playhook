@@ -104,6 +104,7 @@ async function isProcessAlive(pid: number): Promise<boolean> {
 
 const SEE_MASK_NOCLOSEPROCESS = 0x40; // keep info.hProcess valid after the call
 const SW_SHOWNORMAL = 1;
+const SW_HIDE = 0; // hide the elevated taskkill's console window (the UAC prompt is separate)
 const ERROR_CANCELLED = 1223; // GetLastError after the user clicks "No" in the UAC prompt
 const WAIT_TIMEOUT = 0x102; // WaitForSingleObject: object still alive (WAIT_OBJECT_0 = 0 means exited)
 
@@ -235,6 +236,55 @@ export async function anyImageAlive(imageNames: readonly string[]): Promise<bool
   if (imageNames.length === 0) return false;
   const snapshot = await snapshotProcesses();
   return anyVisible(snapshot, imageNames);
+}
+
+/**
+ * Force-kills the given image names ELEVATED: ShellExecuteExW("runas") runs
+ * `taskkill /F /T /IM <name> …` — ONE UAC prompt for the whole set. Needed for a runAsAdmin game whose
+ * high-integrity processes a non-elevated taskkill can't touch (ACCESS_DENIED) and whose ShellExecuteEx
+ * HANDLE lacks PROCESS_TERMINATE. Synchronous like launchElevated (koffi .async can't read GetLastError);
+ * the UAC dialog blocks the main thread briefly, which is fine while a game is running (input is ignored).
+ * We do NOT wait for taskkill to finish — it runs on after we release our handle; the caller's control
+ * poll decides success by fact. Best-effort: a declined UAC (GetLastError 1223) or any failure is logged
+ * and swallowed. No-op off Windows / with no names.
+ */
+export function killImagesElevated(imageNames: readonly string[]): void {
+  if (process.platform !== 'win32' || imageNames.length === 0) return;
+  const shell = loadShell();
+  const kernel = loadKernel();
+  const args = ['/F', '/T'];
+  for (const name of imageNames) args.push('/IM', name);
+  const systemRoot = process.env['SystemRoot'] ?? 'C:\\Windows';
+  const system32 = path.join(systemRoot, 'System32');
+  const info: ShellExecuteInfo = {
+    cbSize: koffi.sizeof('SHELLEXECUTEINFOW'),
+    fMask: SEE_MASK_NOCLOSEPROCESS,
+    hwnd: null,
+    lpVerb: 'runas',
+    lpFile: path.join(system32, 'taskkill.exe'),
+    lpParameters: buildParameters(args),
+    lpDirectory: system32,
+    nShow: SW_HIDE,
+    hInstApp: null,
+    lpIDList: null,
+    lpClass: null,
+    hkeyClass: null,
+    dwHotKey: 0,
+    DUMMYUNIONNAME: { hIcon: null },
+    hProcess: 0n,
+  };
+  try {
+    const ok = shell.ShellExecuteExW(info);
+    if (ok === 0) {
+      // 1223 = ERROR_CANCELLED (user clicked "No" on UAC) — the caller's poll then reports killFailed.
+      log.warn(`[kill] elevated taskkill failed to start (GetLastError=${kernel.GetLastError()})`);
+      return;
+    }
+    // Release our reference — taskkill keeps running to completion; we don't block on it.
+    if (info.hProcess !== 0n) kernel.CloseHandle(info.hProcess);
+  } catch (cause) {
+    log.warn('[kill] elevated taskkill threw:', cause instanceof Error ? cause.message : String(cause));
+  }
 }
 
 /**

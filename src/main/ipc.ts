@@ -35,6 +35,7 @@ import {
   waitForWatchedStart,
   killImageByName,
   anyImageAlive,
+  killImagesElevated,
   LaunchAbortedError,
   type GameProcess,
 } from './game-launcher';
@@ -71,6 +72,12 @@ const INSTALL_POLL_INTERVAL_MS = 1000;
 // STILL alive when the window elapses (a genuine failure, e.g. an elevated handle without
 // PROCESS_TERMINATE rights). The poll cadence between snapshots:
 const KILL_VERIFY_INTERVAL_MS = 500;
+
+// For a runAsAdmin (elevated) game, the non-elevated kill can't touch its high-integrity processes. We
+// give that first attempt a short grace to prove itself (a normal game dies well within this), and only
+// if the targets survive it do we escalate to an elevated taskkill (one UAC prompt). Kept short so the
+// UAC prompt isn't needlessly delayed for a game that genuinely needs it.
+const KILL_ELEVATE_GRACE_SEC = 3;
 
 // Directory removal retries: an Inno uninstaller forks a copy of itself into
 // temp and exits early, so right after waitForExit it may still hold `unins000.*` for a moment — a
@@ -582,6 +589,11 @@ export class GameController {
    * (K-Д3) — no state machine of its own. Guarded by the running state + a killInFlight flag (double Yes /
    * repeat is a no-op).
    *
+   * A non-elevated launcher can't terminate a runAsAdmin game's high-integrity processes (taskkill →
+   * ACCESS_DENIED, the ShellExecuteEx HANDLE lacks PROCESS_TERMINATE). So for a runAsAdmin game, if the
+   * targets survive a short grace, we escalate to ONE elevated `taskkill /F /T /IM …` (a single UAC
+   * prompt). Non-elevated games never trigger UAC.
+   *
    * Success is judged by FACT, not command exit codes: a "not found" from taskkill just means the target
    * is already dead (success). After the kills we verify over a WINDOW bounded by killTimeoutSec (a killed
    * process lingers in tasklist for a beat, so a single instant snapshot would false-positive): success as
@@ -620,10 +632,19 @@ export class GameController {
         }
       }
 
-      // 2. taskkill /F /IM per target image name. Per-name failures are normal ("not found" = already
-      //    dead); the verdict is the control poll below, not these exit codes.
+      // 2. taskkill /F /IM per target image name (non-elevated). Per-name failures are normal ("not
+      //    found" = already dead); the verdict is the control poll below, not these exit codes.
       for (const name of targets) {
         await killImageByName(name);
+      }
+
+      // 2b. Elevated escalation (runAsAdmin games only). A non-elevated taskkill / the ShellExecuteEx
+      //     HANDLE can't terminate high-integrity processes, so if the targets survive a short grace we
+      //     run ONE elevated `taskkill /F /T /IM …` (a single UAC prompt). Non-elevated games never reach
+      //     here (no UAC for them). A declined UAC just leaves the targets up → killFailed below.
+      if (manifest.raw.runAsAdmin && (await this.killTargetsStillAlive(targets, proc, KILL_ELEVATE_GRACE_SEC))) {
+        log.info(`[kill] elevated game survived non-elevated kill id=${manifest.raw.id} — escalating to elevated taskkill (UAC)`);
+        killImagesElevated(targets);
       }
 
       // 3. Fact-based verdict over a window bounded by killTimeoutSec (a killed process lingers in
