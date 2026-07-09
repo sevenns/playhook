@@ -148,6 +148,12 @@ export class FormView {
   // View state.
   private launchMode: LaunchMode = 'executable';
   private rest: Readonly<Record<string, unknown>> = {};
+  // Unknown keys nested inside the sounds/install/steam blocks: the form has no field for them, so they
+  // must be remembered from load() and put back in readModel() (else serialize() drops them — the blocks'
+  // zod is strip-mode, so the loss would be silent). Mirrors the top-level `rest` round-trip.
+  private soundsRest: Readonly<Record<string, unknown>> = {};
+  private installRest: Readonly<Record<string, unknown>> = {};
+  private steamRest: Readonly<Record<string, unknown>> = {};
   private corrupt: Record<string, unknown> = {};
   private mixed = false;
 
@@ -301,6 +307,9 @@ export class FormView {
     mixed: boolean,
   ): void {
     this.rest = rest;
+    this.soundsRest = model.sounds.rest;
+    this.installRest = model.install.rest;
+    this.steamRest = model.steam.rest;
     this.corrupt = { ...corrupt };
     this.launchMode = model.launchMode;
     this.launchType.value = model.launchMode;
@@ -420,7 +429,7 @@ export class FormView {
         navigate: getValue(this.soundNavigate.input),
         button: getValue(this.soundButton.input),
         back: getValue(this.soundBack.input),
-        rest: {},
+        rest: this.soundsRest,
       },
       backgroundMusic: getValue(this.music.input),
       install: {
@@ -428,9 +437,9 @@ export class FormView {
         type: toInstallType(getValue(this.installType)),
         runAsAdmin: getChecked(this.installRunAsAdminSwitch),
         args: this.installArgsList.values(),
-        rest: {},
+        rest: this.installRest,
       },
-      steam: { appid: getValue(this.appidInput), rest: {} },
+      steam: { appid: getValue(this.appidInput), rest: this.steamRest },
     };
   }
 
