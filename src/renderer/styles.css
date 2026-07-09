@@ -419,7 +419,7 @@ html:not(.cursor-hidden) .rect-button:hover,
 }
 
 /* ── Popup (unified: Details / Power / Confirm / Error) ─────────────────────
-   ONE frosted veil + ONE right-side column (450px). The top content and the bottom action stack both
+   ONE frosted veil + ONE right-side column (550px). The top content and the bottom action stack both
    switch by #popup[data-view]; the veil stays put across view changes, so Details ↔ Power doesn't
    cross-fade two identical blur veils. Toggled open with .is-open. */
 
@@ -442,14 +442,14 @@ html:not(.cursor-hidden) .rect-button:hover,
   transition: opacity 0.35s ease;
 }
 
-/* Right column: 450px wide, inset 50px on right/top/bottom. Content sits at the top; the action stack
+/* Right column: 550px wide, inset 50px on right/top/bottom. Content sits at the top; the action stack
    is pushed to the bottom (margin-top:auto on .popup-actions). Slides in + fades with the veil. */
 .popup-column {
   position: absolute;
   right: calc(50 * var(--px));
   top: calc(50 * var(--px));
   bottom: calc(50 * var(--px));
-  width: calc(450 * var(--px));
+  width: calc(550 * var(--px));
   display: flex;
   flex-direction: column;
   text-align: right;
@@ -558,6 +558,9 @@ html:not(.cursor-hidden) .rect-button:hover,
    right edge stays fixed. Default focus is the BOTTOM button (set from controls.ts). */
 .popup-actions {
   margin-top: auto;
+  /* Allow the stack to shrink below its content height, so a too-long group (the game list) becomes a
+     scroll area bounded by the column instead of overflowing it. */
+  min-height: 0;
 }
 
 .actions-group {
@@ -572,17 +575,21 @@ html:not(.cursor-hidden) .rect-button:hover,
 #popup[data-view='error'] .actions-group[data-group='error'],
 #popup[data-view='select-game'] .actions-group[data-group='select-game'] {
   display: flex;
+  /* The group owns the column's leftover height: the list scrolls inside it, Close stays pinned below. */
+  min-height: 0;
 }
 
-/* Select-game list: the game buttons scroll (a card can carry many games) while the Close button below
-   stays fixed and reachable. The scroll area is capped to the column height minus room for Close. */
+/* Select-game list: the game buttons SCROLL when a card carries many games (they never shrink — see
+   .text-button's flex:0 0 auto), while the Close button below stays fixed and reachable. The scroll area
+   takes whatever height the popup column has left, so it adapts to the window instead of a magic cap. */
 .select-game-list {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
   gap: calc(8 * var(--px));
   width: 100%;
-  max-height: calc(720 * var(--px));
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
   /* Room so the last item isn't flush against the Close button below. */
   padding-bottom: calc(8 * var(--px));
@@ -651,6 +658,9 @@ html:not(.cursor-hidden) .rect-button:hover,
 
 .text-button {
   height: calc(92 * var(--px));
+  /* Never squeeze: these are flex items in a vertical stack, and the default flex-shrink:1 would compress
+     them instead of letting a long list scroll (see .select-game-list). */
+  flex: 0 0 auto;
   min-width: calc(184 * var(--px));
   padding: 0 calc(32 * var(--px));
   display: flex;
