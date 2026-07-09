@@ -7,7 +7,7 @@
 // catch a *missing* channel though — that completeness is guarded by the ipc-channels
 // unit test (shared/types.ts is the single source of truth).
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
-import type { AppState, AudioAssets, AudioVolumes, CarouselSfx, GameLibrary, HeroAssets, RendererApi } from '../shared/types';
+import type { AppState, AudioAssets, AudioVolumes, GameLibrary, HeroAssets, RendererApi } from '../shared/types';
 import type { IPC } from '../shared/types';
 import type { Locale } from '../shared/i18n/index';
 
@@ -30,8 +30,6 @@ const CHANNELS = {
   libraryUpdate: 'library:update',
   libraryRequest: 'library:request',
   actionSelect: 'action:select',
-  actionBackToCarousel: 'action:back-to-carousel',
-  carouselSfxRequest: 'carousel:sfx-request',
   wallpaperRequest: 'wallpaper:request',
   wallpaperUpdate: 'wallpaper:update',
   volumeRequest: 'volume:request',
@@ -102,14 +100,8 @@ const api: RendererApi = {
   requestLibrary(): Promise<GameLibrary | null> {
     return ipcRenderer.invoke(CHANNELS.libraryRequest) as Promise<GameLibrary | null>;
   },
-  selectGame(index: number): void {
-    ipcRenderer.send(CHANNELS.actionSelect, index);
-  },
-  backToCarousel(): void {
-    ipcRenderer.send(CHANNELS.actionBackToCarousel);
-  },
-  requestCarouselSfx(): Promise<CarouselSfx> {
-    return ipcRenderer.invoke(CHANNELS.carouselSfxRequest) as Promise<CarouselSfx>;
+  selectGame(id: string): void {
+    ipcRenderer.send(CHANNELS.actionSelect, id);
   },
   requestWallpaper(): Promise<string | null> {
     return ipcRenderer.invoke(CHANNELS.wallpaperRequest) as Promise<string | null>;

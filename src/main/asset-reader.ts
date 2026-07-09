@@ -4,7 +4,7 @@
 // class only reads bytes off disk and encodes them.
 import path from 'node:path';
 import fse from 'fs-extra';
-import { type AudioAssets, type CarouselSfx, type HeroAssets, type ResolvedManifest, type SfxName } from '../shared/types';
+import { type AudioAssets, type HeroAssets, type ResolvedManifest, type SfxName } from '../shared/types';
 import { log } from './logger';
 import { describe } from './util';
 
@@ -233,19 +233,6 @@ export class AssetReader {
 
     if (Object.keys(sounds).length === 0 && music === undefined) return null;
     return { sounds, ...(music !== undefined ? { music } : {}) };
-  }
-
-  /**
-   * Reads the BUNDLED default navigate/button sounds as data URLs for the carousel (game-selection)
-   * screen, which is cross-game and so uses the defaults rather than any one game's sounds (decision 10).
-   */
-  async readCarouselSfx(): Promise<CarouselSfx> {
-    const navigate = await this.readAudioDataUrl(defaultSfxPath('navigate'));
-    const button = await this.readAudioDataUrl(defaultSfxPath('button'));
-    return {
-      ...(navigate !== undefined ? { navigate } : {}),
-      ...(button !== undefined ? { button } : {}),
-    };
   }
 
   private async readAudioDataUrl(filePath: string): Promise<string | undefined> {

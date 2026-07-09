@@ -10,16 +10,16 @@
 // The popup is a state machine: one #popup element whose content + action stack switch by data-view.
 // Navigation is vertical (up/down) inside a stack; the default focus is always the BOTTOM button
 // (Close / No / Sleep), which the mockup draws filled. B/Esc/veil step BACK one level.
-import type { AppState } from '../shared/types';
+import type { AppState, LibraryEntry } from '../shared/types';
 import type { Translator } from '../shared/i18n/index.js';
 import { createGamepadController } from './gamepad.js';
 import { type AudioController } from './audio.js';
-import { type CarouselController } from './carousel.js';
 import { gameOf, phaseOf, steamBusy } from './state-view.js';
 import { req, reqQuery } from './dom.js';
 
 // The current popup view (mutually exclusive; 'none' = closed). Mirrors the data-view on #popup.
-type PopupView = 'none' | 'details' | 'power' | 'confirm' | 'error';
+// `select-game` is the multi-game picker (a scrollable list of the card's OTHER games).
+type PopupView = 'none' | 'details' | 'power' | 'confirm' | 'error' | 'select-game';
 // Which action the confirm view is asking about (only meaningful while popupView === 'confirm').
 type ConfirmMode = 'install' | 'uninstall' | 'kill' | 'shutdown' | 'reboot' | 'sleep';
 // Gamepad A doesn't trigger :active, so flash a press class to play the scale-down animation.
@@ -33,8 +33,6 @@ export interface ControlsDeps {
   audio: AudioController;
   /** The current translator (read live so menu/confirm copy follows the language). */
   getTranslator(): Translator;
-  /** The carousel controller — receives left/right/A while on the game-selection screen. */
-  carousel: CarouselController;
 }
 
 export interface Controls {
@@ -46,17 +44,19 @@ export interface Controls {
   refresh(): void;
   /** Opens the error popup with the given message (a failed launch/action from main). */
   showError(message: string): void;
+  /** Sets the card's game list ({id,title}) — drives the "Select game" popup (rebuilds it if open). */
+  setGames(list: readonly LibraryEntry[]): void;
   /** Starts the gamepad polling loop. */
   start(): void;
 }
 
 export function createControls(deps: ControlsDeps): Controls {
-  const { audio, carousel } = deps;
+  const { audio } = deps;
   const state = (): AppState => deps.getState();
   const t = (): Translator => deps.getTranslator();
-  // On the carousel (game-selection) screen the input model is different: left/right browse games and A
-  // picks one — the popup/bar focus machinery below is bypassed.
-  const onCarousel = (): boolean => state().kind === 'selecting';
+  // The card's games ({id,title}), delivered by main; drives the "Select game" popup. ≥2 → the button
+  // shows and the list has entries (the current game is filtered out).
+  let games: readonly LibraryEntry[] = [];
 
   // Bar buttons.
   const playButton = req<HTMLButtonElement>('play-button');
@@ -75,6 +75,9 @@ export function createControls(deps: ControlsDeps): Controls {
   const menuKill = req<HTMLButtonElement>('menu-kill');
   const menuSelectGame = req<HTMLButtonElement>('menu-select-game');
   const menuClose = req<HTMLButtonElement>('menu-close');
+  // "Select game" list: a scrollable container of dynamically-built game buttons + a static Close button.
+  const selectGameList = req('select-game-list');
+  const menuSelectClose = req<HTMLButtonElement>('menu-select-close');
   const powerShutdown = req<HTMLButtonElement>('power-shutdown');
   const powerReboot = req<HTMLButtonElement>('power-reboot');
   const powerSleep = req<HTMLButtonElement>('power-sleep');
@@ -202,6 +205,12 @@ export function createControls(deps: ControlsDeps): Controls {
         setView(confirmReturnTo);
         focusStackBottom();
         break;
+      case 'select-game':
+        // Back to the Details menu it was opened from (Close in the list does the same — like Power).
+        audio.play('back');
+        setView('details');
+        focusStackBottom();
+        break;
       case 'details':
       case 'error':
         audio.play('back');
@@ -244,14 +253,56 @@ export function createControls(deps: ControlsDeps): Controls {
     if (running) menuKill.textContent = t()('launcher.menu.forceClose');
   }
 
-  // ── Menu item: Select game (return to the carousel) ──────────────────────────
-  // Shown ONLY for a multi-game card on the ready screen — going back to the carousel makes no sense with
-  // one game, and is refused (locked) while a game is launching/running (main guards it too). Text from JS
-  // (no data-i18n) so a language change relabels it at render time.
+  // ── Menu item: Select game (opens the multi-game picker) ─────────────────────
+  // Shown ONLY for a multi-game card on the ready screen — pointless with one game, and refused while a
+  // game is launching/running (kind ≠ ready, and main guards it too). Text from JS (no data-i18n) so a
+  // language change relabels it at render time.
   function applyMenuSelectGame(): void {
-    const show = state().kind === 'ready' && carousel.gameCount() >= 2;
+    const show = state().kind === 'ready' && games.length >= 2;
     menuSelectGame.classList.toggle('is-hidden', !show);
     if (show) menuSelectGame.textContent = t()('launcher.menu.selectGame');
+  }
+
+  // ── "Select game" list (a scrollable list of the card's OTHER games) ─────────
+  // Dynamically-built buttons (one per game, excluding the current one), each carrying data-game-id. Held
+  // here so the focus machine can highlight/clear them; rebuilt on every open (the card/selection may have
+  // changed).
+  let selectGameButtons: HTMLButtonElement[] = [];
+
+  // (Re)builds the game buttons for the current card, excluding the game on screen. Wires click + hover.
+  function buildSelectGameButtons(): void {
+    const currentId = gameOf(state())?.id;
+    selectGameButtons = games
+      .filter((g) => g.id !== currentId)
+      .map((g) => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'text-button';
+        btn.dataset['gameId'] = g.id;
+        btn.textContent = g.title;
+        btn.addEventListener('click', () => {
+          pressFlash(btn);
+          triggerStackButton(btn);
+        });
+        btn.addEventListener('mouseenter', () => {
+          if (!stackActive()) return;
+          const idx = stackFocusables().indexOf(btn);
+          if (idx === -1) return;
+          stackIndex = idx;
+          applyStackFocus();
+        });
+        return btn;
+      });
+    selectGameList.replaceChildren(...selectGameButtons);
+  }
+
+  // Opens the picker: build the list, show the view, focus the first game (or Close when the list is empty).
+  function openSelectGame(): void {
+    buildSelectGameButtons();
+    setView('select-game');
+    stackIndex = 0; // top of the list (the first other game), not the bottom Close
+    applyStackFocus();
+    applyFocus();
   }
 
   // ── Main bar focus (gamepad / mouse) ─────────────────────────────────────────
@@ -380,6 +431,7 @@ export function createControls(deps: ControlsDeps): Controls {
     confirmYes,
     confirmNo,
     errorClose,
+    menuSelectClose,
   ];
   let stackIndex = 0;
 
@@ -399,6 +451,9 @@ export function createControls(deps: ControlsDeps): Controls {
         return [confirmYes, confirmNo];
       case 'error':
         return [errorClose];
+      case 'select-game':
+        // The (dynamic) game buttons, then Close at the bottom.
+        return [...selectGameButtons, menuSelectClose];
       default:
         return [];
     }
@@ -412,7 +467,11 @@ export function createControls(deps: ControlsDeps): Controls {
     const items = stackFocusables();
     stackIndex = Math.min(items.length - 1, Math.max(0, stackIndex));
     const focused = stackActive() ? items[stackIndex] : undefined;
-    ALL_STACK_BUTTONS.forEach((btn) => btn.classList.toggle('is-focused', btn === focused));
+    // Clear/set on the static stack buttons AND the dynamic game buttons (the picker builds its own).
+    for (const btn of ALL_STACK_BUTTONS) btn.classList.toggle('is-focused', btn === focused);
+    for (const btn of selectGameButtons) btn.classList.toggle('is-focused', btn === focused);
+    // Keep the focused button in view when the list is long (scrollable select-game — see styles.css).
+    if (focused !== undefined) focused.scrollIntoView({ block: 'nearest' });
   }
 
   function focusStackBottom(): void {
@@ -423,7 +482,10 @@ export function createControls(deps: ControlsDeps): Controls {
   function moveStackFocus(delta: number): void {
     if (!stackActive()) return;
     const items = stackFocusables();
-    const next = Math.min(items.length - 1, Math.max(0, stackIndex + delta));
+    if (items.length === 0) return;
+    // Cyclic navigation (wrap around) — shared by every popup stack. The early return keeps a single-button
+    // view (error) from playing `navigate` without moving: at len===1 the wrap formula returns the same index.
+    const next = (stackIndex + delta + items.length) % items.length;
     if (next === stackIndex) return;
     stackIndex = next;
     audio.play('navigate');
@@ -477,6 +539,15 @@ export function createControls(deps: ControlsDeps): Controls {
 
   // Dispatch a stack button (shared by gamepad A and mouse click). Each opener/back plays its own sound.
   function triggerStackButton(btn: HTMLButtonElement): void {
+    // A dynamic game button (from the "Select game" list) carries data-game-id. Both gamepad A (via
+    // activateStack → here) and a mouse click go through this one path: close the whole popup and switch.
+    const gameId = btn.dataset['gameId'];
+    if (gameId !== undefined) {
+      audio.play('button');
+      closePopup();
+      window.api.selectGame(gameId);
+      return;
+    }
     if (btn === menuShutdown) {
       audio.play('button');
       openPower();
@@ -487,12 +558,10 @@ export function createControls(deps: ControlsDeps): Controls {
       audio.play('button');
       openConfirm('kill');
     } else if (btn === menuSelectGame) {
-      // Return to the carousel: no confirm (non-destructive). Close the menu first so a re-opened Details
-      // is clean. Main refuses this while locked / with <2 games — a no-op there.
+      // Open the multi-game picker (a submenu of Details, like Power). No confirm — non-destructive.
       audio.play('button');
-      closePopup();
-      window.api.backToCarousel();
-    } else if (btn === menuClose || btn === errorClose || btn === powerClose) {
+      openSelectGame();
+    } else if (btn === menuClose || btn === errorClose || btn === powerClose || btn === menuSelectClose) {
       // back() dispatches by the current view: Details/Error → close the popup; Power → step back to
       // the Details menu (so "Close" in the Power submenu returns you one level up, like the B gesture).
       back();
@@ -612,15 +681,13 @@ export function createControls(deps: ControlsDeps): Controls {
     // does its normal job. With a popup open, left/right are a no-op (the stacks are vertical).
     onLeft: () => {
       noteGamepadActivity();
-      if (onCarousel()) carousel.moveLeft();
-      else if (popupView === 'none') moveFocus(-1);
+      if (popupView === 'none') moveFocus(-1);
     },
     onRight: () => {
       noteGamepadActivity();
-      if (onCarousel()) carousel.moveRight();
-      else if (popupView === 'none') moveFocus(1);
+      if (popupView === 'none') moveFocus(1);
     },
-    // Up/down drive the vertical popup stack; ignored on the bar/carousel (no vertical axis there).
+    // Up/down drive the vertical popup stack; ignored on the bar (no vertical axis there).
     onUp: () => {
       noteGamepadActivity();
       if (popupView !== 'none') moveStackFocus(-1);
@@ -629,18 +696,16 @@ export function createControls(deps: ControlsDeps): Controls {
       noteGamepadActivity();
       if (popupView !== 'none') moveStackFocus(1);
     },
-    // A activates the focused control (Play/More), the focused stack button, or picks the carousel card;
-    // B steps back through the popup. Minimizing is the System menu's "Minimize Playhook".
+    // A activates the focused control (Play/More) or the focused stack button; B steps back through the
+    // popup. Minimizing is the System menu's "Minimize Playhook".
     onA: () => {
       noteGamepadActivity();
-      if (onCarousel()) carousel.select();
-      else if (popupView !== 'none') activateStack();
+      if (popupView !== 'none') activateStack();
       else activateFocused();
     },
     onB: () => {
       noteGamepadActivity();
       if (popupView !== 'none') back();
-      // On the carousel B is a no-op (already the top screen — nothing to go back to).
     },
   });
 
@@ -680,6 +745,11 @@ export function createControls(deps: ControlsDeps): Controls {
     ) {
       closePopup();
     }
+    // The "Select game" list is void once there's no game on screen (card pulled / launch started) or the
+    // card no longer has ≥2 games — its buttons would point at games that aren't selectable → force-close.
+    if (popupView === 'select-game' && (gameOf(state()) === undefined || games.length < 2)) {
+      closePopup();
+    }
     // When an active state (install / launch / uninstall / steam) APPEARS, drop the bar highlight so it
     // doesn't sit on a button the user didn't choose. It wakes again on a gamepad move or a mouse hover.
     const active = phaseOf(state()) === 'busy' || steamBusy(state());
@@ -690,11 +760,25 @@ export function createControls(deps: ControlsDeps): Controls {
     applyPlayAria();
   }
 
+  // Updates the card's game list. If the "Select game" list is open (e.g. a live reload via Configure
+  // added/removed a game), rebuild it from the fresh list so its buttons stay accurate. Selection is by
+  // id, so a reordering can't pick the wrong game.
+  function setGames(list: readonly LibraryEntry[]): void {
+    games = list;
+    if (popupView === 'select-game') {
+      buildSelectGameButtons();
+      applyStackFocus();
+    }
+    // Keep the Details "Select game" item's visibility in sync (its threshold is games.length ≥ 2).
+    applyMenuSelectGame();
+  }
+
   return {
     applyGameButtons,
     clearGameButtons,
     refresh,
     showError: openError,
+    setGames,
     start: () => {
       gamepad.start();
       armIdleTimer(); // begin the countdown so an untouched launcher hides its cursor after 30s

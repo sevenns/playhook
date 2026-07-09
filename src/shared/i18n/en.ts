@@ -57,7 +57,7 @@ export const en = {
   'launcher.menu.minimize': 'Minimize Playhook',
   // Force-close the running game (Details menu item, visible only while a game is running).
   'launcher.menu.forceClose': 'Force close',
-  // Return to the carousel (Details menu item, visible only for a multi-game card on the ready screen).
+  // Opens the "Select game" list (Details menu item, visible only for a multi-game card on the ready screen).
   'launcher.menu.selectGame': 'Select game',
   // Confirmation popup copy (controls.ts). The Yes/No buttons use the shared common.* keys.
   'launcher.confirm.install': 'Do you want to install game?',
