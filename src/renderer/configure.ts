@@ -206,6 +206,10 @@ let drives: readonly DriveCandidate[] = [];
 let selectedRoot: string | null = null;
 let dirty = false;
 let loadedId: string | null = null; // id of the last loaded/saved manifest (for the id-change warning)
+// Descriptor (root|label|hasManifest) of the drive whose config is currently loaded. The label carries the
+// game.json title, so a change means the media at this root was SWAPPED (a card change in the same reader
+// keeps the drive letter) — the trigger to reload. null before the first load.
+let loadedDriveKey: string | null = null;
 let lastValidOk = false;
 let blocked = false; // the selected card vanished → editing/saving disabled
 let templatesCache: ConfigTemplates | null = null;
@@ -356,6 +360,13 @@ function drivesSignature(list: readonly DriveCandidate[]): string {
     .join('¦');
 }
 
+// Per-drive descriptor used to detect a media swap at the SAME root: root + label (carries the game.json
+// title) + hasManifest. isActive is intentionally excluded — it can flap without the card's content
+// changing, and shouldn't force a config reload.
+function driveKey(candidate: DriveCandidate): string {
+  return `${candidate.root}|${candidate.label}|${candidate.hasManifest ? 1 : 0}`;
+}
+
 function renderDrives(list: readonly DriveCandidate[]): void {
   drives = list;
 
@@ -400,14 +411,23 @@ function rebuildOptions(list: readonly DriveCandidate[]): void {
 }
 
 function reconcileSelection(list: readonly DriveCandidate[]): void {
-  const stillPresent = selectedRoot !== null && list.some((d) => d.root === selectedRoot);
-  if (stillPresent && selectedRoot !== null) {
-    // Keep the current selection; a card that had vanished and came back unblocks (text preserved).
+  const current = selectedRoot !== null ? list.find((d) => d.root === selectedRoot) : undefined;
+  if (current !== undefined && selectedRoot !== null) {
     setDropdownValue(driveGroup, selectedRoot);
-    if (blocked) unblock();
+    // The drive letter is unchanged, but the MEDIA behind it may have been swapped (a card change in the
+    // same reader keeps the root). driveKey carries the game.json title, so a changed descriptor means a
+    // different card → reload its config instead of leaving the previous card's stale content on screen.
+    // An UNCHANGED descriptor that merely vanished and came back just unblocks, preserving edits (a flaky
+    // reader / the same card re-seated).
+    if (driveKey(current) !== loadedDriveKey) {
+      if (blocked) unblock();
+      void loadDrive(selectedRoot);
+    } else if (blocked) {
+      unblock();
+    }
     return;
   }
-  if (selectedRoot !== null && !stillPresent) {
+  if (selectedRoot !== null) {
     // The selected card disappeared → block, but do NOT wipe the editor.
     onSelectedGone();
   }
@@ -481,6 +501,9 @@ async function selectDrive(root: string, confirmDirty: boolean): Promise<void> {
 async function loadDrive(root: string): Promise<void> {
   const candidate = drives.find((d) => d.root === root);
   if (candidate === undefined) return;
+  // Record the descriptor we're loading up front (synchronously), so the next poll tick sees an unchanged
+  // key and doesn't re-trigger this load while readConfig is still in flight.
+  loadedDriveKey = driveKey(candidate);
   if (!candidate.hasManifest) {
     // Blank drive: an empty, disabled form (and empty editor) inviting a template. Save stays blocked
     // until the user explicitly picks a template — no placeholder auto-fill (plan cases, R3). loadedId
