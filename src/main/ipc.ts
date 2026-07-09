@@ -575,16 +575,19 @@ export class GameController {
   }
 
   /**
-   * Force-close the running game (More → Force close → confirmed Yes). Kills the main executable AND every
-   * watchProcess, then lets the EXISTING exit waiters (waitForExit / waitForWatchedExit) notice the
-   * processes vanish and carry the flow through syncing-out → sync → ready (K-Д3) — no state machine of
-   * its own. Guarded by the running state + a killInFlight flag (double Yes / repeat is a no-op).
+   * Force-close the running game (More → Force close → confirmed Yes). Flips the running snapshot into its
+   * `killing` sub-state (the launcher shows "Force closing…" and hides the Force close button), kills the
+   * main executable AND every watchProcess, then lets the EXISTING exit waiters (waitForExit /
+   * waitForWatchedExit) notice the processes vanish and carry the flow through syncing-out → sync → ready
+   * (K-Д3) — no state machine of its own. Guarded by the running state + a killInFlight flag (double Yes /
+   * repeat is a no-op).
    *
    * Success is judged by FACT, not command exit codes: a "not found" from taskkill just means the target
-   * is already dead (success). After the kills we verify over a short WINDOW (a killed process lingers in
-   * tasklist for a beat, so a single instant snapshot would false-positive): success as soon as the
-   * targets are gone, and a soft errors.killFailed (state left untouched — still running) only if
-   * something is still alive when the window elapses.
+   * is already dead (success). After the kills we verify over a WINDOW bounded by killTimeoutSec (a killed
+   * process lingers in tasklist for a beat, so a single instant snapshot would false-positive): success as
+   * soon as the targets are gone (the `killing` indicator stays until an exit waiter advances the flow).
+   * If something is still alive when the window elapses, we DROP back to plain running (the game is still
+   * up) and surface a soft errors.killFailed.
    */
   private async onKillRequested(): Promise<void> {
     const snapshot = this.deps.state.get();
@@ -593,6 +596,8 @@ export class GameController {
     const manifest = this.current;
     if (manifest === null) return; // defensive: `running` always has a current manifest
     this.killInFlight = true;
+    // Show "Force closing…" and hide the Force close button immediately (cleared back on failure).
+    this.deps.state.set({ ...snapshot, killing: true });
     try {
       // Targets are computed HERE from this.current, leaving runningImageNames untouched: a union there
       // would regress return-to-game (focusGameWindow picks the first Z-order match — the launcher name
@@ -626,6 +631,10 @@ export class GameController {
       //    something is STILL alive when the window elapses.
       if (await this.killTargetsStillAlive(targets, proc, manifest.raw.killTimeoutSec)) {
         log.warn(`[kill] targets still alive after force-close id=${manifest.raw.id} — reporting killFailed`);
+        // The game is still up → back to plain running (status "Running…", Force close button returns),
+        // then surface the error. Re-read in case a waiter advanced the state (then leave it be).
+        const current = this.deps.state.get();
+        if (current.kind === 'running') this.deps.state.set({ ...current, killing: false });
         this.sendError(this.t('errors.killFailed'));
       } else {
         log.info(`[kill] force-close done id=${manifest.raw.id} — exit waiters will finish the flow`);

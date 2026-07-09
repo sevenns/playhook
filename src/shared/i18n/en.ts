@@ -77,6 +77,7 @@ export const en = {
   'launcher.state.syncingIn': 'Syncing saves...',
   'launcher.state.launching': 'Launching...',
   'launcher.state.running': 'Running...',
+  'launcher.state.killing': 'Force closing...',
   'launcher.state.syncingOut': 'Saving progress...',
   'launcher.state.installingPaused': 'Installing paused...',
   'launcher.state.installingPausedPercent': 'Installing paused on {percent}%...',

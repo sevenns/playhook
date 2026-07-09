@@ -228,7 +228,10 @@ export function createControls(deps: ControlsDeps): Controls {
   // so this is the exact opposite of the install toggle, which hides during busy). Text from JS (no
   // data-i18n) so a language change re-labels it at render time and it stays out of the i18n HTML test.
   function applyMenuKill(): void {
-    const running = state().kind === 'running';
+    // Shown only while a game is running AND a force-close isn't already in flight (during killing the
+    // status reads "Force closing…" and the button would be a no-op — main guards a repeat anyway).
+    const s = state();
+    const running = s.kind === 'running' && s.killing !== true;
     menuKill.classList.toggle('is-hidden', !running);
     if (running) menuKill.textContent = t()('launcher.menu.forceClose');
   }

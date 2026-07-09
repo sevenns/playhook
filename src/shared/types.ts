@@ -275,7 +275,14 @@ export type AppState =
   | { readonly kind: 'uninstalling'; readonly game: GameInfo }
   | { readonly kind: 'syncing-in'; readonly game: GameInfo }
   | { readonly kind: 'launching'; readonly game: GameInfo }
-  | { readonly kind: 'running'; readonly game: GameInfo; readonly since: number }
+  | {
+      readonly kind: 'running';
+      readonly game: GameInfo;
+      readonly since: number;
+      /** A force-close (More → Force close) is in flight: the UI shows a "Force closing…" indicator and
+       * hides the Force close button. Cleared back to running if the force-close fails (game stays up). */
+      readonly killing?: boolean;
+    }
   | { readonly kind: 'syncing-out'; readonly game: GameInfo }
   | { readonly kind: 'error'; readonly game?: GameInfo; readonly message: string };
 

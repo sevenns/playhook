@@ -60,6 +60,7 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'launcher.state.syncingIn': 'Синхронизация сохранений...',
   'launcher.state.launching': 'Запуск...',
   'launcher.state.running': 'Игра запущена...',
+  'launcher.state.killing': 'Принудительное закрытие...',
   'launcher.state.syncingOut': 'Сохранение прогресса...',
   'launcher.state.installingPaused': 'Установка приостановлена...',
   'launcher.state.installingPausedPercent': 'Установка приостановлена на {percent}%...',

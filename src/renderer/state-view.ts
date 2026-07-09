@@ -37,7 +37,7 @@ export function statusOf(state: AppState, t: Translator): string {
     case 'launching':
       return t('launcher.state.launching');
     case 'running':
-      return t('launcher.state.running');
+      return state.killing === true ? t('launcher.state.killing') : t('launcher.state.running');
     case 'syncing-out':
       return t('launcher.state.syncingOut');
     case 'ready': {
