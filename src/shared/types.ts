@@ -555,8 +555,15 @@ export type ConfigEditorCommand = 'format';
 export interface DriveCandidate {
   /** Mountpoint / card root, e.g. "E:\\". */
   readonly root: string;
-  /** Display label: "E:\\ — Hollow Knight" | "E:\\ — invalid game.json" | "E:\\ — blank drive". */
+  /** Display label: "E:\\ — Hollow Knight" | "E:\\ — 3 games" | "E:\\ — invalid game.json" | "E:\\ — blank drive". */
   readonly label: string;
+  /**
+   * Content signature of this card's game.json — the sorted game ids (`''` blank, `'invalid'` unreadable).
+   * Identifies the MEDIA, not the slot: the Configure window compares it to detect a card swapped into the
+   * same mountpoint (the drive letter never changes) and to ignore cosmetic edits. Never displayed —
+   * `label` may be a bare count ("3 games") that two different cards would share.
+   */
+  readonly signature: string;
   /** True when a game.json exists in the root of this mountpoint. */
   readonly hasManifest: boolean;
   /** True when this root is the launcher's currently-active card (driveWatcher.getActiveRoot()). */

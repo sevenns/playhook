@@ -430,11 +430,13 @@ function drivesSignature(list: readonly DriveCandidate[]): string {
     .join('¦');
 }
 
-// Per-drive descriptor used to detect a media swap at the SAME root: root + label (carries the game.json
-// title) + hasManifest. isActive is intentionally excluded — it can flap without the card's content
-// changing, and shouldn't force a config reload.
+// Per-drive descriptor used to detect a media swap at the SAME root: root + the card's CONTENT signature
+// (its game ids) + hasManifest. The signature is used rather than the display label because the label can
+// be a bare count ("3 games") that two different cards share — and the drive letter never changes, so the
+// label alone would miss the swap. isActive is intentionally excluded — it can flap without the card's
+// content changing, and shouldn't force a config reload.
 function driveKey(candidate: DriveCandidate): string {
-  return `${candidate.root}|${candidate.label}|${candidate.hasManifest ? 1 : 0}`;
+  return `${candidate.root}|${candidate.signature}|${candidate.hasManifest ? 1 : 0}`;
 }
 
 function renderDrives(list: readonly DriveCandidate[]): void {

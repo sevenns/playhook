@@ -6,4 +6,5 @@ import type { PluralKey, PluralForms } from './en-plural';
 export const ruPlural: Partial<Record<PluralKey, PluralForms>> = {
   'format.hours': { one: '{n} час', few: '{n} часа', many: '{n} часов', other: '{n} часа' },
   'format.minutes': { one: '{n} минута', few: '{n} минуты', many: '{n} минут', other: '{n} минуты' },
+  'drive.games': { one: '{n} игра', few: '{n} игры', many: '{n} игр', other: '{n} игры' },
 };

@@ -8,6 +8,8 @@ export type PluralForms = Partial<Record<Intl.LDMLPluralRule, string>> & { reado
 export const enPlural = {
   'format.hours': { one: '{n}h', other: '{n}h' },
   'format.minutes': { one: '{n}m', other: '{n}m' },
+  // Drive-picker label for a multi-game card (the individual titles don't fit one line — show the count).
+  'drive.games': { one: '{n} game', other: '{n} games' },
 } as const satisfies Record<string, PluralForms>;
 
 /** Every plural key — the compile-time contract the Russian plural mirror indexes against. */

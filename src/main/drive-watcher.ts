@@ -63,9 +63,11 @@ export async function listDriveCandidates(
       if (!(await fse.pathExists(root))) continue;
       const manifestPath = path.join(root, MANIFEST_FILENAME);
       const hasManifest = await fse.pathExists(manifestPath);
+      const { label, signature } = await describeManifest(root, manifestPath, hasManifest, t);
       candidates.push({
         root,
-        label: await buildDriveLabel(root, manifestPath, hasManifest, t),
+        label,
+        signature,
         hasManifest,
         isActive: root === activeRoot,
       });
@@ -74,29 +76,60 @@ export async function listDriveCandidates(
   return candidates;
 }
 
+/** What one read of a candidate's game.json yields: its display label and its content signature. */
+interface ManifestDescription {
+  /**
+   * "E:\ — Hollow Knight" (title from a single-game game.json), "E:\ — 3 games" (a multi-game card: the
+   * individual titles don't fit a one-line label, so it shows the count), "E:\ — invalid game.json" (file
+   * present but unparseable / no title), or "E:\ — blank drive" (no game.json). This is the primary
+   * signature on Windows, where drivelist does not populate a volume label.
+   */
+  readonly label: string;
+  /** The card's identity — see DriveCandidate.signature / gameIdsSignature. */
+  readonly signature: string;
+}
+
 /**
- * "E:\ — Hollow Knight" (title parsed from game.json), "E:\ — invalid game.json" (file present but
- * unparseable / no title), or "E:\ — blank drive" (no game.json). This is the primary signature on
- * Windows, where drivelist does not populate a volume label.
+ * Card identity: the SORTED game ids from game.json, joined. Ids are constrained to [A-Za-z0-9._-] by the
+ * schema, so `|` is a safe separator. Deliberately independent of the DISPLAY label (which may be a bare
+ * count like "3 games", identical across different cards) and of cosmetic edits (titles/paths), so the
+ * Configure window reloads on a real media swap or a games-list change — not on every rename.
  */
-async function buildDriveLabel(
+function gameIdsSignature(games: readonly unknown[]): string {
+  const ids = games.map((game) =>
+    typeof game === 'object' && game !== null && 'id' in game && typeof game.id === 'string' ? game.id : '?',
+  );
+  return [...ids].sort().join('|');
+}
+
+/** Reads a candidate's game.json ONCE and derives both its display label and its content signature. */
+async function describeManifest(
   root: string,
   manifestPath: string,
   hasManifest: boolean,
   t: Translator,
-): Promise<string> {
+): Promise<ManifestDescription> {
   // The `root — …` shape and the card title (untrusted) stay literal; only the descriptive suffix is
   // translated. The picker re-pushes every 2s while visible, so a language change is picked up on its own.
-  if (!hasManifest) return `${root} — ${t('drive.blank')}`;
+  if (!hasManifest) return { label: `${root} — ${t('drive.blank')}`, signature: '' };
+  const invalid: ManifestDescription = { label: `${root} — ${t('drive.invalid')}`, signature: 'invalid' };
   try {
     const parsed: unknown = await fse.readJson(manifestPath);
-    if (typeof parsed === 'object' && parsed !== null && 'title' in parsed) {
-      const title = parsed.title;
-      if (typeof title === 'string' && title.length > 0) return `${root} — ${title}`;
+    // game.json holds a single game object (legacy) OR a non-empty array of them (multi-game card) — the
+    // same top-level union readManifests accepts.
+    const games: readonly unknown[] = Array.isArray(parsed) ? parsed : [parsed];
+    const first = games[0];
+    if (typeof first !== 'object' || first === null) return invalid;
+    const signature = gameIdsSignature(games);
+    // Several games → the count alone ("3 games"); naming just the first would misrepresent the card.
+    if (games.length > 1) return { label: `${root} — ${t.tp('drive.games', games.length)}`, signature };
+    if ('title' in first) {
+      const title = first.title;
+      if (typeof title === 'string' && title.length > 0) return { label: `${root} — ${title}`, signature };
     }
-    return `${root} — ${t('drive.invalid')}`;
+    return invalid;
   } catch {
-    return `${root} — ${t('drive.invalid')}`;
+    return invalid;
   }
 }
 

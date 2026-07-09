@@ -601,7 +601,7 @@ html:not(.cursor-hidden) .rect-button:hover,
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
-  --fade: calc(12 * var(--px)); /* soft-fade width at a clipped edge (kept small so start/end stay legible) */
+  --fade: calc(8 * var(--px)); /* soft-fade width at a clipped edge (kept small so start/end stay legible) */
 }
 /* A clipped (overflowing) title fades out at the RIGHT edge so the cut looks soft, not chopped. JS adds
    `is-clipped` to any overflowing button. */
