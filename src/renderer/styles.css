@@ -601,6 +601,30 @@ html:not(.cursor-hidden) .rect-button:hover,
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
+  --fade: calc(28 * var(--px)); /* soft-fade width at a clipped edge */
+}
+/* A clipped (overflowing) title fades out at the RIGHT edge so the cut looks soft, not chopped. JS adds
+   `is-clipped` to any overflowing button. */
+.game-button.is-clipped .game-label {
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - var(--fade)), transparent 100%);
+  mask-image: linear-gradient(to right, #000 calc(100% - var(--fade)), transparent 100%);
+}
+/* While the focused title marquee-scrolls, fade BOTH edges so the text softly enters/leaves on each side. */
+.game-button.is-scrolling .game-label {
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    #000 var(--fade),
+    #000 calc(100% - var(--fade)),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    #000 var(--fade),
+    #000 calc(100% - var(--fade)),
+    transparent 100%
+  );
 }
 .game-label-inner {
   display: inline-block;

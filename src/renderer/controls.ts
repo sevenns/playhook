@@ -307,17 +307,19 @@ export function createControls(deps: ControlsDeps): Controls {
   // Constant scroll speed for the focused game title's marquee (design px per second).
   const MARQUEE_SPEED_PX_PER_S = 60;
 
-  // Starts the marquee on the focused game button IF its title overflows, and stops it on the others.
-  // Overflow is measured live (the inner text width vs the visible clip box). No-op unless the picker is
-  // open, so unrelated re-renders don't force a reflow.
+  // Marks every overflowing game title as clipped (→ a soft right-edge fade) and starts the marquee on the
+  // FOCUSED one (→ a both-edge fade + scroll). Overflow is measured live (inner text width vs the visible
+  // clip box). No-op unless the picker is open, so unrelated re-renders don't force a reflow.
   function updateSelectGameMarquee(): void {
     if (popupView !== 'select-game') return;
     for (const btn of selectGameButtons) {
       const label = btn.querySelector<HTMLElement>('.game-label');
       const inner = btn.querySelector<HTMLElement>('.game-label-inner');
       if (label === null || inner === null) continue;
-      const overflow = btn.classList.contains('is-focused') ? inner.scrollWidth - label.clientWidth : 0;
-      if (overflow > 1) {
+      const overflow = inner.scrollWidth - label.clientWidth;
+      const clipped = overflow > 1;
+      btn.classList.toggle('is-clipped', clipped);
+      if (clipped && btn.classList.contains('is-focused')) {
         inner.style.setProperty('--marquee-shift', `${-overflow}px`);
         inner.style.setProperty('--marquee-duration', `${Math.max(2, overflow / MARQUEE_SPEED_PX_PER_S)}s`);
         btn.classList.add('is-scrolling');
