@@ -28,6 +28,30 @@ const AUDIO_MIME: Readonly<Record<string, string>> = {
   '.webm': 'audio/webm',
 };
 
+/**
+ * Supported image / audio file extensions WITHOUT the leading dot, derived from the MIME maps above so
+ * there is a single source of truth. The Configure-game window's file picker builds its dialog filters
+ * from these (see game-config.ts pickPath) — keeping the "what can be a hero image / a sound" answer in
+ * lockstep with what this reader actually decodes.
+ */
+export const IMAGE_EXTENSIONS: readonly string[] = Object.keys(IMAGE_MIME).map((ext) => ext.slice(1));
+export const AUDIO_EXTENSIONS: readonly string[] = Object.keys(AUDIO_MIME).map((ext) => ext.slice(1));
+
+/**
+ * Reads an image file into a base64 data URL (or undefined on any failure). A free function so both the
+ * AssetReader instance (hero delivery) and the Configure window's hero-preview handler share one path.
+ */
+export async function readImageDataUrl(filePath: string): Promise<string | undefined> {
+  try {
+    const mime = IMAGE_MIME[path.extname(filePath).toLowerCase()] ?? 'application/octet-stream';
+    const buffer = await fse.readFile(filePath);
+    return `data:${mime};base64,${buffer.toString('base64')}`;
+  } catch (cause) {
+    log.warn(`[image] failed to read "${filePath}":`, describe(cause));
+    return undefined;
+  }
+}
+
 const SFX_NAMES: readonly SfxName[] = ['play', 'navigate', 'button', 'back'];
 
 // Bundled default UI sounds (in dist/audio, copied by copy-assets). Used per slot when a game.json
@@ -94,14 +118,7 @@ export class AssetReader {
   constructor(private readonly deps: AssetReaderDeps) {}
 
   async readImageDataUrl(filePath: string): Promise<string | undefined> {
-    try {
-      const mime = IMAGE_MIME[path.extname(filePath).toLowerCase()] ?? 'application/octet-stream';
-      const buffer = await fse.readFile(filePath);
-      return `data:${mime};base64,${buffer.toString('base64')}`;
-    } catch (cause) {
-      log.warn(`[image] failed to read "${filePath}":`, describe(cause));
-      return undefined;
-    }
+    return readImageDataUrl(filePath);
   }
 
   /**

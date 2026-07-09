@@ -34,8 +34,12 @@
         <span id="drive-empty" data-i18n="configure.insertCard" hidden>Insert an SD card or flash drive.</span>
       </section>
 
-      <!-- Starter templates -->
-      <section class="section">
+      <!-- Edit tabs: one row of the form sections + a trailing JSON tab (built in configure.ts, since the
+           section labels come from the translator). -->
+      <div id="edit-tabs"></div>
+
+      <!-- Starter templates — the first tab's panel (shown when the Templates tab is active). -->
+      <section id="templates-panel" class="form-section" hidden>
         <span class="section-label" data-i18n="configure.startTemplate">Start from a template</span>
         <div class="button-row">
           <fluent-button id="tpl-executable" data-i18n="configure.tplExecutable">Executable file</fluent-button>
@@ -45,16 +49,23 @@
         </div>
       </section>
 
-      <!-- Editor + validation results. "game.json" is a filename — not translated. -->
-      <section id="editor-section">
+      <!-- Interactive form (its inner DOM is built at runtime in configure-form-view.ts). -->
+      <div id="form-view" hidden></div>
+
+      <!-- Raw JSON editor (advanced). "game.json" is a filename — not translated. -->
+      <section id="editor-section" hidden>
         <span class="section-label">game.json</span>
         <div id="editor"></div>
-        <div id="issues"></div>
       </section>
 
-      <!-- Actions. Format / Reset live in the editor's right-click context menu (see configure-window.ts). -->
+      <!-- Validation results, shared by both modes (unmapped issues + the id-change warning). -->
+      <div id="issues"></div>
+
+      <!-- Actions. Reset re-reads game.json from the card (discarding edits); Format also lives in the
+           JSON editor's right-click context menu (see configure-window.ts). -->
       <div class="actions">
-        <fluent-button id="save" appearance="accent" data-i18n="configure.save">Save &amp; Apply</fluent-button>
+        <fluent-button id="save" appearance="primary" data-i18n="configure.save">Save &amp; Apply</fluent-button>
+        <fluent-button id="reset" data-i18n="configure.reset">Reset</fluent-button>
         <span id="status"></span>
       </div>
     </main>
@@ -64,10 +75,11 @@
       <div id="confirm-panel">
         <span id="confirm-message"></span>
         <!-- Every confirm is a yes/no question: No cancels, Yes performs the action. Labels are fixed
-             (common.yes / common.no) — never a context-specific verb. -->
+             (common.yes / common.no) — never a context-specific verb. Order follows the Windows
+             convention: the affirmative (Yes, primary) first, then No. -->
         <div class="button-row">
+          <fluent-button id="confirm-ok" appearance="primary" data-i18n="common.yes">Yes</fluent-button>
           <fluent-button id="confirm-cancel" data-i18n="common.no">No</fluent-button>
-          <fluent-button id="confirm-ok" appearance="accent" data-i18n="common.yes">Yes</fluent-button>
         </div>
       </div>
     </div>

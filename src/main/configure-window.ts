@@ -27,6 +27,9 @@ const OVERLAY = {
 export class ConfigureWindow {
   private window: BrowserWindow | null = null;
   private closeGuard: HideOnCloseGuard | null = null;
+  // Whether the renderer's active tab is the raw JSON editor. Format only makes sense there, so the
+  // context menu shows it only when true (the renderer pushes this on every tab switch).
+  private jsonEditorActive = false;
 
   constructor(
     private readonly gameConfig: GameConfigService,
@@ -35,6 +38,9 @@ export class ConfigureWindow {
     // The renderer computes the effective theme and asks us to recolor the native caption buttons.
     // Registered once here (singleton); guarded on a live window. Its own channel — see the file header.
     ipcMain.on(IPC.configTitleBarOverlay, (_event, dark: boolean) => this.applyOverlay(dark));
+    ipcMain.on(IPC.configEditorActive, (_event, active: boolean) => {
+      this.jsonEditorActive = active === true;
+    });
   }
 
   /** The native window title (taskbar). Re-applied on a language change (the renderer also sets
@@ -104,22 +110,21 @@ export class ConfigureWindow {
       // it Electron shows its English defaults on Windows. Menu is rebuilt per right-click, so a language
       // change is picked up on its own.
       const t = this.getTranslator();
-      const menu = Menu.buildFromTemplate([
+      const template: Electron.MenuItemConstructorOptions[] = [
         { role: 'cut', label: t('menu.cut'), enabled: params.editFlags.canCut },
         { role: 'copy', label: t('menu.copy'), enabled: params.editFlags.canCopy },
         { role: 'paste', label: t('menu.paste'), enabled: params.editFlags.canPaste },
         { role: 'selectAll', label: t('menu.selectAll'), enabled: params.editFlags.canSelectAll },
-        { type: 'separator' },
-        {
-          label: t('menu.format'),
-          click: () => window.webContents.send(IPC.configEditorCommand, 'format'),
-        },
-        {
-          label: t('menu.reset'),
-          click: () => window.webContents.send(IPC.configEditorCommand, 'reset'),
-        },
-      ]);
-      menu.popup({ window });
+      ];
+      // Format applies only to the raw JSON editor → offer it only when that tab is active. Reset now lives
+      // as a visible button next to Save & Apply (both modes), so it's no longer in this menu.
+      if (this.jsonEditorActive) {
+        template.push(
+          { type: 'separator' },
+          { label: t('menu.format'), click: () => window.webContents.send(IPC.configEditorCommand, 'format') },
+        );
+      }
+      Menu.buildFromTemplate(template).popup({ window });
     });
 
     // X hides to the tray instead of quitting (like GameWindow/SettingsWindow); detach the poll on close.

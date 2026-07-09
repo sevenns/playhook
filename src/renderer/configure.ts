@@ -9,6 +9,12 @@ import '@fluentui/web-components/button/define.js';
 import '@fluentui/web-components/dropdown/define.js';
 import '@fluentui/web-components/listbox/define.js';
 import '@fluentui/web-components/option/define.js';
+// Additional components used by the interactive form (patterns from settings.ts): field, switch, text-input.
+import '@fluentui/web-components/field/define.js';
+import '@fluentui/web-components/switch/define.js';
+import '@fluentui/web-components/text-input/define.js';
+import '@fluentui/web-components/tablist/define.js';
+import '@fluentui/web-components/tab/define.js';
 import { setTheme } from '@fluentui/web-components';
 import { webDarkTheme, webLightTheme } from '@fluentui/tokens';
 import { EditorView, basicSetup } from 'codemirror';
@@ -16,6 +22,7 @@ import { Compartment, type Extension } from '@codemirror/state';
 import { json } from '@codemirror/lang-json';
 import { jsonSchema } from 'codemirror-json-schema';
 import type {
+  ConfigPickKind,
   ConfigTemplates,
   DriveCandidate,
   ManifestValidationIssue,
@@ -23,6 +30,13 @@ import type {
 } from '../shared/types';
 import { createTranslator, type Locale, type Translator } from '../shared/i18n/index.js';
 import { localizeDocument } from './i18n-dom.js';
+import { FormView, FORM_SECTIONS, type SectionId } from './configure-form-view.js';
+import { emptyFormModel, formModelToText, textToFormModel } from './configure-form-model.js';
+
+// The active edit tab: the Templates launcher, one of the form sections, or the raw JSON editor
+// (advanced). The window is a hide-on-close singleton, so this module-level state survives hiding
+// (plan R1/D7 — no AppSettings needed).
+type EditTab = 'templates' | SectionId | 'json';
 
 // Translator, refreshed on a language push. The HTML ships English fallback (no blank flash).
 let translator: Translator = createTranslator('en');
@@ -96,8 +110,13 @@ const driveGroup = req('drive-group');
 const driveListbox = req('drive-listbox');
 const driveEmpty = req('drive-empty');
 const editorEl = req('editor');
+const editorSection = req('editor-section');
+const formViewEl = req('form-view');
+const editTabsEl = req('edit-tabs');
+const templatesPanel = req('templates-panel');
 const issuesEl = req('issues');
 const saveBtn = req('save');
+const resetBtn = req('reset');
 const statusEl = req('status');
 const tplExecutable = req('tpl-executable');
 const tplInstaller = req('tpl-installer');
@@ -138,7 +157,13 @@ function cmTheme(dark: boolean): Extension {
   );
 }
 
+// True while a PROGRAMMATIC editor write is in flight (a load, a mode-sync, a format). CodeMirror fires
+// docChanged synchronously inside dispatch, so this guard stops those writes from being mistaken for a
+// user edit and raising a false dirty (plan R4). User typing still flips dirty (the guard is false then).
+let suppressDocChanged = false;
+
 function onDocChanged(): void {
+  if (suppressDocChanged) return;
   dirty = true;
   scheduleValidate();
 }
@@ -163,15 +188,12 @@ function getEditorText(): string {
   return view?.state.doc.toString() ?? '';
 }
 
-// Replaces the whole document. `fromLoad` marks a programmatic load (not a user edit): clears dirty and
-// runs a validation pass, but doesn't treat the change as unsaved.
-function setEditorText(text: string, fromLoad: boolean): void {
+// Replaces the whole editor document WITHOUT marking dirty (programmatic write — the caller owns dirty).
+function dispatchText(text: string): void {
   if (view === null) return;
+  suppressDocChanged = true;
   view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text } });
-  if (fromLoad) {
-    dirty = false;
-    void runValidate();
-  }
+  suppressDocChanged = false;
 }
 
 function setEditable(editable: boolean): void {
@@ -187,6 +209,37 @@ let loadedId: string | null = null; // id of the last loaded/saved manifest (for
 let lastValidOk = false;
 let blocked = false; // the selected card vanished → editing/saving disabled
 let templatesCache: ConfigTemplates | null = null;
+let activeTab: EditTab = 'basics'; // a form section is the default (plan R1); 'json' is advanced
+let formBlank = false; // a blank drive → the form is shown empty & disabled until a template is picked
+// Created in init() (after all handlers are defined). Owns the interactive form's DOM + state.
+let formView: FormView;
+// The native fluent-tablist + its fluent-tab children ([Templates][Basics]…[JSON]), built in init().
+type TablistEl = HTMLElement & { activeid?: string };
+let tablist: TablistEl;
+const tabButtons = new Map<EditTab, HTMLElement>();
+// Guards the tablist `change` event against our own programmatic activeid writes (so committing/reverting
+// a tab doesn't re-enter the switch logic).
+let applyingTab = false;
+// Tab order: Templates first (#4), JSON last.
+const TAB_ORDER: readonly EditTab[] = ['templates', ...FORM_SECTIONS.map((s) => s.id), 'json'];
+
+function tabDomId(tab: EditTab): string {
+  return `tab-${tab}`;
+}
+function tabFromDomId(id: string | undefined): EditTab | null {
+  if (id === undefined) return null;
+  return TAB_ORDER.find((tab) => tabDomId(tab) === id) ?? null;
+}
+
+/** True when the raw JSON editor tab is active (vs. the Templates or a form section tab). */
+function jsonActive(): boolean {
+  return activeTab === 'json';
+}
+
+// The manifest text of the currently active editor (form → serialized, json → raw editor text).
+function activeText(): string {
+  return jsonActive() ? getEditorText() : formView.serialize();
+}
 
 // ── Validation + issues panel ──────────────────────────────────────────────────
 let validateTimer: number | null = null;
@@ -209,10 +262,20 @@ function parseId(text: string): string | null {
 }
 
 async function runValidate(): Promise<void> {
-  const text = getEditorText();
+  const text = activeText();
   const result = await window.configureApi.validateConfig(text);
   lastValidOk = result.ok;
-  renderIssues(result.ok ? null : result.issues, text);
+  if (result.ok) {
+    formView.setFieldErrors(null);
+    renderIssues(null, text);
+  } else if (!jsonActive()) {
+    // Issues that map onto a field are shown inline; the rest ((root)/syntax/future keys) go to the panel.
+    const unmapped = formView.setFieldErrors(result.issues);
+    renderIssues(unmapped, text);
+  } else {
+    formView.setFieldErrors(null);
+    renderIssues(result.issues, text);
+  }
   updateSaveEnabled();
 }
 
@@ -247,6 +310,9 @@ function renderIssues(issues: readonly ManifestValidationIssue[] | null, text: s
 
 function updateSaveEnabled(): void {
   setDisabled(saveBtn, blocked || selectedRoot === null || !lastValidOk);
+  // Reset re-reads the card and is useful even for an invalid config (to discard edits), so it is NOT
+  // gated by validity — only by having a card that isn't gone.
+  setDisabled(resetBtn, blocked || selectedRoot === null);
 }
 
 // ── Status line ─────────────────────────────────────────────────────────────
@@ -358,6 +424,8 @@ function onSelectedGone(): void {
   blocked = true;
   setEditable(false);
   setTemplatesDisabled(true);
+  setModeTabsDisabled(true);
+  applyFormDisabled();
   updateSaveEnabled();
   setStatus(translator('configure.cardGone'));
 }
@@ -366,12 +434,24 @@ function unblock(): void {
   blocked = false;
   setEditable(true);
   setTemplatesDisabled(false);
+  setModeTabsDisabled(false);
+  applyFormDisabled();
   updateSaveEnabled();
   setStatus('');
 }
 
 function setTemplatesDisabled(disabled: boolean): void {
   for (const btn of [tplExecutable, tplInstaller, tplSteam]) setDisabled(btn, disabled);
+}
+
+function setModeTabsDisabled(disabled: boolean): void {
+  for (const btn of tabButtons.values()) setDisabled(btn, disabled);
+}
+
+// The form fields are disabled when the card is gone (blocked) OR the drive is blank (no template picked
+// yet). Templates/tabs are governed separately (a blank drive still needs its template buttons enabled).
+function applyFormDisabled(): void {
+  formView.setDisabled(blocked || formBlank);
 }
 
 // Switches the active card. `confirmDirty` guards against losing unsaved edits (skipped for the initial
@@ -402,21 +482,57 @@ async function loadDrive(root: string): Promise<void> {
   const candidate = drives.find((d) => d.root === root);
   if (candidate === undefined) return;
   if (!candidate.hasManifest) {
-    // Blank drive: empty editor, invite a template. loadedId null → no id-change warning.
+    // Blank drive: an empty, disabled form (and empty editor) inviting a template. Save stays blocked
+    // until the user explicitly picks a template — no placeholder auto-fill (plan cases, R3). loadedId
+    // null → no id-change warning.
     loadedId = null;
-    setEditorText('', true);
+    formBlank = true;
+    dirty = false;
+    dispatchText('');
+    formView.load(emptyFormModel(), {}, {}, false);
+    applyFormDisabled();
+    showTab('templates'); // a blank card starts on the Templates tab (pick one to begin)
     setStatus(translator('configure.blankDrive'));
+    void runValidate();
     return;
   }
   const result = await window.configureApi.readConfig(root);
   if (!result.ok) {
+    // Not blank but unreadable — behave as before (status, no template): ConfigReadResult can't tell
+    // "file missing" from other failures (plan D2), so we never substitute a template here.
     loadedId = null;
+    formBlank = false;
+    dispatchText('');
+    formView.load(emptyFormModel(), {}, {}, false);
+    applyFormDisabled();
     setStatus(translator('configure.couldNotRead', { message: result.message }));
+    void runValidate();
     return;
   }
   loadedId = parseId(result.text);
-  setEditorText(result.text, true);
+  formBlank = false;
+  dirty = false;
+  loadText(result.text);
   setStatus('');
+}
+
+// Loads manifest text into BOTH editors (raw JSON into CodeMirror, parsed model into the form) so either
+// tab is correct on switch. If the text doesn't parse as JSON, the form can't represent it → the JSON tab
+// is auto-activated with the syntax error surfaced by validation (plan R4 / cases).
+function loadText(text: string): void {
+  dispatchText(text);
+  const parsed = textToFormModel(text);
+  if (parsed.ok) {
+    formView.load(parsed.model, parsed.rest, parsed.corrupt, parsed.mixed);
+    applyFormDisabled();
+    showTab(activeTab);
+  } else {
+    // Unparseable JSON → the form can't represent it; auto-activate the JSON tab (plan R4 / cases).
+    formView.load(emptyFormModel(), {}, {}, false);
+    applyFormDisabled();
+    showTab('json');
+  }
+  void runValidate();
 }
 
 // ── Templates ─────────────────────────────────────────────────────────────────
@@ -429,14 +545,34 @@ async function applyTemplate(kind: keyof ConfigTemplates): Promise<void> {
   if (blocked) return;
   const templates = await getTemplates();
   const template = templates[kind];
-  const current = getEditorText().trim();
-  if (current.length > 0 && current !== template.trim()) {
-    const ok = await confirmDialog(translator('configure.confirmReplace'));
-    if (!ok) return;
-  }
-  setEditorText(template, false);
+  if (!(await confirmTemplateReplace(template))) return;
+  formBlank = false;
+  // Fill both editors from the template (the templates are valid → textToFormModel succeeds).
+  dispatchText(template);
+  const parsed = textToFormModel(template);
+  if (parsed.ok) formView.load(parsed.model, parsed.rest, parsed.corrupt, parsed.mixed);
+  applyFormDisabled();
   dirty = true;
+  showTab('basics'); // jump into the form so the filled fields are visible
   void runValidate();
+}
+
+// Confirms replacing the current config with a template. The comparison is SEMANTIC, not textual: the
+// form omits defaults while templates spell them out, so a raw text compare would always differ and
+// prompt spuriously. We compare both sides through the same serializer; an empty/blank current skips the
+// prompt (plan R8). In JSON mode the current text is the editor's; in form mode it is the serialized form.
+async function confirmTemplateReplace(template: string): Promise<boolean> {
+  const emptyNorm = formModelToText(emptyFormModel(), {}, {}).trim();
+  const templateParsed = textToFormModel(template);
+  const templateNorm = templateParsed.ok
+    ? formModelToText(templateParsed.model, templateParsed.rest, templateParsed.corrupt).trim()
+    : template.trim();
+  const currentParsed = textToFormModel(activeText());
+  const currentNorm = currentParsed.ok
+    ? formModelToText(currentParsed.model, currentParsed.rest, currentParsed.corrupt).trim()
+    : activeText().trim();
+  if (currentNorm === emptyNorm || currentNorm === templateNorm) return true;
+  return confirmDialog(translator('configure.confirmReplace'));
 }
 
 tplExecutable.addEventListener('click', () => void applyTemplate('executable'));
@@ -447,6 +583,8 @@ tplSteam.addEventListener('click', () => void applyTemplate('steam'));
 // Pretty-prints the editor JSON (2-space indent) — the in-app "prettier" for fixing indentation. Only
 // works on syntactically valid JSON; otherwise it asks the user to fix the errors first.
 function onFormat(): void {
+  // Format only makes sense for the raw JSON editor — in form mode it is a no-op (plan R8).
+  if (!jsonActive()) return;
   if (blocked || view === null) return;
   const text = getEditorText();
   let parsed: unknown;
@@ -458,7 +596,7 @@ function onFormat(): void {
   }
   const formatted = JSON.stringify(parsed, null, 2);
   if (formatted === text) return; // already tidy — nothing to do (and don't flag it dirty)
-  setEditorText(formatted, false);
+  dispatchText(formatted);
   dirty = true;
   void runValidate();
   setStatus('');
@@ -468,7 +606,7 @@ function onFormat(): void {
 async function onSave(): Promise<void> {
   if (selectedRoot === null || blocked || !lastValidOk) return;
   const root = selectedRoot;
-  const text = getEditorText();
+  const text = activeText();
   setDisabled(saveBtn, true);
   setStatus(translator('configure.saving'));
   const result = await window.configureApi.saveConfig(root, text);
@@ -512,7 +650,6 @@ saveBtn.addEventListener('click', () => void onSave());
 // Format / Reset are driven from the editor's native right-click menu (configure-window.ts) via IPC.
 window.configureApi.onEditorCommand((command) => {
   if (command === 'format') onFormat();
-  else void onReset();
 });
 
 // The dropdown updates its own display on user selection; selectDrive reverts it if a dirty-switch
@@ -520,6 +657,96 @@ window.configureApi.onEditorCommand((command) => {
 wireDropdown(driveGroup, (root) => {
   void selectDrive(root, true);
 });
+
+// ── Edit tabs ([Templates][Basics][Launch][Hero][Saves][Audio][Advanced][JSON]) ──
+// A native fluent-tablist: it renders the tab strip (accent indicator, keyboard nav, ARIA) and fires
+// `change` with the new activeid. We manage the panels ourselves in showTab. Labels come from the
+// translator (re-applied on a language change via applyLocale → relabelTabs).
+function buildEditTabs(): void {
+  applyingTab = true; // ignore the tablist's own auto-select `change` during construction
+  tablist = document.createElement('fluent-tablist');
+  for (const tab of TAB_ORDER) {
+    const el = document.createElement('fluent-tab');
+    el.setAttribute('slot', 'tab');
+    el.id = tabDomId(tab);
+    tabButtons.set(tab, el);
+    tablist.append(el);
+  }
+  tablist.addEventListener('change', () => {
+    if (applyingTab) return; // our own programmatic activeid write
+    const target = tabFromDomId(tablist.activeid);
+    if (target !== null && target !== activeTab) switchTab(target);
+  });
+  editTabsEl.append(tablist);
+  relabelTabs();
+  applyingTab = false;
+}
+
+function relabelTabs(): void {
+  tabButtons.get('templates')?.replaceChildren(translator('configure.tabTemplates'));
+  for (const section of FORM_SECTIONS) {
+    tabButtons.get(section.id)?.replaceChildren(translator(section.labelKey));
+  }
+  tabButtons.get('json')?.replaceChildren(translator('configure.tabJson'));
+}
+
+// Points the tablist strip at `tab` without triggering the change→switch logic (a commit or a revert).
+function setStripActive(tab: EditTab): void {
+  applyingTab = true;
+  tablist.activeid = tabDomId(tab);
+  applyingTab = false;
+}
+
+// Reflects `activeTab` onto the DOM: the right panel (templates / a form section / the JSON editor) plus
+// the tab strip. Does NOT convert content — that is switchTab's job on a form↔json crossing.
+function showTab(target: EditTab): void {
+  activeTab = target;
+  const isSection = target !== 'templates' && target !== 'json';
+  templatesPanel.hidden = target !== 'templates';
+  formViewEl.hidden = !isSection;
+  editorSection.hidden = target !== 'json';
+  if (isSection) formView.showSection(target);
+  setStripActive(target);
+  // Gate the native "Format" context-menu item: it only applies to the JSON editor.
+  window.configureApi.setJsonEditorActive(target === 'json');
+}
+
+// Switches tabs, converting content across the form↔json boundary. Form/Templates → JSON always works (the
+// model serializes). JSON → a form/Templates tab only when the text parses as JSON (else a status hint and
+// the strip reverts — schema errors are fine, the form exists to fix them, plan R4). Everything else is
+// free (same model). Switching never marks dirty (programmatic editor writes are guarded).
+function switchTab(target: EditTab): void {
+  if (blocked) {
+    setStripActive(activeTab);
+    return;
+  }
+  if (target === 'json') {
+    dispatchText(formView.serialize());
+    formView.setFieldErrors(null);
+    showTab('json');
+    setStatus('');
+    void runValidate();
+    return;
+  }
+  if (jsonActive()) {
+    const parsed = textToFormModel(getEditorText());
+    if (!parsed.ok) {
+      setStatus(translator('configure.fixSyntaxSwitch'));
+      setStripActive(activeTab); // undo the user's tab click
+      return;
+    }
+    formView.load(parsed.model, parsed.rest, parsed.corrupt, parsed.mixed);
+    applyFormDisabled();
+    setStatus('');
+    showTab(target);
+    void runValidate();
+    return;
+  }
+  // Templates ↔ form section, or section ↔ section: same model, just swap the visible panel.
+  showTab(target);
+}
+
+resetBtn.addEventListener('click', () => void onReset());
 
 // ── Init ─────────────────────────────────────────────────────────────────────
 applyTheme('system'); // best-guess before settings load, to avoid a flash
@@ -552,6 +779,8 @@ function applyLocale(locale: Locale): void {
   document.title = `Playhook — ${translator('window.configureGame')}`;
   localizeDocument(translator);
   renderTitlebarSubtitle();
+  formView.relabel();
+  relabelTabs();
 }
 
 async function init(): Promise<void> {
@@ -578,6 +807,21 @@ async function init(): Promise<void> {
     schemaExt = json();
   }
   buildEditor('', schemaExt);
+  // Build the interactive form and the tab bar, then show the first section before a drive loads into it.
+  formView = new FormView({
+    root: formViewEl,
+    translator: () => translator,
+    onChange: () => {
+      dirty = true;
+      scheduleValidate();
+    },
+    pickPath: (kind: ConfigPickKind) => window.configureApi.pickPath(selectedRoot ?? '', kind),
+    imagePreview: (relative: string) => window.configureApi.getImagePreview(selectedRoot ?? '', relative),
+    openExternal: (url: string) => window.configureApi.openExternal(url),
+    onPickError: (message) => setStatus(message),
+  });
+  buildEditTabs();
+  showTab('basics');
   renderDrives(drivesList);
   // Seed the locale last so it localizes the freshly-populated DOM and title-bar suffix in one pass.
   applyLocale(locale);

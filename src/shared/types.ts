@@ -471,18 +471,30 @@ export const IPC = {
   configIconRequest: 'config:icon',
   /** configure-renderer → main (invoke): the app version string (for the custom title bar). */
   configVersionRequest: 'config:version',
-  /** main → configure-renderer: run an editor command from the native context menu (format / reset). */
+  /** main → configure-renderer: run an editor command from the native context menu (format). */
   configEditorCommand: 'config:editor-command',
+  /** configure-renderer → main: whether the JSON editor tab is active (gates the Format context-menu item). */
+  configEditorActive: 'config:editor-active',
   /** configure-renderer → main: recolor THIS window's native title-bar overlay for the theme. */
   configTitleBarOverlay: 'config:titlebar-overlay',
   /** configure-renderer → main (invoke): request the current effective UI locale (on window startup). */
   configLanguageRequest: 'config:language-request',
   /** main → configure-renderer: updated effective UI locale (pushed when the language changes). */
   configLanguageUpdate: 'config:language-update',
+  /** configure-renderer → main (invoke): pick file(s)/a folder from the card via a native dialog →
+   * ConfigPickResult (paths card-relative). Payload ConfigPickRequest. */
+  configPickPath: 'config:pick-path',
+  /** configure-renderer → main (invoke): read a card-relative image into a data URL for the hero
+   * preview (or null when unreadable/outside root). Payload {root, path}. */
+  configImagePreview: 'config:image-preview',
+  /** configure-renderer → main: open an external https URL in the default browser (e.g. the SteamDB
+   * appid lookup). Payload the URL string; main whitelists https. */
+  configOpenExternal: 'config:open-external',
 } as const;
 
-/** Editor commands dispatched from the Configure window's native right-click menu. */
-export type ConfigEditorCommand = 'format' | 'reset';
+/** Editor commands dispatched from the Configure window's native right-click menu. Reset moved to a
+ * visible button, so `format` is the only remaining command. */
+export type ConfigEditorCommand = 'format';
 
 /**
  * A removable-drive candidate for the Configure-game window (stage: init/edit game.json). Unlike
@@ -536,6 +548,36 @@ export interface ConfigTemplates {
   readonly installer: string;
   readonly steam: string;
 }
+
+/**
+ * What the Configure form's Browse button is picking — drives the dialog's filters and mode:
+ * file pickers for exe/installer/image/audio (image is multi-select), a folder picker for `directory`
+ * (card-relative), and `pc-save` (a PC folder OUTSIDE the card, converted to a %PREFIX%\… save path).
+ */
+export type ConfigPickKind =
+  | 'executable'
+  | 'installer'
+  | 'image'
+  | 'audio'
+  | 'directory'
+  | 'pc-save';
+
+/** Request payload for config:pick-path: the card root (re-checked in main) and the pick kind. */
+export interface ConfigPickRequest {
+  readonly root: string;
+  readonly kind: ConfigPickKind;
+}
+
+/**
+ * Result of picking path(s) from the card via the native dialog. On success `paths` are card-RELATIVE
+ * with forward slashes (ready to drop into game.json). A discriminated union (untrusted external action →
+ * Result-union): success (one or more relative paths), a plain cancellation, or a rejection carrying a
+ * localized message (a file outside the card root, the card root itself for a folder pick, …).
+ */
+export type ConfigPickResult =
+  | { readonly ok: true; readonly paths: readonly string[] }
+  | { readonly ok: false; readonly cancelled: true }
+  | { readonly ok: false; readonly message: string };
 
 /** API that preload exposes on `window.api`. */
 export interface RendererApi {
@@ -624,6 +666,12 @@ export interface ConfigureApi {
   saveConfig(root: string, text: string): Promise<ConfigSaveResult>;
   /** The three starter templates as JSON strings. */
   getTemplates(): Promise<ConfigTemplates>;
+  /** Pick file(s)/a folder from the card via a native dialog; resolves with card-relative paths. */
+  pickPath(root: string, kind: ConfigPickKind): Promise<ConfigPickResult>;
+  /** Read a card-relative image into a data URL for the hero preview (null when unreadable). */
+  getImagePreview(root: string, path: string): Promise<string | null>;
+  /** Open an external https URL in the default browser (e.g. the SteamDB appid lookup). */
+  openExternal(url: string): void;
   /** The manifest JSON Schema, fed to the editor for completions/hover. */
   getSchema(): Promise<unknown>;
   /** The current AppSettings (for the window theme). */
@@ -632,8 +680,10 @@ export interface ConfigureApi {
   getAppIcon(): Promise<string>;
   /** The app version string, shown in the custom title bar (matches the settings window). */
   getAppVersion(): Promise<string>;
-  /** Editor commands (format / reset) triggered from the native right-click menu. */
+  /** Editor commands (format) triggered from the native right-click menu. */
   onEditorCommand(callback: (command: ConfigEditorCommand) => void): void;
+  /** Tell main whether the JSON editor tab is active (gates the Format context-menu item). */
+  setJsonEditorActive(active: boolean): void;
   /** Tell main to recolor THIS window's native caption buttons to match the effective theme. */
   setTitleBarDark(dark: boolean): void;
   /** Current effective UI locale (on window startup). */

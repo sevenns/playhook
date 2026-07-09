@@ -101,6 +101,219 @@ fluent-listbox[popover] {
   gap: 8px;
 }
 
+/* Edit tabs: one row of buttons ([Basics]…[JSON]). The active one is marked accent from the renderer
+   (appearance="accent"). Wraps on a narrow window. */
+#edit-tabs {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+/* Interactive form: grows to fill the remaining height and scrolls vertically inside the flex column.
+   Only one section panel is shown at a time (driven by the tab bar). */
+#form-view {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding-right: 4px; /* keep the scrollbar off the controls */
+}
+
+/* A single section panel (Basics/Launch/…): stacks its fields. */
+.form-section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* The Templates tab panel is a direct child of #configure (like #form-view / #editor-section), so it must
+   grow to fill the remaining height — otherwise the Save/Reset footer floats up to the template buttons
+   instead of staying pinned to the bottom. Its content stays top-aligned (column, items at start). */
+#templates-panel {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* Audio Default/Custom selector — a compact dropdown above the (optional) input row (narrower than the
+   default dropdown width). */
+.audio-mode {
+  min-inline-size: 160px;
+}
+
+/* Compact icon buttons in list rows (remove). */
+.icon-button {
+  flex: none;
+  min-width: 32px;
+}
+
+/* Danger (destructive) action, the Fluent way: a transparent icon button whose icon uses the danger
+   foreground token and whose hover/pressed use the danger background tokens (Fluent web-components has no
+   built-in "destructive" button appearance, so we express it through the status-danger design tokens). */
+.icon-danger {
+  --colorTransparentBackgroundHover: var(--colorStatusDangerBackground1);
+  --colorTransparentBackgroundPressed: var(--colorStatusDangerBackground2);
+}
+
+/* Trash/bin icon: outline only, danger-red. fill:none must be set here — Fluent's
+   ::slotted(svg){fill:currentColor} overrides the SVG's fill="none" attribute (making the interior follow
+   the theme foreground); a direct fill:none on the paths wins. */
+.trash-icon {
+  width: 16px;
+  height: 16px;
+}
+
+.trash-icon path {
+  fill: none;
+  stroke: var(--colorStatusDangerForeground1, #d13438);
+}
+
+/* Drag handle (grip) for reordering list rows via native drag-and-drop. */
+.drag-handle {
+  flex: none;
+  cursor: grab;
+  user-select: none;
+  padding: 0 6px;
+  font-size: 16px;
+  line-height: 1;
+  color: var(--colorNeutralForeground3, #8a8a8a);
+}
+
+.drag-handle:active {
+  cursor: grabbing;
+}
+
+.drag-handle[draggable='false'] {
+  cursor: default;
+  opacity: 0.4;
+}
+
+/* The row being dragged is dimmed for feedback. */
+.list-row.dragging {
+  opacity: 0.5;
+}
+
+/* Hero image thumbnail next to each path row (data: URL only — CSP-safe). Clickable → full-size lightbox. */
+.hero-thumb {
+  flex: none;
+  width: 64px;
+  height: 36px;
+  object-fit: cover;
+  border-radius: 4px;
+  border: 1px solid var(--colorNeutralStroke2, #444);
+  cursor: pointer;
+}
+
+/* Full-size hero preview lightbox (click anywhere / Esc to close). */
+.image-preview-veil {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  background: rgba(0, 0, 0, 0.75);
+  z-index: 200;
+  cursor: pointer;
+}
+
+.image-preview-img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: 6px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+
+/* The "find the appid" helper link under the Steam appid field. */
+.help-link {
+  font-size: 12px;
+  color: var(--colorBrandForegroundLink, #479ef5);
+  cursor: pointer;
+  width: fit-content;
+}
+
+/* A launch-mode section wrapper (executable / installer / steam blocks) — stacks its fields. */
+.field-group {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* One labelled control: a stacked label + input(s) + inline error. */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.field-label {
+  font-size: 12px;
+  color: var(--colorNeutralForeground2, #adadad);
+}
+
+/* A control paired with a trailing Browse… button on the same row. */
+.field-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.field-row fluent-text-input {
+  flex: 1 1 auto;
+}
+
+/* A read-only informational line (e.g. "Schema version: 1"). */
+.field-static {
+  font-size: 13px;
+  color: var(--colorNeutralForeground2, #adadad);
+}
+
+/* Inline per-field validation error (mirrors the issues panel colour). Hidden until it has text. */
+.field-error {
+  font-size: 12px;
+  color: var(--colorStatusDangerForeground1, #f87171);
+}
+
+.field-error:empty {
+  display: none;
+}
+
+/* A per-field hint (the corrupt-value note, the {dir} note, the watchProcesses format note). */
+.field-hint {
+  font-size: 12px;
+  color: var(--colorNeutralForeground3, #8a8a8a);
+}
+
+/* Dynamic string lists (args, watchProcesses, heroImage, install.args): a stack of rows + an Add button. */
+.list-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.list-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.list-row fluent-text-input {
+  flex: 1 1 auto;
+}
+
+/* Warning banner shown when the loaded manifest carries blocks for more than one launch mode. */
+#mixed-banner {
+  flex: none;
+  padding: 8px 12px;
+  border-radius: 4px;
+  font-size: 12px;
+  color: var(--colorStatusWarningForeground1, #e6b800);
+  background: var(--colorNeutralBackground2, #2a2a2a);
+}
+
 /* Editor: grows to fill the remaining height; CodeMirror fills the box. */
 #editor-section {
   flex: 1 1 auto;

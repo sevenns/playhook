@@ -156,6 +156,72 @@ export const en = {
   'configure.savedRejected': 'Saved, but the manifest was rejected: {message}',
   'configure.unknownReason': 'unknown reason',
 
+  // ── Configure-game window: interactive form (configure-form-view.ts) ─────────
+  // The JSON tab label (the section tabs reuse the section headings below); "JSON" is a filename/format.
+  'configure.tabJson': 'JSON',
+  // The first tab: the starter-template launcher.
+  'configure.tabTemplates': 'Templates',
+  // A visible Reset button next to Save (re-reads game.json from the card, discarding edits).
+  'configure.reset': 'Reset',
+  // Section headings.
+  'configure.sectionBasics': 'Basics',
+  'configure.sectionLaunch': 'Launch',
+  'configure.sectionHero': 'Hero images',
+  'configure.sectionSaves': 'Saves',
+  'configure.sectionAudio': 'Audio',
+  'configure.sectionAdvanced': 'Advanced',
+  // Field labels.
+  'configure.fieldId': 'Game id',
+  'configure.fieldTitle': 'Title',
+  'configure.schemaVersion': 'Schema version: 1',
+  'configure.launchType': 'Launch type',
+  'configure.launchExecutable': 'Executable',
+  'configure.launchInstaller': 'Installer',
+  'configure.fieldExecutable': 'Executable path',
+  'configure.fieldArgs': 'Arguments',
+  'configure.fieldRunAsAdmin': 'Run as administrator',
+  'configure.fieldInstaller': 'Installer path',
+  'configure.fieldInstallType': 'Installer type',
+  'configure.fieldInstallArgs': 'Installer arguments',
+  'configure.installArgsDirHint':
+    'For a custom installer exactly one argument must contain the {dir} placeholder.',
+  'configure.fieldAppid': 'Steam appid',
+  'configure.fieldWatchProcesses': 'Watched processes',
+  'configure.watchProcessesHint': '1–16 process image names ending in .exe.',
+  'configure.fieldSaveOnCard': 'Save folder on the card',
+  'configure.fieldPcSavePath': 'PC save path',
+  'configure.pcSavePathPlaceholder': '%APPDATA%/My Game',
+  'configure.fieldSoundPlay': 'Play sound',
+  'configure.fieldSoundNavigate': 'Navigate sound',
+  'configure.fieldSoundButton': 'Button sound',
+  'configure.fieldSoundBack': 'Back sound',
+  'configure.fieldBackgroundMusic': 'Background music',
+  'configure.fieldLaunchTimeout': 'Launch timeout (seconds)',
+  // Audio Default/Custom selector (Default → the field is omitted from game.json).
+  'configure.audioDefault': 'Default',
+  'configure.audioCustom': 'Custom',
+  'configure.soundBuiltinHint': 'The built-in sound will be used.',
+  'configure.musicNoneHint': 'No background music.',
+  // Steam appid helper link (opens SteamDB in the default browser).
+  'configure.appidHelp': 'Find the appid on SteamDB',
+  // Dynamic-list + picker buttons.
+  'configure.browse': 'Browse…',
+  'configure.add': 'Add',
+  'configure.addFile': 'Add…',
+  'configure.replace': 'Replace…',
+  'configure.remove': 'Remove',
+  'configure.dragReorder': 'Drag to reorder',
+  // Banners / hints.
+  'configure.corruptField': 'This field contains an invalid value; editing it replaces the value.',
+  'configure.fixSyntaxSwitch': 'Fix the JSON syntax errors before switching to the form.',
+  'configure.mixedLaunchModes':
+    'This manifest defines more than one launch type. Only “{mode}” stays active; saving removes the other blocks.',
+  // Picker rejections (main → renderer).
+  'configure.pickOutsideCard': 'The selected file is outside the card. Choose a file on the card.',
+  'configure.pickChooseSubfolder': 'Choose a subfolder of the card, not the card root.',
+  'configure.pickPcSaveOutside':
+    'That folder is not under a known save location (%DOCUMENTS%, %APPDATA%, %LOCALAPPDATA%, %LOCALLOW% or %USERPROFILE%). Pick a folder inside one of those.',
+
   // ── User-facing errors from main (ipc.ts / game-config.ts / updater.ts) ─────
   // The wrapper is translated; the technical cause ({cause}) is inserted as-is (system messages, nested
   // exceptions and the like stay in their original form).

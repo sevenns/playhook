@@ -230,6 +230,34 @@ export function expandPcSavePath(input: string, env: ManifestEnv): ExpandResult 
   return { ok: true, value: resolved };
 }
 
+/**
+ * Reverse of expandPcSavePath: turns an ABSOLUTE folder (from the Configure form's folder dialog) back
+ * into a `%PREFIX%/…` pcSavePath, or null when it lives under none of the allowed bases (so it cannot be
+ * expressed and the caller rejects it). Bases are tried most-specific-first (longest base wins) so a path
+ * under %APPDATA% is not mislabelled with the broader %USERPROFILE%. Exported for unit tests.
+ */
+export function absoluteToPcSavePath(absolute: string, env: ManifestEnv): string | null {
+  const home = process.env['USERPROFILE'];
+  const candidates: Array<{ readonly prefix: string; readonly base: string | undefined }> = [
+    { prefix: 'DOCUMENTS', base: env.documents },
+    { prefix: 'LOCALLOW', base: home !== undefined && home !== '' ? path.join(home, 'AppData', 'LocalLow') : undefined },
+    { prefix: 'APPDATA', base: process.env['APPDATA'] },
+    { prefix: 'LOCALAPPDATA', base: process.env['LOCALAPPDATA'] },
+    { prefix: 'USERPROFILE', base: home },
+  ];
+  const bases = candidates
+    .filter((c): c is { prefix: string; base: string } => c.base !== undefined && c.base !== '')
+    .sort((a, b) => b.base.length - a.base.length);
+  for (const { prefix, base } of bases) {
+    const rel = path.relative(base, absolute);
+    if (rel === '') return `%${prefix}%`;
+    if (!rel.startsWith('..') && !path.isAbsolute(rel)) {
+      return `%${prefix}%/${rel.split(path.sep).join('/')}`;
+    }
+  }
+  return null;
+}
+
 function formatZodError(error: z.ZodError, t: Translator): string {
   const first = error.issues[0];
   if (first === undefined) return t('manifest.invalid');

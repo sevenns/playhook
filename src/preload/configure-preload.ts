@@ -10,6 +10,8 @@ import type {
   AppSettings,
   ConfigEditorCommand,
   ConfigureApi,
+  ConfigPickKind,
+  ConfigPickResult,
   ConfigReadResult,
   ConfigSaveResult,
   ConfigTemplates,
@@ -31,9 +33,13 @@ const CHANNELS = {
   configIconRequest: 'config:icon',
   configVersionRequest: 'config:version',
   configEditorCommand: 'config:editor-command',
+  configEditorActive: 'config:editor-active',
   configTitleBarOverlay: 'config:titlebar-overlay',
   configLanguageRequest: 'config:language-request',
   configLanguageUpdate: 'config:language-update',
+  configPickPath: 'config:pick-path',
+  configImagePreview: 'config:image-preview',
+  configOpenExternal: 'config:open-external',
 } as const satisfies Partial<typeof IPC>;
 
 const api: ConfigureApi = {
@@ -60,6 +66,15 @@ const api: ConfigureApi = {
   getTemplates(): Promise<ConfigTemplates> {
     return ipcRenderer.invoke(CHANNELS.configTemplatesRequest) as Promise<ConfigTemplates>;
   },
+  pickPath(root: string, kind: ConfigPickKind): Promise<ConfigPickResult> {
+    return ipcRenderer.invoke(CHANNELS.configPickPath, { root, kind }) as Promise<ConfigPickResult>;
+  },
+  getImagePreview(root: string, path: string): Promise<string | null> {
+    return ipcRenderer.invoke(CHANNELS.configImagePreview, { root, path }) as Promise<string | null>;
+  },
+  openExternal(url: string): void {
+    ipcRenderer.send(CHANNELS.configOpenExternal, url);
+  },
   getSchema(): Promise<unknown> {
     return ipcRenderer.invoke(CHANNELS.configSchemaRequest) as Promise<unknown>;
   },
@@ -79,6 +94,9 @@ const api: ConfigureApi = {
         callback(command);
       },
     );
+  },
+  setJsonEditorActive(active: boolean): void {
+    ipcRenderer.send(CHANNELS.configEditorActive, active);
   },
   setTitleBarDark(dark: boolean): void {
     ipcRenderer.send(CHANNELS.configTitleBarOverlay, dark);
