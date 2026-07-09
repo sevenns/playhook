@@ -256,8 +256,10 @@ export function createControls(deps: ControlsDeps): Controls {
     // Steam install/uninstall indicator up (phase stays 'ready'): the gear opens Steam's Downloads page
     // and More opens Details — both focusable.
     if (steamBusy(state())) return [playButton, moreButton];
-    // Running with the launcher summoned over the game: Play returns to the game, so it's focusable too.
-    if (state().kind === 'running') return [playButton, moreButton];
+    // Running with the launcher summoned over the game: Play returns to the game, so it's focusable too —
+    // EXCEPT while a force-close is in flight (killing), when Play is a non-interactive loading spinner.
+    const running = state();
+    if (running.kind === 'running') return running.killing === true ? [moreButton] : [playButton, moreButton];
     // Hard busy (install / uninstall / launch / save-sync): the Play button is a non-interactive activity
     // indicator (spinner/gear), so only More is focusable — it still opens Details.
     if (phaseOf(state()) === 'busy') return [moreButton];
@@ -286,8 +288,11 @@ export function createControls(deps: ControlsDeps): Controls {
   // launcher was summoned over it), "Play" otherwise. Set at render time via the translator (not the
   // static data-i18n-aria-label, which only re-applies on a language change) — see plan F1-5.
   function applyPlayAria(): void {
-    const key = state().kind === 'running' ? 'launcher.aria.returnToGame' : 'launcher.aria.play';
-    playButton.setAttribute('aria-label', t()(key));
+    // "Return to game" only when running and NOT force-closing (during killing Play is a loader, so the
+    // default "Play" label fits better than an action it won't perform).
+    const s = state();
+    const returnToGame = s.kind === 'running' && s.killing !== true;
+    playButton.setAttribute('aria-label', t()(returnToGame ? 'launcher.aria.returnToGame' : 'launcher.aria.play'));
   }
 
   function setCursorHidden(hidden: boolean): void {
@@ -424,6 +429,9 @@ export function createControls(deps: ControlsDeps): Controls {
     }
     // Steam uninstall in progress (gear) → nothing useful to do, ignore the press.
     if (game?.steamUninstalling === true) return;
+    // Force-close in flight: Play is a loading spinner, not return-to-game — ignore the press.
+    const s = state();
+    if (s.kind === 'running' && s.killing === true) return;
     // In a hard-busy phase the Play button is just an activity indicator (spinner/gear) — no launch.
     // EXCEPT `running`: the launcher was summoned over the game and Play returns to it (main branches on
     // the running state and raises the game's window instead of launching).
