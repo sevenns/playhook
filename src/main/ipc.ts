@@ -9,10 +9,13 @@ import {
   IPC,
   type AppState,
   type AudioAssets,
+  type CarouselSfx,
   type GameInfo,
+  type GameLibrary,
   type HeroAssets,
   type InstallManifest,
   type LaunchTarget,
+  type LibraryEntry,
   type ResolvedManifest,
   type Stats,
   type WallpaperResult,
@@ -23,7 +26,7 @@ import { type GameWindow } from './window';
 import { type PcStore } from './pc-store';
 import { type StatsService } from './stats';
 import { type DriveWatcher } from './drive-watcher';
-import { readManifest, type ManifestEnv } from './manifest';
+import { readManifests, type ManifestEnv } from './manifest';
 import { syncDir, syncByChange, snapshotTree } from './save-sync';
 import {
   launchGame,
@@ -247,7 +250,15 @@ async function removeWithRetry(dir: string, signal?: AbortSignal): Promise<void>
 }
 
 export class GameController {
-  private current: ResolvedManifest | null = null;
+  // A card carries one OR MANY games (game.json is an object or an array). `games` holds every resolved
+  // game; `selectedIndex` is the one currently selected/browsed. `current()` (below) derives the single
+  // "active" manifest that all the existing launch/kill/uninstall/save-sync/stats code reads, so those
+  // bodies stay untouched. Empty (`games=[]`) whenever no card / rejected.
+  private games: ResolvedManifest[] = [];
+  private selectedIndex = 0;
+  // True while a game is launching/running: main is "locked" on that game — back-to-carousel is refused
+  // and the renderer hides the "Select game" button. `selecting` is NOT locked. Set in runLaunchSequence.
+  private locked = false;
   private cardPresent = false;
   // Mirror of AppSettings.alwaysShowEmptyScreen (seeded at startup, toggled live from the settings
   // window): when true the launcher stays on the empty "no card" screen instead of hiding to the tray.
@@ -282,6 +293,12 @@ export class GameController {
   private currentAudio: AudioAssets | null = null;
   // Hero images for the current card, sent on their own channel (not on every AppState) — see HeroAssets.
   private currentHero: HeroAssets | null = null;
+  // The full game library for the current card (every game's info+hero+audio), delivered once per card on
+  // its own channel (like hero/audio) so the renderer drives the carousel locally. Null when no card.
+  private currentLibrary: GameLibrary | null = null;
+  // Bundled default carousel SFX (navigate/button) as data URLs, read once from disk and cached (they
+  // never change during a run) — served to the renderer on request for the cross-game carousel screen.
+  private carouselSfx: CarouselSfx | null = null;
   // Reads card assets (hero/audio/wallpaper) into data URLs; owns the effective-wallpaper cache and the
   // custom Empty-screen wallpaper (needs userData + the live custom-file name from settings via DI).
   private readonly assets = new AssetReader({
@@ -291,7 +308,7 @@ export class GameController {
   // Steam-mode background re-detect poller (timer + tick + optimistic uninstall request), extracted from
   // this controller. Reaches back only through the narrow accessor seam below.
   private readonly steamWatch = new SteamInstallWatch({
-    getManifest: () => this.current,
+    getManifest: () => this.current(),
     isLaunchInFlight: () => this.launchInFlight,
     getState: () => this.deps.state.get(),
     isCardPresent: () => this.cardPresent,
@@ -303,6 +320,32 @@ export class GameController {
   /** The current translator (a message is fixed at the language of the moment it is generated). */
   private get t(): Translator {
     return this.deps.getTranslator();
+  }
+
+  /**
+   * The single "active" manifest — the selected game — that every existing consumer reads
+   * (launch/kill/uninstall/save-sync/stats). Read-only: the card's games live in `games`, the choice in
+   * `selectedIndex`. Null when there is no card / it was rejected.
+   */
+  private current(): ResolvedManifest | null {
+    return this.games[this.selectedIndex] ?? null;
+  }
+
+  /** The bundled default carousel SFX (navigate/button) as data URLs, read once and cached. */
+  private async getCarouselSfx(): Promise<CarouselSfx> {
+    if (this.carouselSfx === null) this.carouselSfx = await this.assets.readCarouselSfx();
+    return this.carouselSfx;
+  }
+
+  /** Clears all card-scoped state (games, selection, lock, audio/hero/library channels). The caller sets
+   * the follow-up AppState (idle/error) and window visibility, exactly as before. */
+  private clearCard(): void {
+    this.games = [];
+    this.selectedIndex = 0;
+    this.locked = false;
+    this.setAudio(null);
+    this.setHero(null);
+    this.setLibrary(null);
   }
 
   /** Subscriptions to drive-watcher, state replication to the window, IPC handlers. */
@@ -323,6 +366,8 @@ export class GameController {
     ipcMain.handle(IPC.stateRequest, (): AppState => state.get());
     ipcMain.handle(IPC.audioRequest, (): AudioAssets | null => this.currentAudio);
     ipcMain.handle(IPC.heroRequest, (): HeroAssets | null => this.currentHero);
+    ipcMain.handle(IPC.libraryRequest, (): GameLibrary | null => this.currentLibrary);
+    ipcMain.handle(IPC.carouselSfxRequest, (): Promise<CarouselSfx> => this.getCarouselSfx());
     ipcMain.handle(IPC.wallpaperRequest, (): Promise<string | null> => this.assets.readWallpaperDataUrl());
     // Custom Empty-screen wallpaper (invoked from the settings window; the handlers live here because they
     // own the AssetReader + the game window — see plan F2.2 p.6). preview-request feeds the settings preview.
@@ -336,6 +381,8 @@ export class GameController {
     ipcMain.on(IPC.actionHide, () => this.deps.window.hide());
     ipcMain.on(IPC.actionOpenSteamDownloads, () => void this.onOpenSteamDownloads());
     ipcMain.on(IPC.actionKill, () => void this.onKillRequested());
+    ipcMain.on(IPC.actionSelect, (_event, index: unknown) => this.onSelectRequested(index));
+    ipcMain.on(IPC.actionBackToCarousel, () => this.onBackToCarousel());
   }
 
   /** Sends a transient error to the renderer to surface in the error popup. */
@@ -389,11 +436,11 @@ export class GameController {
   }
 
   /**
-   * Reads a card at `root` and drives the launcher to `ready` (or `error`) — the shared body of an
-   * ordinary insert AND a Configure-window reload. `focus` controls whether the launcher pops to the
-   * front: true for a real insertion (unchanged behaviour), false for a reload so an Apply from the
-   * Configure window doesn't steal focus from the editor. Returns the readManifest verdict so the
-   * caller (reloadManifest) can report it; onInsert ignores it.
+   * Reads a card at `root` and drives the launcher to `ready` (one game) or `selecting` (≥2 games), or to
+   * `error` — the shared body of an ordinary insert AND a Configure-window reload. `focus` controls
+   * whether the launcher pops to the front: true for a real insertion (unchanged behaviour), false for a
+   * reload so an Apply from the Configure window doesn't steal focus from the editor. Returns the
+   * readManifests verdict so the caller (reloadManifest) can report it; onInsert ignores it.
    */
   private async loadCard(
     root: string,
@@ -405,45 +452,88 @@ export class GameController {
     // so %DOCUMENTS% in the manifest maps to the real save folder regardless of UI
     // language or OneDrive redirection. Safe to read here — app is ready by now.
     const env: ManifestEnv = { documents: app.getPath('documents'), t: this.t };
-    const result = await readManifest(root, env);
+    const result = await readManifests(root, env);
     if (!result.ok) {
       // No valid game determined → keep the window hidden (the reason is in the log). We still set
       // the error state so a manually-summoned window can show it, but we never auto-surface it.
       log.warn(`[insert] manifest rejected: ${result.message}`);
-      this.current = null;
-      this.setAudio(null);
-      this.setHero(null);
+      this.clearCard();
       this.deps.state.set({ kind: 'error', message: result.message });
       this.deps.window.hide();
       return { ok: false, message: result.message };
     }
-    const manifest = result.manifest;
-    this.current = manifest;
-    log.info(`[insert] manifest ok id=${manifest.raw.id} root="${manifest.root}"`);
-    this.setAudio(await this.assets.readAudioAssets(manifest));
-    // Hero images are delivered once per card on their own channel (like audio) — the renderer holds
-    // the list and rotates locally, so we never re-send this large payload on subsequent state.set's.
-    this.setHero(await this.assets.readHeroAssets(manifest));
+    const manifests = result.manifests;
+    // Keep the selection on a reload if it still points at a game; a real insert starts at the first.
+    this.selectedIndex = opts.focus || this.selectedIndex >= manifests.length ? 0 : this.selectedIndex;
+    this.games = manifests;
+    this.locked = false;
+    log.info(`[insert] manifest ok games=${manifests.length} ids=[${manifests.map((m) => m.raw.id).join(',')}] root="${root}"`);
 
-    // Reconcile the card's traveling stats with this PC's mirror (the "one card, many PCs"
-    // unified total) FIRST, so the PC mirror holds the merged value before anything else copies
-    // stats to the card. Then write the merged result back to the card so it stays current.
-    const stats = await this.deps.stats.reconcileWithCard(manifest.raw.id, manifest.root);
-    await this.deps.stats.copyToCard(manifest.root, stats);
-
-    // If the card was yanked mid-game last time — top up the deferred PC→SD (saves snapshot).
-    // Runs after reconcile so its own stats copy uses the already-merged value, never clobbering
-    // a higher total the card picked up on another PC.
-    try {
-      await this.flushPendingIfAny(manifest);
-    } catch (cause) {
-      log.warn('[pending-flush] failed on insert:', describe(cause));
+    // Read the card's traveling stats ONCE to detect the pre-multi-game bare-Stats format. Attribution of
+    // that legacy value is decided HERE (only loadCard knows the game count): a single-game card owns it
+    // unambiguously; on a multi-game card the owner is unknown → ignore it (the per-id PC mirror is intact).
+    const cardStatsRead = await this.deps.stats.readCardStatsMap(root);
+    let legacyForSingle: Stats | null = null;
+    if (cardStatsRead.kind === 'legacy') {
+      if (manifests.length === 1) legacyForSingle = cardStatsRead.stats;
+      else log.warn(`[stats] legacy bare card stats on a ${manifests.length}-game card — owner ambiguous, ignoring (PC mirror per-id is intact)`);
     }
 
-    const info = await this.buildGameInfo(manifest, stats);
-    this.enterReady(info);
+    // Reconcile + copy card stats for EVERY game FIRST (so each PC mirror holds the merged value before
+    // anything writes the card), collecting the merged stats for GameInfo. Order matters vs the flush below.
+    const resolvedGames: Array<{ readonly manifest: ResolvedManifest; readonly stats: Stats }> = [];
+    for (const manifest of manifests) {
+      const stats = await this.deps.stats.reconcileWithCard(manifest.raw.id, root, legacyForSingle);
+      await this.deps.stats.copyToCard(root, manifest.raw.id, stats);
+      resolvedGames.push({ manifest, stats });
+    }
+
+    // If a card was yanked mid-game last time — top up the deferred PC→SD (saves snapshot) for ANY game
+    // that has a pending flush, not just the selected one (else game B's flush hangs until B is selected on
+    // some future insert). Runs AFTER all reconciles so each flush's stats copy uses the merged value.
+    for (const { manifest } of resolvedGames) {
+      try {
+        await this.flushPendingIfAny(manifest);
+      } catch (cause) {
+        log.warn(`[pending-flush] failed on insert for id=${manifest.raw.id}:`, describe(cause));
+      }
+    }
+
+    // Build the whole library (info + hero + audio per game) — delivered once on library:update so the
+    // renderer can drive the carousel locally.
+    const entries: LibraryEntry[] = [];
+    for (const { manifest, stats } of resolvedGames) {
+      const info = await this.buildGameInfo(manifest, stats);
+      const hero = await this.assets.readHeroAssets(manifest);
+      const audio = await this.assets.readAudioAssets(manifest);
+      entries.push({ info, hero, audio });
+    }
+    this.setLibrary({ games: entries });
+
+    // Hand the SELECTED game's hero/audio through the existing per-game channels so its background/music
+    // start immediately (on the ready screen for one game, or the focused carousel card for many).
+    const focused = entries[this.selectedIndex];
+    if (focused !== undefined) {
+      this.setAudio(focused.audio);
+      this.setHero(focused.hero);
+    }
+
+    if (manifests.length >= 2) {
+      // Multiple games → the carousel (game-selection) screen. The renderer renders the focused game.
+      this.enterSelecting(this.selectedIndex);
+    } else if (focused !== undefined) {
+      // Single game → straight to ready, exactly as before.
+      this.enterReady(focused.info);
+    }
     if (opts.focus) this.deps.window.showAndFocus();
     return { ok: true };
+  }
+
+  /** Enters the carousel (game-selection) screen at `index`. Stops the Steam poller (it belongs to a
+   * single selected steam game on `ready`; selecting a game re-arms it via enterReady). */
+  private enterSelecting(index: number): void {
+    this.steamWatch.stop();
+    this.deps.state.set({ kind: 'selecting', selectedIndex: index, count: this.games.length });
   }
 
   /**
@@ -459,7 +549,12 @@ export class GameController {
    */
   async reloadManifest(root: string): Promise<{ ok: true } | { ok: false; message: string }> {
     const kind = this.deps.state.get().kind;
-    if ((kind !== 'ready' && kind !== 'error' && kind !== 'idle') || this.launchInFlight) {
+    // `selecting` is allowed (nothing is launching/running — the carousel is not locked); Save & Apply
+    // from Configure while the carousel is open must not be refused with "finish before apply".
+    if (
+      (kind !== 'ready' && kind !== 'error' && kind !== 'idle' && kind !== 'selecting') ||
+      this.launchInFlight
+    ) {
       return { ok: false, message: this.t('errors.finishBeforeApply') };
     }
     if (this.reloadInFlight) return { ok: false, message: this.t('errors.reloadInProgress') };
@@ -481,7 +576,7 @@ export class GameController {
     // snapshot→card replace.
     await syncDir(pending.savesSnapshotDir, manifest.saveOnCardPath);
     const stats = await this.deps.stats.read(manifest.raw.id);
-    await this.deps.stats.copyToCard(manifest.root, stats);
+    await this.deps.stats.copyToCard(manifest.root, manifest.raw.id, stats);
     await this.deps.store.clearPending(manifest.raw.id);
     // The card now holds the flushed progress, so both sides are back in sync. Rebase the baseline from
     // the real folders (each in its own mtime scale) so the next launch sees them as synced, not as a
@@ -526,9 +621,7 @@ export class GameController {
     // `ready` reaches here since its kind is never running/installing).
     this.steamWatch.stop();
     this.steamWatch.clearUninstallRequest();
-    this.current = null;
-    this.setAudio(null);
-    this.setHero(null);
+    this.clearCard();
     this.deps.state.set({ kind: 'idle' });
     // Normally the background app hides to the tray when no card is present. With "always show the no-card
     // screen" on, keep the launcher up on the empty screen instead — BUT only if it's currently on screen.
@@ -567,7 +660,7 @@ export class GameController {
     // Ignore input outside the ready state — this is the "ignore-gamepad" during play
     // (harmless under any interpretation of the Gamepad API focus bug).
     if (snapshot.kind !== 'ready' || this.launchInFlight || this.reloadInFlight) return;
-    const manifest = this.current;
+    const manifest = this.current();
     if (manifest === null) return;
     // Steam mode: not yet installed → open steam://install (fire-and-forget); otherwise launch via
     // steam://rungameid. Both inside runSteamInstall / runLaunchSequence's steam branch.
@@ -602,6 +695,37 @@ export class GameController {
   }
 
   /**
+   * Carousel → a game was picked (renderer sent action:select with the game index). Selects it and enters
+   * the ready screen with that game's hero/audio (served from the already-built library). Rejected unless
+   * we're on the carousel and idle (not locked / launching / reloading), mirroring the launch guard.
+   */
+  private onSelectRequested(indexRaw: unknown): void {
+    if (typeof indexRaw !== 'number' || !Number.isInteger(indexRaw)) return;
+    const snapshot = this.deps.state.get();
+    if (snapshot.kind !== 'selecting' || this.locked || this.launchInFlight || this.reloadInFlight) return;
+    if (indexRaw < 0 || indexRaw >= this.games.length) return;
+    const entry = this.currentLibrary?.games[indexRaw];
+    if (entry === undefined) return;
+    this.selectedIndex = indexRaw;
+    // Push the selected game's hero/audio through the existing per-game channels (mirrors loadCard).
+    this.setHero(entry.hero);
+    this.setAudio(entry.audio);
+    this.enterReady(entry.info);
+  }
+
+  /**
+   * Ready → back to the carousel (the "Select game" button in More). Refused while locked (a game is
+   * launching/running) or when there is only one game (no carousel). Mirrors the launch guard otherwise.
+   */
+  private onBackToCarousel(): void {
+    if (this.locked) return;
+    const snapshot = this.deps.state.get();
+    if (snapshot.kind !== 'ready' || this.launchInFlight || this.reloadInFlight) return;
+    if (this.games.length < 2) return;
+    this.enterSelecting(this.selectedIndex);
+  }
+
+  /**
    * Force-close the running game (More → Force close → confirmed Yes). Flips the running snapshot into its
    * `killing` sub-state (the launcher shows "Force closing…" and hides the Force close button), kills the
    * main executable AND every watchProcess, then lets the EXISTING exit waiters (waitForExit /
@@ -625,7 +749,7 @@ export class GameController {
     const snapshot = this.deps.state.get();
     if (snapshot.kind !== 'running') return; // only meaningful while a game is running
     if (this.killInFlight) return; // a force-close is already underway (double Yes / repeat)
-    const manifest = this.current;
+    const manifest = this.current();
     if (manifest === null) return; // defensive: `running` always has a current manifest
     this.killInFlight = true;
     // Show "Force closing…" and hide the Force close button immediately (cleared back on failure).
@@ -711,7 +835,7 @@ export class GameController {
   private onUninstallRequested(): void {
     const snapshot = this.deps.state.get();
     if (snapshot.kind !== 'ready' || this.launchInFlight || this.reloadInFlight) return;
-    const manifest = this.current;
+    const manifest = this.current();
     if (manifest === null) return;
     if (!snapshot.game.canUninstall) return; // nothing installed to remove
     // Steam: delegate removal to Steam (steam://uninstall) — fire-and-forget, the poller flips to Install.
@@ -795,6 +919,9 @@ export class GameController {
   private async runLaunchSequence(manifest: ResolvedManifest, info: GameInfo): Promise<void> {
     const { state, window, stats } = this.deps;
     this.launchInFlight = true;
+    // Lock the launcher on this game for the launching→running span: back-to-carousel is refused and the
+    // "Select game" button is hidden. Cleared in the finally alongside the other running-scoped fields.
+    this.locked = true;
     const abort = new AbortController();
     this.abort = abort;
     // Declared before the try so `finally` can dispose the kept HANDLE (elevated path).
@@ -944,6 +1071,8 @@ export class GameController {
       // Release the elevated HANDLE (no-op for the normal spawn path).
       proc?.dispose();
       this.launchInFlight = false;
+      // The game is done → unlock (back-to-carousel allowed again, "Select game" button reappears).
+      this.locked = false;
       this.abort = null;
       // The game is no longer running → forget its image names (return-to-game only applies while running).
       this.runningImageNames = null;
@@ -1076,9 +1205,7 @@ export class GameController {
       // The card may have been yanked during the uninstall (it targets the PC, so it completed): no card
       // → idle + hide, mirroring abandonWatchedLaunch / onRemove's cleanup.
       if (!this.cardPresent) {
-        this.current = null;
-        this.setAudio(null);
-        this.setHero(null);
+        this.clearCard();
         state.set({ kind: 'idle' });
         window.hide();
         return;
@@ -1134,9 +1261,7 @@ export class GameController {
     log.info('[launch] watched game never appeared — returning without recording a session');
     if (!this.cardPresent) {
       this.steamWatch.stop();
-      this.current = null;
-      this.setAudio(null);
-      this.setHero(null);
+      this.clearCard();
       this.deps.state.set({ kind: 'idle' });
       this.deps.window.hide();
       return;
@@ -1208,7 +1333,7 @@ export class GameController {
         }
       }
     }
-    await this.deps.stats.copyToCard(manifest.root, stats);
+    await this.deps.stats.copyToCard(manifest.root, manifest.raw.id, stats);
   }
 
   // ── Building GameInfo for the UI ─────────────────────────────────────────
@@ -1347,6 +1472,17 @@ export class GameController {
     const browserWindow = this.deps.window.browserWindow;
     if (browserWindow !== null && !browserWindow.isDestroyed()) {
       browserWindow.webContents.send(IPC.audioUpdate, assets);
+    }
+  }
+
+  // ── Game library (all games of the card, for the carousel; delivered once per card) ──
+
+  /** Stores the current game library and pushes it to the window (null when no card / on error). */
+  private setLibrary(library: GameLibrary | null): void {
+    this.currentLibrary = library;
+    const browserWindow = this.deps.window.browserWindow;
+    if (browserWindow !== null && !browserWindow.isDestroyed()) {
+      browserWindow.webContents.send(IPC.libraryUpdate, library);
     }
   }
 }

@@ -57,6 +57,8 @@ export const en = {
   'launcher.menu.minimize': 'Minimize Playhook',
   // Force-close the running game (Details menu item, visible only while a game is running).
   'launcher.menu.forceClose': 'Force close',
+  // Return to the carousel (Details menu item, visible only for a multi-game card on the ready screen).
+  'launcher.menu.selectGame': 'Select game',
   // Confirmation popup copy (controls.ts). The Yes/No buttons use the shared common.* keys.
   'launcher.confirm.install': 'Do you want to install game?',
   'launcher.confirm.uninstall': 'Do you want to uninstall game from your PC?',
@@ -141,6 +143,16 @@ export const en = {
   // ── Configure-game window (configure.html + configure.ts) ───────────────────
   'configure.card': 'Card',
   'configure.insertCard': 'Insert an SD card or flash drive.',
+  // Multi-game picker (a card can carry several games).
+  'configure.game': 'Game',
+  'configure.addGame': 'Add game',
+  'configure.removeGame': 'Remove current',
+  'configure.confirmRemoveGame': 'Remove the current game from this card?',
+  // Dropdown option label: "1 / 3 · Hollow Knight".
+  'configure.gameOption': '{index} / {count} · {title}',
+  // An issue on another game (not the one being edited) shown in the panel: "Game 3 (Celeste): …".
+  'configure.otherGameIssue': 'Game {index} ({title}): {message}',
+  'configure.untitledGame': 'untitled',
   'configure.startTemplate': 'Start from a template',
   'configure.tplExecutable': 'Executable file',
   'configure.tplInstaller': 'Installer',
@@ -292,6 +304,11 @@ export const en = {
   'manifest.savePairing': 'saveOnCard and pcSavePath must be set together or both omitted',
   'manifest.invalid': 'invalid manifest',
   'manifest.invalidJson': 'invalid JSON: {cause}',
+  // Multi-game (array) manifest checks.
+  'manifest.heroRequired': 'heroImage is required (at least one image)',
+  'manifest.emptyArray': 'the games array must not be empty',
+  'manifest.notObjectOrArray': 'game.json must be a game object or a non-empty array of games',
+  'manifest.duplicateId': 'duplicate game id "{id}"',
 } as const;
 
 /** Every message key — the compile-time contract `ru` and the translator index against. */

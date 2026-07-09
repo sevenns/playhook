@@ -14,6 +14,7 @@ import type { AppState } from '../shared/types';
 import type { Translator } from '../shared/i18n/index.js';
 import { createGamepadController } from './gamepad.js';
 import { type AudioController } from './audio.js';
+import { type CarouselController } from './carousel.js';
 import { gameOf, phaseOf, steamBusy } from './state-view.js';
 import { req, reqQuery } from './dom.js';
 
@@ -32,6 +33,8 @@ export interface ControlsDeps {
   audio: AudioController;
   /** The current translator (read live so menu/confirm copy follows the language). */
   getTranslator(): Translator;
+  /** The carousel controller — receives left/right/A while on the game-selection screen. */
+  carousel: CarouselController;
 }
 
 export interface Controls {
@@ -48,9 +51,12 @@ export interface Controls {
 }
 
 export function createControls(deps: ControlsDeps): Controls {
-  const { audio } = deps;
+  const { audio, carousel } = deps;
   const state = (): AppState => deps.getState();
   const t = (): Translator => deps.getTranslator();
+  // On the carousel (game-selection) screen the input model is different: left/right browse games and A
+  // picks one — the popup/bar focus machinery below is bypassed.
+  const onCarousel = (): boolean => state().kind === 'selecting';
 
   // Bar buttons.
   const playButton = req<HTMLButtonElement>('play-button');
@@ -67,6 +73,7 @@ export function createControls(deps: ControlsDeps): Controls {
   const menuShutdown = req<HTMLButtonElement>('menu-shutdown');
   const menuInstallToggle = req<HTMLButtonElement>('menu-install-toggle');
   const menuKill = req<HTMLButtonElement>('menu-kill');
+  const menuSelectGame = req<HTMLButtonElement>('menu-select-game');
   const menuClose = req<HTMLButtonElement>('menu-close');
   const powerShutdown = req<HTMLButtonElement>('power-shutdown');
   const powerReboot = req<HTMLButtonElement>('power-reboot');
@@ -109,6 +116,7 @@ export function createControls(deps: ControlsDeps): Controls {
   function openDetails(): void {
     applyMenuInstallToggle(); // keep the toggle's text/visibility fresh for the current game
     applyMenuKill(); // keep the force-close item's visibility fresh (running-only)
+    applyMenuSelectGame(); // keep the "Select game" item fresh (multi-game ready-screen only)
     setView('details');
     focusStackBottom(); // default focus: Close
     applyFocus(); // main highlight clears (focusActive false with a popup open)
@@ -236,6 +244,16 @@ export function createControls(deps: ControlsDeps): Controls {
     if (running) menuKill.textContent = t()('launcher.menu.forceClose');
   }
 
+  // ── Menu item: Select game (return to the carousel) ──────────────────────────
+  // Shown ONLY for a multi-game card on the ready screen — going back to the carousel makes no sense with
+  // one game, and is refused (locked) while a game is launching/running (main guards it too). Text from JS
+  // (no data-i18n) so a language change relabels it at render time.
+  function applyMenuSelectGame(): void {
+    const show = state().kind === 'ready' && carousel.gameCount() >= 2;
+    menuSelectGame.classList.toggle('is-hidden', !show);
+    if (show) menuSelectGame.textContent = t()('launcher.menu.selectGame');
+  }
+
   // ── Main bar focus (gamepad / mouse) ─────────────────────────────────────────
 
   const ALL_MAIN_BUTTONS: readonly HTMLButtonElement[] = [playButton, moreButton];
@@ -352,6 +370,7 @@ export function createControls(deps: ControlsDeps): Controls {
     menuShutdown,
     menuInstallToggle,
     menuKill,
+    menuSelectGame,
     menuClose,
     powerShutdown,
     powerReboot,
@@ -370,6 +389,7 @@ export function createControls(deps: ControlsDeps): Controls {
         const items: HTMLButtonElement[] = [menuShutdown];
         if (!menuInstallToggle.classList.contains('is-hidden')) items.push(menuInstallToggle);
         if (!menuKill.classList.contains('is-hidden')) items.push(menuKill);
+        if (!menuSelectGame.classList.contains('is-hidden')) items.push(menuSelectGame);
         items.push(menuClose);
         return items;
       }
@@ -466,6 +486,12 @@ export function createControls(deps: ControlsDeps): Controls {
     } else if (btn === menuKill) {
       audio.play('button');
       openConfirm('kill');
+    } else if (btn === menuSelectGame) {
+      // Return to the carousel: no confirm (non-destructive). Close the menu first so a re-opened Details
+      // is clean. Main refuses this while locked / with <2 games — a no-op there.
+      audio.play('button');
+      closePopup();
+      window.api.backToCarousel();
     } else if (btn === menuClose || btn === errorClose || btn === powerClose) {
       // back() dispatches by the current view: Details/Error → close the popup; Power → step back to
       // the Details menu (so "Close" in the Power submenu returns you one level up, like the B gesture).
@@ -586,13 +612,15 @@ export function createControls(deps: ControlsDeps): Controls {
     // does its normal job. With a popup open, left/right are a no-op (the stacks are vertical).
     onLeft: () => {
       noteGamepadActivity();
-      if (popupView === 'none') moveFocus(-1);
+      if (onCarousel()) carousel.moveLeft();
+      else if (popupView === 'none') moveFocus(-1);
     },
     onRight: () => {
       noteGamepadActivity();
-      if (popupView === 'none') moveFocus(1);
+      if (onCarousel()) carousel.moveRight();
+      else if (popupView === 'none') moveFocus(1);
     },
-    // Up/down drive the vertical popup stack; ignored on the bar (which has no vertical axis).
+    // Up/down drive the vertical popup stack; ignored on the bar/carousel (no vertical axis there).
     onUp: () => {
       noteGamepadActivity();
       if (popupView !== 'none') moveStackFocus(-1);
@@ -601,16 +629,18 @@ export function createControls(deps: ControlsDeps): Controls {
       noteGamepadActivity();
       if (popupView !== 'none') moveStackFocus(1);
     },
-    // A activates the focused control (Play/More) or the focused stack button; B steps back through the
-    // popup. Minimizing is no longer a bar gesture — it's the System menu's "Minimize Playhook".
+    // A activates the focused control (Play/More), the focused stack button, or picks the carousel card;
+    // B steps back through the popup. Minimizing is the System menu's "Minimize Playhook".
     onA: () => {
       noteGamepadActivity();
-      if (popupView !== 'none') activateStack();
+      if (onCarousel()) carousel.select();
+      else if (popupView !== 'none') activateStack();
       else activateFocused();
     },
     onB: () => {
       noteGamepadActivity();
       if (popupView !== 'none') back();
+      // On the carousel B is a no-op (already the top screen — nothing to go back to).
     },
   });
 
@@ -627,13 +657,15 @@ export function createControls(deps: ControlsDeps): Controls {
     // running→syncing-out self-exit must drop Force close; a ready→ready update doesn't close the popup).
     applyMenuInstallToggle();
     applyMenuKill();
+    applyMenuSelectGame();
   }
 
   function clearGameButtons(): void {
-    // No game → no Install/Uninstall item and no Force close (the popup is force-closed off the ready
-    // screen anyway; no-game is never `running`).
+    // No game → no Install/Uninstall item, no Force close, no Select game (the popup is force-closed off
+    // the ready screen anyway; no-game is never `running`).
     menuInstallToggle.classList.add('is-hidden');
     menuKill.classList.add('is-hidden');
+    menuSelectGame.classList.add('is-hidden');
   }
 
   function refresh(): void {

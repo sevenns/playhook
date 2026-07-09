@@ -20,6 +20,24 @@
         <div class="hero-layer"></div>
       </div>
 
+      <!-- Carousel (game-selection) screen: shown only when the card carries ≥2 games (see
+           #app[data-phase="selecting"], styles.css). A fullscreen background (the focused game's hero,
+           fade-only — no pan), a row of cards (the focused one centered + coral pulse, neighbours peeking
+           under a dimming overlay) and the focused game's title. The renderer owns the index + navigation
+           locally (carousel.ts); picking a card sends action:select to main. -->
+      <section id="carousel" aria-hidden="true">
+        <div id="carousel-bg">
+          <div class="hero-layer"></div>
+          <div class="hero-layer"></div>
+        </div>
+        <div id="carousel-track">
+          <div class="carousel-card" data-slot="prev" aria-hidden="true"></div>
+          <div class="carousel-card is-active" data-slot="current"></div>
+          <div class="carousel-card" data-slot="next" aria-hidden="true"></div>
+        </div>
+        <div id="carousel-title" class="carousel-title"></div>
+      </section>
+
       <!-- Bottom bar (same layout for every screen): play / title / status + the More button on the
            right. The empty (no-card) screen shows no Play; More there opens System + Close only. -->
       <footer id="bottom-bar">
@@ -105,6 +123,9 @@
               <!-- Force-close the running game — its text + visibility come from JS (shown only while a
                    game is running), so no data-i18n (mirrors the install toggle, keeps the i18n HTML test happy). -->
               <button id="menu-kill" class="text-button" type="button"></button>
+              <!-- Return to the carousel — shown only for a multi-game card on the ready screen (JS toggles
+                   visibility); no data-i18n so a language change relabels it at render time (like the toggle). -->
+              <button id="menu-select-game" class="text-button" type="button"></button>
               <button id="menu-close" class="text-button" type="button" data-i18n="launcher.menu.close">Close</button>
             </div>
             <div class="actions-group" data-group="power">

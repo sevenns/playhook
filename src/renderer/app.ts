@@ -10,6 +10,7 @@ import { createTranslator, type Locale, type Translator } from '../shared/i18n/i
 import { localizeDocument } from './i18n-dom.js';
 import { createAudioController } from './audio.js';
 import { createHeroController } from './hero.js';
+import { createCarouselController } from './carousel.js';
 import { createControls } from './controls.js';
 import { formatDate, formatPlaytime } from './format.js';
 import { busyKindOf, gameOf, phaseOf, statusOf, steamBusy } from './state-view.js';
@@ -40,11 +41,21 @@ const hero = createHeroController({
   getTranslator,
 });
 
+// ── Carousel (game-selection) screen, own subsystem (see carousel.ts) ────────
+// Shown only for a card with ≥2 games. Holds the whole library and owns the local index + navigation;
+// render() opens/closes it on the `selecting` state, the library:update channel feeds setLibrary, and
+// picking a card sends action:select to main.
+const carousel = createCarouselController({
+  audio,
+  getTranslator,
+  onSelect: (index) => window.api.selectGame(index),
+});
+
 // ── Interaction layer (popups + focus + actions, see controls.ts) ────────────
 // Owns the popups, the two focus groups and the actions they trigger, plus their wiring (clicks, hover,
 // gamepad, Esc). render() drives it via applyGameButtons/clearGameButtons/refresh; main's error goes to
 // showError; the gamepad loop starts with start().
-const controls = createControls({ getState: () => currentState, audio, getTranslator });
+const controls = createControls({ getState: () => currentState, audio, getTranslator, carousel });
 
 // ── Info panel ──────────────────────────────────────────────────────────────
 
@@ -88,12 +99,21 @@ function syncMusic(): void {
 
 // ── Render ──────────────────────────────────────────────────────────────────
 
+let wasSelecting = false;
+
 function render(state: AppState): void {
   currentState = state;
   const phase = phaseOf(state);
   const game = gameOf(state);
 
   app.dataset['phase'] = phase;
+
+  // Carousel: open on ENTERING selecting (so local browsing isn't reset by later renders), close on
+  // leaving. The renderer owns the index while browsing — main only knows it again on action:select.
+  const selecting = state.kind === 'selecting';
+  if (selecting && !wasSelecting) carousel.open(state.selectedIndex);
+  else if (!selecting && wasSelecting) carousel.close();
+  wasSelecting = selecting;
 
   if (game !== undefined) {
     // Hero images travel on their own channel (hero:update), independent of state:update — on a window
@@ -103,6 +123,11 @@ function render(state: AppState): void {
     titleEl.textContent = game.title;
     buildInfoPanel(game);
     controls.applyGameButtons();
+  } else if (selecting) {
+    // The carousel owns the screen (its own background/title/cards). Clear the ready-screen info panel and
+    // game-dependent menu items so a later ready render rebuilds them cleanly.
+    while (infoPanel.firstChild !== null) infoPanel.removeChild(infoPanel.firstChild);
+    controls.clearGameButtons();
   } else {
     // idle / no-game error → the empty "Insert a game card" screen (wallpaper background). Clear any
     // stale stats so the empty screen's Details menu (opened via More) shows just System + Close.
@@ -196,6 +221,15 @@ void window.api.requestVolumes().then(applyVolumes);
 // locally, so we never re-send this large payload on every state transition. See hero.applyAssets.
 window.api.onHeroUpdate((assets) => hero.applyAssets(assets));
 void window.api.requestHero().then((assets) => hero.applyAssets(assets));
+
+// The game library (all games of the card) is delivered on its own channel too, so the carousel can
+// browse every game locally. Seed on startup (back-fill after a window reconnect), then live updates.
+window.api.onLibraryUpdate((library) => carousel.setLibrary(library));
+void window.api.requestLibrary().then((library) => carousel.setLibrary(library));
+
+// Bundled default carousel SFX (navigate/button) — the cross-game selection screen plays these instead
+// of any one game's sounds (decision 10). Fetched once; they never change during a run.
+void window.api.requestCarouselSfx().then((sfx) => audio.setCarouselSfx(sfx));
 
 // Pause/resume music AND the hero rotation when the window is hidden to tray or restored. The active
 // layer keeps showing the current hero, so no force-show is needed on return — just (re)start the timer.

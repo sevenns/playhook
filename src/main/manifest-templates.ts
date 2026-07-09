@@ -29,6 +29,7 @@ const INSTALLER = {
     runAsAdmin: false,
     args: [],
   },
+  heroImage: 'assets/hero.jpg',
   launchTimeoutSec: 30,
 } as const;
 

@@ -164,6 +164,67 @@ describe('validateManifestText', () => {
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.issues.some((i) => i.message.includes('together'))).toBe(true);
   });
+
+  it('requires a heroImage for every game (editor-only policy)', () => {
+    const text = JSON.stringify({ schemaVersion: 1, id: 'x', title: 'X', executable: 'g/g.exe' });
+    const result = validateManifestText(text, t);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.issues.some((i) => i.path === 'heroImage')).toBe(true);
+  });
+
+  it('accepts a single game object with a hero (bare field paths)', () => {
+    const text = JSON.stringify({
+      schemaVersion: 1,
+      id: 'x',
+      title: 'X',
+      executable: 'g/g.exe',
+      heroImage: 'hero.jpg',
+    });
+    expect(validateManifestText(text, t).ok).toBe(true);
+  });
+});
+
+describe('validateManifestText — multi-game array', () => {
+  const game = (id: string, extra: Record<string, unknown> = {}): Record<string, unknown> => ({
+    schemaVersion: 1,
+    id,
+    title: id,
+    executable: 'g/g.exe',
+    heroImage: 'hero.jpg',
+    ...extra,
+  });
+
+  it('accepts a non-empty array of valid games', () => {
+    const text = JSON.stringify([game('a'), game('b')]);
+    expect(validateManifestText(text, t).ok).toBe(true);
+  });
+
+  it('rejects an empty array', () => {
+    const result = validateManifestText('[]', t);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.issues[0]?.path).toBe('(root)');
+  });
+
+  it('rejects duplicate ids across games', () => {
+    const text = JSON.stringify([game('dup'), game('dup')]);
+    const result = validateManifestText(text, t);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.issues.some((i) => i.path === 'games.1.id')).toBe(true);
+  });
+
+  it('prefixes each element\'s issue path with games.<i>.', () => {
+    // Second game is missing its hero → the issue is attributed to games.1.heroImage.
+    const text = JSON.stringify([game('a'), game('b', { heroImage: undefined })]);
+    const result = validateManifestText(text, t);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.issues.some((i) => i.path === 'games.1.heroImage')).toBe(true);
+  });
+
+  it('rejects a top-level that is neither an object nor an array', () => {
+    const result = validateManifestText('42', t);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.issues[0]?.path).toBe('(root)');
+  });
 });
 
 describe('absoluteToPcSavePath (reverse of expandPcSavePath, for the folder picker)', () => {
@@ -206,18 +267,26 @@ describe('absoluteToPcSavePath (reverse of expandPcSavePath, for the folder pick
   });
 });
 
+interface ObjectSchema {
+  type?: string;
+  properties?: Record<string, unknown>;
+  required?: string[];
+  items?: ObjectSchema;
+}
+
 describe('manifestJsonSchema', () => {
-  it('converts without throwing and exposes the required root fields', () => {
-    const schema = manifestJsonSchema() as {
-      type?: string;
-      properties?: Record<string, unknown>;
-      required?: string[];
-    };
-    expect(schema.type).toBe('object');
-    expect(schema.properties).toBeDefined();
-    expect(Object.keys(schema.properties ?? {})).toEqual(
+  it('is a oneOf of a game object and a non-empty array of them, exposing the required root fields', () => {
+    const schema = manifestJsonSchema() as { oneOf?: ObjectSchema[] };
+    expect(Array.isArray(schema.oneOf)).toBe(true);
+    const [objectSchema, arraySchema] = schema.oneOf ?? [];
+    // First branch: a single game object.
+    expect(objectSchema?.type).toBe('object');
+    expect(Object.keys(objectSchema?.properties ?? {})).toEqual(
       expect.arrayContaining(['schemaVersion', 'id', 'title']),
     );
-    expect(schema.required).toEqual(expect.arrayContaining(['schemaVersion', 'id', 'title']));
+    expect(objectSchema?.required).toEqual(expect.arrayContaining(['schemaVersion', 'id', 'title']));
+    // Second branch: an array of the same object schema.
+    expect(arraySchema?.type).toBe('array');
+    expect(arraySchema?.items?.type).toBe('object');
   });
 });

@@ -4,12 +4,14 @@
 import type { AppState, GameInfo } from '../shared/types';
 import type { Translator } from '../shared/i18n/index.js';
 
-export type Phase = 'idle' | 'ready' | 'busy' | 'error';
+export type Phase = 'idle' | 'selecting' | 'ready' | 'busy' | 'error';
 
 export function phaseOf(state: AppState): Phase {
   switch (state.kind) {
     case 'idle':
       return 'idle';
+    case 'selecting':
+      return 'selecting';
     case 'ready':
       return 'ready';
     case 'error':

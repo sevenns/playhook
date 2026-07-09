@@ -228,6 +228,14 @@ export function textToFormModel(text: string): ParseFormResult {
   } catch (cause) {
     return { ok: false, message: cause instanceof Error ? cause.message : String(cause) };
   }
+  return valueToFormResult(parsed);
+}
+
+/**
+ * Parses an already-JSON-parsed VALUE (one game object) into a form model. Split out of textToFormModel
+ * so the multi-game wrapper (textToGames) can reuse it per array element without re-parsing JSON.
+ */
+function valueToFormResult(parsed: unknown): ParseFormResult {
   if (!isRecord(parsed)) {
     return { ok: false, message: 'game.json must be a JSON object' };
   }
@@ -419,6 +427,19 @@ export function formModelToText(
   rest: Readonly<Record<string, unknown>>,
   corrupt: Readonly<Record<string, unknown>>,
 ): string {
+  return `${JSON.stringify(buildManifestObject(model, rest, corrupt), null, 2)}\n`;
+}
+
+/**
+ * Builds ONE game's manifest object (not yet stringified) from a form model. Split out of formModelToText
+ * so the multi-game wrapper (gamesToText) can assemble an array of them. See formModelToText's doc for the
+ * per-field omission rules and the corrupt/rest overlay semantics.
+ */
+function buildManifestObject(
+  model: ManifestFormModel,
+  rest: Readonly<Record<string, unknown>>,
+  corrupt: Readonly<Record<string, unknown>>,
+): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   out.schemaVersion = 1;
   if (model.id !== '') out.id = model.id;
@@ -459,5 +480,59 @@ export function formModelToText(
   for (const [key, value] of Object.entries(corrupt)) out[key] = value;
   for (const [key, value] of Object.entries(rest)) out[key] = value;
 
-  return `${JSON.stringify(out, null, 2)}\n`;
+  return out;
+}
+
+// ── Multi-game wrapper (a card can carry several games) ────────────────────────
+// game.json is a single game object (legacy) OR a non-empty array of them. The form edits ONE game at a
+// time; these two pure functions wrap/unwrap the array so the form's per-game model is reused verbatim.
+
+/** One game's serializable form state (model + preserved unknown/corrupt keys). */
+export interface GameFormState {
+  readonly model: ManifestFormModel;
+  readonly rest: Readonly<Record<string, unknown>>;
+  readonly corrupt: Readonly<Record<string, unknown>>;
+}
+
+export type ParseGamesResult =
+  | {
+      readonly ok: true;
+      /** One parse result per game (each may individually be ok:false — a non-object element). */
+      readonly games: readonly ParseFormResult[];
+      /** Whether the source was an array (>1 games serialize back as an array; see gamesToText). */
+      readonly isArray: boolean;
+    }
+  | { readonly ok: false; readonly message: string };
+
+/**
+ * Parses manifest TEXT into a LIST of per-game parse results. A single object → a one-element list
+ * (isArray:false); a non-empty array → one result per element (isArray:true). ok:false only for a syntax
+ * error or a top-level that is neither an object nor a non-empty array (the caller keeps the JSON tab).
+ */
+export function textToGames(text: string): ParseGamesResult {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text) as unknown;
+  } catch (cause) {
+    return { ok: false, message: cause instanceof Error ? cause.message : String(cause) };
+  }
+  if (Array.isArray(parsed)) {
+    if (parsed.length === 0) return { ok: false, message: 'the games array must not be empty' };
+    return { ok: true, isArray: true, games: parsed.map(valueToFormResult) };
+  }
+  if (isRecord(parsed)) {
+    return { ok: true, isArray: false, games: [valueToFormResult(parsed)] };
+  }
+  return { ok: false, message: 'game.json must be a game object or a non-empty array of games' };
+}
+
+/**
+ * Serializes a LIST of game form states back to manifest TEXT: exactly one game → a single object (legacy
+ * shape, maximal backwards compatibility), more than one → an array (see the plan, decision 2). An empty
+ * list is not expected (a card always has ≥1 game); it falls back to a single empty object for safety.
+ */
+export function gamesToText(games: readonly GameFormState[]): string {
+  const objects = games.map((g) => buildManifestObject(g.model, g.rest, g.corrupt));
+  const value: unknown = objects.length === 1 ? objects[0] : objects;
+  return `${JSON.stringify(value, null, 2)}\n`;
 }

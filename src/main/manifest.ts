@@ -17,6 +17,7 @@ import {
   type SfxName,
 } from '../shared/types';
 import { translateIssueMessage, type Translator } from '../shared/i18n/index';
+import { log } from './logger';
 
 // Install-mode block (optional). When present, the card holds an installer and `executable` is
 // resolved relative to the app-controlled install dir (see readManifest), not the card root.
@@ -152,6 +153,30 @@ const SFX_NAMES: readonly SfxName[] = ['play', 'navigate', 'button', 'back'];
 export type ManifestResult =
   | { readonly ok: true; readonly manifest: ResolvedManifest }
   | { readonly ok: false; readonly message: string };
+
+/** Result of reading ALL games from a card (a card carries one game.json holding an object or an array). */
+export type ManifestsResult =
+  | { readonly ok: true; readonly manifests: ResolvedManifest[] }
+  | { readonly ok: false; readonly message: string };
+
+/**
+ * Normalizes the top-level game.json value into a list of raw game entries: a lone object → [object]
+ * (legacy single-game — still fully valid), a NON-EMPTY array → its items (multi-game). Anything else
+ * (a primitive, null, or an empty array) is a STRUCTURAL error (fatal — the card can't be read at all).
+ */
+function normalizeManifestInput(
+  parsed: unknown,
+  t: Translator,
+): { readonly ok: true; readonly items: readonly unknown[] } | { readonly ok: false; readonly message: string } {
+  if (Array.isArray(parsed)) {
+    if (parsed.length === 0) return { ok: false, message: t('manifest.emptyArray') };
+    return { ok: true, items: parsed };
+  }
+  if (typeof parsed === 'object' && parsed !== null) {
+    return { ok: true, items: [parsed] };
+  }
+  return { ok: false, message: t('manifest.notObjectOrArray') };
+}
 
 /** External path bases the manifest may resolve that are not plain env vars. */
 export interface ManifestEnv {
@@ -331,11 +356,17 @@ async function resolveInstall(
 }
 
 /**
- * Reads and fully validates the manifest at the card root.
- * `env` carries known-folder bases resolved in main (e.g. Documents) for pcSavePath.
- * Also checks that the executable exists (an edge case).
+ * Reads and fully validates ALL games on the card. `game.json` may hold a single object (legacy
+ * single-game — behaves exactly as before) or a non-empty array of game objects (multi-game). Reads the
+ * file once, normalizes to a list, and resolves each entry.
+ *
+ * Failure policy (see the plan): a STRUCTURAL problem (unreadable file, top-level not an object/array,
+ * empty array) is fatal. A single game that fails to resolve (e.g. a normal-mode executable missing on
+ * disk) is SKIPPED with a breadcrumb so one broken entry doesn't kill a multi-game card; if NONE resolve,
+ * the card is fatal with the first skip reason (so a single-game card keeps its precise message — BC).
+ * Duplicate ids are fatal (ids key PC storage — a collision would corrupt stats/saves).
  */
-export async function readManifest(root: string, env: ManifestEnv): Promise<ManifestResult> {
+export async function readManifests(root: string, env: ManifestEnv): Promise<ManifestsResult> {
   const { t } = env;
   const manifestPath = path.join(root, MANIFEST_FILENAME);
 
@@ -349,7 +380,43 @@ export async function readManifest(root: string, env: ManifestEnv): Promise<Mani
     };
   }
 
-  const parsed = manifestSchema.safeParse(parsedJson);
+  const normalized = normalizeManifestInput(parsedJson, t);
+  if (!normalized.ok) return { ok: false, message: normalized.message };
+
+  const manifests: ResolvedManifest[] = [];
+  let firstError: string | null = null;
+  for (const [index, item] of normalized.items.entries()) {
+    const resolved = await resolveOne(item, root, env);
+    if (!resolved.ok) {
+      if (firstError === null) firstError = resolved.message;
+      log.warn(`[manifest] skipping game #${index}: ${resolved.message}`);
+      continue;
+    }
+    manifests.push(resolved.manifest);
+  }
+  if (manifests.length === 0) {
+    // No game resolved → fatal, like a missing manifest. Keep the first (usually only) reason so a
+    // single-game card surfaces its precise error ("executable not found: …") exactly as before.
+    return { ok: false, message: firstError ?? t('manifest.invalid') };
+  }
+  const seen = new Set<string>();
+  for (const manifest of manifests) {
+    if (seen.has(manifest.raw.id)) {
+      return { ok: false, message: t('manifest.duplicateId', { id: manifest.raw.id }) };
+    }
+    seen.add(manifest.raw.id);
+  }
+  return { ok: true, manifests };
+}
+
+/**
+ * Resolves and validates ONE already-read game entry (raw JSON value) against the schema + path
+ * semantics, exactly as the single-game reader did. `env` carries known-folder bases resolved in main
+ * (e.g. Documents) for pcSavePath. Also checks that the executable exists (an edge case).
+ */
+async function resolveOne(rawParsed: unknown, root: string, env: ManifestEnv): Promise<ManifestResult> {
+  const { t } = env;
+  const parsed = manifestSchema.safeParse(rawParsed);
   if (!parsed.success) {
     return { ok: false, message: formatZodError(parsed.error, t) };
   }
@@ -529,9 +596,66 @@ function pushIfEscapes(
 }
 
 /**
- * Static, filesystem-free validation of manifest TEXT (Configure-game window). Two-phase by design:
- * a schema failure short-circuits (zod's superRefine issues only appear after the base schema passes),
- * so the caller may see structural errors first and semantic ones on a later pass. The schema stays
+ * Semantic (fs-free) checks for ONE already-schema-parsed game, appended to `issues`. `prefix` is ''
+ * for a single-object manifest (field paths stay bare, e.g. `heroImage` — so the one-game form maps them
+ * exactly) and `games.<i>.` for an array element (so the multi-game form can attribute/strip them).
+ *
+ * Beyond the traversal / pcSave / pairing checks that mirror readManifest, this enforces the multi-game
+ * POLICY that every game must carry ≥1 heroImage. That is intentionally editor-only (it gates Save) and
+ * NOT in the runtime readManifests path, which stays lenient (a hero-less legacy card still loads via the
+ * wallpaper fallback) — see the plan, decision 3.
+ */
+function pushGameSemanticIssues(
+  issues: ManifestValidationIssue[],
+  raw: GameManifest,
+  t: Translator,
+  prefix: string,
+): void {
+  const field = (name: string): string => `${prefix}${name}`;
+  if (raw.executable !== undefined)
+    pushIfEscapes(issues, field('executable'), raw.executable, t, 'executable');
+  if (raw.install !== undefined) {
+    pushIfEscapes(issues, field('install.installer'), raw.install.installer, t, 'installer');
+  }
+  if (raw.heroImage !== undefined) {
+    const heroes = typeof raw.heroImage === 'string' ? [raw.heroImage] : raw.heroImage;
+    for (const [index, rel] of heroes.entries()) {
+      const name = typeof raw.heroImage === 'string' ? 'heroImage' : `heroImage.${index}`;
+      pushIfEscapes(issues, field(name), rel, t, 'heroImage');
+    }
+  } else {
+    // Multi-game policy: a hero image is required for every game (editor-only gate — see above).
+    issues.push({ path: field('heroImage'), message: t('manifest.heroRequired') });
+  }
+  if (raw.saveOnCard !== undefined)
+    pushIfEscapes(issues, field('saveOnCard'), raw.saveOnCard, t, 'saveOnCard');
+  if (raw.backgroundMusic !== undefined) {
+    pushIfEscapes(issues, field('backgroundMusic'), raw.backgroundMusic, t, 'backgroundMusic');
+  }
+  if (raw.sounds !== undefined) {
+    for (const name of SFX_NAMES) {
+      const rel = raw.sounds[name];
+      if (rel !== undefined) pushIfEscapes(issues, field(`sounds.${name}`), rel, t, `sound "${name}"`);
+    }
+  }
+  if (raw.pcSavePath !== undefined) {
+    const message = validatePcSavePathStatic(raw.pcSavePath, t);
+    if (message !== null) issues.push({ path: field('pcSavePath'), message });
+  }
+  // Sync needs BOTH sides (mirrors readManifest): a lone side means the card was prepared incorrectly.
+  if ((raw.pcSavePath === undefined) !== (raw.saveOnCard === undefined)) {
+    issues.push({
+      path: field(raw.pcSavePath === undefined ? 'pcSavePath' : 'saveOnCard'),
+      message: t('manifest.savePairing'),
+    });
+  }
+}
+
+/**
+ * Static, filesystem-free validation of manifest TEXT (Configure-game window). Accepts a single game
+ * object (legacy — bare field paths) OR a non-empty array of games (each element validated, paths
+ * prefixed with `games.<i>.`). Two-phase by design per game: a schema failure short-circuits that game's
+ * semantic checks (zod's superRefine issues only appear after the base schema passes). The schema stays
  * module-private — only this pure function is exported, so there is a single source of truth.
  */
 export function validateManifestText(text: string, t: Translator): ConfigValidationResult {
@@ -545,56 +669,44 @@ export function validateManifestText(text: string, t: Translator): ConfigValidat
     };
   }
 
-  const result = manifestSchema.safeParse(parsed);
-  if (!result.success) {
-    const issues = result.error.issues.map((issue): ManifestValidationIssue => {
-      const joined = issue.path.join('.');
-      // A refine stores a MessageKey; a structural zod message is already localized via z.config.
-      return {
-        path: joined.length > 0 ? joined : '(root)',
-        message: translateIssueMessage(issue.message, t),
-      };
-    });
-    return { ok: false, issues };
+  if (Array.isArray(parsed)) {
+    if (parsed.length === 0) {
+      return { ok: false, issues: [{ path: '(root)', message: t('manifest.emptyArray') }] };
+    }
+  } else if (typeof parsed !== 'object' || parsed === null) {
+    return { ok: false, issues: [{ path: '(root)', message: t('manifest.notObjectOrArray') }] };
   }
+  const isArray = Array.isArray(parsed);
+  const items: readonly unknown[] = isArray ? (parsed as readonly unknown[]) : [parsed];
 
-  const raw = result.data;
   const issues: ManifestValidationIssue[] = [];
-
-  if (raw.executable !== undefined)
-    pushIfEscapes(issues, 'executable', raw.executable, t, 'executable');
-  if (raw.install !== undefined) {
-    pushIfEscapes(issues, 'install.installer', raw.install.installer, t, 'installer');
-  }
-  if (raw.heroImage !== undefined) {
-    const heroes = typeof raw.heroImage === 'string' ? [raw.heroImage] : raw.heroImage;
-    for (const [index, rel] of heroes.entries()) {
-      const field = typeof raw.heroImage === 'string' ? 'heroImage' : `heroImage.${index}`;
-      pushIfEscapes(issues, field, rel, t, 'heroImage');
+  const idIndex = new Map<string, number>();
+  items.forEach((item, i) => {
+    const prefix = isArray ? `games.${i}.` : '';
+    const rootPath = isArray ? `games.${i}` : '(root)';
+    const result = manifestSchema.safeParse(item);
+    if (!result.success) {
+      for (const issue of result.error.issues) {
+        const joined = issue.path.join('.');
+        // A refine stores a MessageKey; a structural zod message is already localized via z.config.
+        issues.push({
+          path: joined.length > 0 ? `${prefix}${joined}` : rootPath,
+          message: translateIssueMessage(issue.message, t),
+        });
+      }
+      return; // can't run semantic checks without parsed data
     }
-  }
-  if (raw.saveOnCard !== undefined)
-    pushIfEscapes(issues, 'saveOnCard', raw.saveOnCard, t, 'saveOnCard');
-  if (raw.backgroundMusic !== undefined) {
-    pushIfEscapes(issues, 'backgroundMusic', raw.backgroundMusic, t, 'backgroundMusic');
-  }
-  if (raw.sounds !== undefined) {
-    for (const name of SFX_NAMES) {
-      const rel = raw.sounds[name];
-      if (rel !== undefined) pushIfEscapes(issues, `sounds.${name}`, rel, t, `sound "${name}"`);
+    const raw = result.data;
+    pushGameSemanticIssues(issues, raw, t, prefix);
+    // Duplicate id across games (array only; a single object is trivially unique). ids key PC storage.
+    if (isArray) {
+      if (idIndex.has(raw.id)) {
+        issues.push({ path: `games.${i}.id`, message: t('manifest.duplicateId', { id: raw.id }) });
+      } else {
+        idIndex.set(raw.id, i);
+      }
     }
-  }
-  if (raw.pcSavePath !== undefined) {
-    const message = validatePcSavePathStatic(raw.pcSavePath, t);
-    if (message !== null) issues.push({ path: 'pcSavePath', message });
-  }
-  // Sync needs BOTH sides (mirrors readManifest): a lone side means the card was prepared incorrectly.
-  if ((raw.pcSavePath === undefined) !== (raw.saveOnCard === undefined)) {
-    issues.push({
-      path: raw.pcSavePath === undefined ? 'pcSavePath' : 'saveOnCard',
-      message: t('manifest.savePairing'),
-    });
-  }
+  });
 
   return issues.length > 0 ? { ok: false, issues } : { ok: true };
 }
@@ -609,9 +721,13 @@ export function validateManifestText(text: string, t: Translator): ConfigValidat
  * `.default()` (args, runAsAdmin, launchTimeoutSec, killTimeoutSec) must NOT be `required`. Without it the editor's linter
  * flagged "args is missing" while validateManifestText (which zod-parses and fills the defaults) reported
  * the very same text as valid — the two verdicts disagreed.
+ *
+ * Wrapped in `oneOf` so the editor accepts BOTH a single game object (legacy) and a non-empty array of
+ * games (multi-game), matching what validateManifestText / readManifests accept.
  */
 export function manifestJsonSchema(): unknown {
-  return z.toJSONSchema(manifestSchema, { unrepresentable: 'any', io: 'input' });
+  const objectSchema = z.toJSONSchema(manifestSchema, { unrepresentable: 'any', io: 'input' });
+  return { oneOf: [objectSchema, { type: 'array', items: objectSchema, minItems: 1 }] };
 }
 
 function describe(cause: unknown): string {

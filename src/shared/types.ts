@@ -199,6 +199,33 @@ export interface HeroAssets {
   readonly images: readonly string[];
 }
 
+/**
+ * One game's full assets for the carousel (game-selection) screen. A card can carry several games;
+ * every game's info + hero + audio is delivered ONCE per card on the `library:update` channel (like
+ * hero/audio), so the renderer holds the whole set locally and switches between carousel cards
+ * instantly — changing background/palette/music/title with no round-trip to main.
+ */
+export interface LibraryEntry {
+  readonly info: GameInfo;
+  readonly hero: HeroAssets;
+  readonly audio: AudioAssets | null;
+}
+
+/** The full set of games on the current card (empty only transiently; a card with 0 valid games errors). */
+export interface GameLibrary {
+  readonly games: readonly LibraryEntry[];
+}
+
+/**
+ * Bundled default UI sounds for the carousel (game-selection) screen, as data URLs. That screen is
+ * cross-game, so it plays the BUNDLED defaults (not any one game's sounds) — see the plan, decision 10.
+ * Only navigate (move) and button (select) are ever played there.
+ */
+export interface CarouselSfx {
+  readonly navigate?: string;
+  readonly button?: string;
+}
+
 /** Game statistics. The source of truth is on the PC; the card copy is best-effort. */
 export interface Stats {
   readonly schemaVersion: 1;
@@ -270,6 +297,16 @@ export interface GameInfo {
 /** The flow state machine (discriminated union). */
 export type AppState =
   | { readonly kind: 'idle' }
+  | {
+      /**
+       * The carousel (game-selection) screen: the card carries several games and the user is browsing
+       * them. `selectedIndex` is the focused card, `count` the number of games. Carries no GameInfo —
+       * the renderer holds the whole library (see GameLibrary) and renders the focused game locally.
+       */
+      readonly kind: 'selecting';
+      readonly selectedIndex: number;
+      readonly count: number;
+    }
   | { readonly kind: 'ready'; readonly game: GameInfo }
   | { readonly kind: 'installing'; readonly game: GameInfo }
   | { readonly kind: 'uninstalling'; readonly game: GameInfo }
@@ -406,6 +443,17 @@ export const IPC = {
   heroUpdate: 'hero:update',
   /** renderer → main: request the current hero images (on window startup). */
   heroRequest: 'hero:request',
+  /** main → renderer: the full game library for the current card (or null when no card). Delivered once
+   * per card so the renderer can drive the carousel locally (like hero/audio). */
+  libraryUpdate: 'library:update',
+  /** renderer → main (invoke): request the current game library (on window startup / back-fill). */
+  libraryRequest: 'library:request',
+  /** renderer → main: pick a game from the carousel (payload: game index). Enters the ready screen. */
+  actionSelect: 'action:select',
+  /** renderer → main: return to the carousel from the ready screen (the "Select game" button in More). */
+  actionBackToCarousel: 'action:back-to-carousel',
+  /** renderer → main (invoke): the bundled default carousel SFX (navigate/button) as data URLs. */
+  carouselSfxRequest: 'carousel:sfx-request',
   /** renderer → main: request the fallback wallpaper data URL (for the idle / empty screen). */
   wallpaperRequest: 'wallpaper:request',
   /** main → game-renderer: updated Empty-screen wallpaper data URL (pushed when changed in settings). */
@@ -629,6 +677,16 @@ export interface RendererApi {
   requestAudio(): Promise<AudioAssets | null>;
   onHeroUpdate(callback: (assets: HeroAssets | null) => void): void;
   requestHero(): Promise<HeroAssets | null>;
+  /** Live game-library updates (the whole card's games), pushed once per card (null when no card). */
+  onLibraryUpdate(callback: (library: GameLibrary | null) => void): void;
+  /** Current game library (on window startup / back-fill after a reload). */
+  requestLibrary(): Promise<GameLibrary | null>;
+  /** Pick a game from the carousel (index into the library) — enters the ready screen. */
+  selectGame(index: number): void;
+  /** Return to the carousel from the ready screen (the "Select game" button). */
+  backToCarousel(): void;
+  /** The bundled default carousel SFX (navigate/button) as data URLs (on startup). */
+  requestCarouselSfx(): Promise<CarouselSfx>;
   requestWallpaper(): Promise<string | null>;
   /** Live Empty-screen wallpaper updates, pushed when the custom wallpaper changes in the settings window. */
   onWallpaperUpdate(callback: (url: string) => void): void;

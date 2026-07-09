@@ -18,6 +18,22 @@ export interface HeroDeps {
   getGameId(): string;
   /** The current translator (read live so the empty-screen title follows the language). */
   getTranslator(): Translator;
+  /**
+   * Optional DOM/behaviour overrides so a SECOND instance can drive the carousel background (its own
+   * layers, no Ken-Burns pan, no local rotation) instead of the main #hero. Defaults reproduce the
+   * original single-instance behaviour exactly (main #app palette target, #title, #hero layers, pan +
+   * rotation on).
+   */
+  /** Element the two-color palette (`--d1`/`--d2`) is written to. Default `#app`. */
+  readonly paletteTarget?: HTMLElement;
+  /** Element whose textContent is the empty-screen title. Default `#title`. */
+  readonly titleTarget?: HTMLElement;
+  /** CSS selector for the two cross-fading layers. Default `#hero .hero-layer`. */
+  readonly layerSelector?: string;
+  /** Ken-Burns pan on the layers (default true). False for the carousel background (fade only). */
+  readonly pan?: boolean;
+  /** Renderer-local hero rotation (default true). False for the carousel background (changes on nav). */
+  readonly rotate?: boolean;
 }
 
 export interface HeroController {
@@ -34,8 +50,13 @@ export interface HeroController {
 }
 
 export function createHeroController(deps: HeroDeps): HeroController {
-  const app = req('app');
-  const titleEl = req('title');
+  // Palette target (default #app) and empty-screen title target (default #title). A carousel instance
+  // passes its own background container + no title (it never shows the empty screen).
+  const app = deps.paletteTarget ?? req('app');
+  const titleEl = deps.titleTarget ?? req('title');
+  const pan = deps.pan ?? true;
+  const rotate = deps.rotate ?? true;
+  const layerSelector = deps.layerSelector ?? '#hero .hero-layer';
 
   // Fallback wallpaper (data URL from main) for the empty / idle screen, and its cached palette.
   let wallpaperUrl: string | null = null;
@@ -91,10 +112,10 @@ export function createHeroController(deps: HeroDeps): HeroController {
 
   // Two stacked layers we cross-fade between: activeLayer shows the current image, idleLayer receives the
   // next one; then the roles swap. Both run bg-pan perpetually (see styles.css).
-  const heroLayers = Array.from(document.querySelectorAll<HTMLElement>('#hero .hero-layer'));
+  const heroLayers = Array.from(document.querySelectorAll<HTMLElement>(layerSelector));
   const [heroLayerA, heroLayerB] = heroLayers;
   if (heroLayerA === undefined || heroLayerB === undefined) {
-    throw new Error('#hero must contain two .hero-layer elements');
+    throw new Error(`"${layerSelector}" must match two .hero-layer elements`);
   }
   let activeLayer: HTMLElement = heroLayerA;
   let idleLayer: HTMLElement = heroLayerB;
@@ -107,15 +128,20 @@ export function createHeroController(deps: HeroDeps): HeroController {
   function showImage(url: string | null): void {
     if (url === shownUrl) return;
     shownUrl = url;
-    // The incoming (idle) layer gets the new image + a fresh random pan direction (drift left vs right).
+    // The incoming (idle) layer gets the new image (and, when panning, a fresh random pan direction).
     idleLayer.style.backgroundImage = url !== null ? `url("${url}")` : 'none';
-    idleLayer.style.setProperty('--pan-x', Math.random() < 0.5 ? '1.5%' : '-1.5%');
-    // Force-restart bg-pan so the incoming image starts its drift from zero: opacity:0 does NOT pause the
-    // animation, so without this the layer would fade in mid-drift. Toggling animation + a reflow retriggers
-    // it — and the same reflow flushes styles so the opacity transition below actually animates.
-    idleLayer.style.animation = 'none';
-    void idleLayer.offsetWidth;
-    idleLayer.style.animation = '';
+    if (pan) {
+      idleLayer.style.setProperty('--pan-x', Math.random() < 0.5 ? '1.5%' : '-1.5%');
+      // Force-restart bg-pan so the incoming image starts its drift from zero: opacity:0 does NOT pause the
+      // animation, so without this the layer would fade in mid-drift. Toggling animation + a reflow retriggers
+      // it — and the same reflow flushes styles so the opacity transition below actually animates.
+      idleLayer.style.animation = 'none';
+      void idleLayer.offsetWidth;
+      idleLayer.style.animation = '';
+    } else {
+      // No pan (carousel background): still force a reflow so the opacity cross-fade below animates.
+      void idleLayer.offsetWidth;
+    }
     // Cross-fade: incoming layer in, outgoing out, then swap the roles.
     idleLayer.classList.add('is-active');
     activeLayer.classList.remove('is-active');
@@ -162,6 +188,7 @@ export function createHeroController(deps: HeroDeps): HeroController {
   // gate). During a Steam download the window stays on the ready screen with a game, so rotation is fine.
   function heroRotationEligible(): boolean {
     return (
+      rotate &&
       heroImages.length > 1 &&
       document.visibilityState === 'visible' &&
       deps.hasGameOnScreen()
