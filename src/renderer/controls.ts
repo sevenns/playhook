@@ -20,7 +20,7 @@ import { req, reqQuery } from './dom.js';
 // The current popup view (mutually exclusive; 'none' = closed). Mirrors the data-view on #popup.
 type PopupView = 'none' | 'details' | 'power' | 'confirm' | 'error';
 // Which action the confirm view is asking about (only meaningful while popupView === 'confirm').
-type ConfirmMode = 'install' | 'uninstall' | 'shutdown' | 'reboot' | 'sleep';
+type ConfirmMode = 'install' | 'uninstall' | 'kill' | 'shutdown' | 'reboot' | 'sleep';
 // Gamepad A doesn't trigger :active, so flash a press class to play the scale-down animation.
 const PRESS_MS = 130;
 
@@ -66,6 +66,7 @@ export function createControls(deps: ControlsDeps): Controls {
   // Action-stack buttons (grouped by view in the HTML).
   const menuShutdown = req<HTMLButtonElement>('menu-shutdown');
   const menuInstallToggle = req<HTMLButtonElement>('menu-install-toggle');
+  const menuKill = req<HTMLButtonElement>('menu-kill');
   const menuClose = req<HTMLButtonElement>('menu-close');
   const powerShutdown = req<HTMLButtonElement>('power-shutdown');
   const powerReboot = req<HTMLButtonElement>('power-reboot');
@@ -107,6 +108,7 @@ export function createControls(deps: ControlsDeps): Controls {
   // degrades to just System + Close.
   function openDetails(): void {
     applyMenuInstallToggle(); // keep the toggle's text/visibility fresh for the current game
+    applyMenuKill(); // keep the force-close item's visibility fresh (running-only)
     setView('details');
     focusStackBottom(); // default focus: Close
     applyFocus(); // main highlight clears (focusActive false with a popup open)
@@ -144,6 +146,13 @@ export function createControls(deps: ControlsDeps): Controls {
       }
       // Card path only for a card-installer install (empty for steam — there is no install dir).
       if (mode === 'install') confirmPath.textContent = isSteamInstall ? '' : (game.installDir ?? '');
+    } else if (mode === 'kill') {
+      // Force-close confirm (from Details): no path note; returns to Details. The message warns about
+      // unsaved progress. data-mode ≠ 'install' hides the path note (styles.css).
+      confirmReturnTo = 'details';
+      popup.dataset['mode'] = mode;
+      delete popup.dataset['installVia'];
+      confirmMessage.textContent = t()('launcher.confirm.kill');
     } else {
       // Power action: a single-question confirm, no path note (data-mode ≠ 'install' hides it).
       confirmReturnTo = 'power';
@@ -212,6 +221,16 @@ export function createControls(deps: ControlsDeps): Controls {
       // Which action Yes will run — read back in the stack trigger.
       menuInstallToggle.dataset['action'] = showInstall ? 'install' : 'uninstall';
     }
+  }
+
+  // ── Menu item: Force close (running-only) ────────────────────────────────────
+  // The MIRROR IMAGE of the install toggle: shown ONLY while a game is running (running is a busy phase,
+  // so this is the exact opposite of the install toggle, which hides during busy). Text from JS (no
+  // data-i18n) so a language change re-labels it at render time and it stays out of the i18n HTML test.
+  function applyMenuKill(): void {
+    const running = state().kind === 'running';
+    menuKill.classList.toggle('is-hidden', !running);
+    if (running) menuKill.textContent = t()('launcher.menu.forceClose');
   }
 
   // ── Main bar focus (gamepad / mouse) ─────────────────────────────────────────
@@ -324,6 +343,7 @@ export function createControls(deps: ControlsDeps): Controls {
   const ALL_STACK_BUTTONS: readonly HTMLButtonElement[] = [
     menuShutdown,
     menuInstallToggle,
+    menuKill,
     menuClose,
     powerShutdown,
     powerReboot,
@@ -341,6 +361,7 @@ export function createControls(deps: ControlsDeps): Controls {
       case 'details': {
         const items: HTMLButtonElement[] = [menuShutdown];
         if (!menuInstallToggle.classList.contains('is-hidden')) items.push(menuInstallToggle);
+        if (!menuKill.classList.contains('is-hidden')) items.push(menuKill);
         items.push(menuClose);
         return items;
       }
@@ -431,6 +452,9 @@ export function createControls(deps: ControlsDeps): Controls {
     } else if (btn === menuInstallToggle) {
       audio.play('button');
       openConfirm(menuInstallToggle.dataset['action'] === 'install' ? 'install' : 'uninstall');
+    } else if (btn === menuKill) {
+      audio.play('button');
+      openConfirm('kill');
     } else if (btn === menuClose || btn === errorClose || btn === powerClose) {
       // back() dispatches by the current view: Details/Error → close the popup; Power → step back to
       // the Details menu (so "Close" in the Power submenu returns you one level up, like the B gesture).
@@ -478,6 +502,10 @@ export function createControls(deps: ControlsDeps): Controls {
       case 'uninstall':
         audio.play('button'); // neutral sound for the destructive confirm
         window.api.requestUninstall();
+        break;
+      case 'kill':
+        audio.play('button'); // neutral sound for the destructive confirm
+        window.api.requestKill();
         break;
       case 'shutdown':
         audio.play('button');
@@ -583,15 +611,18 @@ export function createControls(deps: ControlsDeps): Controls {
   });
 
   function applyGameButtons(): void {
-    // The only game-dependent control now is the Details menu's Install/Uninstall item (the popup's
-    // other buttons are static). Refreshed every render so it stays correct if the game state changes
-    // while Details is open (a ready→ready update doesn't force-close the popup).
+    // The game-dependent Details items: the Install/Uninstall toggle and the running-only Force close.
+    // Refreshed every render so they stay correct if the game state changes while Details is open (a
+    // running→syncing-out self-exit must drop Force close; a ready→ready update doesn't close the popup).
     applyMenuInstallToggle();
+    applyMenuKill();
   }
 
   function clearGameButtons(): void {
-    // No game → no Install/Uninstall item (the popup is force-closed off the ready screen anyway).
+    // No game → no Install/Uninstall item and no Force close (the popup is force-closed off the ready
+    // screen anyway; no-game is never `running`).
     menuInstallToggle.classList.add('is-hidden');
+    menuKill.classList.add('is-hidden');
   }
 
   function refresh(): void {

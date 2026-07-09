@@ -21,6 +21,7 @@ const CHANNELS = {
   actionShutdown: 'action:shutdown',
   actionReboot: 'action:reboot',
   actionSleep: 'action:sleep',
+  actionKill: 'action:kill',
   errorShow: 'error:show',
   audioUpdate: 'audio:update',
   audioRequest: 'audio:request',
@@ -63,6 +64,9 @@ const api: RendererApi = {
   },
   requestSleep(): void {
     ipcRenderer.send(CHANNELS.actionSleep);
+  },
+  requestKill(): void {
+    ipcRenderer.send(CHANNELS.actionKill);
   },
   onError(callback: (message: string) => void): void {
     ipcRenderer.on(CHANNELS.errorShow, (_event: IpcRendererEvent, message: string) => {

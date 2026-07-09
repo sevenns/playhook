@@ -12,11 +12,14 @@ import {
   type LanguageMode,
   type ThemeMode,
 } from '../shared/types';
-import { readJsonValidated } from './json-store';
+import { readJsonValidated, writeJsonAtomic } from './json-store';
 
 const settingsSchema = z.object({
   schemaVersion: z.literal(1),
-  autoUpdate: z.enum(['download', 'download-install', 'off']),
+  // `.default` so a partial/older settings.json missing this field (e.g. a half-written file that lost
+  // `autoUpdate` mid-write) still validates instead of failing the WHOLE parse → a full reset to defaults.
+  // The value mirrors DEFAULT_SETTINGS. schemaVersion stays strict on purpose (see the note above the class).
+  autoUpdate: z.enum(['download', 'download-install', 'off']).default('download-install'),
   // `.default` makes an older settings.json (written before a field existed) migrate seamlessly: a file
   // missing the field parses fine and keeps its other values.
   theme: z.enum(['system', 'light', 'dark']).default('system'),
@@ -52,9 +55,27 @@ export const DEFAULT_SETTINGS: AppSettings = {
 
 export class AppSettingsStore {
   private readonly settingsPath: string;
+  // Serializes every WRITE (write/patch/reset) so parallel fire-and-forget callers (e.g. a volume slider
+  // firing a burst of patch()) can't interleave read-modify-write and lose updates, and never race on the
+  // shared `${settingsPath}.tmp` file. Reads stay OFF the queue (a queued op reads directly — see enqueue).
+  private tail: Promise<void> = Promise.resolve();
 
   constructor(private readonly baseDir: string) {
     this.settingsPath = path.join(baseDir, 'settings.json');
+  }
+
+  /**
+   * Runs `op` after the current write chain drains, then chains the next writer behind it. The caller
+   * gets `op`'s real result/rejection (used by setVolume awaiting `next`, the wallpaper flow, etc.); the
+   * chain TAIL swallows rejections separately so one failed write can't poison every later enqueue.
+   */
+  private enqueue<T>(op: () => Promise<T>): Promise<T> {
+    const result = this.tail.then(op);
+    this.tail = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
   }
 
   /** Reads settings; returns the default when the file is missing or corrupted (a warn is logged on corruption). */
@@ -62,17 +83,26 @@ export class AppSettingsStore {
     return readJsonValidated(this.settingsPath, settingsSchema, DEFAULT_SETTINGS);
   }
 
-  async write(next: AppSettings): Promise<void> {
+  /** The actual atomic write — called ONLY from inside a queued op, so it never enqueues (would deadlock). */
+  private async persist(next: AppSettings): Promise<void> {
     await fse.ensureDir(this.baseDir);
-    await fse.writeJson(this.settingsPath, next, { spaces: 2 });
+    await writeJsonAtomic(this.settingsPath, next);
   }
 
-  /** Merges a partial change into the current settings and persists the result. */
-  async patch(partial: Partial<Omit<AppSettings, 'schemaVersion'>>): Promise<AppSettings> {
-    const current = await this.read();
-    const next: AppSettings = { ...current, ...partial };
-    await this.write(next);
-    return next;
+  write(next: AppSettings): Promise<void> {
+    return this.enqueue(() => this.persist(next));
+  }
+
+  /** Merges a partial change into the current settings and persists the result (read-modify-write, queued). */
+  patch(partial: Partial<Omit<AppSettings, 'schemaVersion'>>): Promise<AppSettings> {
+    // The whole read-modify-write runs as ONE queued op so concurrent patches can't interleave; the read
+    // is direct (not enqueue) — enqueuing it here would wait on the very op it runs inside → deadlock.
+    return this.enqueue(async () => {
+      const current = await this.read();
+      const next: AppSettings = { ...current, ...partial };
+      await this.persist(next);
+      return next;
+    });
   }
 
   setAutoUpdate(mode: AutoUpdateMode): Promise<AppSettings> {
@@ -87,9 +117,20 @@ export class AppSettingsStore {
     return this.patch({ language: mode });
   }
 
-  /** Overwrites the file with the defaults and returns them. */
-  async reset(): Promise<AppSettings> {
-    await this.write(DEFAULT_SETTINGS);
-    return DEFAULT_SETTINGS;
+  /** Overwrites the file with the defaults and returns them (queued, like every other write). */
+  reset(): Promise<AppSettings> {
+    return this.enqueue(async () => {
+      await this.persist(DEFAULT_SETTINGS);
+      return DEFAULT_SETTINGS;
+    });
+  }
+
+  /**
+   * Resolves once every queued write in flight has settled. Awaited by UpdaterService.install() before
+   * quitAndInstall so an in-flight settings write isn't torn apart mid-write by the process exit (the
+   * root cause of settings loss after an update). Never rejects — the tail already swallows rejections.
+   */
+  flush(): Promise<void> {
+    return this.tail;
   }
 }

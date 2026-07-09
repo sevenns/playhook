@@ -17,6 +17,7 @@ import type {
   ConfigTemplates,
   ConfigValidationResult,
   DriveCandidate,
+  ThemeMode,
 } from '../shared/types';
 import type { IPC } from '../shared/types';
 import type { Locale } from '../shared/i18n/index';
@@ -37,6 +38,7 @@ const CHANNELS = {
   configTitleBarOverlay: 'config:titlebar-overlay',
   configLanguageRequest: 'config:language-request',
   configLanguageUpdate: 'config:language-update',
+  configThemeUpdate: 'config:theme-update',
   configPickPath: 'config:pick-path',
   configImagePreview: 'config:image-preview',
   configOpenExternal: 'config:open-external',
@@ -107,6 +109,11 @@ const api: ConfigureApi = {
   onLanguageUpdate(callback: (locale: Locale) => void): void {
     ipcRenderer.on(CHANNELS.configLanguageUpdate, (_event: IpcRendererEvent, locale: Locale) => {
       callback(locale);
+    });
+  },
+  onThemeUpdate(callback: (mode: ThemeMode) => void): void {
+    ipcRenderer.on(CHANNELS.configThemeUpdate, (_event: IpcRendererEvent, mode: ThemeMode) => {
+      callback(mode);
     });
   },
 };

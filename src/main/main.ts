@@ -136,6 +136,14 @@ async function bootstrap(): Promise<void> {
     // separately — delegate to the controller (it owns the AssetReader + the game window push).
     onWallpaperReset: () => controller.resetCustomWallpaper(),
     onLanguageChanged: (mode) => applyLanguage(mode),
+    // Push a theme change to the Configure window so an open one recolors live (the settings window
+    // applies it locally; the game window doesn't use the Fluent theme). No-op when it was never opened.
+    onThemeChanged: (mode) => {
+      const configureBw = configureWindow.browserWindow;
+      if (configureBw !== null && !configureBw.isDestroyed()) {
+        configureBw.webContents.send(IPC.configThemeUpdate, mode);
+      }
+    },
     getTranslator,
   });
   const settingsWindow = new SettingsWindow(updater, getTranslator);

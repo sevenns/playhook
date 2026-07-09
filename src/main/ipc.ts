@@ -33,6 +33,8 @@ import {
   waitForStart,
   waitForWatchedExit,
   waitForWatchedStart,
+  killImageByName,
+  anyImageAlive,
   LaunchAbortedError,
   type GameProcess,
 } from './game-launcher';
@@ -251,6 +253,15 @@ export class GameController {
   // whenever no game is running; reset in the launch sequence's finally. Matched by image name rather than
   // pid so it covers all backends uniformly, incl. elevated games a non-elevated tasklist can't see.
   private runningImageNames: readonly string[] | null = null;
+  // The owned GameProcess of the currently-running game, kept so a force-close can terminate it directly:
+  // the elevated HANDLE (invisible to taskkill) or the normal pid tree. A REFERENCE to the same object
+  // disposed in the launch sequence's finally (the single owner) — set alongside runningImageNames on
+  // entry to `running` (normal/elevated + watched branches; null for steam, which owns no process),
+  // cleared in that same finally. Never disposed from here.
+  private runningProc: GameProcess | null = null;
+  // A force-close (onKillRequested) is underway. Local try/finally flag (mirrors reloadInFlight, NOT the
+  // launch sequence's finally — a kill has its own short-lived lifecycle) so a double Yes / repeat is a no-op.
+  private killInFlight = false;
   // Audio for the current card, sent on its own channel (not on every AppState) — see AudioAssets.
   private currentAudio: AudioAssets | null = null;
   // Hero images for the current card, sent on their own channel (not on every AppState) — see HeroAssets.
@@ -308,6 +319,7 @@ export class GameController {
     ipcMain.on(IPC.actionUninstall, () => void this.onUninstallRequested());
     ipcMain.on(IPC.actionHide, () => this.deps.window.hide());
     ipcMain.on(IPC.actionOpenSteamDownloads, () => void this.onOpenSteamDownloads());
+    ipcMain.on(IPC.actionKill, () => void this.onKillRequested());
   }
 
   /** Sends a transient error to the renderer to surface in the error popup. */
@@ -553,6 +565,66 @@ export class GameController {
     }
   }
 
+  /**
+   * Force-close the running game (More → Force close → confirmed Yes). Kills the main executable AND every
+   * watchProcess, then lets the EXISTING exit waiters (waitForExit / waitForWatchedExit) notice the
+   * processes vanish and carry the flow through syncing-out → sync → ready (K-Д3) — no state machine of
+   * its own. Guarded by the running state + a killInFlight flag (double Yes / repeat is a no-op).
+   *
+   * Success is judged by FACT, not command exit codes: a "not found" from taskkill just means the target
+   * is already dead (success). After the kills, one control snapshot decides — anything from `targets`
+   * still visible (or the owned elevated process still alive on its HANDLE) → a soft errors.killFailed
+   * with the state left untouched (still running); otherwise success, silently.
+   */
+  private async onKillRequested(): Promise<void> {
+    const snapshot = this.deps.state.get();
+    if (snapshot.kind !== 'running') return; // only meaningful while a game is running
+    if (this.killInFlight) return; // a force-close is already underway (double Yes / repeat)
+    const manifest = this.current;
+    if (manifest === null) return; // defensive: `running` always has a current manifest
+    this.killInFlight = true;
+    try {
+      // Targets are computed HERE from this.current, leaving runningImageNames untouched: a union there
+      // would regress return-to-game (focusGameWindow picks the first Z-order match — the launcher name
+      // could steal focus from the game). Steam's executablePath is '' and drops out in normalization.
+      const targets = normalizeImageNames([
+        manifest.executablePath,
+        ...(manifest.raw.watchProcesses ?? []),
+      ]);
+      log.info(`[kill] force-close requested id=${manifest.raw.id} targets=[${targets.join(',')}]`);
+
+      // 1. Terminate the owned process (elevated HANDLE, or the normal pid tree with an isAlive re-check
+      //    inside kill()). In the watched path this is usually the already-dead launcher — its "not
+      //    found" is normal, not an error.
+      const proc = this.runningProc;
+      if (proc !== null) {
+        try {
+          await proc.kill();
+        } catch (cause) {
+          log.warn('[kill] owned-process kill failed (continuing to taskkill by name):', describe(cause));
+        }
+      }
+
+      // 2. taskkill /F /IM per target image name. Per-name failures are normal ("not found" = already
+      //    dead); the verdict is the control poll below, not these exit codes.
+      for (const name of targets) {
+        await killImageByName(name);
+      }
+
+      // 3. Fact-based verdict: a single control snapshot. Any target image still present, or the owned
+      //    (elevated, taskkill-invisible) process still alive on its HANDLE → the force-close failed.
+      const ownedAlive = proc !== null && (await proc.isAlive());
+      if ((await anyImageAlive(targets)) || ownedAlive) {
+        log.warn(`[kill] targets still alive after force-close id=${manifest.raw.id} — reporting killFailed`);
+        this.sendError(this.t('errors.killFailed'));
+      } else {
+        log.info(`[kill] force-close done id=${manifest.raw.id} — exit waiters will finish the flow`);
+      }
+    } finally {
+      this.killInFlight = false;
+    }
+  }
+
   /** "Uninstall" action (the user confirmed in the popup). Only for an installed install-mode game. */
   private onUninstallRequested(): void {
     const snapshot = this.deps.state.get();
@@ -699,6 +771,9 @@ export class GameController {
         }
         since = Date.now();
         this.runningImageNames = normalizeImageNames(watchProcesses ?? []);
+        // Steam owns no process of ours (steam://rungameid returns instantly) — a force-close relies on
+        // taskkill /IM over the watchProcesses alone.
+        this.runningProc = null;
         state.set({ kind: 'running', game: info, since });
         log.info(`[launch] running (steam) id=${manifest.raw.id} appid=${manifest.steam.appid}`);
         await waitForWatchedExit(watchProcesses ?? [], abort.signal);
@@ -728,6 +803,9 @@ export class GameController {
           // The watched game is up: start the clock now (more accurate than the launcher's spawn time).
           since = Date.now();
           this.runningImageNames = normalizeImageNames(watchProcesses);
+          // The spawned launcher (proc) — usually already dead here; kept so a force-close can also take
+          // down its pid tree. The game itself is killed by taskkill /IM over the watchProcesses.
+          this.runningProc = proc;
           state.set({ kind: 'running', game: info, since });
           log.info(`[launch] running (watched) id=${manifest.raw.id} watch=${watchProcesses.join(',')}`);
           await waitForWatchedExit(watchProcesses, abort.signal);
@@ -742,6 +820,9 @@ export class GameController {
           // normal AND elevated share this branch (differing only by manifest.raw.runAsAdmin): the game
           // IS the spawned exe, so its image name is the executable's basename.
           this.runningImageNames = normalizeImageNames([manifest.executablePath]);
+          // The game process itself — a force-close terminates it directly (elevated: via the HANDLE
+          // invisible to taskkill; normal: its pid tree with an isAlive re-check inside kill()).
+          this.runningProc = proc;
           state.set({ kind: 'running', game: info, since });
           log.info(`[launch] running id=${manifest.raw.id} pid=${proc.pid}`);
           await waitForExit(proc, abort.signal);
@@ -773,6 +854,9 @@ export class GameController {
       this.abort = null;
       // The game is no longer running → forget its image names (return-to-game only applies while running).
       this.runningImageNames = null;
+      // Drop the owned-process reference (proc.dispose() above is the single owner-side release; this is
+      // just the reference the force-close used while running).
+      this.runningProc = null;
       // Replay a card that was swapped in mid-flight, now that launchInFlight has cleared.
       this.resumePendingInsert();
     }

@@ -8,7 +8,7 @@ import path from 'node:path';
 import fse from 'fs-extra';
 import { z } from 'zod';
 import { type Stats } from '../shared/types';
-import { readJsonValidated } from './json-store';
+import { readJsonValidated, writeJsonAtomic } from './json-store';
 
 const statsSchema = z.object({
   schemaVersion: z.literal(1),
@@ -68,7 +68,9 @@ export class PcStore {
 
   async writeStats(id: string, stats: Stats): Promise<void> {
     await fse.ensureDir(this.statsDir);
-    await fse.writeJson(this.statsPath(id), stats, { spaces: 2 });
+    // Atomic temp→rename (same rename semantics as settings): a process kill mid-write leaves the old
+    // valid stats file rather than a truncated one that readJsonValidated would warn-and-reset to zeros.
+    await writeJsonAtomic(this.statsPath(id), stats);
   }
 
   private pendingEntryDir(id: string): string {
