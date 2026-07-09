@@ -7,7 +7,6 @@ import {
   resolveInside,
   validateManifestText,
 } from '../src/main/manifest';
-import { MANIFEST_TEMPLATES } from '../src/main/manifest-templates';
 import { createTranslator } from '../src/shared/i18n/index';
 
 // An English translator makes the translated messages identical to the previous hardcoded English, so
@@ -86,12 +85,6 @@ describe('expandPcSavePath', () => {
 });
 
 describe('validateManifestText', () => {
-  it('accepts all three starter templates (also catches JSONC/trailing-comment leftovers)', () => {
-    for (const [name, text] of Object.entries(MANIFEST_TEMPLATES)) {
-      const result = validateManifestText(text, t);
-      expect(result.ok, `${name} template should be valid: ${JSON.stringify(result)}`).toBe(true);
-    }
-  });
 
   it('rejects JSONC (README-style // comments) as a syntax error', () => {
     const jsonc = '{\n  "schemaVersion": 1, // a comment\n  "id": "x"\n}';

@@ -509,8 +509,6 @@ export const IPC = {
   configValidate: 'config:validate',
   /** configure-renderer → main (invoke): write game.json + try to apply without a restart (payload {root,text}). */
   configSave: 'config:save',
-  /** configure-renderer → main (invoke): the three starter templates as JSON strings. */
-  configTemplatesRequest: 'config:templates-request',
   /** configure-renderer → main (invoke): the manifest JSON Schema for the editor's completions/hover. */
   configSchemaRequest: 'config:schema-request',
   /** configure-renderer → main (invoke): the current AppSettings (for the window theme). */
@@ -599,13 +597,6 @@ export type ConfigSaveResult =
       readonly message?: string;
     }
   | { readonly saved: false; readonly message: string };
-
-/** The three starter templates (valid JSON strings) offered when initializing a card. */
-export interface ConfigTemplates {
-  readonly executable: string;
-  readonly installer: string;
-  readonly steam: string;
-}
 
 /**
  * What the Configure form's Browse button is picking — drives the dialog's filters and mode:
@@ -732,8 +723,6 @@ export interface ConfigureApi {
   validateConfig(text: string): Promise<ConfigValidationResult>;
   /** Write game.json to the card and try to apply it without a restart. */
   saveConfig(root: string, text: string): Promise<ConfigSaveResult>;
-  /** The three starter templates as JSON strings. */
-  getTemplates(): Promise<ConfigTemplates>;
   /** Pick file(s)/a folder from the card via a native dialog; resolves with card-relative paths. */
   pickPath(root: string, kind: ConfigPickKind): Promise<ConfigPickResult>;
   /** Read a card-relative image into a data URL for the hero preview (null when unreadable). */

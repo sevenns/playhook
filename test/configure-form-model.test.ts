@@ -10,7 +10,6 @@ import {
   type ManifestFormModel,
 } from '../src/renderer/configure-form-model';
 import { manifestJsonSchema, validateManifestText } from '../src/main/manifest';
-import { MANIFEST_TEMPLATES } from '../src/main/manifest-templates';
 import { createTranslator } from '../src/shared/i18n/index';
 
 const t = createTranslator('en');
@@ -44,25 +43,73 @@ describe('textToFormModel — parse errors', () => {
   });
 });
 
-describe('round-trip on the three starter templates', () => {
-  it('serializes each template into a VALID, minimal manifest', () => {
-    for (const [name, template] of Object.entries(MANIFEST_TEMPLATES)) {
-      const text = serialize(template);
+// One manifest per launch mode, with the schema defaults spelled out — the shapes the form must round-trip
+// losslessly. (These were the starter templates before the Templates tab was removed; the form is now the
+// only authoring surface, so they live here as fixtures.)
+const LAUNCH_MODE_FIXTURES = {
+  executable: JSON.stringify(
+    {
+      schemaVersion: 1,
+      id: 'my-game',
+      title: 'My Game',
+      executable: 'game/game.exe',
+      args: [],
+      runAsAdmin: false,
+      heroImage: 'assets/hero.jpg',
+      saveOnCard: 'saves',
+      pcSavePath: '%APPDATA%/My Game',
+      launchTimeoutSec: 30,
+    },
+    null,
+    2,
+  ),
+  installer: JSON.stringify(
+    {
+      schemaVersion: 1,
+      id: 'my-game',
+      title: 'My Game',
+      executable: 'MyGame/MyGame.exe',
+      install: { installer: 'setup/setup.exe', type: 'nsis', runAsAdmin: false, args: [] },
+      heroImage: 'assets/hero.jpg',
+      launchTimeoutSec: 30,
+    },
+    null,
+    2,
+  ),
+  steam: JSON.stringify(
+    {
+      schemaVersion: 1,
+      id: 'my-game',
+      title: 'My Game',
+      steam: { appid: 480 },
+      watchProcesses: ['mygame.exe'],
+      launchTimeoutSec: 120,
+      heroImage: 'assets/hero.jpg',
+    },
+    null,
+    2,
+  ),
+};
+
+describe('round-trip on the three launch-mode shapes', () => {
+  it('serializes each into a VALID, minimal manifest', () => {
+    for (const [name, fixture] of Object.entries(LAUNCH_MODE_FIXTURES)) {
+      const text = serialize(fixture);
       const validation = validateManifestText(text, t);
       expect(validation.ok, `${name} → serialized must validate: ${JSON.stringify(validation)}`).toBe(true);
     }
   });
 
   it('is idempotent (the normalized text is a fixed point of parse∘serialize)', () => {
-    for (const [name, template] of Object.entries(MANIFEST_TEMPLATES)) {
-      const once = serialize(template);
+    for (const [name, fixture] of Object.entries(LAUNCH_MODE_FIXTURES)) {
+      const once = serialize(fixture);
       const twice = serialize(once);
       expect(twice, `${name} normalization must be stable`).toBe(once);
     }
   });
 
   it('omits fields equal to their schema default (args/runAsAdmin/launchTimeoutSec 30)', () => {
-    const text = serialize(MANIFEST_TEMPLATES.executable);
+    const text = serialize(LAUNCH_MODE_FIXTURES.executable);
     const parsed = JSON.parse(text) as Record<string, unknown>;
     expect(parsed).not.toHaveProperty('args');
     expect(parsed).not.toHaveProperty('runAsAdmin');
@@ -148,7 +195,7 @@ describe('launch mode', () => {
   });
 
   it('does not leak hidden-mode fields into the serialized text', () => {
-    const base = parseOk(MANIFEST_TEMPLATES.steam);
+    const base = parseOk(LAUNCH_MODE_FIXTURES.steam);
     // A steam-mode model that still carries an executable typed under another mode must NOT emit it.
     const model: ManifestFormModel = { ...base.model, launchMode: 'steam', executable: 'ghost.exe' };
     const parsed = JSON.parse(formModelToText(model, {}, {})) as Record<string, unknown>;

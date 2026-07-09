@@ -129,14 +129,6 @@ fluent-listbox[popover] {
   gap: 16px;
 }
 
-/* The Templates tab panel is a direct child of #configure (like #form-view / #editor-section), so it must
-   grow to fill the remaining height — otherwise the Save/Reset footer floats up to the template buttons
-   instead of staying pinned to the bottom. Its content stays top-aligned (column, items at start). */
-#templates-panel {
-  flex: 1 1 auto;
-  min-height: 0;
-}
-
 /* Audio Default/Custom selector — a compact dropdown above the (optional) input row (narrower than the
    default dropdown width). */
 .audio-mode {

@@ -14,7 +14,6 @@ import type {
   ConfigPickResult,
   ConfigReadResult,
   ConfigSaveResult,
-  ConfigTemplates,
   ConfigValidationResult,
   DriveCandidate,
   ThemeMode,
@@ -28,7 +27,6 @@ const CHANNELS = {
   configRead: 'config:read',
   configValidate: 'config:validate',
   configSave: 'config:save',
-  configTemplatesRequest: 'config:templates-request',
   configSchemaRequest: 'config:schema-request',
   configSettingsRequest: 'config:settings-request',
   configIconRequest: 'config:icon',
@@ -64,9 +62,6 @@ const api: ConfigureApi = {
   },
   saveConfig(root: string, text: string): Promise<ConfigSaveResult> {
     return ipcRenderer.invoke(CHANNELS.configSave, { root, text }) as Promise<ConfigSaveResult>;
-  },
-  getTemplates(): Promise<ConfigTemplates> {
-    return ipcRenderer.invoke(CHANNELS.configTemplatesRequest) as Promise<ConfigTemplates>;
   },
   pickPath(root: string, kind: ConfigPickKind): Promise<ConfigPickResult> {
     return ipcRenderer.invoke(CHANNELS.configPickPath, { root, kind }) as Promise<ConfigPickResult>;

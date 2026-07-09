@@ -1,7 +1,7 @@
 // Configure-game window backend (IPC handlers + drive polling). Owns everything the window needs:
-// listing removable drives (incl. blank ones), reading/validating/saving a card's game.json, the
-// starter templates and the manifest JSON Schema. Interface-DI (like UpdaterService/StatsService): the
-// active-root accessor and the no-restart reload come from GameController, the theme from AppSettingsStore.
+// listing removable drives (incl. blank ones), reading/validating/saving a card's game.json and the
+// manifest JSON Schema. Interface-DI (like UpdaterService/StatsService): the active-root accessor and the
+// no-restart reload come from GameController, the theme from AppSettingsStore.
 //
 // Two security stances mirror manifest.ts's paranoia about untrusted paths:
 //  • the renderer's `root` is NEVER trusted — every read/save re-checks it against a fresh
@@ -22,7 +22,6 @@ import {
   type ConfigReadResult,
   type ConfigSaveResult,
   type ConfigValidationResult,
-  type ConfigTemplates,
   type DriveCandidate,
 } from '../shared/types';
 import { type Translator } from '../shared/i18n/index';
@@ -30,7 +29,6 @@ import { type AppSettingsStore } from './app-settings';
 import { AUDIO_EXTENSIONS, IMAGE_EXTENSIONS, readImageDataUrl } from './asset-reader';
 import { listDriveCandidates } from './drive-watcher';
 import { absoluteToPcSavePath, resolveInside, validateManifestText, manifestJsonSchema } from './manifest';
-import { MANIFEST_TEMPLATES } from './manifest-templates';
 import { writeFileAtomic } from './save-sync';
 import { describe } from './util';
 import { log } from './logger';
@@ -98,7 +96,6 @@ export class GameConfigService {
         payload: { readonly root: string; readonly text: string },
       ): Promise<ConfigSaveResult> => this.save(payload.root, payload.text),
     );
-    ipcMain.handle(IPC.configTemplatesRequest, (): ConfigTemplates => MANIFEST_TEMPLATES);
     ipcMain.handle(
       IPC.configPickPath,
       (event, payload: ConfigPickRequest): Promise<ConfigPickResult> =>

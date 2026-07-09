@@ -23,7 +23,6 @@ import { json } from '@codemirror/lang-json';
 import { jsonSchema } from 'codemirror-json-schema';
 import type {
   ConfigPickKind,
-  ConfigTemplates,
   DriveCandidate,
   ManifestValidationIssue,
   ThemeMode,
@@ -33,17 +32,15 @@ import { localizeDocument } from './i18n-dom.js';
 import { FormView, FORM_SECTIONS, type SectionId } from './configure-form-view.js';
 import {
   emptyFormModel,
-  formModelToText,
   textToFormModel,
   textToGames,
   gamesToText,
   type ManifestFormModel,
 } from './configure-form-model.js';
 
-// The active edit tab: the Templates launcher, one of the form sections, or the raw JSON editor
-// (advanced). The window is a hide-on-close singleton, so this module-level state survives hiding
-// (plan R1/D7 — no AppSettings needed).
-type EditTab = 'templates' | SectionId | 'json';
+// The active edit tab: one of the form sections, or the raw JSON editor (advanced). The window is a
+// hide-on-close singleton, so this module-level state survives hiding (plan R1/D7 — no AppSettings needed).
+type EditTab = SectionId | 'json';
 
 // Translator, refreshed on a language push. The HTML ships English fallback (no blank flash).
 let translator: Translator = createTranslator('en');
@@ -125,14 +122,10 @@ const editorEl = req('editor');
 const editorSection = req('editor-section');
 const formViewEl = req('form-view');
 const editTabsEl = req('edit-tabs');
-const templatesPanel = req('templates-panel');
 const issuesEl = req('issues');
 const saveBtn = req('save');
 const resetBtn = req('reset');
 const statusEl = req('status');
-const tplExecutable = req('tpl-executable');
-const tplInstaller = req('tpl-installer');
-const tplSteam = req('tpl-steam');
 const confirmVeil = req('confirm-veil');
 const confirmMessage = req('confirm-message');
 const confirmOk = req('confirm-ok');
@@ -224,9 +217,7 @@ let loadedId: string | null = null; // id of the last loaded/saved manifest (for
 let loadedDriveKey: string | null = null;
 let lastValidOk = false;
 let blocked = false; // the selected card vanished → editing/saving disabled
-let templatesCache: ConfigTemplates | null = null;
 let activeTab: EditTab = 'basics'; // a form section is the default (plan R1); 'json' is advanced
-let formBlank = false; // a blank drive → the form is shown empty & disabled until a template is picked
 
 // ── Multi-game state (a card can carry several games) ───────────────────────────
 // One game.json can hold a single game object (legacy) OR an array of games. The form edits ONE game at a
@@ -246,15 +237,15 @@ let activeGameIndex = 0;
 
 // Created in init() (after all handlers are defined). Owns the interactive form's DOM + state.
 let formView: FormView;
-// The native fluent-tablist + its fluent-tab children ([Templates][Basics]…[JSON]), built in init().
+// The native fluent-tablist + its fluent-tab children ([Basics]…[Advanced][JSON]), built in init().
 type TablistEl = HTMLElement & { activeid?: string };
 let tablist: TablistEl;
 const tabButtons = new Map<EditTab, HTMLElement>();
 // Guards the tablist `change` event against our own programmatic activeid writes (so committing/reverting
 // a tab doesn't re-enter the switch logic).
 let applyingTab = false;
-// Tab order: Templates first (#4), JSON last.
-const TAB_ORDER: readonly EditTab[] = ['templates', ...FORM_SECTIONS.map((s) => s.id), 'json'];
+// Tab order: the form sections, JSON last.
+const TAB_ORDER: readonly EditTab[] = [...FORM_SECTIONS.map((s) => s.id), 'json'];
 
 function tabDomId(tab: EditTab): string {
   return `tab-${tab}`;
@@ -264,7 +255,7 @@ function tabFromDomId(id: string | undefined): EditTab | null {
   return TAB_ORDER.find((tab) => tabDomId(tab) === id) ?? null;
 }
 
-/** True when the raw JSON editor tab is active (vs. the Templates or a form section tab). */
+/** True when the raw JSON editor tab is active (vs. a form section tab). */
 function jsonActive(): boolean {
   return activeTab === 'json';
 }
@@ -515,7 +506,6 @@ function reconcileSelection(list: readonly DriveCandidate[]): void {
 function onSelectedGone(): void {
   blocked = true;
   setEditable(false);
-  setTemplatesDisabled(true);
   setModeTabsDisabled(true);
   applyFormDisabled();
   applyGameControlsDisabled();
@@ -526,7 +516,6 @@ function onSelectedGone(): void {
 function unblock(): void {
   blocked = false;
   setEditable(true);
-  setTemplatesDisabled(false);
   setModeTabsDisabled(false);
   applyFormDisabled();
   applyGameControlsDisabled();
@@ -534,18 +523,14 @@ function unblock(): void {
   setStatus('');
 }
 
-function setTemplatesDisabled(disabled: boolean): void {
-  for (const btn of [tplExecutable, tplInstaller, tplSteam]) setDisabled(btn, disabled);
-}
-
 function setModeTabsDisabled(disabled: boolean): void {
   for (const btn of tabButtons.values()) setDisabled(btn, disabled);
 }
 
-// The form fields are disabled when the card is gone (blocked) OR the drive is blank (no template picked
-// yet). Templates/tabs are governed separately (a blank drive still needs its template buttons enabled).
+// The form fields are disabled only when the card is gone (blocked). A blank drive gets an empty, EDITABLE
+// game slot to fill in; Save stays blocked by validation until the required fields are there.
 function applyFormDisabled(): void {
-  formView.setDisabled(blocked || formBlank);
+  formView.setDisabled(blocked);
 }
 
 // Switches the active card. `confirmDirty` guards against losing unsaved edits (skipped for the initial
@@ -579,29 +564,27 @@ async function loadDrive(root: string): Promise<void> {
   // key and doesn't re-trigger this load while readConfig is still in flight.
   loadedDriveKey = driveKey(candidate);
   if (!candidate.hasManifest) {
-    // Blank drive: an empty, disabled form (and empty editor) inviting a template. Save stays blocked
-    // until the user explicitly picks a template — no placeholder auto-fill (plan cases, R3). loadedId
-    // null → no id-change warning.
+    // Blank drive: start with ONE empty, editable game the user fills in (there are no templates any more —
+    // the form itself is the authoring surface). Save stays blocked by validation until the required fields
+    // are present. loadedId null → no id-change warning.
     loadedId = null;
-    formBlank = true;
     dirty = false;
-    games = [];
+    games = [{ model: emptyFormModel(), rest: {}, corrupt: {}, mixed: false, loadedId: null }];
     activeGameIndex = 0;
-    dispatchText('');
-    formView.load(emptyFormModel(), {}, {}, false);
+    dispatchText(gamesToText(games));
     rebuildGameSelector();
+    loadActiveIntoForm();
     applyFormDisabled();
-    showTab('templates'); // a blank card starts on the Templates tab (pick one to begin)
+    showTab('basics'); // straight into the form — the first fields to fill are there
     setStatus(translator('configure.blankDrive'));
     void runValidate();
     return;
   }
   const result = await window.configureApi.readConfig(root);
   if (!result.ok) {
-    // Not blank but unreadable — behave as before (status, no template): ConfigReadResult can't tell
-    // "file missing" from other failures (plan D2), so we never substitute a template here.
+    // Not blank but unreadable: ConfigReadResult can't tell "file missing" from other failures (plan D2),
+    // so we do NOT substitute an empty game here — just report it and leave the form empty.
     loadedId = null;
-    formBlank = false;
     games = [];
     activeGameIndex = 0;
     dispatchText('');
@@ -613,7 +596,6 @@ async function loadDrive(root: string): Promise<void> {
     return;
   }
   loadedId = parseId(result.text);
-  formBlank = false;
   dirty = false;
   loadText(result.text);
   setStatus('');
@@ -695,9 +677,8 @@ function gameLabel(slot: GameSlot): string {
 /** Rebuilds the game dropdown ("index / count · title") and toggles the row/controls. */
 function rebuildGameSelector(): void {
   // The Game row belongs to the section tabs (it picks which game they edit): shown only when the form can
-  // represent the file (≥1 slot) AND a form section is active — hidden on Templates and the raw JSON tab.
-  const isSection = activeTab !== 'templates' && activeTab !== 'json';
-  const show = games.length >= 1 && isSection;
+  // represent the file (≥1 slot) AND a form section is active — hidden on the raw JSON tab.
+  const show = games.length >= 1 && !jsonActive();
   gameSection.hidden = !show;
   if (!show) return;
   const options = games.map((slot, i) => {
@@ -716,10 +697,10 @@ function rebuildGameSelector(): void {
   applyGameControlsDisabled();
 }
 
-/** Enables/disables the Game controls: disabled when blocked / blank / on the JSON tab; Remove also needs
+/** Enables/disables the Game controls: disabled when blocked or on the JSON tab; Remove also needs
  * ≥2 games (a card must keep at least one). */
 function applyGameControlsDisabled(): void {
-  const disabled = blocked || formBlank || jsonActive();
+  const disabled = blocked || jsonActive();
   setDisabled(gameGroup, disabled);
   setDisabled(gameAddBtn, disabled);
   setDisabled(gameRemoveBtn, disabled || games.length <= 1);
@@ -736,24 +717,23 @@ function switchGame(index: number): void {
   void runValidate();
 }
 
-/** A default id not yet used by any game (my-game-2, my-game-3, …), so the new game doesn't collide. */
+/** A default id not yet used by any game (my-game, my-game-2, …), so the new game doesn't collide. */
 function uniqueDefaultId(): string {
   const used = new Set(games.map((g) => g.model.id));
+  if (!used.has('my-game')) return 'my-game';
   for (let n = 2; ; n += 1) {
     const candidate = `my-game-${n}`;
     if (!used.has(candidate)) return candidate;
   }
 }
 
-/** Adds a new game from the executable template (with a unique default id), switches to it, opens Basics. */
-async function onAddGame(): Promise<void> {
-  if (blocked || formBlank || jsonActive()) return;
+/** Adds a new, empty game (with a unique default id so the duplicate-id check doesn't fire), switches to
+ * it and opens Basics. The user fills it in from the form. */
+function onAddGame(): void {
+  if (blocked || jsonActive()) return;
   commitActiveGame();
-  const templates = await getTemplates();
-  const parsed = textToFormModel(templates.executable);
-  if (!parsed.ok) return;
-  const model: ManifestFormModel = { ...parsed.model, id: uniqueDefaultId() };
-  games.push({ model, rest: parsed.rest, corrupt: parsed.corrupt, mixed: parsed.mixed, loadedId: null });
+  const model: ManifestFormModel = { ...emptyFormModel(), id: uniqueDefaultId() };
+  games.push({ model, rest: {}, corrupt: {}, mixed: false, loadedId: null });
   activeGameIndex = games.length - 1;
   rebuildGameSelector();
   loadActiveIntoForm();
@@ -766,7 +746,7 @@ async function onAddGame(): Promise<void> {
 /** Removes the current game (confirm) and switches to a neighbour. Refused for the last game (a card can't
  * be empty). */
 async function onRemoveGame(): Promise<void> {
-  if (blocked || formBlank || jsonActive() || games.length <= 1) return;
+  if (blocked || jsonActive() || games.length <= 1) return;
   const ok = await confirmDialog(translator('configure.confirmRemoveGame'));
   if (!ok) return;
   games.splice(activeGameIndex, 1);
@@ -777,50 +757,6 @@ async function onRemoveGame(): Promise<void> {
   dirty = true;
   void runValidate();
 }
-
-// ── Templates ─────────────────────────────────────────────────────────────────
-async function getTemplates(): Promise<ConfigTemplates> {
-  templatesCache ??= await window.configureApi.getTemplates();
-  return templatesCache;
-}
-
-async function applyTemplate(kind: keyof ConfigTemplates): Promise<void> {
-  if (blocked) return;
-  const templates = await getTemplates();
-  const template = templates[kind];
-  if (!(await confirmTemplateReplace(template))) return;
-  formBlank = false;
-  // Replace the whole file with a single-game template (blank-card init). The templates are valid, so
-  // textToFormModel succeeds; loadGamesFromText rebuilds the (one-slot) games array and the selector.
-  dispatchText(template);
-  loadGamesFromText(template);
-  applyFormDisabled();
-  dirty = true;
-  showTab('basics'); // jump into the form so the filled fields are visible
-  void runValidate();
-}
-
-// Confirms replacing the current config with a template. The comparison is SEMANTIC, not textual: the
-// form omits defaults while templates spell them out, so a raw text compare would always differ and
-// prompt spuriously. We compare both sides through the same serializer; an empty/blank current skips the
-// prompt (plan R8). In JSON mode the current text is the editor's; in form mode it is the serialized form.
-async function confirmTemplateReplace(template: string): Promise<boolean> {
-  const emptyNorm = formModelToText(emptyFormModel(), {}, {}).trim();
-  const templateParsed = textToFormModel(template);
-  const templateNorm = templateParsed.ok
-    ? formModelToText(templateParsed.model, templateParsed.rest, templateParsed.corrupt).trim()
-    : template.trim();
-  const currentParsed = textToFormModel(activeText());
-  const currentNorm = currentParsed.ok
-    ? formModelToText(currentParsed.model, currentParsed.rest, currentParsed.corrupt).trim()
-    : activeText().trim();
-  if (currentNorm === emptyNorm || currentNorm === templateNorm) return true;
-  return confirmDialog(translator('configure.confirmReplace'));
-}
-
-tplExecutable.addEventListener('click', () => void applyTemplate('executable'));
-tplInstaller.addEventListener('click', () => void applyTemplate('installer'));
-tplSteam.addEventListener('click', () => void applyTemplate('steam'));
 
 // ── Format ─────────────────────────────────────────────────────────────────────
 // Pretty-prints the editor JSON (2-space indent) — the in-app "prettier" for fixing indentation. Only
@@ -914,10 +850,10 @@ wireDropdown(gameGroup, (value) => {
   const index = Number(value);
   if (Number.isInteger(index)) switchGame(index);
 });
-gameAddBtn.addEventListener('click', () => void onAddGame());
+gameAddBtn.addEventListener('click', () => onAddGame());
 gameRemoveBtn.addEventListener('click', () => void onRemoveGame());
 
-// ── Edit tabs ([Templates][Basics][Launch][Hero][Saves][Audio][Advanced][JSON]) ──
+// ── Edit tabs ([Basics][Launch][Hero][Saves][Audio][Advanced][JSON]) ──
 // A native fluent-tablist: it renders the tab strip (accent indicator, keyboard nav, ARIA) and fires
 // `change` with the new activeid. We manage the panels ourselves in showTab. Labels come from the
 // translator (re-applied on a language change via applyLocale → relabelTabs).
@@ -942,7 +878,6 @@ function buildEditTabs(): void {
 }
 
 function relabelTabs(): void {
-  tabButtons.get('templates')?.replaceChildren(translator('configure.tabTemplates'));
   for (const section of FORM_SECTIONS) {
     tabButtons.get(section.id)?.replaceChildren(translator(section.labelKey));
   }
@@ -956,12 +891,11 @@ function setStripActive(tab: EditTab): void {
   applyingTab = false;
 }
 
-// Reflects `activeTab` onto the DOM: the right panel (templates / a form section / the JSON editor) plus
-// the tab strip. Does NOT convert content — that is switchTab's job on a form↔json crossing.
+// Reflects `activeTab` onto the DOM: the right panel (a form section / the JSON editor) plus the tab
+// strip. Does NOT convert content — that is switchTab's job on a form↔json crossing.
 function showTab(target: EditTab): void {
   activeTab = target;
-  const isSection = target !== 'templates' && target !== 'json';
-  templatesPanel.hidden = target !== 'templates';
+  const isSection = target !== 'json';
   formViewEl.hidden = !isSection;
   editorSection.hidden = target !== 'json';
   if (isSection) formView.showSection(target);
@@ -972,10 +906,10 @@ function showTab(target: EditTab): void {
   window.configureApi.setJsonEditorActive(target === 'json');
 }
 
-// Switches tabs, converting content across the form↔json boundary. Form/Templates → JSON always works (the
-// model serializes). JSON → a form/Templates tab only when the text parses as JSON (else a status hint and
-// the strip reverts — schema errors are fine, the form exists to fix them, plan R4). Everything else is
-// free (same model). Switching never marks dirty (programmatic editor writes are guarded).
+// Switches tabs, converting content across the form↔json boundary. Form → JSON always works (the model
+// serializes). JSON → a form tab only when the text parses as JSON (else a status hint and the strip
+// reverts — schema errors are fine, the form exists to fix them, plan R4). Everything else is free (same
+// model). Switching never marks dirty (programmatic editor writes are guarded).
 function switchTab(target: EditTab): void {
   if (blocked) {
     setStripActive(activeTab);
@@ -1004,7 +938,7 @@ function switchTab(target: EditTab): void {
     void runValidate();
     return;
   }
-  // Templates ↔ form section, or section ↔ section: same model, just swap the visible panel.
+  // Section ↔ section: same model, just swap the visible panel.
   showTab(target);
 }
 

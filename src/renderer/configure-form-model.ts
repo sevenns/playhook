@@ -12,7 +12,7 @@
 //                the original error, Save stays blocked, and nothing is lost. Granularity is the top-level
 //                key (a bad `sounds.play` marks the whole `sounds` block corrupt).
 
-/** The three mutually-exclusive launch methods (mirrors the manifest superRefine + the three templates). */
+/** The three mutually-exclusive launch methods (mirrors the manifest superRefine). */
 export type LaunchMode = 'executable' | 'installer' | 'steam';
 
 /** Installer family (install.type enum). */

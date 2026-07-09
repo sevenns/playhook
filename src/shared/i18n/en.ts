@@ -153,20 +153,16 @@ export const en = {
   // An issue on another game (not the one being edited) shown in the panel: "Game 3 (Celeste): …".
   'configure.otherGameIssue': 'Game {index} ({title}): {message}',
   'configure.untitledGame': 'untitled',
-  'configure.startTemplate': 'Start from a template',
-  'configure.tplExecutable': 'Executable file',
-  'configure.tplInstaller': 'Installer',
   'configure.save': 'Save & Apply',
   'configure.titlebarVersion': '({version}) — Configure game',
   'configure.configValid': 'Config is valid.',
   'configure.idChangedWarning':
     'Warning: id changed ({from} → {to}). Playtime stats are keyed by id and will reset for the new id.',
   'configure.cardGone': 'The selected card is no longer available. Your text is kept.',
-  'configure.blankDrive': 'Blank drive — pick a template to start.',
+  'configure.blankDrive': 'Blank drive — fill in the game and save.',
   'configure.couldNotRead': 'Could not read game.json: {message}',
   'configure.confirmSwitch': 'Discard unsaved changes and switch cards?',
   'configure.confirmReset': 'Discard unsaved changes and reset from the card?',
-  'configure.confirmReplace': 'Replace current config with the template?',
   'configure.fixSyntax': 'Fix the JSON syntax errors before formatting.',
   'configure.saving': 'Saving…',
   'configure.notSaved': 'Not saved: {message}',
@@ -178,8 +174,6 @@ export const en = {
   // ── Configure-game window: interactive form (configure-form-view.ts) ─────────
   // The JSON tab label (the section tabs reuse the section headings below); "JSON" is a filename/format.
   'configure.tabJson': 'JSON',
-  // The first tab: the starter-template launcher.
-  'configure.tabTemplates': 'Templates',
   // A visible Reset button next to Save (re-reads game.json from the card, discarding edits).
   'configure.reset': 'Reset',
   // Section headings.
