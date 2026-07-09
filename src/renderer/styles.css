@@ -588,6 +588,39 @@ html:not(.cursor-hidden) .rect-button:hover,
   padding-bottom: calc(8 * var(--px));
 }
 
+/* Game buttons fill the list width; the title is left-aligned and HARD-CLIPPED when it doesn't fit (no
+   ellipsis). Only while the button is focused (the active row) does the title marquee-scroll back and
+   forth so the full name is readable — the popup never widens. Non-overflowing titles never scroll. */
+.select-game-list .game-button {
+  width: 100%;
+  justify-content: flex-start;
+  overflow: hidden;
+}
+.game-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.game-label-inner {
+  display: inline-block;
+  white-space: nowrap;
+  will-change: transform;
+}
+/* Ping-pong marquee: shift + per-title duration are set from JS (measured overflow); `alternate` scrolls
+   to the end and back, `ease-in-out` dwells at each edge so the start/end are readable. */
+.game-button.is-scrolling .game-label-inner {
+  animation: game-marquee var(--marquee-duration, 6s) ease-in-out infinite alternate;
+}
+@keyframes game-marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(var(--marquee-shift, 0));
+  }
+}
+
 /* ── TextButton — textual sibling of .rect-button ───────────────────────────
    Transparent with d2 text; inverts to a d2 fill with d1 text on hover/focus (the design's "Active"
    variant — the mockup's filled bottom button is just the default focus, not a persistent state). */

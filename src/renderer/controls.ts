@@ -270,6 +270,8 @@ export function createControls(deps: ControlsDeps): Controls {
   let selectGameButtons: HTMLButtonElement[] = [];
 
   // (Re)builds the game buttons for the current card, excluding the game on screen. Wires click + hover.
+  // Each title lives in a clip box (.game-label) + a moving inner span (.game-label-inner) so a long name
+  // is hard-clipped by default and marquee-scrolls only while focused (see updateSelectGameMarquee).
   function buildSelectGameButtons(): void {
     const currentId = gameOf(state())?.id;
     selectGameButtons = games
@@ -277,9 +279,15 @@ export function createControls(deps: ControlsDeps): Controls {
       .map((g) => {
         const btn = document.createElement('button');
         btn.type = 'button';
-        btn.className = 'text-button';
+        btn.className = 'text-button game-button';
         btn.dataset['gameId'] = g.id;
-        btn.textContent = g.title;
+        const label = document.createElement('span');
+        label.className = 'game-label';
+        const inner = document.createElement('span');
+        inner.className = 'game-label-inner';
+        inner.textContent = g.title;
+        label.append(inner);
+        btn.append(label);
         btn.addEventListener('click', () => {
           pressFlash(btn);
           triggerStackButton(btn);
@@ -294,6 +302,31 @@ export function createControls(deps: ControlsDeps): Controls {
         return btn;
       });
     selectGameList.replaceChildren(...selectGameButtons);
+  }
+
+  // Constant scroll speed for the focused game title's marquee (design px per second).
+  const MARQUEE_SPEED_PX_PER_S = 60;
+
+  // Starts the marquee on the focused game button IF its title overflows, and stops it on the others.
+  // Overflow is measured live (the inner text width vs the visible clip box). No-op unless the picker is
+  // open, so unrelated re-renders don't force a reflow.
+  function updateSelectGameMarquee(): void {
+    if (popupView !== 'select-game') return;
+    for (const btn of selectGameButtons) {
+      const label = btn.querySelector<HTMLElement>('.game-label');
+      const inner = btn.querySelector<HTMLElement>('.game-label-inner');
+      if (label === null || inner === null) continue;
+      const overflow = btn.classList.contains('is-focused') ? inner.scrollWidth - label.clientWidth : 0;
+      if (overflow > 1) {
+        inner.style.setProperty('--marquee-shift', `${-overflow}px`);
+        inner.style.setProperty('--marquee-duration', `${Math.max(2, overflow / MARQUEE_SPEED_PX_PER_S)}s`);
+        btn.classList.add('is-scrolling');
+      } else {
+        btn.classList.remove('is-scrolling');
+        inner.style.removeProperty('--marquee-shift');
+        inner.style.removeProperty('--marquee-duration');
+      }
+    }
   }
 
   // Opens the picker: build the list, show the view, focus the first game (or Close when the list is empty).
@@ -472,6 +505,8 @@ export function createControls(deps: ControlsDeps): Controls {
     for (const btn of selectGameButtons) btn.classList.toggle('is-focused', btn === focused);
     // Keep the focused button in view when the list is long (scrollable select-game — see styles.css).
     if (focused !== undefined) focused.scrollIntoView({ block: 'nearest' });
+    // Start/stop the focused game title's marquee (a no-op unless the picker is open).
+    updateSelectGameMarquee();
   }
 
   function focusStackBottom(): void {
