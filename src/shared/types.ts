@@ -82,6 +82,13 @@ export interface GameManifest {
   readonly pcSavePath?: string;
   readonly launchTimeoutSec: number;
   /**
+   * How many seconds a force-close (More → Force close) waits for the game's processes to actually
+   * disappear before reporting a failure. A killed process lingers in `tasklist` for a moment (and a
+   * launcher/wrapper may take longer to tear down), so this is the MAX wait — the wait ends early the
+   * instant every target process is gone. Default 60. Raise it for games that shut down slowly.
+   */
+  readonly killTimeoutSec: number;
+  /**
    * Optional install mode: when set, the card holds an installer and `executable` is interpreted
    * relative to the install directory (controlled by the app), not the card root. See InstallManifest.
    */
@@ -268,7 +275,14 @@ export type AppState =
   | { readonly kind: 'uninstalling'; readonly game: GameInfo }
   | { readonly kind: 'syncing-in'; readonly game: GameInfo }
   | { readonly kind: 'launching'; readonly game: GameInfo }
-  | { readonly kind: 'running'; readonly game: GameInfo; readonly since: number }
+  | {
+      readonly kind: 'running';
+      readonly game: GameInfo;
+      readonly since: number;
+      /** A force-close (More → Force close) is in flight: the UI shows a "Force closing…" indicator and
+       * hides the Force close button. Cleared back to running if the force-close fails (game stays up). */
+      readonly killing?: boolean;
+    }
   | { readonly kind: 'syncing-out'; readonly game: GameInfo }
   | { readonly kind: 'error'; readonly game?: GameInfo; readonly message: string };
 
@@ -373,6 +387,9 @@ export const IPC = {
   actionReboot: 'action:reboot',
   /** renderer → main: the user confirmed "Sleep" in the power menu — put the PC to sleep. */
   actionSleep: 'action:sleep',
+  /** renderer → main: force-close the running game (from the More menu, after confirm) — kills the
+   * main executable and any watchProcesses. */
+  actionKill: 'action:kill',
   /** main → renderer: a transient error to surface in the error popup (e.g. a failed launch). */
   errorShow: 'error:show',
   /** main → renderer: audio assets for the current game (or null when no card). */
@@ -481,6 +498,9 @@ export const IPC = {
   configLanguageRequest: 'config:language-request',
   /** main → configure-renderer: updated effective UI locale (pushed when the language changes). */
   configLanguageUpdate: 'config:language-update',
+  /** main → configure-renderer: updated UI theme, pushed live when the theme changes in settings so an
+   * open Configure window recolors without waiting for a hide/show. */
+  configThemeUpdate: 'config:theme-update',
   /** configure-renderer → main (invoke): pick file(s)/a folder from the card via a native dialog →
    * ConfigPickResult (paths card-relative). Payload ConfigPickRequest. */
   configPickPath: 'config:pick-path',
@@ -594,6 +614,8 @@ export interface RendererApi {
   requestReboot(): void;
   /** Put the PC to sleep (after the in-launcher confirm). */
   requestSleep(): void;
+  /** Force-close the running game (after the in-launcher confirm). */
+  requestKill(): void;
   onError(callback: (message: string) => void): void;
   onAudioUpdate(callback: (assets: AudioAssets | null) => void): void;
   requestAudio(): Promise<AudioAssets | null>;
@@ -690,6 +712,8 @@ export interface ConfigureApi {
   getLanguage(): Promise<Locale>;
   /** Live UI-locale updates, pushed when the language changes. */
   onLanguageUpdate(callback: (locale: Locale) => void): void;
+  /** Live UI-theme updates, pushed when the theme changes in the settings window. */
+  onThemeUpdate(callback: (mode: ThemeMode) => void): void;
 }
 
 declare global {

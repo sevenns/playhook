@@ -102,6 +102,9 @@
               <!-- Install/Uninstall — one button; its text + visibility come from JS (executable games
                    have no install block, so the button is hidden entirely). -->
               <button id="menu-install-toggle" class="text-button" type="button"></button>
+              <!-- Force-close the running game — its text + visibility come from JS (shown only while a
+                   game is running), so no data-i18n (mirrors the install toggle, keeps the i18n HTML test happy). -->
+              <button id="menu-kill" class="text-button" type="button"></button>
               <button id="menu-close" class="text-button" type="button" data-i18n="launcher.menu.close">Close</button>
             </div>
             <div class="actions-group" data-group="power">

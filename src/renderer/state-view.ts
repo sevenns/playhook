@@ -37,7 +37,7 @@ export function statusOf(state: AppState, t: Translator): string {
     case 'launching':
       return t('launcher.state.launching');
     case 'running':
-      return t('launcher.state.running');
+      return state.killing === true ? t('launcher.state.killing') : t('launcher.state.running');
     case 'syncing-out':
       return t('launcher.state.syncingOut');
     case 'ready': {
@@ -73,9 +73,10 @@ export function busyKindOf(state: AppState): BusyKind {
     case 'syncing-out':
       return 'game';
     // `running` is its own kind: the launcher may be summoned over the game, where Play shows the play
-    // triangle again (press = return to the game), NOT the game-phase spinner. See app.ts / styles.css.
+    // triangle again (press = return to the game), NOT the game-phase spinner. EXCEPT while a force-close
+    // is in flight (killing) — then Play is a loading spinner, like the other game phases. See app.ts / styles.css.
     case 'running':
-      return 'running';
+      return state.killing === true ? 'game' : 'running';
     case 'ready':
       // Steam download/uninstall is non-blocking system activity on the (still) ready screen.
       return steamBusy(state) ? 'system' : 'none';

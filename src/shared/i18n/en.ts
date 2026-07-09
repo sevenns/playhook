@@ -55,11 +55,16 @@ export const en = {
   'launcher.menu.reboot': 'Reboot',
   'launcher.menu.sleep': 'Sleep',
   'launcher.menu.minimize': 'Minimize Playhook',
+  // Force-close the running game (Details menu item, visible only while a game is running).
+  'launcher.menu.forceClose': 'Force close',
   // Confirmation popup copy (controls.ts). The Yes/No buttons use the shared common.* keys.
   'launcher.confirm.install': 'Do you want to install game?',
   'launcher.confirm.uninstall': 'Do you want to uninstall game from your PC?',
   'launcher.confirm.steamInstall': 'Open Steam to install this game?',
   'launcher.confirm.steamUninstall': 'Open Steam to uninstall this game?',
+  // Force-close confirmation — warns that unsaved in-game progress may be lost (the game is killed, so it
+  // may not get to write its save before syncing-out runs).
+  'launcher.confirm.kill': 'Force close the game? Unsaved progress may be lost.',
   // Power-action confirmations — single-question form, matching the installer confirm convention.
   'launcher.confirm.shutdown': 'Shut down the PC?',
   'launcher.confirm.reboot': 'Reboot the PC?',
@@ -72,6 +77,7 @@ export const en = {
   'launcher.state.syncingIn': 'Syncing saves...',
   'launcher.state.launching': 'Launching...',
   'launcher.state.running': 'Running...',
+  'launcher.state.killing': 'Force closing...',
   'launcher.state.syncingOut': 'Saving progress...',
   'launcher.state.installingPaused': 'Installing paused...',
   'launcher.state.installingPausedPercent': 'Installing paused on {percent}%...',
@@ -197,6 +203,7 @@ export const en = {
   'configure.fieldSoundBack': 'Back sound',
   'configure.fieldBackgroundMusic': 'Background music',
   'configure.fieldLaunchTimeout': 'Launch timeout (seconds)',
+  'configure.fieldKillTimeout': 'Force-close timeout (seconds)',
   // Audio Default/Custom selector (Default → the field is omitted from game.json).
   'configure.audioDefault': 'Default',
   'configure.audioCustom': 'Custom',
@@ -236,6 +243,7 @@ export const en = {
   'errors.gameDidNotStart': 'the game did not start (process wait timed out)',
   'errors.startInstaller': 'failed to start the installer: {cause}',
   'errors.installIncomplete': 'installation did not complete (the game executable did not appear)',
+  'errors.killFailed': 'could not force-close the game (some processes are still running)',
   'errors.finishBeforeInstall': 'Finish what’s running before installing the update.',
   'errors.driveUnavailable': 'the selected drive is no longer available',
   'errors.cannotReadManifest': 'cannot read {file}: {cause}',

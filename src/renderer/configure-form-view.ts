@@ -77,6 +77,7 @@ type FieldKey =
   | 'pcSavePath'
   | 'backgroundMusic'
   | 'launchTimeoutSec'
+  | 'killTimeoutSec'
   | 'steam.appid'
   | 'install.installer'
   | 'install.type'
@@ -124,6 +125,7 @@ export class FormView {
   private readonly soundBack: AudioField;
   private readonly music: AudioField;
   private readonly launchTimeoutInput: ValueEl;
+  private readonly killTimeoutInput: ValueEl;
 
   private readonly argsList: DynamicList;
   private readonly watchList: DynamicList;
@@ -283,8 +285,10 @@ export class FormView {
 
     // ── Advanced ──────────────────────────────────────────────────────────────
     this.launchTimeoutInput = this.numberInput('launchTimeoutSec');
+    this.killTimeoutInput = this.numberInput('killTimeoutSec');
     this.addSection('advanced', [
       this.field('configure.fieldLaunchTimeout', 'launchTimeoutSec', this.launchTimeoutInput),
+      this.field('configure.fieldKillTimeout', 'killTimeoutSec', this.killTimeoutInput),
     ]);
 
     this.applyLabels();
@@ -321,6 +325,7 @@ export class FormView {
     this.setScalar('saveOnCard', this.saveOnCardInput, model.saveOnCard);
     this.setScalar('pcSavePath', this.pcSavePathInput, model.pcSavePath);
     this.setScalar('launchTimeoutSec', this.launchTimeoutInput, model.launchTimeoutSec);
+    this.setScalar('killTimeoutSec', this.killTimeoutInput, model.killTimeoutSec);
 
     this.setList('args', this.argsList, model.args);
     this.setList('watchProcesses', this.watchList, model.watchProcesses);
@@ -389,6 +394,7 @@ export class FormView {
       this.saveOnCardInput,
       this.pcSavePathInput,
       this.launchTimeoutInput,
+      this.killTimeoutInput,
       ...[...this.deps.root.querySelectorAll('.field-row fluent-button')].map((e) => e as HTMLElement),
     ];
     for (const el of controls) setElDisabled(el, disabled);
@@ -424,6 +430,7 @@ export class FormView {
       saveOnCard: getValue(this.saveOnCardInput),
       pcSavePath: getValue(this.pcSavePathInput),
       launchTimeoutSec: getValue(this.launchTimeoutInput),
+      killTimeoutSec: getValue(this.killTimeoutInput),
       sounds: {
         play: getValue(this.soundPlay.input),
         navigate: getValue(this.soundNavigate.input),
@@ -1066,6 +1073,7 @@ function fieldKeyForPath(path: string): FieldKey | null {
     case 'pcSavePath':
     case 'backgroundMusic':
     case 'launchTimeoutSec':
+    case 'killTimeoutSec':
       return path;
     default:
       break;

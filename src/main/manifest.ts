@@ -86,6 +86,9 @@ const manifestSchema = z
     saveOnCard: z.string().min(1).optional(),
     pcSavePath: z.string().min(1).optional(),
     launchTimeoutSec: z.number().int().positive().default(30),
+    // Max seconds a force-close waits for the game's processes to vanish before reporting a failure (the
+    // wait ends early once they're gone). `.default(60)` so an older/partial file stays valid.
+    killTimeoutSec: z.number().int().positive().default(60),
     sounds: z
       .object({
         play: z.string().min(1).optional(),
@@ -603,7 +606,7 @@ export function validateManifestText(text: string, t: Translator): ConfigValidat
  * `unrepresentable: 'any'` keeps the conversion from throwing on anything else it can't express.
  *
  * `io: 'input'` is critical: the editor validates what the USER TYPES (before defaults), so fields with a
- * `.default()` (args, runAsAdmin, launchTimeoutSec) must NOT be `required`. Without it the editor's linter
+ * `.default()` (args, runAsAdmin, launchTimeoutSec, killTimeoutSec) must NOT be `required`. Without it the editor's linter
  * flagged "args is missing" while validateManifestText (which zod-parses and fills the defaults) reported
  * the very same text as valid — the two verdicts disagreed.
  */

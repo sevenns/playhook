@@ -751,9 +751,9 @@ resetBtn.addEventListener('click', () => void onReset());
 // ── Init ─────────────────────────────────────────────────────────────────────
 applyTheme('system'); // best-guess before settings load, to avoid a flash
 
-// The theme is chosen in the settings window and persisted; there is no live cross-window push. The
-// window is a hidden/shown singleton, so re-fetch the persisted theme whenever it becomes visible again —
-// otherwise a theme change made in settings only took effect after a full app restart.
+// The theme is chosen in the settings window and persisted, and pushed live to this window via
+// onThemeUpdate (see init). This visibilitychange re-fetch stays as a cheap fallback: the window is a
+// hidden/shown singleton, so re-reading the persisted theme on show covers any push missed while hidden.
 async function refreshTheme(): Promise<void> {
   const settings = await window.configureApi.getSettings();
   applyTheme(settings.theme);
@@ -786,6 +786,9 @@ function applyLocale(locale: Locale): void {
 async function init(): Promise<void> {
   window.configureApi.onDrivesUpdate(renderDrives);
   window.configureApi.onLanguageUpdate(applyLocale);
+  // Live theme push from main (the theme changed in the settings window): applyTheme is idempotent, so
+  // this coexists with the visibilitychange re-fetch below (which stays as a cheap fallback).
+  window.configureApi.onThemeUpdate(applyTheme);
   const [settings, schema, drivesList, icon, version, locale] = await Promise.all([
     window.configureApi.getSettings(),
     window.configureApi.getSchema(),

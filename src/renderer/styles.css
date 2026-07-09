@@ -188,7 +188,9 @@ body {
   transition: background 0.2s ease, color 0.2s ease, transform 0.12s ease;
 }
 
-.play-button:hover,
+/* :hover gated on a live cursor — see the note on .text-button:hover (avoids a stale hover highlight
+   sticking under the pointer once the gamepad takes over). */
+html:not(.cursor-hidden) .play-button:hover,
 .play-button.is-focused {
   background: var(--d2);
   color: var(--d1);
@@ -213,7 +215,7 @@ body {
   transition: opacity 0.2s ease;
 }
 
-.play-button:hover::after,
+html:not(.cursor-hidden) .play-button:hover::after,
 .play-button.is-focused::after {
   opacity: 1;
   animation: pulse-ring 1.1s ease-in-out infinite;
@@ -275,7 +277,8 @@ body {
   transition: background 0.2s ease, color 0.2s ease, opacity 0.3s ease, transform 0.12s ease;
 }
 
-.rect-button:hover,
+/* :hover gated on a live cursor — see the note on .text-button:hover. */
+html:not(.cursor-hidden) .rect-button:hover,
 .rect-button.is-focused {
   background: var(--d2);
   color: var(--d1);
@@ -593,7 +596,12 @@ body {
   transition: background 0.2s ease, color 0.2s ease, transform 0.12s ease;
 }
 
-.text-button:hover,
+/* Hover paints the same highlight as .is-focused, but ONLY while the cursor is live: once the gamepad
+   takes over (html.cursor-hidden), the pointer still physically sits over whatever it last hovered, so a
+   bare :hover would keep that button highlighted alongside the gamepad's .is-focused one — two
+   highlights, and A (which acts on .is-focused) would fire a different button than the hovered one looks.
+   Gating :hover on :not(.cursor-hidden) drops the stale hover the moment the gamepad is used. */
+html:not(.cursor-hidden) .text-button:hover,
 .text-button.is-focused {
   background: var(--d2);
   color: var(--d1);

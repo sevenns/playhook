@@ -33,6 +33,9 @@ import {
   waitForStart,
   waitForWatchedExit,
   waitForWatchedStart,
+  killImageByName,
+  anyImageAlive,
+  killImagesElevated,
   LaunchAbortedError,
   type GameProcess,
 } from './game-launcher';
@@ -60,6 +63,21 @@ export interface ControllerDeps {
 
 // Grace-poll cadence after the installer exits, waiting for the game executable to appear.
 const INSTALL_POLL_INTERVAL_MS = 1000;
+
+// Force-close verification: after issuing the kills, a `taskkill /F` (or TerminateProcess) returns
+// BEFORE the process actually leaves tasklist — a killed process in teardown still shows for a beat, and
+// a launcher/wrapper can take longer (the very reason the exit waiters debounce). So we don't judge on a
+// single instant snapshot: poll the targets over a window bounded by the manifest's killTimeoutSec
+// (default 60s), succeeding as soon as they're all gone, and only reporting killFailed if something is
+// STILL alive when the window elapses (a genuine failure, e.g. an elevated handle without
+// PROCESS_TERMINATE rights). The poll cadence between snapshots:
+const KILL_VERIFY_INTERVAL_MS = 500;
+
+// For a runAsAdmin (elevated) game, the non-elevated kill can't touch its high-integrity processes. We
+// give that first attempt a short grace to prove itself (a normal game dies well within this), and only
+// if the targets survive it do we escalate to an elevated taskkill (one UAC prompt). Kept short so the
+// UAC prompt isn't needlessly delayed for a game that genuinely needs it.
+const KILL_ELEVATE_GRACE_SEC = 3;
 
 // Directory removal retries: an Inno uninstaller forks a copy of itself into
 // temp and exits early, so right after waitForExit it may still hold `unins000.*` for a moment — a
@@ -251,6 +269,15 @@ export class GameController {
   // whenever no game is running; reset in the launch sequence's finally. Matched by image name rather than
   // pid so it covers all backends uniformly, incl. elevated games a non-elevated tasklist can't see.
   private runningImageNames: readonly string[] | null = null;
+  // The owned GameProcess of the currently-running game, kept so a force-close can terminate it directly:
+  // the elevated HANDLE (invisible to taskkill) or the normal pid tree. A REFERENCE to the same object
+  // disposed in the launch sequence's finally (the single owner) — set alongside runningImageNames on
+  // entry to `running` (normal/elevated + watched branches; null for steam, which owns no process),
+  // cleared in that same finally. Never disposed from here.
+  private runningProc: GameProcess | null = null;
+  // A force-close (onKillRequested) is underway. Local try/finally flag (mirrors reloadInFlight, NOT the
+  // launch sequence's finally — a kill has its own short-lived lifecycle) so a double Yes / repeat is a no-op.
+  private killInFlight = false;
   // Audio for the current card, sent on its own channel (not on every AppState) — see AudioAssets.
   private currentAudio: AudioAssets | null = null;
   // Hero images for the current card, sent on their own channel (not on every AppState) — see HeroAssets.
@@ -308,6 +335,7 @@ export class GameController {
     ipcMain.on(IPC.actionUninstall, () => void this.onUninstallRequested());
     ipcMain.on(IPC.actionHide, () => this.deps.window.hide());
     ipcMain.on(IPC.actionOpenSteamDownloads, () => void this.onOpenSteamDownloads());
+    ipcMain.on(IPC.actionKill, () => void this.onKillRequested());
   }
 
   /** Sends a transient error to the renderer to surface in the error popup. */
@@ -553,6 +581,112 @@ export class GameController {
     }
   }
 
+  /**
+   * Force-close the running game (More → Force close → confirmed Yes). Flips the running snapshot into its
+   * `killing` sub-state (the launcher shows "Force closing…" and hides the Force close button), kills the
+   * main executable AND every watchProcess, then lets the EXISTING exit waiters (waitForExit /
+   * waitForWatchedExit) notice the processes vanish and carry the flow through syncing-out → sync → ready
+   * (K-Д3) — no state machine of its own. Guarded by the running state + a killInFlight flag (double Yes /
+   * repeat is a no-op).
+   *
+   * A non-elevated launcher can't terminate a runAsAdmin game's high-integrity processes (taskkill →
+   * ACCESS_DENIED, the ShellExecuteEx HANDLE lacks PROCESS_TERMINATE). So for a runAsAdmin game, if the
+   * targets survive a short grace, we escalate to ONE elevated `taskkill /F /T /IM …` (a single UAC
+   * prompt). Non-elevated games never trigger UAC.
+   *
+   * Success is judged by FACT, not command exit codes: a "not found" from taskkill just means the target
+   * is already dead (success). After the kills we verify over a WINDOW bounded by killTimeoutSec (a killed
+   * process lingers in tasklist for a beat, so a single instant snapshot would false-positive): success as
+   * soon as the targets are gone (the `killing` indicator stays until an exit waiter advances the flow).
+   * If something is still alive when the window elapses, we DROP back to plain running (the game is still
+   * up) and surface a soft errors.killFailed.
+   */
+  private async onKillRequested(): Promise<void> {
+    const snapshot = this.deps.state.get();
+    if (snapshot.kind !== 'running') return; // only meaningful while a game is running
+    if (this.killInFlight) return; // a force-close is already underway (double Yes / repeat)
+    const manifest = this.current;
+    if (manifest === null) return; // defensive: `running` always has a current manifest
+    this.killInFlight = true;
+    // Show "Force closing…" and hide the Force close button immediately (cleared back on failure).
+    this.deps.state.set({ ...snapshot, killing: true });
+    try {
+      // Targets are computed HERE from this.current, leaving runningImageNames untouched: a union there
+      // would regress return-to-game (focusGameWindow picks the first Z-order match — the launcher name
+      // could steal focus from the game). Steam's executablePath is '' and drops out in normalization.
+      const targets = normalizeImageNames([
+        manifest.executablePath,
+        ...(manifest.raw.watchProcesses ?? []),
+      ]);
+      log.info(`[kill] force-close requested id=${manifest.raw.id} targets=[${targets.join(',')}]`);
+
+      // 1. Terminate the owned process (elevated HANDLE, or the normal pid tree with an isAlive re-check
+      //    inside kill()). In the watched path this is usually the already-dead launcher — its "not
+      //    found" is normal, not an error.
+      const proc = this.runningProc;
+      if (proc !== null) {
+        try {
+          await proc.kill();
+        } catch (cause) {
+          log.warn('[kill] owned-process kill failed (continuing to taskkill by name):', describe(cause));
+        }
+      }
+
+      // 2. taskkill /F /IM per target image name (non-elevated). Per-name failures are normal ("not
+      //    found" = already dead); the verdict is the control poll below, not these exit codes.
+      for (const name of targets) {
+        await killImageByName(name);
+      }
+
+      // 2b. Elevated escalation (runAsAdmin games only). A non-elevated taskkill / the ShellExecuteEx
+      //     HANDLE can't terminate high-integrity processes, so if the targets survive a short grace we
+      //     run ONE elevated `taskkill /F /T /IM …` (a single UAC prompt). Non-elevated games never reach
+      //     here (no UAC for them). A declined UAC just leaves the targets up → killFailed below.
+      if (manifest.raw.runAsAdmin && (await this.killTargetsStillAlive(targets, proc, KILL_ELEVATE_GRACE_SEC))) {
+        log.info(`[kill] elevated game survived non-elevated kill id=${manifest.raw.id} — escalating to elevated taskkill (UAC)`);
+        killImagesElevated(targets);
+      }
+
+      // 3. Fact-based verdict over a window bounded by killTimeoutSec (a killed process lingers in
+      //    tasklist for a beat — a single instant snapshot would false-positive). killFailed only if
+      //    something is STILL alive when the window elapses.
+      if (await this.killTargetsStillAlive(targets, proc, manifest.raw.killTimeoutSec)) {
+        log.warn(`[kill] targets still alive after force-close id=${manifest.raw.id} — reporting killFailed`);
+        // The game is still up → back to plain running (status "Running…", Force close button returns),
+        // then surface the error. Re-read in case a waiter advanced the state (then leave it be).
+        const current = this.deps.state.get();
+        if (current.kind === 'running') this.deps.state.set({ ...current, killing: false });
+        this.sendError(this.t('errors.killFailed'));
+      } else {
+        log.info(`[kill] force-close done id=${manifest.raw.id} — exit waiters will finish the flow`);
+      }
+    } finally {
+      this.killInFlight = false;
+    }
+  }
+
+  /**
+   * Polls the kill targets for up to `timeoutSec`, returning false (success — everything is gone) as soon
+   * as no target image is present AND the owned process (elevated HANDLE / normal pid) is dead, OR once an
+   * exit waiter has already advanced the state out of `running` (it saw the exit → definitely killed).
+   * Returns true only if something is still alive when the window elapses — a genuine failure.
+   */
+  private async killTargetsStillAlive(
+    targets: readonly string[],
+    proc: GameProcess | null,
+    timeoutSec: number,
+  ): Promise<boolean> {
+    const deadline = Date.now() + timeoutSec * 1000;
+    for (;;) {
+      // An exit waiter that already left `running` proves the process is gone — treat as killed.
+      if (this.deps.state.get().kind !== 'running') return false;
+      const ownedAlive = proc !== null && (await proc.isAlive());
+      if (!ownedAlive && !(await anyImageAlive(targets))) return false;
+      if (Date.now() >= deadline) return true; // window elapsed and something is still alive → real fail
+      await delay(KILL_VERIFY_INTERVAL_MS);
+    }
+  }
+
   /** "Uninstall" action (the user confirmed in the popup). Only for an installed install-mode game. */
   private onUninstallRequested(): void {
     const snapshot = this.deps.state.get();
@@ -699,6 +833,9 @@ export class GameController {
         }
         since = Date.now();
         this.runningImageNames = normalizeImageNames(watchProcesses ?? []);
+        // Steam owns no process of ours (steam://rungameid returns instantly) — a force-close relies on
+        // taskkill /IM over the watchProcesses alone.
+        this.runningProc = null;
         state.set({ kind: 'running', game: info, since });
         log.info(`[launch] running (steam) id=${manifest.raw.id} appid=${manifest.steam.appid}`);
         await waitForWatchedExit(watchProcesses ?? [], abort.signal);
@@ -728,6 +865,9 @@ export class GameController {
           // The watched game is up: start the clock now (more accurate than the launcher's spawn time).
           since = Date.now();
           this.runningImageNames = normalizeImageNames(watchProcesses);
+          // The spawned launcher (proc) — usually already dead here; kept so a force-close can also take
+          // down its pid tree. The game itself is killed by taskkill /IM over the watchProcesses.
+          this.runningProc = proc;
           state.set({ kind: 'running', game: info, since });
           log.info(`[launch] running (watched) id=${manifest.raw.id} watch=${watchProcesses.join(',')}`);
           await waitForWatchedExit(watchProcesses, abort.signal);
@@ -742,6 +882,9 @@ export class GameController {
           // normal AND elevated share this branch (differing only by manifest.raw.runAsAdmin): the game
           // IS the spawned exe, so its image name is the executable's basename.
           this.runningImageNames = normalizeImageNames([manifest.executablePath]);
+          // The game process itself — a force-close terminates it directly (elevated: via the HANDLE
+          // invisible to taskkill; normal: its pid tree with an isAlive re-check inside kill()).
+          this.runningProc = proc;
           state.set({ kind: 'running', game: info, since });
           log.info(`[launch] running id=${manifest.raw.id} pid=${proc.pid}`);
           await waitForExit(proc, abort.signal);
@@ -773,6 +916,9 @@ export class GameController {
       this.abort = null;
       // The game is no longer running → forget its image names (return-to-game only applies while running).
       this.runningImageNames = null;
+      // Drop the owned-process reference (proc.dispose() above is the single owner-side release; this is
+      // just the reference the force-close used while running).
+      this.runningProc = null;
       // Replay a card that was swapped in mid-flight, now that launchInFlight has cleared.
       this.resumePendingInsert();
     }

@@ -60,6 +60,7 @@ export interface ManifestFormModel {
   readonly saveOnCard: string;
   readonly pcSavePath: string;
   readonly launchTimeoutSec: string;
+  readonly killTimeoutSec: string;
   readonly sounds: SoundsModel;
   readonly backgroundMusic: string;
   readonly install: InstallModel;
@@ -95,6 +96,7 @@ export const KNOWN_MANIFEST_KEYS: readonly string[] = [
   'saveOnCard',
   'pcSavePath',
   'launchTimeoutSec',
+  'killTimeoutSec',
   'sounds',
   'backgroundMusic',
   'install',
@@ -138,6 +140,7 @@ export function emptyFormModel(): ManifestFormModel {
     saveOnCard: '',
     pcSavePath: '',
     launchTimeoutSec: '',
+    killTimeoutSec: '',
     sounds: emptySounds(),
     backgroundMusic: '',
     install: emptyInstall(),
@@ -290,6 +293,12 @@ export function textToFormModel(text: string): ParseFormResult {
     else corrupt['launchTimeoutSec'] = source['launchTimeoutSec'];
   }
 
+  let killTimeoutSec = '';
+  if (has('killTimeoutSec')) {
+    if (typeof source['killTimeoutSec'] === 'number') killTimeoutSec = String(source['killTimeoutSec']);
+    else corrupt['killTimeoutSec'] = source['killTimeoutSec'];
+  }
+
   let sounds = emptySounds();
   if (has('sounds')) {
     const value = source['sounds'];
@@ -331,6 +340,7 @@ export function textToFormModel(text: string): ParseFormResult {
     saveOnCard,
     pcSavePath,
     launchTimeoutSec,
+    killTimeoutSec,
     sounds,
     backgroundMusic,
     install,
@@ -358,12 +368,13 @@ function numericValue(text: string): number | string | undefined {
 }
 
 const DEFAULT_LAUNCH_TIMEOUT = 30;
+const DEFAULT_KILL_TIMEOUT = 60;
 
-/** launchTimeoutSec → value or undefined (omit when blank OR equal to the schema default of 30). */
-function timeoutValue(text: string): number | string | undefined {
+/** A timeout field → value or undefined (omit when blank OR equal to its schema default). */
+function timeoutValue(text: string, defaultValue: number): number | string | undefined {
   const value = numericValue(text);
   if (value === undefined) return undefined;
-  if (typeof value === 'number' && value === DEFAULT_LAUNCH_TIMEOUT) return undefined;
+  if (typeof value === 'number' && value === defaultValue) return undefined;
   return value;
 }
 
@@ -399,7 +410,7 @@ function buildSounds(sounds: SoundsModel): Record<string, unknown> | undefined {
 /**
  * Serializes a form model back to manifest TEXT (2-space indent, trailing newline). Only the ACTIVE launch
  * mode's fields are written (writing hidden modes would trip the superRefine exclusivity). Fields equal to
- * their schema default (args [], runAsAdmin false, launchTimeoutSec 30) are omitted so the manifest stays
+ * their schema default (args [], runAsAdmin false, launchTimeoutSec 30, killTimeoutSec 60) are omitted so the manifest stays
  * minimal. `corrupt` (raw known keys) and `rest` (unknown keys) are overlaid last, verbatim — corrupt wins
  * over the model value (an unedited broken field) and preserves the original validation error.
  */
@@ -437,8 +448,11 @@ export function formModelToText(
   if (sounds !== undefined) out.sounds = sounds;
   if (model.backgroundMusic !== '') out.backgroundMusic = model.backgroundMusic;
 
-  const timeout = timeoutValue(model.launchTimeoutSec);
+  const timeout = timeoutValue(model.launchTimeoutSec, DEFAULT_LAUNCH_TIMEOUT);
   if (timeout !== undefined) out.launchTimeoutSec = timeout;
+
+  const killTimeout = timeoutValue(model.killTimeoutSec, DEFAULT_KILL_TIMEOUT);
+  if (killTimeout !== undefined) out.killTimeoutSec = killTimeout;
 
   // Overlay raw corrupt values (a broken known key wins over the model until the user edits it) then the
   // unknown top-level keys — both verbatim, so the round-trip is lossless and errors stay visible.

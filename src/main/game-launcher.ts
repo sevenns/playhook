@@ -23,6 +23,7 @@ import koffi from 'koffi';
 import { type LaunchTarget, type ResolvedManifest } from '../shared/types';
 import { buildInstallerArgs, buildParameters } from './launch-args';
 import { delay } from './util';
+import { log } from './logger';
 
 const execFileAsync = promisify(execFile);
 
@@ -44,6 +45,14 @@ export class LaunchAbortedError extends Error {
 export interface GameProcess {
   readonly pid: number;
   isAlive(): Promise<boolean>;
+  /**
+   * Force-terminates the process (force-close from the More menu). Normal path: `taskkill /PID <pid> /T
+   * /F` (the whole tree), guarded by an isAlive() re-check so a reused pid can't take down an unrelated
+   * process. Elevated path: TerminateProcess on the kept HANDLE, done synchronously (no await before the
+   * FFI call) and skipped if dispose() already closed the handle. Errors are swallowed — the caller
+   * decides success by a fact-based control poll, not this call's outcome.
+   */
+  kill(): Promise<void>;
   /** Releases the kept HANDLE (elevated path); no-op for the normal path. */
   dispose(): void;
 }
@@ -95,6 +104,7 @@ async function isProcessAlive(pid: number): Promise<boolean> {
 
 const SEE_MASK_NOCLOSEPROCESS = 0x40; // keep info.hProcess valid after the call
 const SW_SHOWNORMAL = 1;
+const SW_HIDE = 0; // hide the elevated taskkill's console window (the UAC prompt is separate)
 const ERROR_CANCELLED = 1223; // GetLastError after the user clicks "No" in the UAC prompt
 const WAIT_TIMEOUT = 0x102; // WaitForSingleObject: object still alive (WAIT_OBJECT_0 = 0 means exited)
 
@@ -146,6 +156,7 @@ type ShellExecuteExWFn = (info: ShellExecuteInfo) => number;
 type WaitForSingleObjectFn = (handle: bigint, milliseconds: number) => number;
 type CloseHandleFn = (handle: bigint) => number;
 type GetLastErrorFn = () => number;
+type TerminateProcessFn = (handle: bigint, exitCode: number) => number;
 
 interface ShellLib {
   readonly ShellExecuteExW: ShellExecuteExWFn;
@@ -154,7 +165,12 @@ interface KernelLib {
   readonly WaitForSingleObject: WaitForSingleObjectFn;
   readonly CloseHandle: CloseHandleFn;
   readonly GetLastError: GetLastErrorFn;
+  readonly TerminateProcess: TerminateProcessFn;
 }
+
+// Exit code handed to TerminateProcess for a force-closed game (arbitrary non-zero — the game is being
+// killed, not exiting cleanly).
+const KILL_EXIT_CODE = 1;
 
 let shellLib: ShellLib | null = null;
 let kernelLib: KernelLib | null = null;
@@ -180,8 +196,95 @@ function loadKernel(): KernelLib {
     'int __stdcall CloseHandle(HANDLE hObject)',
   ) as unknown as CloseHandleFn;
   const GetLastError = lib.func('uint32 __stdcall GetLastError()') as unknown as GetLastErrorFn;
-  kernelLib = { WaitForSingleObject, CloseHandle, GetLastError };
+  const TerminateProcess = lib.func(
+    'int __stdcall TerminateProcess(HANDLE hProcess, uint32 uExitCode)',
+  ) as unknown as TerminateProcessFn;
+  kernelLib = { WaitForSingleObject, CloseHandle, GetLastError, TerminateProcess };
   return kernelLib;
+}
+
+/**
+ * Force-kills a whole process tree by pid via `taskkill /PID <pid> /T /F`. A non-zero exit (the pid is
+ * already gone) is swallowed — for a force-close, "not found" is success. Exported-adjacent helper used
+ * only by the normal GameProcess.kill().
+ */
+async function killTreeByPid(pid: number): Promise<void> {
+  try {
+    await execFileAsync('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true });
+  } catch {
+    // taskkill exits non-zero when the pid no longer exists → already dead, nothing to do.
+  }
+}
+
+/**
+ * Force-kills every process with image name `imageName` via `taskkill /F /IM <name>`. Errors are
+ * swallowed — a non-zero exit means the image isn't running (already dead), which is success for a
+ * force-close. Kills only same-integrity-level processes (an elevated game is unaffected — that one is
+ * terminated via its HANDLE instead). `imageName` is expected already lower-cased (matching is
+ * case-insensitive in taskkill regardless).
+ */
+export async function killImageByName(imageName: string): Promise<void> {
+  try {
+    await execFileAsync('taskkill', ['/F', '/IM', imageName], { windowsHide: true });
+  } catch {
+    // Non-zero exit = the image isn't running (already dead) → nothing to do.
+  }
+}
+
+/** True if ANY of the (already lower-cased) image names is present in a fresh single tasklist snapshot. */
+export async function anyImageAlive(imageNames: readonly string[]): Promise<boolean> {
+  if (imageNames.length === 0) return false;
+  const snapshot = await snapshotProcesses();
+  return anyVisible(snapshot, imageNames);
+}
+
+/**
+ * Force-kills the given image names ELEVATED: ShellExecuteExW("runas") runs
+ * `taskkill /F /T /IM <name> …` — ONE UAC prompt for the whole set. Needed for a runAsAdmin game whose
+ * high-integrity processes a non-elevated taskkill can't touch (ACCESS_DENIED) and whose ShellExecuteEx
+ * HANDLE lacks PROCESS_TERMINATE. Synchronous like launchElevated (koffi .async can't read GetLastError);
+ * the UAC dialog blocks the main thread briefly, which is fine while a game is running (input is ignored).
+ * We do NOT wait for taskkill to finish — it runs on after we release our handle; the caller's control
+ * poll decides success by fact. Best-effort: a declined UAC (GetLastError 1223) or any failure is logged
+ * and swallowed. No-op off Windows / with no names.
+ */
+export function killImagesElevated(imageNames: readonly string[]): void {
+  if (process.platform !== 'win32' || imageNames.length === 0) return;
+  const shell = loadShell();
+  const kernel = loadKernel();
+  const args = ['/F', '/T'];
+  for (const name of imageNames) args.push('/IM', name);
+  const systemRoot = process.env['SystemRoot'] ?? 'C:\\Windows';
+  const system32 = path.join(systemRoot, 'System32');
+  const info: ShellExecuteInfo = {
+    cbSize: koffi.sizeof('SHELLEXECUTEINFOW'),
+    fMask: SEE_MASK_NOCLOSEPROCESS,
+    hwnd: null,
+    lpVerb: 'runas',
+    lpFile: path.join(system32, 'taskkill.exe'),
+    lpParameters: buildParameters(args),
+    lpDirectory: system32,
+    nShow: SW_HIDE,
+    hInstApp: null,
+    lpIDList: null,
+    lpClass: null,
+    hkeyClass: null,
+    dwHotKey: 0,
+    DUMMYUNIONNAME: { hIcon: null },
+    hProcess: 0n,
+  };
+  try {
+    const ok = shell.ShellExecuteExW(info);
+    if (ok === 0) {
+      // 1223 = ERROR_CANCELLED (user clicked "No" on UAC) — the caller's poll then reports killFailed.
+      log.warn(`[kill] elevated taskkill failed to start (GetLastError=${kernel.GetLastError()})`);
+      return;
+    }
+    // Release our reference — taskkill keeps running to completion; we don't block on it.
+    if (info.hProcess !== 0n) kernel.CloseHandle(info.hProcess);
+  } catch (cause) {
+    log.warn('[kill] elevated taskkill threw:', cause instanceof Error ? cause.message : String(cause));
+  }
 }
 
 /**
@@ -228,6 +331,12 @@ async function launchNormal(target: LaunchTarget, mode: LaunchMode): Promise<Gam
       resolve({
         pid,
         isAlive: () => isProcessAlive(pid),
+        kill: async () => {
+          // Reused-pid guard: `running` can outlive the real process by ~7.5s (the exit debounce), so a
+          // blind taskkill /PID could take down an unrelated process that inherited this pid. Only kill
+          // while the pid is still alive — accepting the tiny residual TOCTOU as best-effort.
+          if (await isProcessAlive(pid)) await killTreeByPid(pid);
+        },
         dispose: () => {},
       });
     });
@@ -282,10 +391,29 @@ function launchElevated(target: LaunchTarget, mode: LaunchMode): GameProcess {
     // for the start timeout.
     throw new Error('elevated launch did not create a process');
   }
+  // Guards the HANDLE lifetime: dispose() sets it and closes the handle; kill() no-ops once set so we
+  // never TerminateProcess a closed (potentially reused) handle. Both run synchronously on the single JS
+  // thread, so a kill() can't interleave with a dispose() between reading the flag and the FFI call.
+  let disposed = false;
   return {
     pid: 0, // elevated marker; we monitor by HANDLE (GetProcessId is not bound).
-    isAlive: () => Promise.resolve(kernel.WaitForSingleObject(handle, 0) === WAIT_TIMEOUT),
+    isAlive: () =>
+      Promise.resolve(!disposed && kernel.WaitForSingleObject(handle, 0) === WAIT_TIMEOUT),
+    kill: () => {
+      // Synchronous up to the FFI call — no await between reading `disposed` and TerminateProcess.
+      if (!disposed) {
+        const ok = kernel.TerminateProcess(handle, KILL_EXIT_CODE);
+        if (ok === 0) {
+          // Undocumented whether SEE_MASK_NOCLOSEPROCESS grants PROCESS_TERMINATE (see K-Д1) — leave a
+          // breadcrumb; the controller's control poll turns a still-alive game into errors.killFailed.
+          log.warn(`[kill] TerminateProcess failed (GetLastError=${kernel.GetLastError()})`);
+        }
+      }
+      return Promise.resolve();
+    },
     dispose: () => {
+      if (disposed) return;
+      disposed = true;
       kernel.CloseHandle(handle);
     },
   };

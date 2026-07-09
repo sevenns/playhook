@@ -64,6 +64,8 @@ export interface UpdaterDeps {
   readonly onWallpaperReset: () => Promise<void>;
   /** Applies a UI-language change (re-resolve locale, rebuild tray/titles, push to live windows). */
   readonly onLanguageChanged: (mode: LanguageMode) => void;
+  /** Pushes a UI-theme change to the Configure window so an open one recolors live (no hide/show). */
+  readonly onThemeChanged: (mode: ThemeMode) => void;
   /** The current translator (for the install-busy soft error rendered in the settings window). */
   readonly getTranslator: () => Translator;
 }
@@ -131,7 +133,7 @@ export class UpdaterService {
     ipcMain.handle(IPC.updateStatusRequest, (): UpdateStatus => this.status);
     ipcMain.on(IPC.updateCheck, () => this.check());
     ipcMain.on(IPC.updateDownload, () => this.download());
-    ipcMain.on(IPC.updateInstall, () => this.install());
+    ipcMain.on(IPC.updateInstall, () => void this.install());
     ipcMain.handle(IPC.settingsRequest, () => this.deps.settings.read());
     ipcMain.on(IPC.settingsSetAutoUpdate, (_event, mode: AutoUpdateMode) => {
       void this.deps.settings
@@ -142,11 +144,13 @@ export class UpdaterService {
         })
         .catch((cause: unknown) => log.error('[updater] failed to persist auto-update mode:', cause));
     });
-    // Theme is a pure renderer concern — persist it so the choice survives a restart; nothing to apply
-    // in main (the settings renderer applies the theme live via setTheme).
+    // The settings renderer applies the theme live in its own window; main persists it so the choice
+    // survives a restart AND pushes it to the Configure window (onThemeChanged) so an open Configure
+    // recolors live too — otherwise it only updated on its next hide/show.
     ipcMain.on(IPC.settingsSetTheme, (_event, mode: ThemeMode) => {
       void this.deps.settings
         .setTheme(mode)
+        .then(() => this.deps.onThemeChanged(mode))
         .catch((cause: unknown) => log.error('[updater] failed to persist theme:', cause));
     });
     ipcMain.on(IPC.settingsSetPrerelease, (_event, on: boolean) => {
@@ -199,8 +203,9 @@ export class UpdaterService {
   }
 
   // Resets settings to defaults and re-applies every side effect (auto-update mode, prerelease flag,
-  // summon-hotkey toggle, game-renderer volumes). Theme is re-applied by the settings renderer from the
-  // returned AppSettings. Returns the defaults so the settings UI can re-render its controls.
+  // summon-hotkey toggle, game-renderer volumes). The settings renderer re-applies the theme in its own
+  // window from the returned AppSettings; the Configure window gets it via onThemeChanged (the reset may
+  // have flipped the theme to the default). Returns the defaults so the settings UI can re-render.
   private async resetSettings(): Promise<AppSettings> {
     const next = await this.deps.settings.reset();
     if (app.isPackaged) {
@@ -213,6 +218,7 @@ export class UpdaterService {
     // reset() already wrote customWallpaper=null; this deletes the copied file and pushes the default.
     await this.deps.onWallpaperReset();
     this.deps.onLanguageChanged(next.language);
+    this.deps.onThemeChanged(next.theme);
     return next;
   }
 
@@ -352,7 +358,7 @@ export class UpdaterService {
       .catch((cause: unknown) => log.error('[updater] download failed:', cause));
   }
 
-  install(): void {
+  async install(): Promise<void> {
     // (a) status guard: only from `downloaded` — the UI shows the install button only then, but this
     // also closes the race "mode flipped to off mid-download → stray install".
     if (this.status.kind !== 'downloaded') {
@@ -371,6 +377,11 @@ export class UpdaterService {
       });
       return;
     }
+    // Drain any in-flight settings writes FIRST: quitAndInstall tears the process down, and a write cut
+    // off mid-flight is the root cause of settings loss after an update. beforeInstall stays SYNCHRONOUS
+    // right before quitAndInstall (nothing awaited between them) — its contract of dropping the window
+    // close-guards with no yield in the way is preserved.
+    await this.deps.settings.flush();
     log.info('[updater] installing update — quitAndInstall');
     this.deps.beforeInstall(); // drop both windows' close-guards synchronously first
     autoUpdater.quitAndInstall();
