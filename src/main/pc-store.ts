@@ -9,6 +9,8 @@ import fse from 'fs-extra';
 import { z } from 'zod';
 import { type Stats } from '../shared/types';
 import { readJsonValidated, writeJsonAtomic } from './json-store';
+import { type SyncState } from './save-sync';
+import { log } from './logger';
 
 const statsSchema = z.object({
   schemaVersion: z.literal(1),
@@ -43,18 +45,30 @@ export interface PendingFlush {
   readonly savesSnapshotDir: string;
 }
 
+// The per-side last-sync baseline for a game (paths+mtime snapshots). Kept separate from stats: it is
+// sync bookkeeping, not user-facing data. A record of relPath→mtimeMs per side plus a timestamp.
+const treeSnapshotSchema = z.record(z.string(), z.number());
+const syncStateSchema = z.object({
+  card: treeSnapshotSchema,
+  pc: treeSnapshotSchema,
+  syncedAt: z.number(),
+});
+
 export class PcStore {
   private readonly statsDir: string;
   private readonly pendingDir: string;
+  private readonly syncStateDir: string;
 
   constructor(private readonly baseDir: string) {
     this.statsDir = path.join(baseDir, 'stats');
     this.pendingDir = path.join(baseDir, 'pending-flush');
+    this.syncStateDir = path.join(baseDir, 'sync-state');
   }
 
   async init(): Promise<void> {
     await fse.ensureDir(this.statsDir);
     await fse.ensureDir(this.pendingDir);
+    await fse.ensureDir(this.syncStateDir);
   }
 
   private statsPath(id: string): string {
@@ -86,7 +100,7 @@ export class PcStore {
     await fse.remove(entryDir);
     const savesSnapshotDir = path.join(entryDir, 'saves');
     if (await fse.pathExists(pcSavePath)) {
-      await fse.copy(pcSavePath, savesSnapshotDir, { preserveTimestamps: false });
+      await fse.copy(pcSavePath, savesSnapshotDir, { preserveTimestamps: true });
     } else {
       await fse.ensureDir(savesSnapshotDir);
     }
@@ -114,5 +128,38 @@ export class PcStore {
 
   async clearPending(id: string): Promise<void> {
     await fse.remove(this.pendingEntryDir(id));
+  }
+
+  private syncStatePath(id: string): string {
+    return path.join(this.syncStateDir, `${id}.json`);
+  }
+
+  /**
+   * Reads the last-sync baseline for game `id`. Returns null when it's missing (normal first run / after
+   * an update → the caller falls back to the deterministic phase direction) or corrupted (logged, then
+   * treated as absent so a damaged file can't wedge sync — the next successful sync rewrites it).
+   */
+  async readSyncState(id: string): Promise<SyncState | null> {
+    let raw: unknown;
+    try {
+      raw = await fse.readJson(this.syncStatePath(id));
+    } catch (cause) {
+      // ENOENT is the expected first-run case → silent; anything else is a real read anomaly → warn.
+      if (cause instanceof Error && (cause as { code?: unknown }).code !== 'ENOENT') {
+        log.warn(`[sync-state] failed to read baseline for "${id}":`, cause);
+      }
+      return null;
+    }
+    const parsed = syncStateSchema.safeParse(raw);
+    if (!parsed.success) {
+      log.warn(`[sync-state] baseline for "${id}" failed validation, ignoring:`, parsed.error.message);
+      return null;
+    }
+    return parsed.data;
+  }
+
+  async writeSyncState(id: string, state: SyncState): Promise<void> {
+    await fse.ensureDir(this.syncStateDir);
+    await writeJsonAtomic(this.syncStatePath(id), state);
   }
 }

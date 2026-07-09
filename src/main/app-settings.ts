@@ -28,6 +28,9 @@ const settingsSchema = z.object({
   language: z.enum(['system', 'en', 'ru']).default('system'),
   allowPrerelease: z.boolean().default(false),
   summonHotkeyEnabled: z.boolean().default(true),
+  // Keep the display awake (no screensaver / display-sleep) while the launcher owns the session.
+  // `.default(true)` keeps the field valid for an older settings.json written before it existed.
+  preventScreensaver: z.boolean().default(true),
   musicVolume: z.number().min(0).max(1).default(0.5),
   sfxVolume: z.number().min(0).max(1).default(1),
   // File name of the custom Empty-screen wallpaper in userData, or null for the bundled default.
@@ -47,6 +50,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   language: 'system',
   allowPrerelease: false,
   summonHotkeyEnabled: true,
+  preventScreensaver: true,
   musicVolume: 0.5,
   sfxVolume: 1,
   customWallpaper: null,
