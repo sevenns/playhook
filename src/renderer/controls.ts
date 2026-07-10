@@ -348,7 +348,6 @@ export function createControls(deps: ControlsDeps): Controls {
   // element and fade it. It shows only while the list overflows AND the focus is ON a game button AND
   // there has been input recently — i.e. it appears exactly when you're scrolling through games.
   const SCROLLBAR_IDLE_MS = 2000;
-  const MIN_THUMB_PX = 24;
   let scrollbarAwake = false;
   let scrollbarIdleTimer = 0;
   // Thumb drag (mouse): the pointer is captured, so it keeps scrolling even when it leaves the thin bar.
@@ -363,7 +362,8 @@ export function createControls(deps: ControlsDeps): Controls {
     return focused !== undefined && selectGameButtons.includes(focused);
   }
 
-  /** Recomputes the thumb's size/position and whether it should be visible. Cheap; safe to call often. */
+  /** Repositions the thumb and decides whether it should be visible. Its height is fixed (see styles.css),
+   * so this only maps the scroll position onto the thumb's travel. Cheap; safe to call often. */
   function updateSelectGameScrollbar(): void {
     if (popupView !== 'select-game') {
       selectGameThumb.classList.remove('is-visible');
@@ -376,10 +376,9 @@ export function createControls(deps: ControlsDeps): Controls {
     const show = overflowing && (thumbDragging || (scrollbarAwake && focusedIsGameButton()));
     selectGameThumb.classList.toggle('is-visible', show);
     if (!overflowing) return;
-    const height = Math.max(MIN_THUMB_PX, (clientHeight / scrollHeight) * clientHeight);
-    const top = (scrollTop / scrollable) * (clientHeight - height);
-    selectGameThumb.style.height = `${height}px`;
-    selectGameThumb.style.transform = `translateY(${top}px)`;
+    // Travel = the track minus the (fixed) thumb. Guard a track shorter than the thumb itself.
+    const track = Math.max(0, clientHeight - selectGameThumb.offsetHeight);
+    selectGameThumb.style.transform = `translateY(${(scrollTop / scrollable) * track}px)`;
   }
 
   /** Marks the scrollbar awake and restarts the idle countdown; after it elapses the thumb fades out. */

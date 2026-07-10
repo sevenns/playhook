@@ -629,6 +629,9 @@ html:not(.cursor-hidden) .rect-button:hover,
   top: 0;
   right: calc(-1 * (var(--thumb-width) + var(--thumb-gap)));
   width: var(--thumb-width);
+  /* Fixed height: a proportional thumb (clientHeight/scrollHeight) grows to nearly the full track when the
+     list only just overflows, which reads as a bug. JS only positions it (translateY). */
+  height: calc(32 * var(--px));
   border-radius: calc(2 * var(--px));
   /* Barely there at rest; it firms up under the cursor (and for the whole drag). */
   background: color-mix(in srgb, var(--fg) 10%, transparent);
