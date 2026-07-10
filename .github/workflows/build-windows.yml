@@ -54,15 +54,20 @@ jobs:
       # assets across two drafts. Its "reuse an existing release" check does match a draft by tag name,
       # but a draft carries no real git tag, so nothing is found while both are racing to create it.
       # Drafting the release up front removes the race: both targets find this one and upload into it.
+      #
+      # Fail fast on an already-published release: electron-builder only logs a warning and uploads
+      # nothing when the release it finds is not a draft, leaving a green job with no assets. Publish
+      # the release after this workflow finishes, never while it runs.
       - name: Ensure draft release exists
         shell: bash
         run: |
           tag="v$(node -p "require('./package.json').version")"
-          if gh release view "$tag" >/dev/null 2>&1; then
-            echo "Release $tag already exists — reusing it."
-          else
-            gh release create "$tag" --draft --target "$GITHUB_SHA" --title "$tag" --notes "$tag"
-          fi
+          isDraft=$(gh release view "$tag" --json isDraft --jq .isDraft 2>/dev/null || echo missing)
+          case "$isDraft" in
+            missing) gh release create "$tag" --draft --target "$GITHUB_SHA" --title "$tag" --notes "$tag" ;;
+            true)    echo "Draft release $tag already exists — reusing it." ;;
+            false)   echo "::error::Release $tag is already published. electron-builder refuses to upload assets into it. Delete the release (and its tag) and re-run." ; exit 1 ;;
+          esac
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
