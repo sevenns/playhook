@@ -114,7 +114,13 @@
                  data-game-id) inside a scrollable list, with a fixed Close below it (stays reachable when
                  the list scrolls). Picking a game closes the whole popup and switches. -->
             <div class="actions-group" data-group="select-game">
-              <div id="select-game-list" class="select-game-list"></div>
+              <!-- The native scrollbar is hidden and replaced by #select-game-thumb: a real element, so it
+                   can fade in/out (Chromium never animates ::-webkit-scrollbar). controls.ts sizes and
+                   positions it from the list's scroll geometry. -->
+              <div class="select-game-scroll">
+                <div id="select-game-list" class="select-game-list"></div>
+                <div id="select-game-thumb" class="select-game-thumb" aria-hidden="true"></div>
+              </div>
               <button id="menu-select-close" class="text-button" type="button" data-i18n="launcher.menu.close">Close</button>
             </div>
             <div class="actions-group" data-group="power">

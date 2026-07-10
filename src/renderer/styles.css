@@ -581,11 +581,20 @@ html:not(.cursor-hidden) .rect-button:hover,
 }
 
 /* ONLY the game list may claim the column's leftover height (the other stacks stay content-sized and
-   pinned to the bottom). `min-height:0` + `overflow:hidden` are what actually stop it from spilling. */
+   pinned to the bottom). `min-height:0` is what stops it from spilling — the scroll area is contained by
+   .select-game-scroll + the list's own overflow-y. Overflow stays VISIBLE here on purpose, so the
+   scrollbar thumb can sit outside the list's right edge. */
 #popup[data-view='select-game'] .actions-group[data-group='select-game'] {
   flex: 1 1 auto;
   min-height: 0;
-  overflow: hidden;
+}
+
+/* Positioning context for the custom scrollbar thumb, which overlays the list's right edge. */
+.select-game-scroll {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
 }
 
 /* Select-game list: the game buttons SCROLL when a card carries many games (they never shrink — see
@@ -597,33 +606,66 @@ html:not(.cursor-hidden) .rect-button:hover,
   align-items: flex-end;
   gap: calc(8 * var(--px));
   width: 100%;
-  flex: 1 1 auto;
-  min-height: 0;
+  height: 100%;
   overflow-y: auto;
   /* Room so the last item isn't flush against the Close button below. */
   padding-bottom: calc(8 * var(--px));
+  /* Hide the native scrollbar entirely — Chromium never animates ::-webkit-scrollbar, so a fade is
+     impossible there. The visible one is .select-game-thumb, a real element we can transition. */
+  scrollbar-width: none;
+  --fade-v: calc(8 * var(--px)); /* soft-fade height at a scroll-clipped edge */
+}
+.select-game-list::-webkit-scrollbar {
+  display: none;
 }
 
-/* Scrollbar: the chunky default is replaced by a hairline thumb that barely reads against the frosted
-   popup (it only appears when the list actually overflows). Chromium pseudo-elements — this is Electron,
-   so no cross-browser fallback is needed. The track and the arrow buttons are removed entirely. */
-.select-game-list::-webkit-scrollbar {
-  width: calc(4 * var(--px));
+/* Soft-fade the edge the list is actually cut at, so items don't pop in/out against a hard line. JS adds
+   is-fade-top / is-fade-bottom from the scroll position, so the top fade is absent at the very top (and
+   the bottom one at the very bottom) — nothing is dimmed that isn't clipped. */
+.select-game-list.is-fade-top:not(.is-fade-bottom) {
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 var(--fade-v));
+  mask-image: linear-gradient(to bottom, transparent 0, #000 var(--fade-v));
 }
-.select-game-list::-webkit-scrollbar-track {
-  background: transparent;
+.select-game-list.is-fade-bottom:not(.is-fade-top) {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - var(--fade-v)), transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - var(--fade-v)), transparent 100%);
 }
-.select-game-list::-webkit-scrollbar-thumb {
-  background: color-mix(in srgb, var(--fg) 18%, transparent);
+.select-game-list.is-fade-top.is-fade-bottom {
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 var(--fade-v),
+    #000 calc(100% - var(--fade-v)),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 var(--fade-v),
+    #000 calc(100% - var(--fade-v)),
+    transparent 100%
+  );
+}
+
+/* Custom scrollbar thumb: a hairline that barely reads against the frosted popup. Sized/positioned from
+   JS (height + translateY) and faded out when the focus leaves the game list or after a few idle seconds.
+   It sits OUTSIDE the list's right edge (a negative `right` pulls it out of the box), so the buttons keep
+   their full width — nothing shifts when it appears. The group's overflow is visible for this to show. */
+.select-game-thumb {
+  --thumb-width: calc(4 * var(--px));
+  --thumb-gap: calc(16 * var(--px)); /* clearance between the buttons and the scrollbar */
+  position: absolute;
+  top: 0;
+  right: calc(-1 * (var(--thumb-width) + var(--thumb-gap)));
+  width: var(--thumb-width);
   border-radius: calc(2 * var(--px));
+  background: color-mix(in srgb, var(--fg) 22%, transparent);
+  opacity: 0;
+  transition: opacity 0.35s ease;
+  pointer-events: none;
 }
-/* Gated on a live cursor, like the button :hover rules — the gamepad shouldn't leave a stale highlight. */
-html:not(.cursor-hidden) .select-game-list::-webkit-scrollbar-thumb:hover {
-  background: color-mix(in srgb, var(--fg) 34%, transparent);
-}
-.select-game-list::-webkit-scrollbar-button,
-.select-game-list::-webkit-scrollbar-corner {
-  display: none;
+.select-game-thumb.is-visible {
+  opacity: 1;
 }
 
 /* Game buttons fill the list width; the title is left-aligned and HARD-CLIPPED when it doesn't fit (no

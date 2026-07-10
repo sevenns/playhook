@@ -75,8 +75,10 @@ export function createControls(deps: ControlsDeps): Controls {
   const menuKill = req<HTMLButtonElement>('menu-kill');
   const menuSelectGame = req<HTMLButtonElement>('menu-select-game');
   const menuClose = req<HTMLButtonElement>('menu-close');
-  // "Select game" list: a scrollable container of dynamically-built game buttons + a static Close button.
+  // "Select game" list: a scrollable container of dynamically-built game buttons + a static Close button,
+  // plus the custom scrollbar thumb overlaying the list (the native one is hidden — see styles.css).
   const selectGameList = req('select-game-list');
+  const selectGameThumb = req('select-game-thumb');
   const menuSelectClose = req<HTMLButtonElement>('menu-select-close');
   const powerShutdown = req<HTMLButtonElement>('power-shutdown');
   const powerReboot = req<HTMLButtonElement>('power-reboot');
@@ -338,7 +340,59 @@ export function createControls(deps: ControlsDeps): Controls {
     stackIndex = 0; // top of the list (the first other game), not the bottom Close
     applyStackFocus();
     applyFocus();
+    noteSelectGameActivity();
   }
+
+  // ── Custom scrollbar for the game list ──────────────────────────────────────
+  // The native scrollbar is hidden (Chromium never animates ::-webkit-scrollbar), so we drive a real
+  // element and fade it. It shows only while the list overflows AND the focus is ON a game button AND
+  // there has been input recently — i.e. it appears exactly when you're scrolling through games.
+  const SCROLLBAR_IDLE_MS = 5000;
+  const MIN_THUMB_PX = 24;
+  let scrollbarAwake = false;
+  let scrollbarIdleTimer = 0;
+
+  /** True when the popup focus sits on one of the (dynamic) game buttons, not on Close. */
+  function focusedIsGameButton(): boolean {
+    if (popupView !== 'select-game') return false;
+    const focused = stackFocusables()[stackIndex];
+    return focused !== undefined && selectGameButtons.includes(focused);
+  }
+
+  /** Recomputes the thumb's size/position and whether it should be visible. Cheap; safe to call often. */
+  function updateSelectGameScrollbar(): void {
+    if (popupView !== 'select-game') {
+      selectGameThumb.classList.remove('is-visible');
+      return;
+    }
+    const { scrollHeight, clientHeight, scrollTop } = selectGameList;
+    const scrollable = scrollHeight - clientHeight;
+    const overflowing = scrollable > 1;
+    selectGameThumb.classList.toggle('is-visible', overflowing && scrollbarAwake && focusedIsGameButton());
+    // Soft-fade only the edge the list is actually clipped at (no top fade at the very top, and vice versa).
+    selectGameList.classList.toggle('is-fade-top', overflowing && scrollTop > 1);
+    selectGameList.classList.toggle('is-fade-bottom', overflowing && scrollTop < scrollable - 1);
+    if (!overflowing) return;
+    const height = Math.max(MIN_THUMB_PX, (clientHeight / scrollHeight) * clientHeight);
+    const top = (scrollTop / scrollable) * (clientHeight - height);
+    selectGameThumb.style.height = `${height}px`;
+    selectGameThumb.style.transform = `translateY(${top}px)`;
+  }
+
+  /** Marks the scrollbar awake and restarts the idle countdown; after it elapses the thumb fades out. */
+  function noteSelectGameActivity(): void {
+    scrollbarAwake = true;
+    if (scrollbarIdleTimer !== 0) window.clearTimeout(scrollbarIdleTimer);
+    scrollbarIdleTimer = window.setTimeout(() => {
+      scrollbarIdleTimer = 0;
+      scrollbarAwake = false;
+      updateSelectGameScrollbar();
+    }, SCROLLBAR_IDLE_MS);
+    updateSelectGameScrollbar();
+  }
+
+  // Scrolling (wheel / scrollIntoView from gamepad navigation) counts as activity and moves the thumb.
+  selectGameList.addEventListener('scroll', () => noteSelectGameActivity());
 
   // ── Main bar focus (gamepad / mouse) ─────────────────────────────────────────
 
@@ -423,12 +477,14 @@ export function createControls(deps: ControlsDeps): Controls {
   function noteGamepadActivity(): void {
     setCursorHidden(true);
     armIdleTimer();
+    noteSelectGameActivity();
   }
 
   // Real mouse movement = activity: show the cursor + restart the idle.
   function noteMouseActivity(): void {
     setCursorHidden(false);
     armIdleTimer();
+    noteSelectGameActivity();
   }
 
   function moveFocus(delta: number): void {
@@ -509,6 +565,9 @@ export function createControls(deps: ControlsDeps): Controls {
     if (focused !== undefined) focused.scrollIntoView({ block: 'nearest' });
     // Start/stop the focused game title's marquee (a no-op unless the picker is open).
     updateSelectGameMarquee();
+    // Reflect the new focus on the scrollbar (it hides when the focus leaves the game list). NOT an
+    // activity ping: applyStackFocus also runs on ordinary re-renders, which must not keep it awake.
+    updateSelectGameScrollbar();
   }
 
   function focusStackBottom(): void {
