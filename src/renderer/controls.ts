@@ -369,9 +369,6 @@ export function createControls(deps: ControlsDeps): Controls {
     const scrollable = scrollHeight - clientHeight;
     const overflowing = scrollable > 1;
     selectGameThumb.classList.toggle('is-visible', overflowing && scrollbarAwake && focusedIsGameButton());
-    // Soft-fade only the edge the list is actually clipped at (no top fade at the very top, and vice versa).
-    selectGameList.classList.toggle('is-fade-top', overflowing && scrollTop > 1);
-    selectGameList.classList.toggle('is-fade-bottom', overflowing && scrollTop < scrollable - 1);
     if (!overflowing) return;
     const height = Math.max(MIN_THUMB_PX, (clientHeight / scrollHeight) * clientHeight);
     const top = (scrollTop / scrollable) * (clientHeight - height);

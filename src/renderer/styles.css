@@ -613,38 +613,9 @@ html:not(.cursor-hidden) .rect-button:hover,
   /* Hide the native scrollbar entirely — Chromium never animates ::-webkit-scrollbar, so a fade is
      impossible there. The visible one is .select-game-thumb, a real element we can transition. */
   scrollbar-width: none;
-  --fade-v: calc(8 * var(--px)); /* soft-fade height at a scroll-clipped edge */
 }
 .select-game-list::-webkit-scrollbar {
   display: none;
-}
-
-/* Soft-fade the edge the list is actually cut at, so items don't pop in/out against a hard line. JS adds
-   is-fade-top / is-fade-bottom from the scroll position, so the top fade is absent at the very top (and
-   the bottom one at the very bottom) — nothing is dimmed that isn't clipped. */
-.select-game-list.is-fade-top:not(.is-fade-bottom) {
-  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 var(--fade-v));
-  mask-image: linear-gradient(to bottom, transparent 0, #000 var(--fade-v));
-}
-.select-game-list.is-fade-bottom:not(.is-fade-top) {
-  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - var(--fade-v)), transparent 100%);
-  mask-image: linear-gradient(to bottom, #000 calc(100% - var(--fade-v)), transparent 100%);
-}
-.select-game-list.is-fade-top.is-fade-bottom {
-  -webkit-mask-image: linear-gradient(
-    to bottom,
-    transparent 0,
-    #000 var(--fade-v),
-    #000 calc(100% - var(--fade-v)),
-    transparent 100%
-  );
-  mask-image: linear-gradient(
-    to bottom,
-    transparent 0,
-    #000 var(--fade-v),
-    #000 calc(100% - var(--fade-v)),
-    transparent 100%
-  );
 }
 
 /* Custom scrollbar thumb: a hairline that barely reads against the frosted popup. Sized/positioned from
@@ -668,16 +639,20 @@ html:not(.cursor-hidden) .rect-button:hover,
   opacity: 1;
 }
 
-/* Game buttons fill the list width; the title is left-aligned and HARD-CLIPPED when it doesn't fit (no
-   ellipsis). Only while the button is focused (the active row) does the title marquee-scroll back and
-   forth so the full name is readable — the popup never widens. Non-overflowing titles never scroll. */
+/* Game buttons size to their title (like every other .text-button, right-aligned in the stack), but never
+   wider than the list — a long title is HARD-CLIPPED at that cap (no ellipsis). Only while the button is
+   focused (the active row) does the title marquee-scroll back and forth so the full name is readable —
+   the popup never widens. Non-overflowing titles never scroll. */
 .select-game-list .game-button {
-  width: 100%;
+  width: auto;
+  max-width: 100%;
   justify-content: flex-start;
   overflow: hidden;
 }
 .game-label {
-  flex: 1 1 auto;
+  /* `0 1 auto`: sized by the text, but allowed to SHRINK once the button hits max-width — that shrink
+     (with min-width:0) is what produces the clip. `1 …` would instead stretch it on short titles. */
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
