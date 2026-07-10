@@ -24,10 +24,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
+      # Node 22.12+ is required by electron@43 and @electron/rebuild@4 (their `engines`).
       - name: Setup Node.js
         uses: actions/setup-node@v5
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
 
       # npm ci runs postinstall (electron-builder install-app-deps) — the runner
