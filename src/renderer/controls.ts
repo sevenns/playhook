@@ -347,10 +347,14 @@ export function createControls(deps: ControlsDeps): Controls {
   // The native scrollbar is hidden (Chromium never animates ::-webkit-scrollbar), so we drive a real
   // element and fade it. It shows only while the list overflows AND the focus is ON a game button AND
   // there has been input recently — i.e. it appears exactly when you're scrolling through games.
-  const SCROLLBAR_IDLE_MS = 5000;
+  const SCROLLBAR_IDLE_MS = 2000;
   const MIN_THUMB_PX = 24;
   let scrollbarAwake = false;
   let scrollbarIdleTimer = 0;
+  // Thumb drag (mouse): the pointer is captured, so it keeps scrolling even when it leaves the thin bar.
+  let thumbDragging = false;
+  let dragStartY = 0;
+  let dragStartScrollTop = 0;
 
   /** True when the popup focus sits on one of the (dynamic) game buttons, not on Close. */
   function focusedIsGameButton(): boolean {
@@ -368,7 +372,9 @@ export function createControls(deps: ControlsDeps): Controls {
     const { scrollHeight, clientHeight, scrollTop } = selectGameList;
     const scrollable = scrollHeight - clientHeight;
     const overflowing = scrollable > 1;
-    selectGameThumb.classList.toggle('is-visible', overflowing && scrollbarAwake && focusedIsGameButton());
+    // Stay visible for the whole drag, even if the pointer is held still past the idle timeout.
+    const show = overflowing && (thumbDragging || (scrollbarAwake && focusedIsGameButton()));
+    selectGameThumb.classList.toggle('is-visible', show);
     if (!overflowing) return;
     const height = Math.max(MIN_THUMB_PX, (clientHeight / scrollHeight) * clientHeight);
     const top = (scrollTop / scrollable) * (clientHeight - height);
@@ -391,6 +397,43 @@ export function createControls(deps: ControlsDeps): Controls {
   // Scrolling (wheel / scrollIntoView from gamepad navigation) counts as activity and moves the thumb.
   selectGameList.addEventListener('scroll', () => noteSelectGameActivity());
 
+  // Drag the thumb to scroll (the native scrollbar is hidden, so we implement the grab ourselves). The
+  // pointer is captured on press, so the drag survives the pointer wandering off the 4px bar.
+  selectGameThumb.addEventListener('pointerdown', (event) => {
+    if (popupView !== 'select-game') return;
+    if (selectGameList.scrollHeight - selectGameList.clientHeight <= 1) return;
+    thumbDragging = true;
+    selectGameThumb.classList.add('is-dragging'); // keep it emphasised even if the pointer leaves the bar
+    dragStartY = event.clientY;
+    dragStartScrollTop = selectGameList.scrollTop;
+    selectGameThumb.setPointerCapture(event.pointerId);
+    event.preventDefault(); // no text selection / native drag
+    noteSelectGameActivity();
+  });
+
+  selectGameThumb.addEventListener('pointermove', (event) => {
+    if (!thumbDragging) return;
+    const { scrollHeight, clientHeight } = selectGameList;
+    const scrollable = scrollHeight - clientHeight;
+    // The thumb travels `clientHeight - thumbHeight`; map that travel onto the scrollable distance.
+    const track = clientHeight - selectGameThumb.offsetHeight;
+    if (track <= 0 || scrollable <= 0) return;
+    selectGameList.scrollTop = dragStartScrollTop + ((event.clientY - dragStartY) / track) * scrollable;
+    noteSelectGameActivity();
+  });
+
+  function endThumbDrag(event: PointerEvent): void {
+    if (!thumbDragging) return;
+    thumbDragging = false;
+    selectGameThumb.classList.remove('is-dragging');
+    if (selectGameThumb.hasPointerCapture(event.pointerId)) {
+      selectGameThumb.releasePointerCapture(event.pointerId);
+    }
+    noteSelectGameActivity(); // restart the idle countdown from the moment the drag ended
+  }
+  selectGameThumb.addEventListener('pointerup', endThumbDrag);
+  selectGameThumb.addEventListener('pointercancel', endThumbDrag);
+
   // ── Main bar focus (gamepad / mouse) ─────────────────────────────────────────
 
   const ALL_MAIN_BUTTONS: readonly HTMLButtonElement[] = [playButton, moreButton];
@@ -400,10 +443,10 @@ export function createControls(deps: ControlsDeps): Controls {
   // it wakes again only on an explicit gamepad move or a mouse hover. `wasActive` tracks the edge.
   let focusRevealed = true;
   let wasActive = false;
-  // Idle timeout, shared by the bar focus and the mouse cursor: after 30s with no input the bar
+  // Idle timeout, shared by the bar focus and the mouse cursor: after 5s with no input the bar
   // highlight goes dormant AND the cursor hides. Any input restarts the countdown; the gamepad hides the
   // cursor at once (the user switched to the pad), a real mouse move shows it (see the note* helpers).
-  const IDLE_MS = 30_000;
+  const IDLE_MS = 5_000;
   let idleTimer = 0;
   let cursorHidden = false;
 
@@ -456,7 +499,7 @@ export function createControls(deps: ControlsDeps): Controls {
     document.documentElement.classList.toggle('cursor-hidden', hidden);
   }
 
-  // (Re)start the 30s countdown. On expiry (no input for 30s) the cursor hides and the bar highlight
+  // (Re)start the idle countdown (IDLE_MS). On expiry the cursor hides and the bar highlight
   // goes dormant if it's shown with nothing open — both "went idle" at the same moment.
   function armIdleTimer(): void {
     if (idleTimer !== 0) window.clearTimeout(idleTimer);
@@ -874,7 +917,7 @@ export function createControls(deps: ControlsDeps): Controls {
     setGames,
     start: () => {
       gamepad.start();
-      armIdleTimer(); // begin the countdown so an untouched launcher hides its cursor after 30s
+      armIdleTimer(); // begin the countdown so an untouched launcher hides its cursor (IDLE_MS)
     },
   };
 }

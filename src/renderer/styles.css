@@ -47,7 +47,7 @@
   cursor: default;
 }
 
-/* Cursor hidden while the gamepad is in use, or after 30s idle (class toggled from controls.ts). The
+/* Cursor hidden while the gamepad is in use, or after the idle timeout (class toggled from controls.ts). The
    descendant selector's specificity beats the per-element cursor rules (buttons' pointer, the copyable
    path's text); a real mouse move restores it. */
 html.cursor-hidden,
@@ -630,13 +630,30 @@ html:not(.cursor-hidden) .rect-button:hover,
   right: calc(-1 * (var(--thumb-width) + var(--thumb-gap)));
   width: var(--thumb-width);
   border-radius: calc(2 * var(--px));
-  background: color-mix(in srgb, var(--fg) 22%, transparent);
+  /* Barely there at rest; it firms up under the cursor (and for the whole drag). */
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
   opacity: 0;
-  transition: opacity 0.35s ease;
+  transition: opacity 0.35s ease, background 0.2s ease;
+  /* Not grabbable while faded out — an invisible 0-opacity element would still swallow clicks. */
   pointer-events: none;
 }
 .select-game-thumb.is-visible {
   opacity: 1;
+  pointer-events: auto;
+  cursor: pointer;
+}
+/* Hover is gated on a live cursor (like the buttons): once the gamepad takes over, the pointer still
+   physically sits wherever it was left, and a stale highlight would linger. `is-dragging` keeps the
+   emphasis while the pointer is captured and may wander off the thin bar. */
+html:not(.cursor-hidden) .select-game-thumb.is-visible:hover,
+.select-game-thumb.is-dragging {
+  background: color-mix(in srgb, var(--fg) 22%, transparent);
+}
+/* The 4px bar is far too thin to aim at: widen the HIT area on both sides without changing the visuals. */
+.select-game-thumb::before {
+  content: '';
+  position: absolute;
+  inset: 0 calc(-8 * var(--px));
 }
 
 /* Game buttons size to their title (like every other .text-button, right-aligned in the stack), but never
