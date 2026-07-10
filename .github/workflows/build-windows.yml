@@ -48,8 +48,26 @@ jobs:
       - name: Compile TypeScript + assets
         run: npm run build
 
-      # --publish always: build the artifacts AND upload them (+ latest.yml for auto-update) to a
-      # GitHub Release tagged v{version} (created as a draft — publish it manually to go live).
+      # electron-builder 26.x publishes the nsis and portable targets in parallel, and its publisher
+      # cache is filled only after an `await` (PublishManager.getOrCreatePublisher became async) — so
+      # both targets build their own GitHub publisher and each drafts its own release, splitting the
+      # assets across two drafts. Its "reuse an existing release" check does match a draft by tag name,
+      # but a draft carries no real git tag, so nothing is found while both are racing to create it.
+      # Drafting the release up front removes the race: both targets find this one and upload into it.
+      - name: Ensure draft release exists
+        shell: bash
+        run: |
+          tag="v$(node -p "require('./package.json').version")"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "Release $tag already exists — reusing it."
+          else
+            gh release create "$tag" --draft --target "$GITHUB_SHA" --title "$tag" --notes "$tag"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # --publish always: build the artifacts AND upload them (+ latest.yml for auto-update) to the
+      # GitHub Release tagged v{version} drafted above (publish it manually to go live).
       # GH_TOKEN = the default workflow token, scoped to this repo by the `permissions` block above.
       - name: Package (nsis + portable) and publish
         run: npx electron-builder --win --publish always
