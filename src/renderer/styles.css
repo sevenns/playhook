@@ -556,10 +556,13 @@ html:not(.cursor-hidden) .rect-button:hover,
    Pinned to the column bottom (margin-top:auto). One group per view; only the active view's group
    shows, as a vertical stack aligned to the right edge — a longer localized label grows LEFT, the
    right edge stays fixed. Default focus is the BOTTOM button (set from controls.ts). */
+/* A flex column (not a plain block): the active group must be a flex ITEM so a too-long one (the game
+   list) can be constrained by the column and scroll internally. `min-height:0` lets this box shrink below
+   its content height; without it — or as a block — the list overflows visibly past the column. */
 .popup-actions {
   margin-top: auto;
-  /* Allow the stack to shrink below its content height, so a too-long group (the game list) becomes a
-     scroll area bounded by the column instead of overflowing it. */
+  display: flex;
+  flex-direction: column;
   min-height: 0;
 }
 
@@ -575,8 +578,14 @@ html:not(.cursor-hidden) .rect-button:hover,
 #popup[data-view='error'] .actions-group[data-group='error'],
 #popup[data-view='select-game'] .actions-group[data-group='select-game'] {
   display: flex;
-  /* The group owns the column's leftover height: the list scrolls inside it, Close stays pinned below. */
+}
+
+/* ONLY the game list may claim the column's leftover height (the other stacks stay content-sized and
+   pinned to the bottom). `min-height:0` + `overflow:hidden` are what actually stop it from spilling. */
+#popup[data-view='select-game'] .actions-group[data-group='select-game'] {
+  flex: 1 1 auto;
   min-height: 0;
+  overflow: hidden;
 }
 
 /* Select-game list: the game buttons SCROLL when a card carries many games (they never shrink — see
