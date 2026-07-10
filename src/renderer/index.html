@@ -62,7 +62,7 @@
         </div>
       </footer>
 
-      <!-- Unified popup: ONE frosted veil + ONE right-side column (450px), whose content and action stack
+      <!-- Unified popup: ONE frosted veil + ONE right-side column (550px), whose content and action stack
            switch by data-view (details / power / confirm / error) — a mirror of the popup state machine in
            controls.ts. A single veil (vs one per section) avoids the cross-fade flicker of two identical
            blur veils when moving Details ↔ Power: the veil stays, only the content changes.
@@ -105,7 +105,23 @@
               <!-- Force-close the running game — its text + visibility come from JS (shown only while a
                    game is running), so no data-i18n (mirrors the install toggle, keeps the i18n HTML test happy). -->
               <button id="menu-kill" class="text-button" type="button"></button>
+              <!-- Opens the "Select game" list — shown only for a multi-game card on the ready screen (JS
+                   toggles visibility); no data-i18n so a language change relabels it at render time. -->
+              <button id="menu-select-game" class="text-button" type="button"></button>
               <button id="menu-close" class="text-button" type="button" data-i18n="launcher.menu.close">Close</button>
+            </div>
+            <!-- Select-game list: the card's OTHER games (built from JS, each a .text-button carrying
+                 data-game-id) inside a scrollable list, with a fixed Close below it (stays reachable when
+                 the list scrolls). Picking a game closes the whole popup and switches. -->
+            <div class="actions-group" data-group="select-game">
+              <!-- The native scrollbar is hidden and replaced by #select-game-thumb: a real element, so it
+                   can fade in/out (Chromium never animates ::-webkit-scrollbar). controls.ts sizes and
+                   positions it from the list's scroll geometry. -->
+              <div class="select-game-scroll">
+                <div id="select-game-list" class="select-game-list"></div>
+                <div id="select-game-thumb" class="select-game-thumb" aria-hidden="true"></div>
+              </div>
+              <button id="menu-select-close" class="text-button" type="button" data-i18n="launcher.menu.close">Close</button>
             </div>
             <div class="actions-group" data-group="power">
               <button id="power-shutdown" class="text-button" type="button" data-i18n="launcher.menu.shutdown">Shutdown</button>

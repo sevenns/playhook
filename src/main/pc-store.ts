@@ -12,7 +12,9 @@ import { readJsonValidated, writeJsonAtomic } from './json-store';
 import { type SyncState } from './save-sync';
 import { log } from './logger';
 
-const statsSchema = z.object({
+// Exported so stats.ts can build the per-id card-stats map schema (v2) on top of the same single-game
+// shape — one source of truth for what a valid Stats record is.
+export const statsSchema = z.object({
   schemaVersion: z.literal(1),
   totalPlaySeconds: z.number().nonnegative(),
   lastPlayedAt: z.string().nullable(),

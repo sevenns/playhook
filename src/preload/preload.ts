@@ -7,7 +7,7 @@
 // catch a *missing* channel though — that completeness is guarded by the ipc-channels
 // unit test (shared/types.ts is the single source of truth).
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
-import type { AppState, AudioAssets, AudioVolumes, HeroAssets, RendererApi } from '../shared/types';
+import type { AppState, AudioAssets, AudioVolumes, GameLibrary, HeroAssets, RendererApi } from '../shared/types';
 import type { IPC } from '../shared/types';
 import type { Locale } from '../shared/i18n/index';
 
@@ -27,6 +27,9 @@ const CHANNELS = {
   audioRequest: 'audio:request',
   heroUpdate: 'hero:update',
   heroRequest: 'hero:request',
+  libraryUpdate: 'library:update',
+  libraryRequest: 'library:request',
+  actionSelect: 'action:select',
   wallpaperRequest: 'wallpaper:request',
   wallpaperUpdate: 'wallpaper:update',
   volumeRequest: 'volume:request',
@@ -88,6 +91,17 @@ const api: RendererApi = {
   },
   requestHero(): Promise<HeroAssets | null> {
     return ipcRenderer.invoke(CHANNELS.heroRequest) as Promise<HeroAssets | null>;
+  },
+  onLibraryUpdate(callback: (library: GameLibrary | null) => void): void {
+    ipcRenderer.on(CHANNELS.libraryUpdate, (_event: IpcRendererEvent, library: GameLibrary | null) => {
+      callback(library);
+    });
+  },
+  requestLibrary(): Promise<GameLibrary | null> {
+    return ipcRenderer.invoke(CHANNELS.libraryRequest) as Promise<GameLibrary | null>;
+  },
+  selectGame(id: string): void {
+    ipcRenderer.send(CHANNELS.actionSelect, id);
   },
   requestWallpaper(): Promise<string | null> {
     return ipcRenderer.invoke(CHANNELS.wallpaperRequest) as Promise<string | null>;

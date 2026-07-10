@@ -199,6 +199,22 @@ export interface HeroAssets {
   readonly images: readonly string[];
 }
 
+/**
+ * One game's identity for the "Select game" popup list. A card can carry several games; the light list
+ * of {id, title} is delivered once per card on the `library:update` channel so the renderer can render
+ * the picker without a round-trip. The SELECTED game's heavy assets (hero/audio/GameInfo) still travel
+ * on the existing hero:update / audio:update / state:update channels — only for the one game on screen.
+ */
+export interface LibraryEntry {
+  readonly id: string;
+  readonly title: string;
+}
+
+/** The list of games on the current card (empty only transiently; a card with 0 valid games errors). */
+export interface GameLibrary {
+  readonly games: readonly LibraryEntry[];
+}
+
 /** Game statistics. The source of truth is on the PC; the card copy is best-effort. */
 export interface Stats {
   readonly schemaVersion: 1;
@@ -406,6 +422,13 @@ export const IPC = {
   heroUpdate: 'hero:update',
   /** renderer → main: request the current hero images (on window startup). */
   heroRequest: 'hero:request',
+  /** main → renderer: the light list of games ({id,title}) on the current card (or null when no card).
+   * Delivered once per card so the renderer can render the "Select game" popup without a round-trip. */
+  libraryUpdate: 'library:update',
+  /** renderer → main (invoke): request the current game list (on window startup / back-fill). */
+  libraryRequest: 'library:request',
+  /** renderer → main: pick a game by id from the "Select game" popup. Switches to it on the ready screen. */
+  actionSelect: 'action:select',
   /** renderer → main: request the fallback wallpaper data URL (for the idle / empty screen). */
   wallpaperRequest: 'wallpaper:request',
   /** main → game-renderer: updated Empty-screen wallpaper data URL (pushed when changed in settings). */
@@ -486,8 +509,6 @@ export const IPC = {
   configValidate: 'config:validate',
   /** configure-renderer → main (invoke): write game.json + try to apply without a restart (payload {root,text}). */
   configSave: 'config:save',
-  /** configure-renderer → main (invoke): the three starter templates as JSON strings. */
-  configTemplatesRequest: 'config:templates-request',
   /** configure-renderer → main (invoke): the manifest JSON Schema for the editor's completions/hover. */
   configSchemaRequest: 'config:schema-request',
   /** configure-renderer → main (invoke): the current AppSettings (for the window theme). */
@@ -532,8 +553,15 @@ export type ConfigEditorCommand = 'format';
 export interface DriveCandidate {
   /** Mountpoint / card root, e.g. "E:\\". */
   readonly root: string;
-  /** Display label: "E:\\ — Hollow Knight" | "E:\\ — invalid game.json" | "E:\\ — blank drive". */
+  /** Display label: "E:\\ — Hollow Knight" | "E:\\ — 3 games" | "E:\\ — invalid game.json" | "E:\\ — blank drive". */
   readonly label: string;
+  /**
+   * Content signature of this card's game.json — the sorted game ids (`''` blank, `'invalid'` unreadable).
+   * Identifies the MEDIA, not the slot: the Configure window compares it to detect a card swapped into the
+   * same mountpoint (the drive letter never changes) and to ignore cosmetic edits. Never displayed —
+   * `label` may be a bare count ("3 games") that two different cards would share.
+   */
+  readonly signature: string;
   /** True when a game.json exists in the root of this mountpoint. */
   readonly hasManifest: boolean;
   /** True when this root is the launcher's currently-active card (driveWatcher.getActiveRoot()). */
@@ -569,13 +597,6 @@ export type ConfigSaveResult =
       readonly message?: string;
     }
   | { readonly saved: false; readonly message: string };
-
-/** The three starter templates (valid JSON strings) offered when initializing a card. */
-export interface ConfigTemplates {
-  readonly executable: string;
-  readonly installer: string;
-  readonly steam: string;
-}
 
 /**
  * What the Configure form's Browse button is picking — drives the dialog's filters and mode:
@@ -629,6 +650,12 @@ export interface RendererApi {
   requestAudio(): Promise<AudioAssets | null>;
   onHeroUpdate(callback: (assets: HeroAssets | null) => void): void;
   requestHero(): Promise<HeroAssets | null>;
+  /** Live game-list updates (the card's games as {id,title}), pushed once per card (null when no card). */
+  onLibraryUpdate(callback: (library: GameLibrary | null) => void): void;
+  /** Current game list (on window startup / back-fill after a reload). */
+  requestLibrary(): Promise<GameLibrary | null>;
+  /** Pick a game by id (from the "Select game" popup) — switches to it on the ready screen. */
+  selectGame(id: string): void;
   requestWallpaper(): Promise<string | null>;
   /** Live Empty-screen wallpaper updates, pushed when the custom wallpaper changes in the settings window. */
   onWallpaperUpdate(callback: (url: string) => void): void;
@@ -696,8 +723,6 @@ export interface ConfigureApi {
   validateConfig(text: string): Promise<ConfigValidationResult>;
   /** Write game.json to the card and try to apply it without a restart. */
   saveConfig(root: string, text: string): Promise<ConfigSaveResult>;
-  /** The three starter templates as JSON strings. */
-  getTemplates(): Promise<ConfigTemplates>;
   /** Pick file(s)/a folder from the card via a native dialog; resolves with card-relative paths. */
   pickPath(root: string, kind: ConfigPickKind): Promise<ConfigPickResult>;
   /** Read a card-relative image into a data URL for the hero preview (null when unreadable). */

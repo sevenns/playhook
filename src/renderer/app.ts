@@ -41,9 +41,10 @@ const hero = createHeroController({
 });
 
 // ── Interaction layer (popups + focus + actions, see controls.ts) ────────────
-// Owns the popups, the two focus groups and the actions they trigger, plus their wiring (clicks, hover,
-// gamepad, Esc). render() drives it via applyGameButtons/clearGameButtons/refresh; main's error goes to
-// showError; the gamepad loop starts with start().
+// Owns the popups (incl. the "Select game" list for a multi-game card), the two focus groups and the
+// actions they trigger, plus their wiring (clicks, hover, gamepad, Esc). render() drives it via
+// applyGameButtons/clearGameButtons/refresh; main's error goes to showError; the game list arrives via
+// setGames; the gamepad loop starts with start().
 const controls = createControls({ getState: () => currentState, audio, getTranslator });
 
 // ── Info panel ──────────────────────────────────────────────────────────────
@@ -196,6 +197,11 @@ void window.api.requestVolumes().then(applyVolumes);
 // locally, so we never re-send this large payload on every state transition. See hero.applyAssets.
 window.api.onHeroUpdate((assets) => hero.applyAssets(assets));
 void window.api.requestHero().then((assets) => hero.applyAssets(assets));
+
+// The card's game list ({id,title}) is delivered on its own channel; controls uses it to build the
+// "Select game" popup. Seed on startup (back-fill after a window reconnect), then live updates.
+window.api.onLibraryUpdate((library) => controls.setGames(library?.games ?? []));
+void window.api.requestLibrary().then((library) => controls.setGames(library?.games ?? []));
 
 // Pause/resume music AND the hero rotation when the window is hidden to tray or restored. The active
 // layer keeps showing the current hero, so no force-show is needed on return — just (re)start the timer.

@@ -47,7 +47,7 @@
   cursor: default;
 }
 
-/* Cursor hidden while the gamepad is in use, or after 30s idle (class toggled from controls.ts). The
+/* Cursor hidden while the gamepad is in use, or after the idle timeout (class toggled from controls.ts). The
    descendant selector's specificity beats the per-element cursor rules (buttons' pointer, the copyable
    path's text); a real mouse move restores it. */
 html.cursor-hidden,
@@ -419,7 +419,7 @@ html:not(.cursor-hidden) .rect-button:hover,
 }
 
 /* ── Popup (unified: Details / Power / Confirm / Error) ─────────────────────
-   ONE frosted veil + ONE right-side column (450px). The top content and the bottom action stack both
+   ONE frosted veil + ONE right-side column (550px). The top content and the bottom action stack both
    switch by #popup[data-view]; the veil stays put across view changes, so Details ↔ Power doesn't
    cross-fade two identical blur veils. Toggled open with .is-open. */
 
@@ -442,14 +442,14 @@ html:not(.cursor-hidden) .rect-button:hover,
   transition: opacity 0.35s ease;
 }
 
-/* Right column: 450px wide, inset 50px on right/top/bottom. Content sits at the top; the action stack
+/* Right column: 550px wide, inset 50px on right/top/bottom. Content sits at the top; the action stack
    is pushed to the bottom (margin-top:auto on .popup-actions). Slides in + fades with the veil. */
 .popup-column {
   position: absolute;
   right: calc(50 * var(--px));
   top: calc(50 * var(--px));
   bottom: calc(50 * var(--px));
-  width: calc(450 * var(--px));
+  width: calc(550 * var(--px));
   display: flex;
   flex-direction: column;
   text-align: right;
@@ -556,8 +556,14 @@ html:not(.cursor-hidden) .rect-button:hover,
    Pinned to the column bottom (margin-top:auto). One group per view; only the active view's group
    shows, as a vertical stack aligned to the right edge — a longer localized label grows LEFT, the
    right edge stays fixed. Default focus is the BOTTOM button (set from controls.ts). */
+/* A flex column (not a plain block): the active group must be a flex ITEM so a too-long one (the game
+   list) can be constrained by the column and scroll internally. `min-height:0` lets this box shrink below
+   its content height; without it — or as a block — the list overflows visibly past the column. */
 .popup-actions {
   margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .actions-group {
@@ -569,8 +575,149 @@ html:not(.cursor-hidden) .rect-button:hover,
 #popup[data-view='details'] .actions-group[data-group='details'],
 #popup[data-view='power'] .actions-group[data-group='power'],
 #popup[data-view='confirm'] .actions-group[data-group='confirm'],
-#popup[data-view='error'] .actions-group[data-group='error'] {
+#popup[data-view='error'] .actions-group[data-group='error'],
+#popup[data-view='select-game'] .actions-group[data-group='select-game'] {
   display: flex;
+}
+
+/* ONLY the game list may claim the column's leftover height (the other stacks stay content-sized and
+   pinned to the bottom). `min-height:0` is what stops it from spilling — the scroll area is contained by
+   .select-game-scroll + the list's own overflow-y. Overflow stays VISIBLE here on purpose, so the
+   scrollbar thumb can sit outside the list's right edge. */
+#popup[data-view='select-game'] .actions-group[data-group='select-game'] {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* Positioning context for the custom scrollbar thumb, which overlays the list's right edge. */
+.select-game-scroll {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+}
+
+/* Select-game list: the game buttons SCROLL when a card carries many games (they never shrink — see
+   .text-button's flex:0 0 auto), while the Close button below stays fixed and reachable. The scroll area
+   takes whatever height the popup column has left, so it adapts to the window instead of a magic cap. */
+.select-game-list {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: calc(8 * var(--px));
+  width: 100%;
+  height: 100%;
+  overflow-y: auto;
+  /* Room so the last item isn't flush against the Close button below. */
+  padding-bottom: calc(8 * var(--px));
+  /* Hide the native scrollbar entirely — Chromium never animates ::-webkit-scrollbar, so a fade is
+     impossible there. The visible one is .select-game-thumb, a real element we can transition. */
+  scrollbar-width: none;
+}
+.select-game-list::-webkit-scrollbar {
+  display: none;
+}
+
+/* Custom scrollbar thumb: a hairline that barely reads against the frosted popup. Sized/positioned from
+   JS (height + translateY) and faded out when the focus leaves the game list or after a few idle seconds.
+   It sits OUTSIDE the list's right edge (a negative `right` pulls it out of the box), so the buttons keep
+   their full width — nothing shifts when it appears. The group's overflow is visible for this to show. */
+.select-game-thumb {
+  --thumb-width: calc(4 * var(--px));
+  --thumb-gap: calc(16 * var(--px)); /* clearance between the buttons and the scrollbar */
+  position: absolute;
+  top: 0;
+  right: calc(-1 * (var(--thumb-width) + var(--thumb-gap)));
+  width: var(--thumb-width);
+  /* Fixed height: a proportional thumb (clientHeight/scrollHeight) grows to nearly the full track when the
+     list only just overflows, which reads as a bug. JS only positions it (translateY). */
+  height: calc(32 * var(--px));
+  border-radius: calc(2 * var(--px));
+  /* Barely there at rest; it firms up under the cursor (and for the whole drag). */
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+  opacity: 0;
+  transition: opacity 0.35s ease, background 0.2s ease;
+  /* Not grabbable while faded out — an invisible 0-opacity element would still swallow clicks. */
+  pointer-events: none;
+}
+.select-game-thumb.is-visible {
+  opacity: 1;
+  pointer-events: auto;
+  cursor: pointer;
+}
+/* Hover is gated on a live cursor (like the buttons): once the gamepad takes over, the pointer still
+   physically sits wherever it was left, and a stale highlight would linger. `is-dragging` keeps the
+   emphasis while the pointer is captured and may wander off the thin bar. */
+html:not(.cursor-hidden) .select-game-thumb.is-visible:hover,
+.select-game-thumb.is-dragging {
+  background: color-mix(in srgb, var(--fg) 22%, transparent);
+}
+/* The 4px bar is far too thin to aim at: widen the HIT area on both sides without changing the visuals. */
+.select-game-thumb::before {
+  content: '';
+  position: absolute;
+  inset: 0 calc(-8 * var(--px));
+}
+
+/* Game buttons size to their title (like every other .text-button, right-aligned in the stack), but never
+   wider than the list — a long title is HARD-CLIPPED at that cap (no ellipsis). Only while the button is
+   focused (the active row) does the title marquee-scroll back and forth so the full name is readable —
+   the popup never widens. Non-overflowing titles never scroll. */
+.select-game-list .game-button {
+  width: auto;
+  max-width: 100%;
+  justify-content: flex-start;
+  overflow: hidden;
+}
+.game-label {
+  /* `0 1 auto`: sized by the text, but allowed to SHRINK once the button hits max-width — that shrink
+     (with min-width:0) is what produces the clip. `1 …` would instead stretch it on short titles. */
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  --fade: calc(8 * var(--px)); /* soft-fade width at a clipped edge (kept small so start/end stay legible) */
+}
+/* A clipped (overflowing) title fades out at the RIGHT edge so the cut looks soft, not chopped. JS adds
+   `is-clipped` to any overflowing button. */
+.game-button.is-clipped .game-label {
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - var(--fade)), transparent 100%);
+  mask-image: linear-gradient(to right, #000 calc(100% - var(--fade)), transparent 100%);
+}
+/* While the focused title marquee-scrolls, fade BOTH edges so the text softly enters/leaves on each side. */
+.game-button.is-scrolling .game-label {
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    #000 var(--fade),
+    #000 calc(100% - var(--fade)),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    #000 var(--fade),
+    #000 calc(100% - var(--fade)),
+    transparent 100%
+  );
+}
+.game-label-inner {
+  display: inline-block;
+  white-space: nowrap;
+  will-change: transform;
+}
+/* Ping-pong marquee: shift + per-title duration are set from JS (measured overflow); `alternate` scrolls
+   to the end and back, `ease-in-out` dwells at each edge so the start/end are readable. */
+.game-button.is-scrolling .game-label-inner {
+  animation: game-marquee var(--marquee-duration, 6s) ease-in-out infinite alternate;
+}
+@keyframes game-marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(var(--marquee-shift, 0));
+  }
 }
 
 /* ── TextButton — textual sibling of .rect-button ───────────────────────────
@@ -579,6 +726,9 @@ html:not(.cursor-hidden) .rect-button:hover,
 
 .text-button {
   height: calc(92 * var(--px));
+  /* Never squeeze: these are flex items in a vertical stack, and the default flex-shrink:1 would compress
+     them instead of letting a long list scroll (see .select-game-list). */
+  flex: 0 0 auto;
   min-width: calc(184 * var(--px));
   padding: 0 calc(32 * var(--px));
   display: flex;

@@ -23,7 +23,6 @@ import { json } from '@codemirror/lang-json';
 import { jsonSchema } from 'codemirror-json-schema';
 import type {
   ConfigPickKind,
-  ConfigTemplates,
   DriveCandidate,
   ManifestValidationIssue,
   ThemeMode,
@@ -31,12 +30,17 @@ import type {
 import { createTranslator, type Locale, type Translator } from '../shared/i18n/index.js';
 import { localizeDocument } from './i18n-dom.js';
 import { FormView, FORM_SECTIONS, type SectionId } from './configure-form-view.js';
-import { emptyFormModel, formModelToText, textToFormModel } from './configure-form-model.js';
+import {
+  emptyFormModel,
+  textToFormModel,
+  textToGames,
+  gamesToText,
+  type ManifestFormModel,
+} from './configure-form-model.js';
 
-// The active edit tab: the Templates launcher, one of the form sections, or the raw JSON editor
-// (advanced). The window is a hide-on-close singleton, so this module-level state survives hiding
-// (plan R1/D7 — no AppSettings needed).
-type EditTab = 'templates' | SectionId | 'json';
+// The active edit tab: one of the form sections, or the raw JSON editor (advanced). The window is a
+// hide-on-close singleton, so this module-level state survives hiding (plan R1/D7 — no AppSettings needed).
+type EditTab = SectionId | 'json';
 
 // Translator, refreshed on a language push. The HTML ships English fallback (no blank flash).
 let translator: Translator = createTranslator('en');
@@ -109,18 +113,19 @@ const titlebarSubtitle = req('titlebar-subtitle');
 const driveGroup = req('drive-group');
 const driveListbox = req('drive-listbox');
 const driveEmpty = req('drive-empty');
+const gameSection = req('game-section');
+const gameGroup = req('game-group');
+const gameListbox = req('game-listbox');
+const gameAddBtn = req('game-add');
+const gameRemoveBtn = req('game-remove');
 const editorEl = req('editor');
 const editorSection = req('editor-section');
 const formViewEl = req('form-view');
 const editTabsEl = req('edit-tabs');
-const templatesPanel = req('templates-panel');
 const issuesEl = req('issues');
 const saveBtn = req('save');
 const resetBtn = req('reset');
 const statusEl = req('status');
-const tplExecutable = req('tpl-executable');
-const tplInstaller = req('tpl-installer');
-const tplSteam = req('tpl-steam');
 const confirmVeil = req('confirm-veil');
 const confirmMessage = req('confirm-message');
 const confirmOk = req('confirm-ok');
@@ -212,20 +217,35 @@ let loadedId: string | null = null; // id of the last loaded/saved manifest (for
 let loadedDriveKey: string | null = null;
 let lastValidOk = false;
 let blocked = false; // the selected card vanished → editing/saving disabled
-let templatesCache: ConfigTemplates | null = null;
 let activeTab: EditTab = 'basics'; // a form section is the default (plan R1); 'json' is advanced
-let formBlank = false; // a blank drive → the form is shown empty & disabled until a template is picked
+
+// ── Multi-game state (a card can carry several games) ───────────────────────────
+// One game.json can hold a single game object (legacy) OR an array of games. The form edits ONE game at a
+// time; `games` mirrors the whole file (each slot's model + preserved unknown/corrupt keys + its loaded
+// id for the id-change warning), and `activeGameIndex` is the one shown in the form. The ACTIVE game's
+// live edits live in `formView`; commitActiveGame() flushes them back into its slot before any whole-file
+// operation (serialize, switch game, add/remove).
+interface GameSlot {
+  model: ManifestFormModel;
+  rest: Readonly<Record<string, unknown>>;
+  corrupt: Readonly<Record<string, unknown>>;
+  mixed: boolean;
+  loadedId: string | null;
+}
+let games: GameSlot[] = [];
+let activeGameIndex = 0;
+
 // Created in init() (after all handlers are defined). Owns the interactive form's DOM + state.
 let formView: FormView;
-// The native fluent-tablist + its fluent-tab children ([Templates][Basics]…[JSON]), built in init().
+// The native fluent-tablist + its fluent-tab children ([Basics]…[Advanced][JSON]), built in init().
 type TablistEl = HTMLElement & { activeid?: string };
 let tablist: TablistEl;
 const tabButtons = new Map<EditTab, HTMLElement>();
 // Guards the tablist `change` event against our own programmatic activeid writes (so committing/reverting
 // a tab doesn't re-enter the switch logic).
 let applyingTab = false;
-// Tab order: Templates first (#4), JSON last.
-const TAB_ORDER: readonly EditTab[] = ['templates', ...FORM_SECTIONS.map((s) => s.id), 'json'];
+// Tab order: the form sections, JSON last.
+const TAB_ORDER: readonly EditTab[] = [...FORM_SECTIONS.map((s) => s.id), 'json'];
 
 function tabDomId(tab: EditTab): string {
   return `tab-${tab}`;
@@ -235,14 +255,18 @@ function tabFromDomId(id: string | undefined): EditTab | null {
   return TAB_ORDER.find((tab) => tabDomId(tab) === id) ?? null;
 }
 
-/** True when the raw JSON editor tab is active (vs. the Templates or a form section tab). */
+/** True when the raw JSON editor tab is active (vs. a form section tab). */
 function jsonActive(): boolean {
   return activeTab === 'json';
 }
 
-// The manifest text of the currently active editor (form → serialized, json → raw editor text).
+// The manifest text of the currently active editor (form → the whole games array/object serialized, json
+// → raw editor text). In form mode the active game's live edits are flushed into its slot first.
 function activeText(): string {
-  return jsonActive() ? getEditorText() : formView.serialize();
+  if (jsonActive()) return getEditorText();
+  commitActiveGame();
+  if (games.length === 0) return formView.serialize(); // blank drive: a single empty object
+  return gamesToText(games);
 }
 
 // ── Validation + issues panel ──────────────────────────────────────────────────
@@ -273,14 +297,43 @@ async function runValidate(): Promise<void> {
     formView.setFieldErrors(null);
     renderIssues(null, text);
   } else if (!jsonActive()) {
-    // Issues that map onto a field are shown inline; the rest ((root)/syntax/future keys) go to the panel.
-    const unmapped = formView.setFieldErrors(result.issues);
-    renderIssues(unmapped, text);
+    // Split issues by game. For a single object (games.length ≤ 1) the paths are bare, mapped straight to
+    // fields as before. For an array, only the ACTIVE game's issues get their `games.<i>.` prefix stripped
+    // and mapped inline; other games' issues (and any root issue) go to the panel, labelled by game.
+    const forActive: ManifestValidationIssue[] = [];
+    const forPanel: ManifestValidationIssue[] = [];
+    const activePrefix = `games.${activeGameIndex}.`;
+    for (const issue of result.issues) {
+      if (games.length <= 1) {
+        forActive.push(issue);
+      } else if (issue.path.startsWith(activePrefix)) {
+        forActive.push({ path: issue.path.slice(activePrefix.length), message: issue.message });
+      } else if (issue.path.startsWith('games.')) {
+        forPanel.push(labelOtherGameIssue(issue));
+      } else {
+        forPanel.push(issue); // a root-level issue (empty array, duplicate id at root, syntax)
+      }
+    }
+    const unmapped = formView.setFieldErrors(forActive);
+    renderIssues([...unmapped, ...forPanel], text);
   } else {
     formView.setFieldErrors(null);
     renderIssues(result.issues, text);
   }
   updateSaveEnabled();
+}
+
+/** Relabels an issue on a NON-active game for the #issues panel: "Game 3 (Celeste): heroImage is …". */
+function labelOtherGameIssue(issue: ManifestValidationIssue): ManifestValidationIssue {
+  const match = /^games\.(\d+)\.(.*)$/.exec(issue.path);
+  if (match === null) return issue;
+  const index = Number(match[1]);
+  const slot = games[index];
+  const title = slot !== undefined ? gameLabel(slot) : String(index + 1);
+  return {
+    path: issue.path,
+    message: translator('configure.otherGameIssue', { index: index + 1, title, message: issue.message }),
+  };
 }
 
 function renderIssues(issues: readonly ManifestValidationIssue[] | null, text: string): void {
@@ -290,8 +343,16 @@ function renderIssues(issues: readonly ManifestValidationIssue[] | null, text: s
     const ok = document.createElement('div');
     ok.textContent = translator('configure.configValid');
     issuesEl.append(ok);
-    // Changing `id` moves the game's PC stats to a fresh key → a "new" game with zero playtime.
-    const id = parseId(text);
+    // Changing `id` moves the game's PC stats to a fresh key → a "new" game with zero playtime. In form
+    // mode the warning is about the ACTIVE game (its live id vs the id it loaded with); in JSON mode we
+    // parse the id from the (single-object) text, as before.
+    let id: string | null;
+    if (jsonActive()) {
+      id = parseId(text);
+    } else {
+      const slot = games[activeGameIndex];
+      id = slot !== undefined ? (slot.model.id !== '' ? slot.model.id : null) : parseId(text);
+    }
     if (loadedId !== null && id !== null && id !== loadedId) {
       const warn = document.createElement('div');
       warn.className = 'warning';
@@ -360,11 +421,13 @@ function drivesSignature(list: readonly DriveCandidate[]): string {
     .join('¦');
 }
 
-// Per-drive descriptor used to detect a media swap at the SAME root: root + label (carries the game.json
-// title) + hasManifest. isActive is intentionally excluded — it can flap without the card's content
-// changing, and shouldn't force a config reload.
+// Per-drive descriptor used to detect a media swap at the SAME root: root + the card's CONTENT signature
+// (its game ids) + hasManifest. The signature is used rather than the display label because the label can
+// be a bare count ("3 games") that two different cards share — and the drive letter never changes, so the
+// label alone would miss the swap. isActive is intentionally excluded — it can flap without the card's
+// content changing, and shouldn't force a config reload.
 function driveKey(candidate: DriveCandidate): string {
-  return `${candidate.root}|${candidate.label}|${candidate.hasManifest ? 1 : 0}`;
+  return `${candidate.root}|${candidate.signature}|${candidate.hasManifest ? 1 : 0}`;
 }
 
 function renderDrives(list: readonly DriveCandidate[]): void {
@@ -443,9 +506,9 @@ function reconcileSelection(list: readonly DriveCandidate[]): void {
 function onSelectedGone(): void {
   blocked = true;
   setEditable(false);
-  setTemplatesDisabled(true);
   setModeTabsDisabled(true);
   applyFormDisabled();
+  applyGameControlsDisabled();
   updateSaveEnabled();
   setStatus(translator('configure.cardGone'));
 }
@@ -453,25 +516,21 @@ function onSelectedGone(): void {
 function unblock(): void {
   blocked = false;
   setEditable(true);
-  setTemplatesDisabled(false);
   setModeTabsDisabled(false);
   applyFormDisabled();
+  applyGameControlsDisabled();
   updateSaveEnabled();
   setStatus('');
-}
-
-function setTemplatesDisabled(disabled: boolean): void {
-  for (const btn of [tplExecutable, tplInstaller, tplSteam]) setDisabled(btn, disabled);
 }
 
 function setModeTabsDisabled(disabled: boolean): void {
   for (const btn of tabButtons.values()) setDisabled(btn, disabled);
 }
 
-// The form fields are disabled when the card is gone (blocked) OR the drive is blank (no template picked
-// yet). Templates/tabs are governed separately (a blank drive still needs its template buttons enabled).
+// The form fields are disabled only when the card is gone (blocked). A blank drive gets an empty, EDITABLE
+// game slot to fill in; Save stays blocked by validation until the required fields are there.
 function applyFormDisabled(): void {
-  formView.setDisabled(blocked || formBlank);
+  formView.setDisabled(blocked);
 }
 
 // Switches the active card. `confirmDirty` guards against losing unsaved edits (skipped for the initial
@@ -505,102 +564,199 @@ async function loadDrive(root: string): Promise<void> {
   // key and doesn't re-trigger this load while readConfig is still in flight.
   loadedDriveKey = driveKey(candidate);
   if (!candidate.hasManifest) {
-    // Blank drive: an empty, disabled form (and empty editor) inviting a template. Save stays blocked
-    // until the user explicitly picks a template — no placeholder auto-fill (plan cases, R3). loadedId
-    // null → no id-change warning.
+    // Blank drive: start with ONE empty, editable game the user fills in (there are no templates any more —
+    // the form itself is the authoring surface). Save stays blocked by validation until the required fields
+    // are present. loadedId null → no id-change warning.
     loadedId = null;
-    formBlank = true;
     dirty = false;
-    dispatchText('');
-    formView.load(emptyFormModel(), {}, {}, false);
+    games = [{ model: emptyFormModel(), rest: {}, corrupt: {}, mixed: false, loadedId: null }];
+    activeGameIndex = 0;
+    dispatchText(gamesToText(games));
+    rebuildGameSelector();
+    loadActiveIntoForm();
     applyFormDisabled();
-    showTab('templates'); // a blank card starts on the Templates tab (pick one to begin)
+    showTab('basics'); // straight into the form — the first fields to fill are there
     setStatus(translator('configure.blankDrive'));
     void runValidate();
     return;
   }
   const result = await window.configureApi.readConfig(root);
   if (!result.ok) {
-    // Not blank but unreadable — behave as before (status, no template): ConfigReadResult can't tell
-    // "file missing" from other failures (plan D2), so we never substitute a template here.
+    // Not blank but unreadable: ConfigReadResult can't tell "file missing" from other failures (plan D2),
+    // so we do NOT substitute an empty game here — just report it and leave the form empty.
     loadedId = null;
-    formBlank = false;
+    games = [];
+    activeGameIndex = 0;
     dispatchText('');
     formView.load(emptyFormModel(), {}, {}, false);
+    rebuildGameSelector();
     applyFormDisabled();
     setStatus(translator('configure.couldNotRead', { message: result.message }));
     void runValidate();
     return;
   }
   loadedId = parseId(result.text);
-  formBlank = false;
   dirty = false;
   loadText(result.text);
   setStatus('');
 }
 
-// Loads manifest text into BOTH editors (raw JSON into CodeMirror, parsed model into the form) so either
-// tab is correct on switch. If the text doesn't parse as JSON, the form can't represent it → the JSON tab
-// is auto-activated with the syntax error surfaced by validation (plan R4 / cases).
+// Loads manifest text into BOTH editors (raw JSON into CodeMirror, parsed games into the form) so either
+// tab is correct on switch. A single object OR an array of games is accepted; if the text doesn't parse
+// (or any game element isn't an object) the form can't represent it → the JSON tab is auto-activated with
+// the error surfaced by validation (plan R4 / cases).
 function loadText(text: string): void {
   dispatchText(text);
-  const parsed = textToFormModel(text);
-  if (parsed.ok) {
-    formView.load(parsed.model, parsed.rest, parsed.corrupt, parsed.mixed);
-    applyFormDisabled();
+  if (loadGamesFromText(text)) {
     showTab(activeTab);
   } else {
-    // Unparseable JSON → the form can't represent it; auto-activate the JSON tab (plan R4 / cases).
+    // Unrepresentable (syntax error / non-object element) → the form can't show it; go to the JSON tab.
+    games = [];
+    activeGameIndex = 0;
     formView.load(emptyFormModel(), {}, {}, false);
+    rebuildGameSelector();
     applyFormDisabled();
     showTab('json');
   }
   void runValidate();
 }
 
-// ── Templates ─────────────────────────────────────────────────────────────────
-async function getTemplates(): Promise<ConfigTemplates> {
-  templatesCache ??= await window.configureApi.getTemplates();
-  return templatesCache;
+// ── Multi-game helpers ──────────────────────────────────────────────────────────
+
+/** Parses whole-file text into the `games` slots and loads the first into the form. Returns false when the
+ * text can't be represented as a form (syntax error, top-level not object/array, or a non-object element).
+ * `keepIndex` preserves the active game (a JSON→form switch); otherwise it resets to the first game. */
+function loadGamesFromText(text: string, keepIndex = false): boolean {
+  const parsed = textToGames(text);
+  if (!parsed.ok || !parsed.games.every((g) => g.ok)) return false;
+  const slots: GameSlot[] = [];
+  for (const g of parsed.games) {
+    if (!g.ok) return false; // narrowed away by the every() above; keeps TS happy
+    const loadedGameId = g.model.id !== '' ? g.model.id : null;
+    slots.push({ model: g.model, rest: g.rest, corrupt: g.corrupt, mixed: g.mixed, loadedId: loadedGameId });
+  }
+  games = slots;
+  activeGameIndex = keepIndex ? Math.min(activeGameIndex, games.length - 1) : 0;
+  rebuildGameSelector();
+  loadActiveIntoForm();
+  applyFormDisabled();
+  return true;
 }
 
-async function applyTemplate(kind: keyof ConfigTemplates): Promise<void> {
-  if (blocked) return;
-  const templates = await getTemplates();
-  const template = templates[kind];
-  if (!(await confirmTemplateReplace(template))) return;
-  formBlank = false;
-  // Fill both editors from the template (the templates are valid → textToFormModel succeeds).
-  dispatchText(template);
-  const parsed = textToFormModel(template);
-  if (parsed.ok) formView.load(parsed.model, parsed.rest, parsed.corrupt, parsed.mixed);
+/** Flushes the active game's live form edits back into its slot (serialize → re-parse). The form always
+ * serializes to valid single-game JSON, so the parse succeeds; on the off chance it doesn't, the slot is
+ * left as-is. */
+function commitActiveGame(): void {
+  const slot = games[activeGameIndex];
+  if (slot === undefined) return;
+  const parsed = textToFormModel(formView.serialize());
+  if (parsed.ok) {
+    slot.model = parsed.model;
+    slot.rest = parsed.rest;
+    slot.corrupt = parsed.corrupt;
+  }
+}
+
+/** Loads the active game slot into the form. */
+function loadActiveIntoForm(): void {
+  const slot = games[activeGameIndex];
+  if (slot === undefined) {
+    formView.load(emptyFormModel(), {}, {}, false);
+    return;
+  }
+  loadedId = slot.loadedId;
+  formView.load(slot.model, slot.rest, slot.corrupt, slot.mixed);
+}
+
+/** A short human label for a game slot (its title, or a placeholder when untitled). */
+function gameLabel(slot: GameSlot): string {
+  const title = slot.model.title.trim();
+  return title !== '' ? title : translator('configure.untitledGame');
+}
+
+/** Rebuilds the game dropdown ("index / count · title") and toggles the row/controls. */
+function rebuildGameSelector(): void {
+  // The Game row belongs to the section tabs (it picks which game they edit): shown only when the form can
+  // represent the file (≥1 slot) AND a form section is active — hidden on the raw JSON tab.
+  const show = games.length >= 1 && !jsonActive();
+  gameSection.hidden = !show;
+  if (!show) return;
+  const options = games.map((slot, i) => {
+    const option = document.createElement('fluent-option');
+    (option as HTMLElement & { value?: string }).value = String(i);
+    option.textContent = translator('configure.gameOption', {
+      index: i + 1,
+      count: games.length,
+      title: gameLabel(slot),
+    });
+    return option;
+  });
+  gameListbox.replaceChildren(...options);
+  setDropdownValue(gameGroup, String(activeGameIndex));
+  requestAnimationFrame(() => setDropdownValue(gameGroup, String(activeGameIndex)));
+  applyGameControlsDisabled();
+}
+
+/** Enables/disables the Game controls: disabled when blocked or on the JSON tab; Remove also needs
+ * ≥2 games (a card must keep at least one). */
+function applyGameControlsDisabled(): void {
+  const disabled = blocked || jsonActive();
+  setDisabled(gameGroup, disabled);
+  setDisabled(gameAddBtn, disabled);
+  setDisabled(gameRemoveBtn, disabled || games.length <= 1);
+}
+
+/** Switches the active game (dropdown): flush the current one, load the picked one, keep the section tab. */
+function switchGame(index: number): void {
+  if (index === activeGameIndex || index < 0 || index >= games.length) return;
+  commitActiveGame();
+  activeGameIndex = index;
+  loadActiveIntoForm();
   applyFormDisabled();
-  dirty = true;
-  showTab('basics'); // jump into the form so the filled fields are visible
+  setDropdownValue(gameGroup, String(index));
   void runValidate();
 }
 
-// Confirms replacing the current config with a template. The comparison is SEMANTIC, not textual: the
-// form omits defaults while templates spell them out, so a raw text compare would always differ and
-// prompt spuriously. We compare both sides through the same serializer; an empty/blank current skips the
-// prompt (plan R8). In JSON mode the current text is the editor's; in form mode it is the serialized form.
-async function confirmTemplateReplace(template: string): Promise<boolean> {
-  const emptyNorm = formModelToText(emptyFormModel(), {}, {}).trim();
-  const templateParsed = textToFormModel(template);
-  const templateNorm = templateParsed.ok
-    ? formModelToText(templateParsed.model, templateParsed.rest, templateParsed.corrupt).trim()
-    : template.trim();
-  const currentParsed = textToFormModel(activeText());
-  const currentNorm = currentParsed.ok
-    ? formModelToText(currentParsed.model, currentParsed.rest, currentParsed.corrupt).trim()
-    : activeText().trim();
-  if (currentNorm === emptyNorm || currentNorm === templateNorm) return true;
-  return confirmDialog(translator('configure.confirmReplace'));
+/** A default id not yet used by any game (my-game, my-game-2, …), so the new game doesn't collide. */
+function uniqueDefaultId(): string {
+  const used = new Set(games.map((g) => g.model.id));
+  if (!used.has('my-game')) return 'my-game';
+  for (let n = 2; ; n += 1) {
+    const candidate = `my-game-${n}`;
+    if (!used.has(candidate)) return candidate;
+  }
 }
 
-tplExecutable.addEventListener('click', () => void applyTemplate('executable'));
-tplInstaller.addEventListener('click', () => void applyTemplate('installer'));
-tplSteam.addEventListener('click', () => void applyTemplate('steam'));
+/** Adds a new, empty game (with a unique default id so the duplicate-id check doesn't fire), switches to
+ * it and opens Basics. The user fills it in from the form. */
+function onAddGame(): void {
+  if (blocked || jsonActive()) return;
+  commitActiveGame();
+  const model: ManifestFormModel = { ...emptyFormModel(), id: uniqueDefaultId() };
+  games.push({ model, rest: {}, corrupt: {}, mixed: false, loadedId: null });
+  activeGameIndex = games.length - 1;
+  rebuildGameSelector();
+  loadActiveIntoForm();
+  applyFormDisabled();
+  dirty = true;
+  showTab('basics');
+  void runValidate();
+}
+
+/** Removes the current game (confirm) and switches to a neighbour. Refused for the last game (a card can't
+ * be empty). */
+async function onRemoveGame(): Promise<void> {
+  if (blocked || jsonActive() || games.length <= 1) return;
+  const ok = await confirmDialog(translator('configure.confirmRemoveGame'));
+  if (!ok) return;
+  games.splice(activeGameIndex, 1);
+  activeGameIndex = Math.min(activeGameIndex, games.length - 1);
+  rebuildGameSelector();
+  loadActiveIntoForm();
+  applyFormDisabled();
+  dirty = true;
+  void runValidate();
+}
 
 // ── Format ─────────────────────────────────────────────────────────────────────
 // Pretty-prints the editor JSON (2-space indent) — the in-app "prettier" for fixing indentation. Only
@@ -639,7 +795,15 @@ async function onSave(): Promise<void> {
     return;
   }
   dirty = false;
-  loadedId = parseId(text);
+  // The card now holds what we saved → each game's loaded id becomes its current id (so the id-change
+  // warning re-arms from the saved baseline). In JSON mode we don't have per-game slots — fall back to
+  // parsing the single-object id, as before.
+  if (jsonActive() || games.length === 0) {
+    loadedId = parseId(text);
+  } else {
+    for (const slot of games) slot.loadedId = slot.model.id !== '' ? slot.model.id : null;
+    loadedId = games[activeGameIndex]?.loadedId ?? null;
+  }
   switch (result.applied) {
     case 'applied':
       setStatus(translator('configure.applied'));
@@ -681,7 +845,15 @@ wireDropdown(driveGroup, (root) => {
   void selectDrive(root, true);
 });
 
-// ── Edit tabs ([Templates][Basics][Launch][Hero][Saves][Audio][Advanced][JSON]) ──
+// Game picker (multi-game cards): switch the edited game, or add/remove one.
+wireDropdown(gameGroup, (value) => {
+  const index = Number(value);
+  if (Number.isInteger(index)) switchGame(index);
+});
+gameAddBtn.addEventListener('click', () => onAddGame());
+gameRemoveBtn.addEventListener('click', () => void onRemoveGame());
+
+// ── Edit tabs ([Basics][Launch][Hero][Saves][Audio][Advanced][JSON]) ──
 // A native fluent-tablist: it renders the tab strip (accent indicator, keyboard nav, ARIA) and fires
 // `change` with the new activeid. We manage the panels ourselves in showTab. Labels come from the
 // translator (re-applied on a language change via applyLocale → relabelTabs).
@@ -706,7 +878,6 @@ function buildEditTabs(): void {
 }
 
 function relabelTabs(): void {
-  tabButtons.get('templates')?.replaceChildren(translator('configure.tabTemplates'));
   for (const section of FORM_SECTIONS) {
     tabButtons.get(section.id)?.replaceChildren(translator(section.labelKey));
   }
@@ -720,31 +891,33 @@ function setStripActive(tab: EditTab): void {
   applyingTab = false;
 }
 
-// Reflects `activeTab` onto the DOM: the right panel (templates / a form section / the JSON editor) plus
-// the tab strip. Does NOT convert content — that is switchTab's job on a form↔json crossing.
+// Reflects `activeTab` onto the DOM: the right panel (a form section / the JSON editor) plus the tab
+// strip. Does NOT convert content — that is switchTab's job on a form↔json crossing.
 function showTab(target: EditTab): void {
   activeTab = target;
-  const isSection = target !== 'templates' && target !== 'json';
-  templatesPanel.hidden = target !== 'templates';
+  const isSection = target !== 'json';
   formViewEl.hidden = !isSection;
   editorSection.hidden = target !== 'json';
   if (isSection) formView.showSection(target);
   setStripActive(target);
+  // The Game row follows the section tabs (shown only on a form section).
+  rebuildGameSelector();
   // Gate the native "Format" context-menu item: it only applies to the JSON editor.
   window.configureApi.setJsonEditorActive(target === 'json');
 }
 
-// Switches tabs, converting content across the form↔json boundary. Form/Templates → JSON always works (the
-// model serializes). JSON → a form/Templates tab only when the text parses as JSON (else a status hint and
-// the strip reverts — schema errors are fine, the form exists to fix them, plan R4). Everything else is
-// free (same model). Switching never marks dirty (programmatic editor writes are guarded).
+// Switches tabs, converting content across the form↔json boundary. Form → JSON always works (the model
+// serializes). JSON → a form tab only when the text parses as JSON (else a status hint and the strip
+// reverts — schema errors are fine, the form exists to fix them, plan R4). Everything else is free (same
+// model). Switching never marks dirty (programmatic editor writes are guarded).
 function switchTab(target: EditTab): void {
   if (blocked) {
     setStripActive(activeTab);
     return;
   }
   if (target === 'json') {
-    dispatchText(formView.serialize());
+    // Form → JSON: write the WHOLE file (all games) into the editor.
+    dispatchText(activeText());
     formView.setFieldErrors(null);
     showTab('json');
     setStatus('');
@@ -752,20 +925,20 @@ function switchTab(target: EditTab): void {
     return;
   }
   if (jsonActive()) {
-    const parsed = textToFormModel(getEditorText());
-    if (!parsed.ok) {
+    // JSON → form: the editor may hold an object or an array; the form can only show it if every element
+    // is an object (else stay on JSON with a hint, as before). Resets to the first game.
+    if (!loadGamesFromText(getEditorText())) {
       setStatus(translator('configure.fixSyntaxSwitch'));
       setStripActive(activeTab); // undo the user's tab click
       return;
     }
-    formView.load(parsed.model, parsed.rest, parsed.corrupt, parsed.mixed);
     applyFormDisabled();
     setStatus('');
     showTab(target);
     void runValidate();
     return;
   }
-  // Templates ↔ form section, or section ↔ section: same model, just swap the visible panel.
+  // Section ↔ section: same model, just swap the visible panel.
   showTab(target);
 }
 
@@ -804,6 +977,7 @@ function applyLocale(locale: Locale): void {
   renderTitlebarSubtitle();
   formView.relabel();
   relabelTabs();
+  rebuildGameSelector(); // the game options carry translated "index / count · title" labels
 }
 
 async function init(): Promise<void> {

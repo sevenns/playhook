@@ -34,20 +34,24 @@
         <span id="drive-empty" data-i18n="configure.insertCard" hidden>Insert an SD card or flash drive.</span>
       </section>
 
+      <!-- Game picker (a card can carry several games): mirrors the Card row, sits between it and the
+           section tabs. The dropdown lists "index / count · title"; Add/Remove edit the games array. The
+           section tabs + form below all apply to the selected game. Hidden until a card with ≥1 game is
+           loaded (its options are built in configure.ts). -->
+      <section class="section" id="game-section" hidden>
+        <span class="section-label" data-i18n="configure.game">Game</span>
+        <fluent-dropdown id="game-group" name="game">
+          <fluent-listbox id="game-listbox"></fluent-listbox>
+        </fluent-dropdown>
+        <div class="button-row">
+          <fluent-button id="game-add" data-i18n="configure.addGame">Add game</fluent-button>
+          <fluent-button id="game-remove" data-i18n="configure.removeGame">Remove current</fluent-button>
+        </div>
+      </section>
+
       <!-- Edit tabs: one row of the form sections + a trailing JSON tab (built in configure.ts, since the
            section labels come from the translator). -->
       <div id="edit-tabs"></div>
-
-      <!-- Starter templates — the first tab's panel (shown when the Templates tab is active). -->
-      <section id="templates-panel" class="form-section" hidden>
-        <span class="section-label" data-i18n="configure.startTemplate">Start from a template</span>
-        <div class="button-row">
-          <fluent-button id="tpl-executable" data-i18n="configure.tplExecutable">Executable file</fluent-button>
-          <fluent-button id="tpl-installer" data-i18n="configure.tplInstaller">Installer</fluent-button>
-          <!-- "Steam" is a brand name — not translated. -->
-          <fluent-button id="tpl-steam">Steam</fluent-button>
-        </div>
-      </section>
 
       <!-- Interactive form (its inner DOM is built at runtime in configure-form-view.ts). -->
       <div id="form-view" hidden></div>
