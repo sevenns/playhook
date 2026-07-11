@@ -9,15 +9,10 @@ import type {
   Platform,
   PowerBackend,
   SavePathResolver,
-  SteamLocator,
 } from './types';
 import type { GameProcess } from '../game-launcher';
 import { createLinuxProcessMonitor } from './proc';
-
-// ── SteamLocator — Э3 (probe ~/.local/share/Steam, flatpak, snap). Placeholder: not found. ──
-function createSteamLocator(): SteamLocator {
-  return { locateSteam: () => Promise.resolve(null) };
-}
+import { createLinuxSteamLocator } from './steam-locator.linux';
 
 // ── GameProcessLauncher — Э4 (umu-run in the game's Wine prefix). Placeholder: unsupported. ──
 function unsupportedLaunch(): Promise<GameProcess> {
@@ -54,7 +49,7 @@ function createPowerBackend(): PowerBackend {
 export function createLinuxPlatform(): Platform {
   return {
     processMonitor: createLinuxProcessMonitor(),
-    steamLocator: createSteamLocator(),
+    steamLocator: createLinuxSteamLocator(),
     gameLauncher: createGameLauncher(),
     savePathResolver: createSavePathResolver(),
     powerBackend: createPowerBackend(),
