@@ -27,9 +27,6 @@ import { type DriveWatcher } from './drive-watcher';
 import { readManifests, type ManifestEnv } from './manifest';
 import { syncDir, syncByChange, snapshotTree } from './save-sync';
 import {
-  launchGame,
-  launchInstaller,
-  launchUninstaller,
   waitForExit,
   waitForStart,
   waitForWatchedExit,
@@ -334,6 +331,11 @@ export class GameController {
   /** The platform process monitor (win32 tasklist / linux /proc), threaded into the launcher + waits. */
   private get monitor(): ProcessMonitor {
     return this.deps.platform.processMonitor;
+  }
+
+  /** The platform game launcher (win32 spawn/ShellExecuteEx / linux umu-run/Proton). */
+  private get launcher(): Platform['gameLauncher'] {
+    return this.deps.platform.gameLauncher;
   }
 
   /** True if any of the given image names is currently running (fresh snapshot; empty list → false). */
@@ -1046,7 +1048,7 @@ export class GameController {
         // 2. launch → GameProcess (spawn, or elevated ShellExecuteEx per manifest.runAsAdmin)
         state.set({ kind: 'launching', game: info });
         try {
-          proc = await launchGame(manifest, this.monitor);
+          proc = await this.launcher.launchGame(manifest);
         } catch (cause) {
           this.failSequence('launch', info, this.t('errors.launchGame', { cause: describe(cause) }));
           return;
@@ -1151,7 +1153,7 @@ export class GameController {
       await fse.remove(install.dir);
 
       try {
-        proc = await launchInstaller(install, this.monitor);
+        proc = await this.launcher.launchInstaller(install);
       } catch (cause) {
         this.failSequence('install', info, this.t('errors.startInstaller', { cause: describe(cause) }));
         return;
@@ -1230,7 +1232,7 @@ export class GameController {
       const target = await resolveUninstaller(install);
       if (target !== null) {
         try {
-          proc = await launchUninstaller(target, this.monitor);
+          proc = await this.launcher.launchUninstaller(target);
           await waitForExit(proc, abort.signal);
         } catch (cause) {
           if (cause instanceof LaunchAbortedError) throw cause;
