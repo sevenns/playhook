@@ -4,6 +4,9 @@ release/
 *.log
 .DS_Store
 
+# umu-launcher zipapp is fetched at build time (scripts/fetch-umu.mjs), never committed.
+resources/umu/
+
 # Build artifacts must never live next to their .ts sources in src/ (see audit C3).
 src/**/*.js
 src/**/*.js.map

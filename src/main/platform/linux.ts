@@ -5,27 +5,14 @@
 //   ProcessMonitor → Э2 (/proc scan)   SteamLocator → Э3 (known paths)   GameProcessLauncher → Э4 (umu-run)
 //   SavePathResolver → Э5/Э6 (Wine prefix / compatdata)   PowerBackend → Э7 (systemctl / logind)
 import type {
-  GameProcessLauncher,
   Platform,
+  PlatformDeps,
   PowerBackend,
   SavePathResolver,
 } from './types';
-import type { GameProcess } from '../game-launcher';
 import { createLinuxProcessMonitor } from './proc';
 import { createLinuxSteamLocator } from './steam-locator.linux';
-
-// ── GameProcessLauncher — Э4 (umu-run in the game's Wine prefix). Placeholder: unsupported. ──
-function unsupportedLaunch(): Promise<GameProcess> {
-  return Promise.reject(new Error('game launch is not supported on Linux yet (Proton port stage 4)'));
-}
-
-function createGameLauncher(): GameProcessLauncher {
-  return {
-    launchGame: unsupportedLaunch,
-    launchInstaller: unsupportedLaunch,
-    launchUninstaller: unsupportedLaunch,
-  };
-}
+import { createLinuxGameLauncher } from './game-launcher.linux';
 
 // ── SavePathResolver — Э5/Э6 (map %PREFIX% inside the Wine/compatdata prefix). Placeholder: unresolvable. ──
 function createSavePathResolver(): SavePathResolver {
@@ -45,12 +32,18 @@ function createPowerBackend(): PowerBackend {
   };
 }
 
-/** Assembles the linux platform bundle. (PlatformDeps — userData for Wine prefixes — is added from Э4.) */
-export function createLinuxPlatform(): Platform {
+/** Assembles the linux platform bundle. The game launcher shares the /proc monitor (for force-kill) and
+ * needs userData (Wine prefixes) + the bundled umu-run path. */
+export function createLinuxPlatform(deps: PlatformDeps): Platform {
+  const processMonitor = createLinuxProcessMonitor();
   return {
-    processMonitor: createLinuxProcessMonitor(),
+    processMonitor,
     steamLocator: createLinuxSteamLocator(),
-    gameLauncher: createGameLauncher(),
+    gameLauncher: createLinuxGameLauncher({
+      userData: deps.userData,
+      umuRunPath: deps.umuRunPath,
+      monitor: processMonitor,
+    }),
     savePathResolver: createSavePathResolver(),
     powerBackend: createPowerBackend(),
   };

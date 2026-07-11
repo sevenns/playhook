@@ -53,6 +53,10 @@ jobs:
       - name: Compile TypeScript + assets
         run: npm run build
 
+      # Fetch the umu-launcher zipapp into resources/umu (extraResources) for the Proton launcher (Р1).
+      - name: Fetch umu-launcher
+        run: npm run build:umu
+
       # Only when releasing (a v* tag): draft the release up front so electron-builder uploads into it.
       # Same rationale/fail-fast as build-windows.yml (avoid split drafts / a silently-empty publish).
       - name: Ensure draft release exists

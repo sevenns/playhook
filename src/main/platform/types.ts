@@ -124,4 +124,7 @@ export interface PlatformDeps {
   readonly getDocuments: () => string;
   /** app.getPath('userData') — the base for per-game Wine prefixes on linux (`<userData>/prefixes/<id>`). */
   readonly userData: string;
+  /** Absolute path to the bundled umu-run zipapp (extraResources), run via system python3 on linux (Р1).
+   * Unused on win32. */
+  readonly umuRunPath: string;
 }

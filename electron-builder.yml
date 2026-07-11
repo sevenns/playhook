@@ -40,6 +40,12 @@ linux:
   category: Game
   target:
     - AppImage
+  # Bundle the umu-launcher zipapp OUTSIDE asar (it is run as `python3 umu-run …` — Р1). Fetched into
+  # resources/umu by `npm run build:umu` (scripts/fetch-umu.mjs) before the Linux pack. Lands at
+  # <resourcesPath>/umu/umu-run in the AppImage.
+  extraResources:
+    - from: resources/umu
+      to: umu
 
 # Auto-update channel (electron-updater): the app reads `latest.yml` + the installer from this repo's
 # GitHub Releases. Public repo → no token on the client. Update `owner`/`repo` if the GitHub repo is

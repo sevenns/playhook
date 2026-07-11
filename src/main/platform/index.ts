@@ -21,5 +21,5 @@ export type {
 
 /** Builds the platform service bundle for the running OS. Bootstrapped once in main. */
 export function createPlatform(platform: NodeJS.Platform, deps: PlatformDeps): Platform {
-  return platform === 'win32' ? createWin32Platform(deps) : createLinuxPlatform();
+  return platform === 'win32' ? createWin32Platform(deps) : createLinuxPlatform(deps);
 }

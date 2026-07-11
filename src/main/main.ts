@@ -147,9 +147,16 @@ async function bootstrap(): Promise<void> {
 
   // Platform services (process monitor / Steam locator / launcher / save-path resolver / power) selected
   // once for the running OS. Every OS-specific behaviour flows through this bundle (see platform/index.ts).
+  // The bundled umu-run zipapp (extraResources, linux only): packaged it lives under resourcesPath; in dev
+  // it sits in the repo's resources/ (fetched by scripts/fetch-umu.mjs). Resolved here so platform/ stays
+  // electron-free.
+  const umuRunPath = app.isPackaged
+    ? path.join(process.resourcesPath, 'umu', 'umu-run')
+    : path.join(app.getAppPath(), 'resources', 'umu', 'umu-run');
   const platform = createPlatform(process.platform, {
     getDocuments: () => app.getPath('documents'),
     userData: app.getPath('userData'),
+    umuRunPath,
   });
 
   windowRef = window;
