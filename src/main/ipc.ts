@@ -34,6 +34,8 @@ import {
   waitForStart,
   waitForWatchedExit,
   waitForWatchedStart,
+  waitForSteamStart,
+  waitForSteamExit,
   killImagesElevated,
   LaunchAbortedError,
   type GameProcess,
@@ -764,45 +766,59 @@ export class GameController {
     // Show "Force closing…" and hide the Force close button immediately (cleared back on failure).
     this.deps.state.set({ ...snapshot, killing: true });
     try {
-      // Targets are computed HERE from this.current, leaving runningImageNames untouched: a union there
-      // would regress return-to-game (focusGameWindow picks the first Z-order match — the launcher name
-      // could steal focus from the game). Steam's executablePath is '' and drops out in normalization.
-      const targets = normalizeImageNames([
-        manifest.executablePath,
-        ...(manifest.raw.watchProcesses ?? []),
-      ]);
-      log.info(`[kill] force-close requested id=${manifest.raw.id} targets=[${targets.join(',')}]`);
+      // Steam mode is tracked/killed by SteamAppId (native + Proton games), with no owned pid and no
+      // elevation (the schema forbids runAsAdmin there). Every other mode kills the owned process + the
+      // target image names, escalating to an elevated taskkill for a runAsAdmin game. Both end in the same
+      // fact-based verdict below (stillAlive).
+      let stillAlive: boolean;
+      if (manifest.steam !== undefined) {
+        const appid = manifest.steam.appid;
+        const names = manifest.raw.watchProcesses ?? [];
+        log.info(`[kill] force-close requested id=${manifest.raw.id} steam appid=${appid}`);
+        await this.monitor.killSteamGame(appid, names);
+        stillAlive = await this.steamGameStillAlive(appid, names, manifest.raw.killTimeoutSec);
+      } else {
+        // Targets are computed HERE from this.current, leaving runningImageNames untouched: a union there
+        // would regress return-to-game (focusGameWindow picks the first Z-order match — the launcher name
+        // could steal focus from the game).
+        const targets = normalizeImageNames([
+          manifest.executablePath,
+          ...(manifest.raw.watchProcesses ?? []),
+        ]);
+        log.info(`[kill] force-close requested id=${manifest.raw.id} targets=[${targets.join(',')}]`);
 
-      // 1. Terminate the owned process (elevated HANDLE, or the normal pid tree with an isAlive re-check
-      //    inside kill()). In the watched path this is usually the already-dead launcher — its "not
-      //    found" is normal, not an error.
-      const proc = this.runningProc;
-      if (proc !== null) {
-        try {
-          await proc.kill();
-        } catch (cause) {
-          log.warn('[kill] owned-process kill failed (continuing to taskkill by name):', describe(cause));
+        // 1. Terminate the owned process (elevated HANDLE, or the normal pid tree with an isAlive re-check
+        //    inside kill()). In the watched path this is usually the already-dead launcher — its "not
+        //    found" is normal, not an error.
+        const proc = this.runningProc;
+        if (proc !== null) {
+          try {
+            await proc.kill();
+          } catch (cause) {
+            log.warn('[kill] owned-process kill failed (continuing to kill by name):', describe(cause));
+          }
         }
+
+        // 2. Kill each target image by name (non-elevated): win32 `taskkill /F /IM`, linux SIGTERM/SIGKILL
+        //    to every /proc match. Failures are normal ("not found" = already dead).
+        await this.monitor.killByName(targets);
+
+        // 2b. Elevated escalation (runAsAdmin games only). A non-elevated taskkill / the ShellExecuteEx
+        //     HANDLE can't terminate high-integrity processes, so if the targets survive a short grace we
+        //     run ONE elevated `taskkill /F /T /IM …` (a single UAC prompt). Non-elevated games never reach
+        //     here (no UAC for them). A declined UAC just leaves the targets up → killFailed below.
+        if (manifest.raw.runAsAdmin && (await this.killTargetsStillAlive(targets, proc, KILL_ELEVATE_GRACE_SEC))) {
+          log.info(`[kill] elevated game survived non-elevated kill id=${manifest.raw.id} — escalating to elevated taskkill (UAC)`);
+          killImagesElevated(targets);
+        }
+
+        // 3. Fact-based verdict over a window bounded by killTimeoutSec (a killed process lingers for a
+        //    beat — a single instant snapshot would false-positive).
+        stillAlive = await this.killTargetsStillAlive(targets, proc, manifest.raw.killTimeoutSec);
       }
 
-      // 2. Kill each target image by name (non-elevated): win32 `taskkill /F /IM`, linux SIGTERM/SIGKILL to
-      //    every /proc match. Failures are normal ("not found" = already dead); the verdict is the control
-      //    poll below, not these outcomes.
-      await this.monitor.killByName(targets);
-
-      // 2b. Elevated escalation (runAsAdmin games only). A non-elevated taskkill / the ShellExecuteEx
-      //     HANDLE can't terminate high-integrity processes, so if the targets survive a short grace we
-      //     run ONE elevated `taskkill /F /T /IM …` (a single UAC prompt). Non-elevated games never reach
-      //     here (no UAC for them). A declined UAC just leaves the targets up → killFailed below.
-      if (manifest.raw.runAsAdmin && (await this.killTargetsStillAlive(targets, proc, KILL_ELEVATE_GRACE_SEC))) {
-        log.info(`[kill] elevated game survived non-elevated kill id=${manifest.raw.id} — escalating to elevated taskkill (UAC)`);
-        killImagesElevated(targets);
-      }
-
-      // 3. Fact-based verdict over a window bounded by killTimeoutSec (a killed process lingers in
-      //    tasklist for a beat — a single instant snapshot would false-positive). killFailed only if
-      //    something is STILL alive when the window elapses.
-      if (await this.killTargetsStillAlive(targets, proc, manifest.raw.killTimeoutSec)) {
+      // killFailed only if something is STILL alive when the window elapsed.
+      if (stillAlive) {
         log.warn(`[kill] targets still alive after force-close id=${manifest.raw.id} — reporting killFailed`);
         // The game is still up → back to plain running (status "Running…", Force close button returns),
         // then surface the error. Re-read in case a waiter advanced the state (then leave it be).
@@ -835,6 +851,24 @@ export class GameController {
       const ownedAlive = proc !== null && (await proc.isAlive());
       if (!ownedAlive && !(await this.anyTargetAlive(targets))) return false;
       if (Date.now() >= deadline) return true; // window elapsed and something is still alive → real fail
+      await delay(KILL_VERIFY_INTERVAL_MS);
+    }
+  }
+
+  /**
+   * Steam-mode analogue of killTargetsStillAlive: polls the monitor's SteamAppId signal (linux) / watch
+   * names (win32) until the game is gone or the window elapses. Returns true only if it is STILL running.
+   */
+  private async steamGameStillAlive(
+    appid: number,
+    watchNames: readonly string[],
+    timeoutSec: number,
+  ): Promise<boolean> {
+    const deadline = Date.now() + timeoutSec * 1000;
+    for (;;) {
+      if (this.deps.state.get().kind !== 'running') return false; // an exit waiter already left `running`
+      if (!(await this.monitor.isSteamGameRunning(appid, watchNames))) return false;
+      if (Date.now() >= deadline) return true;
       await delay(KILL_VERIFY_INTERVAL_MS);
     }
   }
@@ -980,9 +1014,10 @@ export class GameController {
           this.failSequence('launch', info, this.t('errors.launchViaSteam', { cause: describe(cause) }));
           return;
         }
-        // No launcher pid → null. watchProcesses is guaranteed non-empty by the schema in steam mode.
-        const { started } = await waitForWatchedStart(
-          null,
+        // Track by SteamAppId (via the monitor): on linux that reads /proc environ, so native-Linux AND
+        // Proton games are detected regardless of their binary name; on win32 it maps to the watch names.
+        const { started } = await waitForSteamStart(
+          manifest.steam.appid,
           watchProcesses ?? [],
           manifest.raw.launchTimeoutSec,
           this.monitor,
@@ -1005,7 +1040,7 @@ export class GameController {
         this.runningProc = null;
         state.set({ kind: 'running', game: info, since });
         log.info(`[launch] running (steam) id=${manifest.raw.id} appid=${manifest.steam.appid}`);
-        await waitForWatchedExit(watchProcesses ?? [], this.monitor, abort.signal);
+        await waitForSteamExit(manifest.steam.appid, watchProcesses ?? [], this.monitor, abort.signal);
         log.info(`[launch] exited (steam) id=${manifest.raw.id}`);
       } else {
         // 2. launch → GameProcess (spawn, or elevated ShellExecuteEx per manifest.runAsAdmin)

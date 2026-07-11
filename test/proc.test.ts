@@ -5,6 +5,7 @@ import {
   imageNameMatches,
   buildProcIndex,
   snapshotFromEntries,
+  environHasSteamApp,
   type ProcEntry,
 } from '../src/main/platform/proc';
 
@@ -100,6 +101,31 @@ describe('linux /proc process monitor — pure helpers', () => {
       const snap = snapshotFromEntries(entries);
       expect(snap.hasPid(10)).toBe(true);
       expect(snap.hasPid(999)).toBe(false);
+    });
+  });
+
+  describe('environHasSteamApp (Steam-mode process tagging)', () => {
+    it('matches SteamAppId in a NUL-separated environ', () => {
+      const environ = 'PATH=/usr/bin\0SteamAppId=892970\0LANG=en_US.UTF-8\0';
+      expect(environHasSteamApp(environ, 892970)).toBe(true);
+    });
+
+    it('matches SteamGameId as well (equal for base games)', () => {
+      expect(environHasSteamApp('SteamGameId=620\0FOO=bar', 620)).toBe(true);
+    });
+
+    it('does not match a different appid', () => {
+      expect(environHasSteamApp('SteamAppId=892970\0', 620)).toBe(false);
+    });
+
+    it('does not match a substring / prefix appid', () => {
+      // 8929 must not match 892970 (exact value compare, not includes).
+      expect(environHasSteamApp('SteamAppId=892970\0', 8929)).toBe(false);
+    });
+
+    it('returns false when no Steam tag is present (native non-Steam / kernel thread)', () => {
+      expect(environHasSteamApp('PATH=/usr/bin\0HOME=/home/deck\0', 892970)).toBe(false);
+      expect(environHasSteamApp('', 892970)).toBe(false);
     });
   });
 });

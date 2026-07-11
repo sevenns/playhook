@@ -534,3 +534,46 @@ export async function waitForWatchedExit(
     await delay(EXIT_POLL_INTERVAL_MS);
   }
 }
+
+// ── Steam-mode waits ─────────────────────────────────────────────────────────
+// Steam mode has no launcher pid of ours (steam://rungameid returns instantly), so "is the game up?" is
+// asked of the ProcessMonitor by appid: on win32 that maps to the watch image names (Windows Steam runs
+// the `.exe`), on linux to the SteamAppId in /proc environ (robust for native AND Proton games). Mirrors
+// waitForWatchedStart(launcherPid=null) / waitForWatchedExit, only the "visible" signal differs.
+
+/** HANDOFF: wait for the Steam game (by appid) to appear within `graceSec`. */
+export async function waitForSteamStart(
+  appid: number,
+  watchNames: readonly string[],
+  graceSec: number,
+  monitor: ProcessMonitor,
+  signal?: AbortSignal,
+): Promise<{ readonly started: boolean }> {
+  const deadline = Date.now() + graceSec * 1000;
+  for (;;) {
+    throwIfAborted(signal);
+    if (await monitor.isSteamGameRunning(appid, watchNames)) return { started: true };
+    if (Date.now() >= deadline) return { started: false };
+    await delay(START_POLL_INTERVAL_MS);
+  }
+}
+
+/** RUNNING: resolve after N=3 consecutive reads with the Steam game (by appid) absent (debounce). */
+export async function waitForSteamExit(
+  appid: number,
+  watchNames: readonly string[],
+  monitor: ProcessMonitor,
+  signal?: AbortSignal,
+): Promise<void> {
+  let missedReads = 0;
+  for (;;) {
+    throwIfAborted(signal);
+    if (await monitor.isSteamGameRunning(appid, watchNames)) {
+      missedReads = 0;
+    } else {
+      missedReads += 1;
+      if (missedReads >= EXIT_DEBOUNCE_READS) return;
+    }
+    await delay(EXIT_POLL_INTERVAL_MS);
+  }
+}

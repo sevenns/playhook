@@ -40,7 +40,7 @@ function makeWin32Snapshot(rawLower: string): ProcessSnapshot {
 }
 
 function createProcessMonitor(): ProcessMonitor {
-  return {
+  const monitor: ProcessMonitor = {
     async snapshot(): Promise<ProcessSnapshot> {
       try {
         const { stdout } = await execFileAsync('tasklist', ['/NH', '/FO', 'CSV'], { windowsHide: true });
@@ -77,7 +77,17 @@ function createProcessMonitor(): ProcessMonitor {
         }
       }
     },
+    // On Windows, Steam launches the game's `.exe`, so the watched image names ARE the running signal
+    // (1:1 with the pre-port steam-mode behaviour). The appid is unused here.
+    async isSteamGameRunning(_appid, watchNames): Promise<boolean> {
+      const snap = await monitor.snapshot();
+      return watchNames.some((name) => snap.hasImageName(name));
+    },
+    killSteamGame(_appid, watchNames): Promise<void> {
+      return monitor.killByName(watchNames);
+    },
   };
+  return monitor;
 }
 
 // ── SteamLocator (registry) ──────────────────────────────────────────────────

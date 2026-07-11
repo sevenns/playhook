@@ -37,6 +37,18 @@ export interface ProcessMonitor {
   killTree(pid: number): Promise<void>;
   /** Force-kills every process whose image matches one of the given (bare) names (best-effort). */
   killByName(names: readonly string[]): Promise<void>;
+  /**
+   * Whether a Steam game (by appid) is currently running. On win32 this falls back to the (Windows-
+   * dictionary) `watchNames` image match — Windows Steam runs the game's `.exe`. On linux it keys on
+   * `SteamAppId`/`SteamGameId` in `/proc/<pid>/environ`, which Steam stamps on every game process — robust
+   * for BOTH native-Linux and Proton games, whose binary names differ from the manifest's `*.exe`.
+   */
+  isSteamGameRunning(appid: number, watchNames: readonly string[]): Promise<boolean>;
+  /**
+   * Force-kills a running Steam game (force-close). win32: kills by `watchNames`. linux: SIGTERM/SIGKILL
+   * every process tagged with this `SteamAppId`, plus a by-name sweep as a fallback.
+   */
+  killSteamGame(appid: number, watchNames: readonly string[]): Promise<void>;
 }
 
 /** Locates the local Steam installation (the source of the steamapps libraries + compatdata prefixes). */

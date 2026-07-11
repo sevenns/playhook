@@ -39,6 +39,23 @@ export function imageNameMatches(target: string, actual: string): boolean {
   return pathBasename(target).toLowerCase() === actual.toLowerCase();
 }
 
+/**
+ * Whether a raw /proc/<pid>/environ blob (NUL-separated `KEY=VALUE`) tags the process with this Steam
+ * appid. Steam stamps `SteamAppId` (and `SteamGameId`, equal for base games) on every game process, so
+ * this identifies a running Steam game regardless of its binary name — the robust signal for BOTH native-
+ * Linux and Proton games (whose process names differ from the manifest's Windows `*.exe`). Pure — tested.
+ */
+export function environHasSteamApp(environ: string, appid: number): boolean {
+  const wanted = String(appid);
+  for (const entry of environ.split('\0')) {
+    const eq = entry.indexOf('=');
+    if (eq === -1) continue;
+    const key = entry.slice(0, eq);
+    if ((key === 'SteamAppId' || key === 'SteamGameId') && entry.slice(eq + 1) === wanted) return true;
+  }
+  return false;
+}
+
 /** One scanned process: its pid and the resolved image name (null for kernel threads / unreadable cmdline). */
 export interface ProcEntry {
   readonly pid: number;
@@ -115,9 +132,33 @@ function signalPids(pids: Iterable<number>): void {
   }
 }
 
+/** Pids of every process tagged with this Steam appid (via /proc/<pid>/environ). Any read error → skip. */
+async function steamAppPids(appid: number): Promise<readonly number[]> {
+  let dirents: readonly string[];
+  try {
+    dirents = await fs.readdir('/proc');
+  } catch {
+    return [];
+  }
+  const matches = await Promise.all(
+    dirents.map(async (name): Promise<number | null> => {
+      if (!/^\d+$/.test(name)) return null;
+      let environ = '';
+      try {
+        // environ is readable only for our own (same-user) processes — enough on Deck (games run as deck).
+        environ = await fs.readFile(`/proc/${name}/environ`, 'utf8');
+      } catch {
+        return null;
+      }
+      return environHasSteamApp(environ, appid) ? Number.parseInt(name, 10) : null;
+    }),
+  );
+  return matches.filter((pid): pid is number => pid !== null);
+}
+
 /** The linux /proc-backed ProcessMonitor. */
 export function createLinuxProcessMonitor(): ProcessMonitor {
-  return {
+  const monitor: ProcessMonitor = {
     async snapshot(): Promise<ProcessSnapshot> {
       return snapshotFromEntries(await scanProc());
     },
@@ -158,5 +199,19 @@ export function createLinuxProcessMonitor(): ProcessMonitor {
         .map((entry) => entry.pid);
       signalPids(pids);
     },
+    // Primary signal: any process tagged with this Steam appid (native OR Proton). Fallback: the Windows-
+    // style watch names, for odd setups where environ is unreadable.
+    async isSteamGameRunning(appid, watchNames): Promise<boolean> {
+      if ((await steamAppPids(appid)).length > 0) return true;
+      if (watchNames.length === 0) return false;
+      const snap = snapshotFromEntries(await scanProc());
+      return watchNames.some((name) => snap.hasImageName(name));
+    },
+    async killSteamGame(appid, watchNames): Promise<void> {
+      signalPids(await steamAppPids(appid));
+      // Fallback sweep by the Windows watch names (Proton `.exe`) — harmless if none match.
+      if (watchNames.length > 0) await monitor.killByName(watchNames);
+    },
   };
+  return monitor;
 }
