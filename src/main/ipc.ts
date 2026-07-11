@@ -34,14 +34,13 @@ import {
   waitForStart,
   waitForWatchedExit,
   waitForWatchedStart,
-  killImageByName,
-  anyImageAlive,
   killImagesElevated,
   LaunchAbortedError,
   type GameProcess,
 } from './game-launcher';
-import { findUninstallEntry, getSteamPath } from './registry';
+import { findUninstallEntry } from './registry';
 import { steamInstallStatus, openSteamUri } from './steam';
+import { type Platform, type ProcessMonitor } from './platform';
 import { AssetReader } from './asset-reader';
 import { type AppSettingsStore } from './app-settings';
 import { focusGameWindow } from './window-finder';
@@ -58,6 +57,14 @@ export interface ControllerDeps {
   readonly watcher: DriveWatcher;
   /** App-wide settings store — read/patched by the custom-wallpaper handlers (they own AssetReader). */
   readonly settings: AppSettingsStore;
+  /** Platform services (process monitor, Steam locator, launcher, save-path resolver, power) for the OS. */
+  readonly platform: Platform;
+  /**
+   * Whether this is a SteamOS Game Mode (gamescope) session. In Game Mode there is no tray, so every path
+   * that would hide the window to the tray instead keeps the empty/error screen up (Р8). Always false on
+   * Windows/desktop, so their behaviour is unchanged.
+   */
+  readonly isGamescope: boolean;
   /** The current translator (read live so a language change applies to freshly-generated messages). */
   readonly getTranslator: () => Translator;
 }
@@ -312,6 +319,7 @@ export class GameController {
     getState: () => this.deps.state.get(),
     isCardPresent: () => this.cardPresent,
     enterReady: (info) => this.enterReady(info),
+    steamLocator: () => this.deps.platform.steamLocator,
   });
 
   constructor(private readonly deps: ControllerDeps) {}
@@ -319,6 +327,18 @@ export class GameController {
   /** The current translator (a message is fixed at the language of the moment it is generated). */
   private get t(): Translator {
     return this.deps.getTranslator();
+  }
+
+  /** The platform process monitor (win32 tasklist / linux /proc), threaded into the launcher + waits. */
+  private get monitor(): ProcessMonitor {
+    return this.deps.platform.processMonitor;
+  }
+
+  /** True if any of the given image names is currently running (fresh snapshot; empty list → false). */
+  private async anyTargetAlive(targets: readonly string[]): Promise<boolean> {
+    if (targets.length === 0) return false;
+    const snapshot = await this.monitor.snapshot();
+    return targets.some((name) => snapshot.hasImageName(name));
   }
 
   /**
@@ -340,6 +360,16 @@ export class GameController {
     this.setAudio(null);
     this.setHero(null);
     this.setLibrary(null);
+  }
+
+  /**
+   * Hides the launcher to the tray (the background-app default), OR — in SteamOS Game Mode, where there is
+   * no tray to hide into — keeps the empty "insert a card" screen up instead (Р8). Used at every "no card"
+   * exit point. On Windows/desktop this is a plain hide (unchanged behaviour).
+   */
+  private hideToTrayOrKeepEmpty(): void {
+    if (this.deps.isGamescope) this.deps.window.showAndFocus();
+    else this.deps.window.hide();
   }
 
   /** Subscriptions to drive-watcher, state replication to the window, IPC handlers. */
@@ -371,7 +401,11 @@ export class GameController {
     }));
     ipcMain.on(IPC.actionLaunch, () => void this.onLaunchRequested());
     ipcMain.on(IPC.actionUninstall, () => void this.onUninstallRequested());
-    ipcMain.on(IPC.actionHide, () => this.deps.window.hide());
+    // Game Mode: hiding is meaningless (no tray, and on Linux no summon hotkey) — ignore the Hide button
+    // so the only window can't vanish with no way back. Desktop/Windows hide to the tray as before.
+    ipcMain.on(IPC.actionHide, () => {
+      if (!this.deps.isGamescope) this.deps.window.hide();
+    });
     ipcMain.on(IPC.actionOpenSteamDownloads, () => void this.onOpenSteamDownloads());
     ipcMain.on(IPC.actionKill, () => void this.onKillRequested());
     ipcMain.on(IPC.actionSelect, (_event, id: unknown) => void this.onSelectRequested(id));
@@ -452,7 +486,11 @@ export class GameController {
       log.warn(`[insert] manifest rejected: ${result.message}`);
       this.clearCard();
       this.deps.state.set({ kind: 'error', message: result.message });
-      this.deps.window.hide();
+      // Desktop/Windows: keep the window hidden (background app — the error is in the log and only shows
+      // if the user summons the window). Game Mode: there is no tray to hide into, so surface the manifest
+      // error on screen instead of hiding (Р8, point 1).
+      if (this.deps.isGamescope) this.deps.window.showAndFocus();
+      else this.deps.window.hide();
       return { ok: false, message: result.message };
     }
     const manifests = result.manifests;
@@ -595,7 +633,10 @@ export class GameController {
     // Normally the background app hides to the tray when no card is present. With "always show the no-card
     // screen" on, keep the launcher up on the empty screen instead — BUT only if it's currently on screen.
     // If the user minimized it to the tray, pulling the card must not pop it back up (respect that intent).
-    if (this.alwaysShowEmptyScreen) {
+    if (this.deps.isGamescope) {
+      // Game Mode: no tray — always keep the empty "insert a card" screen up (forces alwaysShowEmptyScreen).
+      this.deps.window.showAndFocus();
+    } else if (this.alwaysShowEmptyScreen) {
       if (this.deps.window.isShown()) this.deps.window.showAndFocus();
     } else {
       this.deps.window.hide();
@@ -741,11 +782,10 @@ export class GameController {
         }
       }
 
-      // 2. taskkill /F /IM per target image name (non-elevated). Per-name failures are normal ("not
-      //    found" = already dead); the verdict is the control poll below, not these exit codes.
-      for (const name of targets) {
-        await killImageByName(name);
-      }
+      // 2. Kill each target image by name (non-elevated): win32 `taskkill /F /IM`, linux SIGTERM/SIGKILL to
+      //    every /proc match. Failures are normal ("not found" = already dead); the verdict is the control
+      //    poll below, not these outcomes.
+      await this.monitor.killByName(targets);
 
       // 2b. Elevated escalation (runAsAdmin games only). A non-elevated taskkill / the ShellExecuteEx
       //     HANDLE can't terminate high-integrity processes, so if the targets survive a short grace we
@@ -790,7 +830,7 @@ export class GameController {
       // An exit waiter that already left `running` proves the process is gone — treat as killed.
       if (this.deps.state.get().kind !== 'running') return false;
       const ownedAlive = proc !== null && (await proc.isAlive());
-      if (!ownedAlive && !(await anyImageAlive(targets))) return false;
+      if (!ownedAlive && !(await this.anyTargetAlive(targets))) return false;
       if (Date.now() >= deadline) return true; // window elapsed and something is still alive → real fail
       await delay(KILL_VERIFY_INTERVAL_MS);
     }
@@ -823,7 +863,7 @@ export class GameController {
   private async runSteamInstall(manifest: ResolvedManifest, info: GameInfo): Promise<void> {
     const appid = manifest.steam?.appid;
     if (appid === undefined) return; // defensive: onLaunchRequested only calls this in steam mode
-    if ((await getSteamPath()) === null) {
+    if ((await this.deps.platform.steamLocator.locateSteam()) === null) {
       this.sendError(this.t('errors.steamNotInstalled'));
       return;
     }
@@ -863,7 +903,7 @@ export class GameController {
   private async runSteamUninstall(manifest: ResolvedManifest, info: GameInfo): Promise<void> {
     const appid = manifest.steam?.appid;
     if (appid === undefined) return; // defensive: onUninstallRequested only calls this in steam mode
-    if ((await getSteamPath()) === null) {
+    if ((await this.deps.platform.steamLocator.locateSteam()) === null) {
       this.sendError(this.t('errors.steamNotInstalled'));
       return;
     }
@@ -927,7 +967,7 @@ export class GameController {
         state.set({ kind: 'launching', game: info });
         // Pre-check: openExternal doesn't reliably reject when steam:// is unregistered, so gate the
         // launch on Steam actually being installed instead of relying on a reject.
-        if ((await getSteamPath()) === null) {
+        if ((await this.deps.platform.steamLocator.locateSteam()) === null) {
           this.failSequence('launch', info, this.t('errors.steamNotInstalled'));
           return;
         }
@@ -942,6 +982,7 @@ export class GameController {
           null,
           watchProcesses ?? [],
           manifest.raw.launchTimeoutSec,
+          this.monitor,
           abort.signal,
         );
         if (!started) {
@@ -961,13 +1002,13 @@ export class GameController {
         this.runningProc = null;
         state.set({ kind: 'running', game: info, since });
         log.info(`[launch] running (steam) id=${manifest.raw.id} appid=${manifest.steam.appid}`);
-        await waitForWatchedExit(watchProcesses ?? [], abort.signal);
+        await waitForWatchedExit(watchProcesses ?? [], this.monitor, abort.signal);
         log.info(`[launch] exited (steam) id=${manifest.raw.id}`);
       } else {
         // 2. launch → GameProcess (spawn, or elevated ShellExecuteEx per manifest.runAsAdmin)
         state.set({ kind: 'launching', game: info });
         try {
-          proc = await launchGame(manifest);
+          proc = await launchGame(manifest, this.monitor);
         } catch (cause) {
           this.failSequence('launch', info, this.t('errors.launchGame', { cause: describe(cause) }));
           return;
@@ -977,6 +1018,7 @@ export class GameController {
             proc.pid,
             watchProcesses,
             manifest.raw.launchTimeoutSec,
+            this.monitor,
             abort.signal,
           );
           if (!started) {
@@ -993,7 +1035,7 @@ export class GameController {
           this.runningProc = proc;
           state.set({ kind: 'running', game: info, since });
           log.info(`[launch] running (watched) id=${manifest.raw.id} watch=${watchProcesses.join(',')}`);
-          await waitForWatchedExit(watchProcesses, abort.signal);
+          await waitForWatchedExit(watchProcesses, this.monitor, abort.signal);
           log.info(`[launch] exited (watched) id=${manifest.raw.id}`);
         } else {
           const started = await waitForStart(proc, manifest.raw.launchTimeoutSec, abort.signal);
@@ -1071,7 +1113,7 @@ export class GameController {
       await fse.remove(install.dir);
 
       try {
-        proc = await launchInstaller(install);
+        proc = await launchInstaller(install, this.monitor);
       } catch (cause) {
         this.failSequence('install', info, this.t('errors.startInstaller', { cause: describe(cause) }));
         return;
@@ -1150,7 +1192,7 @@ export class GameController {
       const target = await resolveUninstaller(install);
       if (target !== null) {
         try {
-          proc = await launchUninstaller(target);
+          proc = await launchUninstaller(target, this.monitor);
           await waitForExit(proc, abort.signal);
         } catch (cause) {
           if (cause instanceof LaunchAbortedError) throw cause;
@@ -1172,7 +1214,7 @@ export class GameController {
       if (!this.cardPresent) {
         this.clearCard();
         state.set({ kind: 'idle' });
-        window.hide();
+        this.hideToTrayOrKeepEmpty();
         return;
       }
 
@@ -1228,7 +1270,7 @@ export class GameController {
       this.steamWatch.stop();
       this.clearCard();
       this.deps.state.set({ kind: 'idle' });
-      this.deps.window.hide();
+      this.hideToTrayOrKeepEmpty();
       return;
     }
     this.enterReady(game);
@@ -1318,7 +1360,7 @@ export class GameController {
     let steamPausedProgress: number | undefined;
     if (manifest.steam !== undefined) {
       // Steam mode: "installed" is Steam's own .acf state; uninstall is managed in Steam (never here).
-      const status = await steamInstallStatus(manifest.steam.appid);
+      const status = await steamInstallStatus(manifest.steam.appid, this.deps.platform.steamLocator);
       requiresInstall = status.state !== 'installed';
       // Steam uninstall is delegated to Steam (steam://uninstall) — available once installed.
       canUninstall = status.state === 'installed';
