@@ -11,7 +11,14 @@ import { promisify } from 'node:util';
 import fse from 'fs-extra';
 import type { GameProcessLauncher, ProcessMonitor } from './types';
 import type { GameProcess } from '../game-launcher';
-import { prefixDir, prefixForInstall, buildUmuEnv, buildUmuArgs, DEFAULT_PROTON } from './umu';
+import {
+  prefixDir,
+  prefixForInstall,
+  pendingWinetricks,
+  buildUmuEnv,
+  buildUmuArgs,
+  DEFAULT_PROTON,
+} from './umu';
 import { buildInstallerArgs } from '../launch-args';
 import { log } from '../logger';
 
@@ -111,6 +118,96 @@ function spawnUmuProcess(
   });
 }
 
+// ── Prefix dependency provisioning (Р7b) ─────────────────────────────────────
+// Before an installer runs, its Wine prefix gets a baseline set of runtimes (mfc42/gdiplus/vcrun/…) plus
+// any card-specific extras, via `umu-run winetricks`. A skinned Inno installer (isskin.dll) fails to load
+// on a bare prefix without these; games in the same prefix benefit too. Idempotent: the applied verbs are
+// recorded in a per-prefix sentinel so re-installs skip the (slow) step; the winetricks DOWNLOADS are
+// globally cached by winetricks, so a new prefix re-applies without re-downloading.
+
+/** Per-prefix marker file listing the winetricks verbs already provisioned (newline-separated). */
+const WINETRICKS_SENTINEL = '.playhook-winetricks';
+
+/** Reads the verbs already provisioned in `prefix` (empty if the sentinel is missing/unreadable). */
+async function readDoneVerbs(prefix: string): Promise<string[]> {
+  try {
+    const text = await fse.readFile(path.join(prefix, WINETRICKS_SENTINEL), 'utf8');
+    return text.split('\n').map((line) => line.trim()).filter((line) => line.length > 0);
+  } catch {
+    return []; // missing sentinel = nothing provisioned yet (normal first install)
+  }
+}
+
+/**
+ * Spawns `python3 umu-run winetricks -q <verbs…>` and resolves true on a clean exit, false otherwise
+ * (best-effort — a failure is logged and the install proceeds; the installer then either finds the
+ * runtimes already present or fails with its own error). Awaits completion, keeping only an output tail.
+ */
+function runWinetricks(
+  umuRunPath: string,
+  prefix: string,
+  verbs: readonly string[],
+): Promise<boolean> {
+  return new Promise<boolean>((resolve) => {
+    const env = buildUmuEnv(process.env, { prefix, proton: DEFAULT_PROTON });
+    const child = spawn('python3', [umuRunPath, 'winetricks', '-q', ...verbs], {
+      cwd: prefix,
+      env,
+      detached: false,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let outputTail = '';
+    const capture = (chunk: unknown): void => {
+      outputTail = (outputTail + String(chunk)).slice(-UMU_OUTPUT_TAIL_BYTES);
+    };
+    child.stdout?.on('data', capture);
+    child.stderr?.on('data', capture);
+    child.once('error', (err) => {
+      log.warn(`[install] winetricks spawn failed: ${err.message}`);
+      resolve(false);
+    });
+    child.once('exit', (code) => {
+      if (code === 0 || code === null) {
+        resolve(true);
+        return;
+      }
+      log.warn(`[install] winetricks exited code=${code} — output tail:\n${outputTail.trim()}`);
+      resolve(false);
+    });
+  });
+}
+
+/**
+ * Ensures the baseline + card-`extra` winetricks verbs are provisioned in `prefix` (Р7b). Idempotent via
+ * the per-prefix sentinel; a no-op when everything is already applied. Best-effort: a winetricks failure
+ * is logged and provisioning does NOT record success (so the next attempt retries), but the install is
+ * allowed to proceed regardless (chosen behaviour — the installer surfaces its own error if deps are
+ * truly missing). Needs network the first time (like the GE-Proton download), same as game launch in Э4.
+ */
+async function ensurePrefixDeps(
+  umuRunPath: string,
+  prefix: string,
+  extra: readonly string[],
+): Promise<void> {
+  const done = await readDoneVerbs(prefix);
+  const pending = pendingWinetricks(extra, done);
+  if (pending.length === 0) return;
+  log.info(`[install] provisioning prefix winetricks: ${pending.join(' ')}`);
+  const ok = await runWinetricks(umuRunPath, prefix, pending);
+  if (!ok) {
+    log.warn('[install] winetricks provisioning failed — proceeding; installer may fail on missing runtimes');
+    return;
+  }
+  // Persist the union of previously-done and newly-applied verbs so re-installs skip this step.
+  const union = [...new Set([...done, ...pending])];
+  try {
+    await fse.writeFile(path.join(prefix, WINETRICKS_SENTINEL), `${union.join('\n')}\n`);
+  } catch (cause) {
+    // Non-fatal: without the sentinel the next install re-runs winetricks (idempotent, just slower).
+    log.warn(`[install] failed to write winetricks sentinel: ${cause instanceof Error ? cause.message : String(cause)}`);
+  }
+}
+
 /** Builds the linux GameProcessLauncher (umu-run / Proton). */
 export function createLinuxGameLauncher(deps: LinuxGameLauncherDeps): GameProcessLauncher {
   return {
@@ -140,6 +237,10 @@ export function createLinuxGameLauncher(deps: LinuxGameLauncherDeps): GameProces
       // The prefix that makes `install.installerDir` (C:\…) map onto `install.dir` (the host dir).
       const prefix = prefixForInstall(install.dir);
       await fse.ensureDir(prefix);
+      // Р7b: provision the runtimes the installer/game need (baseline + card extras) before it runs.
+      // Also initializes the prefix (first `umu-run` here does the Proton upgrade), so the installer
+      // launches into a ready environment.
+      await ensurePrefixDeps(deps.umuRunPath, prefix, install.winetricks);
       const env = buildUmuEnv(process.env, { prefix, proton: DEFAULT_PROTON });
       const installerArgs = buildInstallerArgs(install.type, install.installerDir, install.args, false);
       const args = buildUmuArgs(deps.umuRunPath, install.installerPath, installerArgs);

@@ -269,6 +269,7 @@ export const en = {
   'manifest.idPattern': 'id must match [A-Za-z0-9._-]',
   'manifest.idDots': 'id must not be . or ..',
   'manifest.watchProcessesName': 'watchProcesses entries must be a bare *.exe name',
+  'manifest.winetricksName': 'install.winetricks entries must be winetricks verb names (letters, digits, _.-)',
   'manifest.installRunAsAdminCustom': 'install.runAsAdmin is not allowed with type "custom"',
   'manifest.installArgsDir':
     'install.args (type "custom") must contain exactly one token with a {dir} placeholder',

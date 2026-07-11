@@ -36,6 +36,12 @@ export interface InstallManifest {
    * built-in silent + dir flags.
    */
   readonly args: readonly string[];
+  /**
+   * Linux-only (Р7b): extra winetricks verbs provisioned into the game's Wine prefix before the installer
+   * runs, on top of the app's baseline set (e.g. a skinned Inno installer needing `mfc42`/`gdiplus`, or a
+   * game needing `dotnet48`). Ignored on Windows. Empty by default (schema `.default([])`).
+   */
+  readonly winetricks: readonly string[];
 }
 
 /**
@@ -155,6 +161,11 @@ export interface ResolvedManifest {
     readonly type: InstallManifest['type'];
     readonly runAsAdmin: boolean;
     readonly args: readonly string[];
+    /**
+     * Extra winetricks verbs (Р7b) provisioned into the game's Wine prefix before install, on top of the
+     * linux baseline set. Linux-only; ignored on Windows. Empty by default.
+     */
+    readonly winetricks: readonly string[];
     /**
      * Host-view of the app-controlled install directory: every fs op (pre-clean, uninstaller search,
      * sweep) and the resolved `executable` live under it. win32: `%LOCALAPPDATA%\playhook\games\<id>`;

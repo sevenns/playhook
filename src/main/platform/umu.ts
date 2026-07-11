@@ -41,6 +41,37 @@ export function installDirs(
 }
 
 /**
+ * Baseline winetricks verbs provisioned into every install-mode prefix before the installer runs (Р7b).
+ * These runtimes are what skinned Inno installers (isskin.dll) and many games need under a bare Proton
+ * prefix; installing them proactively makes install mode work out of the box. Card-specific extras
+ * (`install.winetricks`) are appended on top.
+ */
+export const INSTALL_BASELINE_WINETRICKS = [
+  'mfc42',
+  'gdiplus',
+  'vcrun6',
+  'vcrun2008',
+  'riched20',
+] as const;
+
+/**
+ * The winetricks verbs that still need applying: baseline + card `extra`, minus those already recorded as
+ * done in the prefix sentinel, de-duplicated and order-preserving. Empty → nothing to do (skip the run).
+ * Pure so the set logic is unit-tested without fs.
+ */
+export function pendingWinetricks(extra: readonly string[], done: readonly string[]): string[] {
+  const doneSet = new Set(done);
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const verb of [...INSTALL_BASELINE_WINETRICKS, ...extra]) {
+    if (doneSet.has(verb) || seen.has(verb)) continue;
+    seen.add(verb);
+    out.push(verb);
+  }
+  return out;
+}
+
+/**
  * The Wine prefix that hosts an install whose host-view dir is `hostDir` (inverse of installDirs): the
  * installer's `C:\playhook\games\<id>` maps to `hostDir` only when WINEPREFIX is the path segment before
  * `/drive_c/`. Used to launch the installer/uninstaller in the game's own prefix from the resolved

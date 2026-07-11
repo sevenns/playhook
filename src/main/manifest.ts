@@ -29,6 +29,14 @@ const installSchema = z
     runAsAdmin: z.boolean().default(false),
     // For `custom`: the full argv with exactly one {dir} token. For nsis/inno: optional extra flags.
     args: z.array(z.string()).default([]),
+    // Linux-only (Р7b): extra winetricks verbs provisioned into the game's Wine prefix BEFORE the
+    // installer runs, on top of the app's baseline set. Lets a card cover runtimes its installer/game
+    // needs (e.g. a skinned Inno installer needing mfc42/gdiplus, or a game needing dotnet). Ignored on
+    // Windows (native runtimes exist). Verb names only — strictly validated (shell-less execFile, but we
+    // guard anyway) against injection into the umu `winetricks` argv.
+    winetricks: z
+      .array(z.string().regex(/^[A-Za-z0-9_.-]+$/, 'manifest.winetricksName'))
+      .default([]),
   })
   // `custom` hands argv control to the card; running THAT elevated would escalate the attack
   // surface beyond the read-only tasklist we use today. The app builds nsis/inno args itself, so
@@ -369,6 +377,7 @@ async function resolveInstall(
       type: install.type,
       runAsAdmin: install.runAsAdmin,
       args: install.args,
+      winetricks: install.winetricks,
       dir: dirs.hostDir,
       installerDir: dirs.installerDir,
     },

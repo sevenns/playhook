@@ -231,6 +231,7 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'manifest.idPattern': 'id должен соответствовать [A-Za-z0-9._-]',
   'manifest.idDots': 'id не может быть . или ..',
   'manifest.watchProcessesName': 'элементы watchProcesses должны быть простым именем *.exe',
+  'manifest.winetricksName': 'элементы install.winetricks должны быть именами winetricks-вербов (буквы, цифры, _.-)',
   'manifest.installRunAsAdminCustom': 'install.runAsAdmin недопустим с типом "custom"',
   'manifest.installArgsDir':
     'install.args (тип "custom") должен содержать ровно один токен с плейсхолдером {dir}',

@@ -3,6 +3,8 @@ import {
   prefixDir,
   installDirs,
   prefixForInstall,
+  pendingWinetricks,
+  INSTALL_BASELINE_WINETRICKS,
   buildUmuEnv,
   buildUmuArgs,
   DEFAULT_PROTON,
@@ -43,6 +45,39 @@ describe('umu launch helpers (Proton exe mode)', () => {
 
     it('falls back to the input when there is no drive_c marker', () => {
       expect(prefixForInstall('/some/plain/path')).toBe('/some/plain/path');
+    });
+  });
+
+  describe('pendingWinetricks (prefix provisioning — Р7b)', () => {
+    it('returns the full baseline when nothing is done and no extras', () => {
+      expect(pendingWinetricks([], [])).toEqual([...INSTALL_BASELINE_WINETRICKS]);
+    });
+
+    it('appends card extras after the baseline', () => {
+      expect(pendingWinetricks(['dotnet48', 'd3dcompiler_47'], [])).toEqual([
+        ...INSTALL_BASELINE_WINETRICKS,
+        'dotnet48',
+        'd3dcompiler_47',
+      ]);
+    });
+
+    it('skips verbs already recorded as done', () => {
+      const done = ['mfc42', 'gdiplus'];
+      expect(pendingWinetricks([], done)).toEqual(
+        INSTALL_BASELINE_WINETRICKS.filter((v) => !done.includes(v)),
+      );
+    });
+
+    it('is empty when baseline + extras are all done (idempotent skip)', () => {
+      expect(pendingWinetricks(['dotnet48'], [...INSTALL_BASELINE_WINETRICKS, 'dotnet48'])).toEqual([]);
+    });
+
+    it('de-duplicates a verb an extra repeats from the baseline', () => {
+      // 'mfc42' is in the baseline; repeating it as an extra must not double it.
+      expect(pendingWinetricks(['mfc42', 'dotnet48'], [])).toEqual([
+        ...INSTALL_BASELINE_WINETRICKS,
+        'dotnet48',
+      ]);
     });
   });
 
