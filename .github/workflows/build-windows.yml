@@ -24,10 +24,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
+      # Node 22.12+ is required by electron@43 and @electron/rebuild@4 (their `engines`).
       - name: Setup Node.js
         uses: actions/setup-node@v5
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
 
       # npm ci runs postinstall (electron-builder install-app-deps) — the runner
@@ -47,8 +48,31 @@ jobs:
       - name: Compile TypeScript + assets
         run: npm run build
 
-      # --publish always: build the artifacts AND upload them (+ latest.yml for auto-update) to a
-      # GitHub Release tagged v{version} (created as a draft — publish it manually to go live).
+      # electron-builder 26.x publishes the nsis and portable targets in parallel, and its publisher
+      # cache is filled only after an `await` (PublishManager.getOrCreatePublisher became async) — so
+      # both targets build their own GitHub publisher and each drafts its own release, splitting the
+      # assets across two drafts. Its "reuse an existing release" check does match a draft by tag name,
+      # but a draft carries no real git tag, so nothing is found while both are racing to create it.
+      # Drafting the release up front removes the race: both targets find this one and upload into it.
+      #
+      # Fail fast on an already-published release: electron-builder only logs a warning and uploads
+      # nothing when the release it finds is not a draft, leaving a green job with no assets. Publish
+      # the release after this workflow finishes, never while it runs.
+      - name: Ensure draft release exists
+        shell: bash
+        run: |
+          tag="v$(node -p "require('./package.json').version")"
+          isDraft=$(gh release view "$tag" --json isDraft --jq .isDraft 2>/dev/null || echo missing)
+          case "$isDraft" in
+            missing) gh release create "$tag" --draft --target "$GITHUB_SHA" --title "$tag" --notes "$tag" ;;
+            true)    echo "Draft release $tag already exists — reusing it." ;;
+            false)   echo "::error::Release $tag is already published. electron-builder refuses to upload assets into it. Delete the release (and its tag) and re-run." ; exit 1 ;;
+          esac
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # --publish always: build the artifacts AND upload them (+ latest.yml for auto-update) to the
+      # GitHub Release tagged v{version} drafted above (publish it manually to go live).
       # GH_TOKEN = the default workflow token, scoped to this repo by the `permissions` block above.
       - name: Package (nsis + portable) and publish
         run: npx electron-builder --win --publish always
