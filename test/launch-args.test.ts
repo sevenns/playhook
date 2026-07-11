@@ -38,22 +38,29 @@ describe('buildParameters', () => {
 });
 
 describe('buildInstallerArgs', () => {
-  it('nsis: /S first, unquoted /D= last (even with spaces in dir) — unaffected by quoteDir', () => {
+  it('nsis silent: /S first, unquoted /D= last (even with spaces in dir) — unaffected by quoteDir', () => {
     const expected = ['/S', '/D=C:\\Program Files\\Game'];
-    expect(buildInstallerArgs('nsis', 'C:\\Program Files\\Game', [], true)).toEqual(expected);
-    expect(buildInstallerArgs('nsis', 'C:\\Program Files\\Game', [], false)).toEqual(expected);
+    expect(buildInstallerArgs('nsis', 'C:\\Program Files\\Game', [], true, true)).toEqual(expected);
+    expect(buildInstallerArgs('nsis', 'C:\\Program Files\\Game', [], false, true)).toEqual(expected);
   });
 
-  it('nsis: custom args go between /S and the trailing /D=', () => {
-    expect(buildInstallerArgs('nsis', 'C:\\Game', ['/EXTRA'], true)).toEqual([
+  it('nsis silent: custom args go between /S and the trailing /D=', () => {
+    expect(buildInstallerArgs('nsis', 'C:\\Game', ['/EXTRA'], true, true)).toEqual([
       '/S',
       '/EXTRA',
       '/D=C:\\Game',
     ]);
   });
 
-  it('inno win32 (quoteDir=true): silent flags with a QUOTED /DIR= (verbatim passthrough)', () => {
-    expect(buildInstallerArgs('inno', 'C:\\Program Files\\Game', [], true)).toEqual([
+  it('nsis interactive (silent=false): drops /S but keeps the trailing /D= dir hint', () => {
+    expect(buildInstallerArgs('nsis', 'C:\\Game', ['/EXTRA'], true, false)).toEqual([
+      '/EXTRA',
+      '/D=C:\\Game',
+    ]);
+  });
+
+  it('inno win32 silent (quoteDir=true): silent flags with a QUOTED /DIR= (verbatim passthrough)', () => {
+    expect(buildInstallerArgs('inno', 'C:\\Program Files\\Game', [], true, true)).toEqual([
       '/VERYSILENT',
       '/SUPPRESSMSGBOXES',
       '/NORESTART',
@@ -61,8 +68,8 @@ describe('buildInstallerArgs', () => {
     ]);
   });
 
-  it('inno linux (quoteDir=false): silent flags with an UNQUOTED /DIR= (Р7 — argv passthrough)', () => {
-    expect(buildInstallerArgs('inno', 'C:\\playhook\\games\\my-game', [], false)).toEqual([
+  it('inno linux silent (quoteDir=false): silent flags with an UNQUOTED /DIR= (Р7 — argv passthrough)', () => {
+    expect(buildInstallerArgs('inno', 'C:\\playhook\\games\\my-game', [], false, true)).toEqual([
       '/VERYSILENT',
       '/SUPPRESSMSGBOXES',
       '/NORESTART',
@@ -70,9 +77,18 @@ describe('buildInstallerArgs', () => {
     ]);
   });
 
-  it('custom: substitutes every {dir} token — unaffected by quoteDir', () => {
+  it('inno interactive (silent=false): drops the silent flags but keeps /DIR= to steer the wizard', () => {
+    expect(buildInstallerArgs('inno', 'C:\\playhook\\games\\my-game', [], false, false)).toEqual([
+      '/DIR=C:\\playhook\\games\\my-game',
+    ]);
+  });
+
+  it('custom: substitutes every {dir} token — unaffected by quoteDir/silent', () => {
     expect(
-      buildInstallerArgs('custom', 'C:\\Game', ['--target={dir}', '--also={dir}'], false),
+      buildInstallerArgs('custom', 'C:\\Game', ['--target={dir}', '--also={dir}'], false, true),
     ).toEqual(['--target=C:\\Game', '--also=C:\\Game']);
+    expect(
+      buildInstallerArgs('custom', 'C:\\Game', ['--target={dir}'], false, false),
+    ).toEqual(['--target=C:\\Game']);
   });
 });

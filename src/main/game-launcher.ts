@@ -237,6 +237,9 @@ interface LaunchMode {
 
 const GAME_MODE: LaunchMode = { verbatim: false, hide: false };
 const INSTALLER_MODE: LaunchMode = { verbatim: true, hide: true };
+// Interactive installer (user disabled silent mode): same verbatim arg passthrough, but the wizard window
+// is shown (not hidden) so the user can click through it — incl. steps a silent install would skip.
+const INSTALLER_INTERACTIVE_MODE: LaunchMode = { verbatim: true, hide: false };
 // Uninstaller: hidden (silent), but verbatim:FALSE — unlike the installer, the uninstaller target's
 // file/args are LOGICAL tokens (a found .exe path possibly with spaces/Cyrillic, or registry-parsed
 // argv), so Node/CommandLineToArgvW quoting must re-quote them correctly.
@@ -391,22 +394,24 @@ export async function launchGame(
 }
 
 /**
- * Launches the installer silently, feeding it the app-controlled install directory through the
- * family's dir-key. cwd is the installer's own folder on the card (the install dir may not exist yet —
- * it was just pre-cleaned, and the installer creates it). Returns a GameProcess; throws on failure.
+ * Launches the installer, feeding it the app-controlled install directory through the family's dir-key.
+ * `silent` (from settings) picks unattended vs a visible wizard (see buildInstallerArgs / the launch mode).
+ * cwd is the installer's own folder on the card (the install dir may not exist yet — it was just
+ * pre-cleaned, and the installer creates it). Returns a GameProcess; throws on failure.
  */
 export async function launchInstaller(
   install: NonNullable<ResolvedManifest['install']>,
+  silent: boolean,
   monitor: ProcessMonitor,
 ): Promise<GameProcess> {
   const target: LaunchTarget = {
     file: install.installerPath,
     // win32: installer-view dir == host dir; quoteDir:true bakes Inno's quotes for verbatim passthrough.
-    args: buildInstallerArgs(install.type, install.installerDir, install.args, true),
+    args: buildInstallerArgs(install.type, install.installerDir, install.args, true, silent),
     cwd: path.dirname(install.installerPath),
     runAsAdmin: install.runAsAdmin,
   };
-  return launch(target, INSTALLER_MODE, monitor);
+  return launch(target, silent ? INSTALLER_MODE : INSTALLER_INTERACTIVE_MODE, monitor);
 }
 
 /**

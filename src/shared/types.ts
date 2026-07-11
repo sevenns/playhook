@@ -389,6 +389,13 @@ export interface AppSettings {
    * the empty screen stays on card removal AND is shown at startup.
    */
   readonly alwaysShowEmptyScreen: boolean;
+  /**
+   * Disable trying silent mode for install-mode installers (Linux/Proton). Default false (installers run
+   * unattended). When true, the installer shows its wizard so the user can click through steps a silent
+   * install would skip — e.g. a repack's crack/patch flagged `skipifsilent`. The app still steers the
+   * install directory via the dir-key; the user must keep it for the completion check to find the exe.
+   */
+  readonly disableSilentInstall: boolean;
 }
 
 /**
@@ -479,6 +486,8 @@ export const IPC = {
   settingsSetAutoUpdate: 'settings:set-auto-update',
   /** settings-renderer → main: toggle keeping the empty "no card" screen visible (payload boolean). */
   settingsSetAlwaysShowEmptyScreen: 'settings:set-always-show-empty-screen',
+  /** settings-renderer → main: toggle disabling silent installer mode (payload boolean). */
+  settingsSetDisableSilentInstall: 'settings:set-disable-silent-install',
   /** settings-renderer → main: change the UI theme (payload ThemeMode). */
   settingsSetTheme: 'settings:set-theme',
   /** settings-renderer → main: toggle pre-release (beta) updates (payload boolean). */
@@ -699,6 +708,8 @@ export interface SettingsApi {
   setAutoUpdate(mode: AutoUpdateMode): void;
   /** Toggle keeping the empty "no card" screen visible instead of hiding to the tray. */
   setAlwaysShowEmptyScreen(on: boolean): void;
+  /** Toggle disabling silent installer mode (installers show their wizard when on). */
+  setDisableSilentInstall(on: boolean): void;
   setTheme(mode: ThemeMode): void;
   setPrerelease(on: boolean): void;
   setSummonHotkey(on: boolean): void;

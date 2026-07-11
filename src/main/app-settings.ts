@@ -39,6 +39,9 @@ const settingsSchema = z.object({
   // Keep the empty "no card" screen visible instead of hiding to the tray. `.default(false)` keeps the
   // original background-app behaviour for an older settings.json without the field.
   alwaysShowEmptyScreen: z.boolean().default(false),
+  // Disable trying silent mode for install-mode installers (they show their wizard instead). `.default(false)`
+  // keeps the original silent behaviour for an older settings.json without the field.
+  disableSilentInstall: z.boolean().default(false),
 });
 
 // Default preserves the pre-settings behaviour (silent download + install on next quit), so the
@@ -55,6 +58,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   sfxVolume: 1,
   customWallpaper: null,
   alwaysShowEmptyScreen: false,
+  disableSilentInstall: false,
 };
 
 export class AppSettingsStore {

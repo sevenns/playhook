@@ -1152,8 +1152,11 @@ export class GameController {
       // a bogus "Play". We're (re)installing anyway, so a clean directory is safe.
       await fse.remove(install.dir);
 
+      // Silent by default; a user who enabled "disable silent installer mode" gets the visible wizard
+      // (needed for repacks that skip a crack/patch step under silent — `skipifsilent`).
+      const silent = !(await this.deps.settings.read()).disableSilentInstall;
       try {
-        proc = await this.launcher.launchInstaller(install);
+        proc = await this.launcher.launchInstaller(install, silent);
       } catch (cause) {
         this.failSequence('install', info, this.t('errors.startInstaller', { cause: describe(cause) }));
         return;

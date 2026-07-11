@@ -107,7 +107,7 @@ function createSteamLocator(): SteamLocator {
 function createGameLauncher(monitor: ProcessMonitor): GameProcessLauncher {
   return {
     launchGame: (manifest) => launchGame(manifest, monitor),
-    launchInstaller: (install) => launchInstaller(install, monitor),
+    launchInstaller: (install, silent) => launchInstaller(install, silent, monitor),
     launchUninstaller: (target) => launchUninstaller(target, monitor),
   };
 }

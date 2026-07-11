@@ -95,6 +95,7 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'settings.summonHintPost': 'на геймпаде в любой момент, чтобы вывести лаунчер на передний план.',
   'settings.preventScreensaver': 'Не гасить экран, пока открыт лаунчер',
   'settings.alwaysShowEmpty': 'Всегда показывать экран без карты',
+  'settings.disableSilentInstall': 'Отключить тихую установку (показывать мастер установщика)',
   'settings.wallpaperLabel': 'Фон пустого экрана',
   'settings.wallpaperChoose': 'Выбрать изображение…',
   'settings.wallpaperReset': 'Сбросить',

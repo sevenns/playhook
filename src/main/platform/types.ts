@@ -70,8 +70,14 @@ export interface SteamLocator {
 export interface GameProcessLauncher {
   /** Launches the game executable and returns a GameProcess. Throws on failure. */
   launchGame(manifest: ResolvedManifest): Promise<GameProcess>;
-  /** Launches the install-mode installer silently into the app-controlled directory. Throws on failure. */
-  launchInstaller(install: NonNullable<ResolvedManifest['install']>): Promise<GameProcess>;
+  /**
+   * Launches the install-mode installer into the app-controlled directory. `silent` (from settings) runs
+   * it unattended (default) or shows its wizard when the user disabled silent mode. Throws on failure.
+   */
+  launchInstaller(
+    install: NonNullable<ResolvedManifest['install']>,
+    silent: boolean,
+  ): Promise<GameProcess>;
   /** Launches a resolved uninstaller target silently. Throws on failure. */
   launchUninstaller(target: LaunchTarget): Promise<GameProcess>;
 }

@@ -114,6 +114,7 @@ export const en = {
   'settings.summonHintPost': 'on your gamepad at any time to bring the launcher to the front.',
   'settings.preventScreensaver': 'Keep the screen awake while the launcher is open',
   'settings.alwaysShowEmpty': 'Always show the no-card screen',
+  'settings.disableSilentInstall': 'Disable silent installer mode (show the installer wizard)',
   'settings.wallpaperLabel': 'Empty screen background',
   'settings.wallpaperChoose': 'Choose image…',
   'settings.wallpaperReset': 'Reset',

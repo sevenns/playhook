@@ -229,7 +229,7 @@ export function createLinuxGameLauncher(deps: LinuxGameLauncherDeps): GameProces
     // it the app-controlled dir via the family's silent dir-key (unquoted on linux — see buildInstallerArgs).
     // cwd is the installer's own folder on the card (host path); the install dir may not exist yet (the
     // installer creates it, and the controller pre-cleaned it). runAsAdmin is ignored (no elevation — Р6).
-    async launchInstaller(install): Promise<GameProcess> {
+    async launchInstaller(install, silent): Promise<GameProcess> {
       if (install.runAsAdmin) {
         log.warn('[install] runAsAdmin ignored on Linux (no elevation under Proton)');
       }
@@ -242,11 +242,13 @@ export function createLinuxGameLauncher(deps: LinuxGameLauncherDeps): GameProces
       // launches into a ready environment.
       await ensurePrefixDeps(deps.umuRunPath, prefix, install.winetricks);
       const env = buildUmuEnv(process.env, { prefix, proton: DEFAULT_PROTON });
-      const installerArgs = buildInstallerArgs(install.type, install.installerDir, install.args, false);
+      // silent:false drops the silent flags → Proton shows the installer's wizard (no windowsHide concept
+      // on linux — umu surfaces the Wine window whenever the installer isn't running silently).
+      const installerArgs = buildInstallerArgs(install.type, install.installerDir, install.args, false, silent);
       const args = buildUmuArgs(deps.umuRunPath, install.installerPath, installerArgs);
       const cwd = path.dirname(install.installerPath);
       log.info(
-        `[install] umu-run installer prefix="${prefix}" installer="${install.installerPath}" dir="${install.installerDir}"`,
+        `[install] umu-run installer silent=${silent} prefix="${prefix}" installer="${install.installerPath}" dir="${install.installerDir}"`,
       );
       return spawnUmuProcess(args, cwd, env, deps.monitor);
     },

@@ -181,6 +181,12 @@ export class UpdaterService {
         .then(() => this.deps.onAlwaysShowEmptyScreenChanged(on))
         .catch((cause: unknown) => log.error('[updater] failed to persist always-show-empty-screen:', cause));
     });
+    // No side-effect on toggle: the install flow reads disableSilentInstall from settings at install time.
+    ipcMain.on(IPC.settingsSetDisableSilentInstall, (_event, on: boolean) => {
+      void this.deps.settings
+        .patch({ disableSilentInstall: on })
+        .catch((cause: unknown) => log.error('[updater] failed to persist disable-silent-install:', cause));
+    });
     ipcMain.on(IPC.settingsSetMusicVolume, (_event, volume: number) => {
       void this.setVolume({ musicVolume: volume });
     });
