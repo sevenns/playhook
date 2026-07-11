@@ -652,7 +652,10 @@ export class GameController {
   setAlwaysShowEmptyScreen(on: boolean): void {
     this.alwaysShowEmptyScreen = on;
     if (this.cardPresent || this.deps.state.get().kind !== 'idle') return;
-    if (on) this.deps.window.showAndFocus();
+    // Game Mode (gamescope): there is no tray to hide into, and a HIDDEN window leaves gamescope with no
+    // surface to present — Steam's launch spinner then hangs forever. So the window is ALWAYS shown there
+    // (the empty "insert a card" screen), regardless of the setting. Desktop/Windows honour the flag.
+    if (on || this.deps.isGamescope) this.deps.window.showAndFocus();
     else this.deps.window.hide();
   }
 
