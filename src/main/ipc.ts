@@ -199,9 +199,8 @@ function parseCommandLine(command: string): string[] {
 async function resolveUninstaller(
   install: NonNullable<ResolvedManifest['install']>,
 ): Promise<LaunchTarget | null> {
-  if (process.platform !== 'win32') return null; // install mode is Windows-only
-
-  // Step 1: FS search in install.dir, with self-built silent flags.
+  // Step 1: FS search in the (host-view) install dir, with self-built silent flags. Works on BOTH
+  // platforms (win32 reads the Windows path, linux the prefix path — Р7).
   const found = await findUninstallerInDir(install.dir, install.type);
   if (found !== null) {
     return {
@@ -212,6 +211,7 @@ async function resolveUninstaller(
     };
   }
   if (install.type === 'custom') return null; // no FS match and no silent convention → plain remove
+  if (process.platform !== 'win32') return null; // registry fallback is Windows-only (no registry under Proton — Р7)
 
   // Step 2: registry fallback (rare — nonstandard NSIS uninstaller name).
   const entry = await findUninstallEntry(install.dir);
@@ -483,7 +483,7 @@ export class GameController {
     // so %DOCUMENTS% in the manifest maps to the real save folder regardless of UI
     // language or OneDrive redirection. Safe to read here — app is ready by now.
     const env: ManifestEnv = { documents: app.getPath('documents'), t: this.t };
-    const result = await readManifests(root, env);
+    const result = await readManifests(root, env, this.deps.platform.resolveInstallDir);
     if (!result.ok) {
       // No valid game determined → keep the window hidden (the reason is in the log). We still set
       // the error state so a manually-summoned window can show it, but we never auto-surface it.
@@ -1430,7 +1430,9 @@ export class GameController {
       launchCount: stats.launchCount,
       requiresInstall,
       canUninstall,
-      ...(manifest.install !== undefined ? { installDir: manifest.install.dir } : {}),
+      // Installer-view dir (Р7): on linux this is the `C:\playhook\games\<id>` the user would paste into a
+      // non-silent Wine picker; on win32 it equals the host dir.
+      ...(manifest.install !== undefined ? { installDir: manifest.install.installerDir } : {}),
       ...(installVia !== undefined ? { installVia } : {}),
       ...(steamInstalling ? { steamInstalling: true } : {}),
       ...(steamPaused ? { steamPaused: true } : {}),

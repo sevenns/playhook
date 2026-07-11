@@ -13,6 +13,7 @@ import type {
 import { createLinuxProcessMonitor } from './proc';
 import { createLinuxSteamLocator } from './steam-locator.linux';
 import { createLinuxGameLauncher } from './game-launcher.linux';
+import { installDirs } from './umu';
 
 // ── SavePathResolver — Э5/Э6 (map %PREFIX% inside the Wine/compatdata prefix). Placeholder: unresolvable. ──
 function createSavePathResolver(): SavePathResolver {
@@ -46,5 +47,8 @@ export function createLinuxPlatform(deps: PlatformDeps): Platform {
     }),
     savePathResolver: createSavePathResolver(),
     powerBackend: createPowerBackend(),
+    // Install mode is always supported on linux — the prefix is created on demand (Р7). Both views come
+    // from umu.installDirs (host path inside the prefix + the `C:\playhook\games\<id>` installer view).
+    resolveInstallDir: (id) => installDirs(deps.userData, id),
   };
 }

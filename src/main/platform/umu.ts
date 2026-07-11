@@ -20,6 +20,39 @@ export function prefixDir(userData: string, id: string): string {
   return path.posix.join(userData, 'prefixes', id);
 }
 
+/** The `drive_c`-relative install root inside a prefix: `playhook/games` (then `<id>`). */
+const INSTALL_HOST_SUBPATH = ['drive_c', 'playhook', 'games'] as const;
+
+/**
+ * The app-controlled install directory for an install-mode game, in BOTH views (Р7):
+ * - `hostDir` — the real path inside the game's Wine prefix (`<pfx>/drive_c/playhook/games/<id>`),
+ *   where the installed files physically land (all fs ops + the resolved executable);
+ * - `installerDir` — the SAME place as the installer sees it under Wine (`C:\playhook\games\<id>`),
+ *   fed to the silent dir-arg. The path has no spaces by construction (`id` ∈ `[A-Za-z0-9._-]`), so the
+ *   Linux dir-arg can be passed unquoted (Р7).
+ */
+export function installDirs(
+  userData: string,
+  id: string,
+): { readonly hostDir: string; readonly installerDir: string } {
+  const hostDir = path.posix.join(prefixDir(userData, id), ...INSTALL_HOST_SUBPATH, id);
+  const installerDir = `C:\\playhook\\games\\${id}`;
+  return { hostDir, installerDir };
+}
+
+/**
+ * The Wine prefix that hosts an install whose host-view dir is `hostDir` (inverse of installDirs): the
+ * installer's `C:\playhook\games\<id>` maps to `hostDir` only when WINEPREFIX is the path segment before
+ * `/drive_c/`. Used to launch the installer/uninstaller in the game's own prefix from the resolved
+ * install descriptor (which carries the host dir, not the id). Falls back to `hostDir` if the marker is
+ * absent (defensive — never expected for a resolved install dir).
+ */
+export function prefixForInstall(hostDir: string): string {
+  const marker = '/drive_c/';
+  const idx = hostDir.indexOf(marker);
+  return idx === -1 ? hostDir : hostDir.slice(0, idx);
+}
+
 /**
  * The environment umu-run reads: the game's own Wine prefix, the generic GAMEID, and PROTONPATH (a Proton
  * name like `GE-Proton` that umu resolves/downloads, or an absolute path to a specific Proton). Layered

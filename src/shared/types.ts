@@ -155,8 +155,17 @@ export interface ResolvedManifest {
     readonly type: InstallManifest['type'];
     readonly runAsAdmin: boolean;
     readonly args: readonly string[];
-    /** The install directory the app controls: `%LOCALAPPDATA%\playhook\games\<id>`. */
+    /**
+     * Host-view of the app-controlled install directory: every fs op (pre-clean, uninstaller search,
+     * sweep) and the resolved `executable` live under it. win32: `%LOCALAPPDATA%\playhook\games\<id>`;
+     * linux: `<pfx>/drive_c/playhook/games/<id>` (inside the game's Wine prefix — Р7).
+     */
     readonly dir: string;
+    /**
+     * Installer-view of the SAME directory, fed to the silent dir-arg (`/DIR=` / `/D=`). win32: identical
+     * to `dir`; linux: `C:\playhook\games\<id>` — the path the installer sees under Wine (Р7).
+     */
+    readonly installerDir: string;
   };
   /** Resolved Steam descriptor (Steam mode only). When present, launch/install go through steam://. */
   readonly steam?: {

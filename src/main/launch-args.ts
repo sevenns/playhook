@@ -39,23 +39,34 @@ export function buildParameters(args: readonly string[]): string {
 
 /**
  * Builds the FINAL installer argument tokens for a silent install into `dir`, with each family's
- * quoting baked in (so they are passed verbatim, never re-quoted by Node/CommandLineToArgvW):
- * - `nsis`  → `/S` … `/D=<dir>` — `/D=` MUST be last and UNQUOTED (NSIS reads everything after it,
- *   to end of line, as the path — even with spaces).
- * - `inno`  → `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR="<dir>"` … — Inno needs the path quoted.
+ * silent flags and the dir-key:
+ * - `nsis`  → `/S` … `/D=<dir>` — `/D=` MUST be last and always UNQUOTED (NSIS reads everything after
+ *   it, to end of line, as the path — even with spaces), on both platforms.
+ * - `inno`  → `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR=<dir>` … — Inno's `/DIR=` quoting is the
+ *   ONLY platform-varying piece (Р7): see `quoteDir`.
  * - `custom`→ the card author's own args, with `{dir}` substituted; they own the quoting/flags.
  * Extra `customArgs` for nsis/inno are appended (after the silent flags, before the trailing `/D=` for nsis).
+ *
+ * `quoteDir` decides whether Inno's `/DIR=` value is wrapped in quotes:
+ * - win32 (`true`): the tokens are passed VERBATIM (`windowsVerbatimArguments: true`), so the quotes must
+ *   be baked in — Inno needs `/DIR="<dir>"`.
+ * - linux (`false`): the tokens travel as SEPARATE argv strings through umu → python → Proton → wine (no
+ *   `windowsVerbatimArguments`), so baked-in quotes would reach Inno escaped. The install dir has no
+ *   spaces by construction (`%LOCALAPPDATA%`-free `C:\playhook\games\<id>`), so `/DIR=<dir>` is safe.
  */
 export function buildInstallerArgs(
   type: InstallManifest['type'],
   dir: string,
   customArgs: readonly string[],
+  quoteDir: boolean,
 ): string[] {
   switch (type) {
     case 'nsis':
       return ['/S', ...customArgs, `/D=${dir}`];
-    case 'inno':
-      return ['/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', `/DIR="${dir}"`, ...customArgs];
+    case 'inno': {
+      const dirArg = quoteDir ? `/DIR="${dir}"` : `/DIR=${dir}`;
+      return ['/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', dirArg, ...customArgs];
+    }
     case 'custom':
       return customArgs.map((arg) => arg.replaceAll('{dir}', dir));
   }

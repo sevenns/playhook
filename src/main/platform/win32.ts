@@ -2,6 +2,7 @@
 // process control, the registry Steam lookup, the spawn/ShellExecuteEx launchers, the env-based save-path
 // mapping, the `shutdown` command + powrprof suspend). Behaviour is 1:1 with the pre-port code — the port
 // only routes it through the interfaces so a linux implementation can take its place (Р3/Р4/Р5/Р9).
+import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import type {
@@ -21,7 +22,12 @@ import {
 } from '../game-launcher';
 import { getSteamPath } from '../registry';
 import { suspendToSleep } from '../power-native';
-import { expandPcSavePath, absoluteToPcSavePath, type ManifestEnv } from '../manifest';
+import {
+  expandPcSavePath,
+  absoluteToPcSavePath,
+  type ManifestEnv,
+  type InstallDirResolver,
+} from '../manifest';
 import { createTranslator } from '../../shared/i18n/index';
 
 const execFileAsync = promisify(execFile);
@@ -123,6 +129,20 @@ function createSavePathResolver(deps: PlatformDeps): SavePathResolver {
   };
 }
 
+// ── InstallDirResolver (`%LOCALAPPDATA%\playhook\games\<id>`) ────────────────
+// Both views coincide on Windows: the installer writes to the same real path the app reads. Absent
+// `%LOCALAPPDATA%` (unusual setups) → null, so install mode is rejected exactly as the pre-port check did.
+
+function createInstallDirResolver(): InstallDirResolver {
+  return (id) => {
+    const localAppData = process.env['LOCALAPPDATA'];
+    if (localAppData === undefined || localAppData === '') return null;
+    // `id` is already constrained to [A-Za-z0-9._-] (no separators / not . or ..) → a safe folder name.
+    const dir = path.join(localAppData, 'playhook', 'games', id);
+    return { hostDir: dir, installerDir: dir };
+  };
+}
+
 // ── PowerBackend (`shutdown` + powrprof suspend) ─────────────────────────────
 
 function createPowerBackend(): PowerBackend {
@@ -151,5 +171,6 @@ export function createWin32Platform(deps: PlatformDeps): Platform {
     gameLauncher: createGameLauncher(processMonitor),
     savePathResolver: createSavePathResolver(deps),
     powerBackend: createPowerBackend(),
+    resolveInstallDir: createInstallDirResolver(),
   };
 }

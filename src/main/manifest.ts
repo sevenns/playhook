@@ -305,10 +305,30 @@ type InstallResolveResult =
   | { readonly ok: false; readonly message: string };
 
 /**
+ * The app-controlled install directory in BOTH views (Р7). On win32 they are identical
+ * (`%LOCALAPPDATA%\playhook\games\<id>`); on linux they diverge:
+ * - `hostDir` — the real filesystem path inside the game's Wine prefix
+ *   (`<pfx>/drive_c/playhook/games/<id>`): every fs op and the resolved `executable` live under it;
+ * - `installerDir` — the SAME location as the installer sees it under Wine (`C:\playhook\games\<id>`),
+ *   fed to the silent dir-arg (`/DIR=` / `/D=`).
+ */
+export interface InstallDir {
+  readonly hostDir: string;
+  readonly installerDir: string;
+}
+
+/**
+ * Platform install-dir resolution, injected into readManifests (Р7): maps a game `id` to both views of
+ * its app-controlled install dir, or null when install mode is unsupported on this platform/config
+ * (win32 with `%LOCALAPPDATA%` unset). `id` is already validated as a safe single path segment.
+ */
+export type InstallDirResolver = (id: string) => InstallDir | null;
+
+/**
  * Resolves the install-mode block: verifies the installer exists on the card, derives the
- * app-controlled install dir `%LOCALAPPDATA%\playhook\games\<id>` (Windows-only — install mode is
- * impossible without it, like runAsAdmin off-Windows), and resolves `executable` RELATIVE to that
- * dir (traversal forbidden, existence NOT checked — its absence is exactly the "not installed" state).
+ * app-controlled install dir via the platform `resolveInstallDir` (win32 `%LOCALAPPDATA%\…`; linux the
+ * game's Wine prefix — Р7), and resolves `executable` RELATIVE to its HOST view (traversal forbidden,
+ * existence NOT checked — its absence is exactly the "not installed" state).
  */
 async function resolveInstall(
   root: string,
@@ -316,6 +336,7 @@ async function resolveInstall(
   executable: string,
   install: NonNullable<GameManifest['install']>,
   t: Translator,
+  resolveInstallDir: InstallDirResolver,
 ): Promise<InstallResolveResult> {
   const installerPath = resolveInside(root, install.installer);
   if (installerPath === null) {
@@ -325,19 +346,17 @@ async function resolveInstall(
     return { ok: false, message: t('manifest.installerNotFound', { path: install.installer }) };
   }
 
-  // The install root is derived straight from the env var — the same mechanism pcSavePath uses —
-  // so nothing is added to ManifestEnv. %LOCALAPPDATA% is per-user, per-machine, non-roaming and
-  // needs no admin rights. Absent (non-Windows / unusual setups) → install mode is rejected.
-  const localAppData = process.env['LOCALAPPDATA'];
-  if (localAppData === undefined || localAppData === '') {
+  // The install dir is platform-specific (Р7): win32 derives `%LOCALAPPDATA%\playhook\games\<id>`;
+  // linux places it inside the game's Wine prefix. null → install mode is unsupported here (e.g.
+  // `%LOCALAPPDATA%` absent) and the card is rejected, exactly as the pre-port Windows-only check did.
+  const dirs = resolveInstallDir(id);
+  if (dirs === null) {
     return { ok: false, message: t('manifest.installNeedsLocalAppData') };
   }
-  // `id` is already constrained to [A-Za-z0-9._-] (no separators / not . or ..) → a safe folder name.
-  const dir = path.join(localAppData, 'playhook', 'games', id);
 
-  // `executable` resolves relative to the install dir — traversal forbidden, but existence is NOT
-  // checked here (it appears only after a successful install).
-  const executablePath = resolveInside(dir, executable);
+  // `executable` resolves relative to the HOST-view install dir — traversal forbidden, but existence is
+  // NOT checked here (it appears only after a successful install).
+  const executablePath = resolveInside(dirs.hostDir, executable);
   if (executablePath === null) {
     return { ok: false, message: t('manifest.executableEscapesInstall', { path: executable }) };
   }
@@ -350,7 +369,8 @@ async function resolveInstall(
       type: install.type,
       runAsAdmin: install.runAsAdmin,
       args: install.args,
-      dir,
+      dir: dirs.hostDir,
+      installerDir: dirs.installerDir,
     },
   };
 }
@@ -366,7 +386,11 @@ async function resolveInstall(
  * the card is fatal with the first skip reason (so a single-game card keeps its precise message — BC).
  * Duplicate ids are fatal (ids key PC storage — a collision would corrupt stats/saves).
  */
-export async function readManifests(root: string, env: ManifestEnv): Promise<ManifestsResult> {
+export async function readManifests(
+  root: string,
+  env: ManifestEnv,
+  resolveInstallDir: InstallDirResolver,
+): Promise<ManifestsResult> {
   const { t } = env;
   const manifestPath = path.join(root, MANIFEST_FILENAME);
 
@@ -386,7 +410,7 @@ export async function readManifests(root: string, env: ManifestEnv): Promise<Man
   const manifests: ResolvedManifest[] = [];
   let firstError: string | null = null;
   for (const [index, item] of normalized.items.entries()) {
-    const resolved = await resolveOne(item, root, env);
+    const resolved = await resolveOne(item, root, env, resolveInstallDir);
     if (!resolved.ok) {
       if (firstError === null) firstError = resolved.message;
       log.warn(`[manifest] skipping game #${index}: ${resolved.message}`);
@@ -414,7 +438,12 @@ export async function readManifests(root: string, env: ManifestEnv): Promise<Man
  * semantics, exactly as the single-game reader did. `env` carries known-folder bases resolved in main
  * (e.g. Documents) for pcSavePath. Also checks that the executable exists (an edge case).
  */
-async function resolveOne(rawParsed: unknown, root: string, env: ManifestEnv): Promise<ManifestResult> {
+async function resolveOne(
+  rawParsed: unknown,
+  root: string,
+  env: ManifestEnv,
+  resolveInstallDir: InstallDirResolver,
+): Promise<ManifestResult> {
   const { t } = env;
   const parsed = manifestSchema.safeParse(rawParsed);
   if (!parsed.success) {
@@ -454,7 +483,14 @@ async function resolveOne(rawParsed: unknown, root: string, env: ManifestEnv): P
     if (raw.executable === undefined) {
       return { ok: false, message: t('manifest.executableRequired') };
     }
-    const resolvedInstall = await resolveInstall(root, raw.id, raw.executable, raw.install, t);
+    const resolvedInstall = await resolveInstall(
+      root,
+      raw.id,
+      raw.executable,
+      raw.install,
+      t,
+      resolveInstallDir,
+    );
     if (!resolvedInstall.ok) {
       return { ok: false, message: resolvedInstall.message };
     }

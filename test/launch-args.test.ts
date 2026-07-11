@@ -38,23 +38,22 @@ describe('buildParameters', () => {
 });
 
 describe('buildInstallerArgs', () => {
-  it('nsis: /S first, unquoted /D= last (even with spaces in dir)', () => {
-    expect(buildInstallerArgs('nsis', 'C:\\Program Files\\Game', [])).toEqual([
-      '/S',
-      '/D=C:\\Program Files\\Game',
-    ]);
+  it('nsis: /S first, unquoted /D= last (even with spaces in dir) — unaffected by quoteDir', () => {
+    const expected = ['/S', '/D=C:\\Program Files\\Game'];
+    expect(buildInstallerArgs('nsis', 'C:\\Program Files\\Game', [], true)).toEqual(expected);
+    expect(buildInstallerArgs('nsis', 'C:\\Program Files\\Game', [], false)).toEqual(expected);
   });
 
   it('nsis: custom args go between /S and the trailing /D=', () => {
-    expect(buildInstallerArgs('nsis', 'C:\\Game', ['/EXTRA'])).toEqual([
+    expect(buildInstallerArgs('nsis', 'C:\\Game', ['/EXTRA'], true)).toEqual([
       '/S',
       '/EXTRA',
       '/D=C:\\Game',
     ]);
   });
 
-  it('inno: silent flags with a quoted /DIR=', () => {
-    expect(buildInstallerArgs('inno', 'C:\\Program Files\\Game', [])).toEqual([
+  it('inno win32 (quoteDir=true): silent flags with a QUOTED /DIR= (verbatim passthrough)', () => {
+    expect(buildInstallerArgs('inno', 'C:\\Program Files\\Game', [], true)).toEqual([
       '/VERYSILENT',
       '/SUPPRESSMSGBOXES',
       '/NORESTART',
@@ -62,10 +61,18 @@ describe('buildInstallerArgs', () => {
     ]);
   });
 
-  it('custom: substitutes every {dir} token', () => {
-    expect(buildInstallerArgs('custom', 'C:\\Game', ['--target={dir}', '--also={dir}'])).toEqual([
-      '--target=C:\\Game',
-      '--also=C:\\Game',
+  it('inno linux (quoteDir=false): silent flags with an UNQUOTED /DIR= (Р7 — argv passthrough)', () => {
+    expect(buildInstallerArgs('inno', 'C:\\playhook\\games\\my-game', [], false)).toEqual([
+      '/VERYSILENT',
+      '/SUPPRESSMSGBOXES',
+      '/NORESTART',
+      '/DIR=C:\\playhook\\games\\my-game',
     ]);
+  });
+
+  it('custom: substitutes every {dir} token — unaffected by quoteDir', () => {
+    expect(
+      buildInstallerArgs('custom', 'C:\\Game', ['--target={dir}', '--also={dir}'], false),
+    ).toEqual(['--target=C:\\Game', '--also=C:\\Game']);
   });
 });

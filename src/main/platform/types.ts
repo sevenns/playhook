@@ -10,6 +10,7 @@
 import type { ResolvedManifest, LaunchTarget } from '../../shared/types';
 import type { GameProcess } from '../game-launcher';
 import type { PowerAction } from '../power';
+import type { InstallDirResolver } from '../manifest';
 
 /**
  * An atomic snapshot of the running processes (one OS call). The same snapshot answers BOTH "is a watched
@@ -116,6 +117,11 @@ export interface Platform {
   readonly gameLauncher: GameProcessLauncher;
   readonly savePathResolver: SavePathResolver;
   readonly powerBackend: PowerBackend;
+  /**
+   * Resolves the app-controlled install directory for an install-mode game id (Р7), injected into
+   * readManifests. win32 derives `%LOCALAPPDATA%\playhook\games\<id>`; linux the game's Wine prefix.
+   */
+  readonly resolveInstallDir: InstallDirResolver;
 }
 
 /** Environment a platform needs at construction (resolved once in main from Electron's app paths). */

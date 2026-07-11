@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   prefixDir,
+  installDirs,
+  prefixForInstall,
   buildUmuEnv,
   buildUmuArgs,
   DEFAULT_PROTON,
@@ -13,6 +15,34 @@ describe('umu launch helpers (Proton exe mode)', () => {
       expect(prefixDir('/home/deck/.config/playhook', 'hollow-knight')).toBe(
         '/home/deck/.config/playhook/prefixes/hollow-knight',
       );
+    });
+  });
+
+  describe('installDirs (install mode — Р7)', () => {
+    it('host view is <pfx>/drive_c/playhook/games/<id>, installer view is C:\\playhook\\games\\<id>', () => {
+      const { hostDir, installerDir } = installDirs('/home/deck/.config/playhook', 'my-game');
+      expect(hostDir).toBe(
+        '/home/deck/.config/playhook/prefixes/my-game/drive_c/playhook/games/my-game',
+      );
+      expect(installerDir).toBe('C:\\playhook\\games\\my-game');
+    });
+
+    it('host view sits inside the game prefix (prefixDir)', () => {
+      const userData = '/home/deck/.config/playhook';
+      const { hostDir } = installDirs(userData, 'zork');
+      expect(hostDir.startsWith(`${prefixDir(userData, 'zork')}/`)).toBe(true);
+    });
+  });
+
+  describe('prefixForInstall (inverse of installDirs)', () => {
+    it('recovers the prefix from a host-view install dir', () => {
+      const userData = '/home/deck/.config/playhook';
+      const { hostDir } = installDirs(userData, 'my-game');
+      expect(prefixForInstall(hostDir)).toBe(prefixDir(userData, 'my-game'));
+    });
+
+    it('falls back to the input when there is no drive_c marker', () => {
+      expect(prefixForInstall('/some/plain/path')).toBe('/some/plain/path');
     });
   });
 

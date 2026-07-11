@@ -401,7 +401,8 @@ export async function launchInstaller(
 ): Promise<GameProcess> {
   const target: LaunchTarget = {
     file: install.installerPath,
-    args: buildInstallerArgs(install.type, install.dir, install.args),
+    // win32: installer-view dir == host dir; quoteDir:true bakes Inno's quotes for verbatim passthrough.
+    args: buildInstallerArgs(install.type, install.installerDir, install.args, true),
     cwd: path.dirname(install.installerPath),
     runAsAdmin: install.runAsAdmin,
   };
