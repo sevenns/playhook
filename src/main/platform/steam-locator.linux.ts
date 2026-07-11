@@ -12,17 +12,19 @@ import type { SteamLocator } from './types';
  * installs it is `~/.local/share/Steam`; `~/.steam/steam` is usually a symlink to it. Pure — unit-tested.
  */
 export function steamCandidateDirs(home: string): readonly string[] {
+  // Always POSIX-join: these are Linux paths, so they must use `/` regardless of the OS the tests run on
+  // (a win32 `path.join` would emit backslashes). The locator itself only runs on Linux at runtime.
   return [
-    path.join(home, '.local', 'share', 'Steam'),
-    path.join(home, '.steam', 'steam'), // legacy symlink to the above on most installs
-    path.join(home, '.var', 'app', 'com.valvesoftware.Steam', '.local', 'share', 'Steam'), // flatpak
-    path.join(home, 'snap', 'steam', 'common', '.local', 'share', 'Steam'), // snap
+    path.posix.join(home, '.local', 'share', 'Steam'),
+    path.posix.join(home, '.steam', 'steam'), // legacy symlink to the above on most installs
+    path.posix.join(home, '.var', 'app', 'com.valvesoftware.Steam', '.local', 'share', 'Steam'), // flatpak
+    path.posix.join(home, 'snap', 'steam', 'common', '.local', 'share', 'Steam'), // snap
   ];
 }
 
 /** A Steam root is valid iff it holds `steamapps/libraryfolders.vdf` (Steam's library index). Pure path. */
 export function libraryIndexPath(steamRoot: string): string {
-  return path.join(steamRoot, 'steamapps', 'libraryfolders.vdf');
+  return path.posix.join(steamRoot, 'steamapps', 'libraryfolders.vdf');
 }
 
 /** The linux SteamLocator: returns the first candidate root whose library index exists, or null. */
