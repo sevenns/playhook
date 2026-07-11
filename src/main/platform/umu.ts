@@ -15,7 +15,9 @@ export const UMU_GAMEID = 'umu-default' as const;
  * `[A-Za-z0-9._-]` (no separators, not `.`/`..`), so it is a safe single path segment.
  */
 export function prefixDir(userData: string, id: string): string {
-  return path.join(userData, 'prefixes', id);
+  // Always POSIX-join: this is a Linux path (the launcher only runs on Linux), so it must use `/`
+  // regardless of the OS the tests run on (a win32 `path.join` would emit backslashes and fail CI).
+  return path.posix.join(userData, 'prefixes', id);
 }
 
 /**
