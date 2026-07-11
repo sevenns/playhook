@@ -49,6 +49,9 @@ async function ensurePython3(): Promise<void> {
  * reuse. The kill delegates to the ProcessMonitor's group kill (the by-name sweep in the controller does
  * the rest for processes wineserver re-parented out of the group).
  */
+// Cap on the umu/Proton output we retain for diagnostics (last N chars of the combined stream).
+const UMU_OUTPUT_TAIL_BYTES = 8192;
+
 function spawnUmuProcess(
   args: readonly string[],
   cwd: string,
@@ -56,12 +59,20 @@ function spawnUmuProcess(
   monitor: ProcessMonitor,
 ): Promise<GameProcess> {
   return new Promise<GameProcess>((resolve, reject) => {
+    // Pipe (not ignore) so umu/Proton output is captured for diagnostics — a silent early exit is otherwise
+    // undebuggable. We keep only the tail (a game runs for hours; the buffer stays bounded).
     const child = spawn('python3', [...args], {
       cwd,
       env,
       detached: true,
-      stdio: 'ignore',
+      stdio: ['ignore', 'pipe', 'pipe'],
     });
+    let outputTail = '';
+    const capture = (chunk: unknown): void => {
+      outputTail = (outputTail + String(chunk)).slice(-UMU_OUTPUT_TAIL_BYTES);
+    };
+    child.stdout?.on('data', capture);
+    child.stderr?.on('data', capture);
     child.once('error', reject);
     child.once('spawn', () => {
       if (typeof child.pid !== 'number') {
@@ -71,8 +82,18 @@ function spawnUmuProcess(
       const pid = child.pid;
       child.removeListener('error', reject);
       let exited = false;
-      child.once('exit', () => {
+      child.once('exit', (code, signal) => {
         exited = true;
+        if (code === 0 || code === null) {
+          log.info(`[umu] exited code=${code ?? 'null'} signal=${signal ?? ''}`);
+        } else {
+          // A non-zero exit (esp. a near-instant one) is a failed launch, not a played session — surface the
+          // captured output so the cause is visible (bad Proton, no network for the GE-Proton download, an
+          // env conflict, …).
+          log.warn(
+            `[umu] exited code=${code} signal=${signal ?? ''} — output tail:\n${outputTail.trim()}`,
+          );
+        }
       });
       resolve({
         pid,

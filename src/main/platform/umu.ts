@@ -29,13 +29,22 @@ export function buildUmuEnv(
   base: NodeJS.ProcessEnv,
   opts: { readonly prefix: string; readonly proton: string },
 ): NodeJS.ProcessEnv {
-  return {
+  const env: NodeJS.ProcessEnv = {
     ...base,
     WINEPREFIX: opts.prefix,
     GAMEID: UMU_GAMEID,
     PROTONPATH: opts.proton,
   };
+  // The Electron AppImage injects LD_LIBRARY_PATH / LD_PRELOAD pointing at its OWN bundled libraries. A
+  // spawned system binary (python3 → umu → Proton) that inherits them loads mismatched libs and dies
+  // instantly (§5.1). Strip them so umu-run runs against the clean system libraries. umu/Proton set up
+  // their own library environment from scratch, so nothing of ours needs to survive here.
+  for (const key of ENV_STRIP_KEYS) delete env[key];
+  return env;
 }
+
+/** Dynamic-linker vars the Electron AppImage sets that must NOT leak into the spawned Proton toolchain. */
+const ENV_STRIP_KEYS = ['LD_LIBRARY_PATH', 'LD_PRELOAD'] as const;
 
 /**
  * The argv for `python3`: the umu-run zipapp, then the (host-path) Windows executable and its game args.
