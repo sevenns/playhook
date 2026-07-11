@@ -24,10 +24,11 @@ for (const name of dirs) {
 
 // App icons: copied into dist so they ship inside the asar and are usable at runtime.
 // icon.ico — main app icon (BrowserWindow; also referenced by electron-builder for exe/installer).
-// icon-tray.ico — smaller/simpler icon for the tray, so it doesn't turn to mush at tray size.
+// icon-tray.ico — smaller/simpler icon for the tray on Windows, so it doesn't turn to mush at tray size.
+// icon-tray.png — the tray icon for Linux (Desktop Mode/KDE): a .ico yields an empty nativeImage there.
 // icon.png — 256×256 app icon, read by main and handed to the settings window's custom title bar as a
-// data URL (its CSP allows img-src data: only).
-const icons = ['icon.ico', 'icon-tray.ico', 'icon.png'];
+// data URL (its CSP allows img-src data: only); also the Linux BrowserWindow/AppImage icon.
+const icons = ['icon.ico', 'icon-tray.ico', 'icon-tray.png', 'icon.png'];
 for (const name of icons) {
   await cp(resolve(root, name), resolve(outDist, name));
 }

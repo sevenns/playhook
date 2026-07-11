@@ -24,9 +24,11 @@ export function buildTrayMenu(t: Translator, callbacks: TrayCallbacks): Menu {
 }
 
 export function createTray(t: Translator, callbacks: TrayCallbacks): Tray {
-  // Dedicated tray icon (simpler than the main app icon so it stays legible at tray size),
-  // copied into dist by copy-assets. Falls back to an empty image if missing.
-  const iconPath = path.join(__dirname, '../icon-tray.ico');
+  // Dedicated tray icon (simpler than the main app icon so it stays legible at tray size), copied into
+  // dist by copy-assets. Windows uses the .ico; Linux (Desktop Mode/KDE) needs a PNG — a .ico yields an
+  // empty image via nativeImage there (Р8). Falls back to an empty image if the file is missing.
+  const iconFile = process.platform === 'win32' ? '../icon-tray.ico' : '../icon-tray.png';
+  const iconPath = path.join(__dirname, iconFile);
   const image = nativeImage.createFromPath(iconPath);
   const tray = new Tray(image.isEmpty() ? nativeImage.createEmpty() : image);
 

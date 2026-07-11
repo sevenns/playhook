@@ -24,7 +24,10 @@ export class GameWindow {
    * (all visibility changes go through them → 'hide'/'show'); the minimize/restore listeners are a cheap
    * guard for the OS minimizing us (e.g. an exclusive-fullscreen game).
    */
-  create(onVisibilityChanged: (shown: boolean) => void = () => undefined): BrowserWindow {
+  create(
+    onVisibilityChanged: (shown: boolean) => void = () => undefined,
+    opts: { readonly hideToTrayOnClose?: boolean } = {},
+  ): BrowserWindow {
     const window = new BrowserWindow({
       // width/height act as the windowed fallback if fullscreen is ever toggled off.
       width: 960,
@@ -35,7 +38,8 @@ export class GameWindow {
       frame: false,
       // Fullscreen launcher: the window covers the whole screen (incl. taskbar) when shown.
       fullscreen: true,
-      icon: path.join(__dirname, '../icon.ico'),
+      // Windows takes a multi-res .ico; Linux/mac need a PNG (a .ico renders as an empty icon there).
+      icon: path.join(__dirname, process.platform === 'win32' ? '../icon.ico' : '../icon.png'),
       backgroundColor: '#101014',
       webPreferences: {
         preload: path.join(__dirname, '../preload/preload.js'),
@@ -68,8 +72,12 @@ export class GameWindow {
       menu.popup({ window });
     });
 
-    // Closing the window with the X doesn't quit the app — we hide it to the tray.
-    this.closeGuard = installHideOnClose(window);
+    // Closing the window with the X doesn't quit the app — we hide it to the tray. In SteamOS Game Mode
+    // there is no tray and Steam ends a non-Steam game by closing its window, so the guard is skipped
+    // (`hideToTrayOnClose: false`): the close proceeds and main quits on window-all-closed (see Р8, point 5).
+    if (opts.hideToTrayOnClose ?? true) {
+      this.closeGuard = installHideOnClose(window);
+    }
 
     // Report on-screen state changes to the keep-awake driver. 'show'/'hide' cover every in-app
     // transition (hide() / showAndFocus()); 'minimize'/'restore' guard against the OS minimizing us.

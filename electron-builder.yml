@@ -30,6 +30,17 @@ nsis:
   perMachine: false
   allowToChangeInstallationDirectory: true
 
+# Linux / SteamOS build (Steam Deck port). AppImage is the only target — self-contained, runnable from
+# any distro, and electron-updater supports AppImage in-place updates (blockmap deltas). `icon.png` is the
+# 256×256 app icon (electron-builder may warn about size but it works). `category: Game` sets the .desktop
+# category. The native drivelist/koffi unpack above applies to Linux too (koffi is unused there but stays
+# a dependency of the win32 build). The umu-launcher zipapp is bundled via extraResources (added in Э4).
+linux:
+  icon: icon.png
+  category: Game
+  target:
+    - AppImage
+
 # Auto-update channel (electron-updater): the app reads `latest.yml` + the installer from this repo's
 # GitHub Releases. Public repo → no token on the client. Update `owner`/`repo` if the GitHub repo is
 # renamed. Only the `nsis` target self-updates; the `portable` exe does not.
