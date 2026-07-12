@@ -315,6 +315,12 @@ export type AppState =
   | { readonly kind: 'ready'; readonly game: GameInfo }
   | { readonly kind: 'installing'; readonly game: GameInfo }
   | { readonly kind: 'uninstalling'; readonly game: GameInfo }
+  /**
+   * Linux-only (Р7g): the game's Wine prefix is being provisioned (winetricks) before the installer/game
+   * runs. A transient screen shown WITHIN installing/launching; `message` is the current (rotating,
+   * pre-translated) status text. Reverts to the prior installing/launching state when provisioning ends.
+   */
+  | { readonly kind: 'configuringProton'; readonly game: GameInfo; readonly message: string }
   | { readonly kind: 'syncing-in'; readonly game: GameInfo }
   | { readonly kind: 'launching'; readonly game: GameInfo }
   | {

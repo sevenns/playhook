@@ -68,18 +68,33 @@ export interface SteamLocator {
  * prefix (Р1/Р7) with no elevation (runAsAdmin is a no-op there — Р6).
  */
 export interface GameProcessLauncher {
-  /** Launches the game executable and returns a GameProcess. Throws on failure. */
-  launchGame(manifest: ResolvedManifest): Promise<GameProcess>;
+  /**
+   * Launches the game executable and returns a GameProcess. Throws on failure. `onProvisioning` (linux
+   * only) fires true/false around a winetricks prefix provisioning step, so the caller can show a
+   * "Configuring Proton" status; win32 never provisions and ignores it.
+   */
+  launchGame(
+    manifest: ResolvedManifest,
+    onProvisioning?: (active: boolean) => void,
+  ): Promise<GameProcess>;
   /**
    * Launches the install-mode installer into the app-controlled directory. `silent` (from settings) runs
-   * it unattended (default) or shows its wizard when the user disabled silent mode. Throws on failure.
+   * it unattended (default) or shows its wizard when the user disabled silent mode. `onProvisioning` — see
+   * launchGame. Throws on failure.
    */
   launchInstaller(
     install: NonNullable<ResolvedManifest['install']>,
     silent: boolean,
+    onProvisioning?: (active: boolean) => void,
   ): Promise<GameProcess>;
   /** Launches a resolved uninstaller target silently. Throws on failure. */
   launchUninstaller(target: LaunchTarget): Promise<GameProcess>;
+  /**
+   * The directory whose removal fully uninstalls the game (removed best-effort by the controller — Р7f).
+   * win32: the app-controlled install dir. linux: the WHOLE per-game Wine prefix — it holds the install
+   * dir AND the game's provisioned runtimes (dotnet/GE-Proton env), so uninstall reclaims all of it.
+   */
+  uninstallDir(install: NonNullable<ResolvedManifest['install']>): string;
 }
 
 /**

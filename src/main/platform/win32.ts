@@ -109,6 +109,9 @@ function createGameLauncher(monitor: ProcessMonitor): GameProcessLauncher {
     launchGame: (manifest) => launchGame(manifest, monitor),
     launchInstaller: (install, silent) => launchInstaller(install, silent, monitor),
     launchUninstaller: (target) => launchUninstaller(target, monitor),
+    // win32: no Wine prefix — uninstall removes the app-controlled install dir (after the game's own
+    // uninstaller runs). 1:1 with the pre-port behaviour.
+    uninstallDir: (install) => install.dir,
   };
 }
 

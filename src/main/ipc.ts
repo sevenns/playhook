@@ -18,7 +18,7 @@ import {
   type Stats,
   type WallpaperResult,
 } from '../shared/types';
-import { type Translator } from '../shared/i18n/index';
+import { type Translator, type MessageKey } from '../shared/i18n/index';
 import { type StateManager } from './state';
 import { type GameWindow } from './window';
 import { type PcStore } from './pc-store';
@@ -91,6 +91,20 @@ const KILL_ELEVATE_GRACE_SEC = 3;
 // few backed-off retries let the lock clear before fse.remove succeeds.
 const REMOVE_RETRY_ATTEMPTS = 3;
 const REMOVE_RETRY_BASE_MS = 300;
+
+// ── "Configuring Proton" rotating status (Linux prefix provisioning — Р7g) ──
+// While winetricks provisions the prefix (can be minutes for dotnet), a fun rotating status keeps the wait
+// from feeling stuck. The FIRST entry is always shown; the rest rotate at random once a minute.
+const PROTON_CONFIG_KEYS = [
+  'launcher.protonConfig1',
+  'launcher.protonConfig2',
+  'launcher.protonConfig3',
+  'launcher.protonConfig4',
+  'launcher.protonConfig5',
+  'launcher.protonConfig6',
+  'launcher.protonConfig7',
+] as const satisfies readonly MessageKey[];
+const PROTON_CONFIG_ROTATE_MS = 60_000;
 
 // ── Uninstaller resolution (FS search in the install dir → registry fallback) ──
 
@@ -199,8 +213,13 @@ function parseCommandLine(command: string): string[] {
 async function resolveUninstaller(
   install: NonNullable<ResolvedManifest['install']>,
 ): Promise<LaunchTarget | null> {
-  // Step 1: FS search in the (host-view) install dir, with self-built silent flags. Works on BOTH
-  // platforms (win32 reads the Windows path, linux the prefix path — Р7).
+  // Linux (Р7f): uninstall removes the WHOLE per-game Wine prefix (see GameProcessLauncher.uninstallDir),
+  // so running the game's own in-prefix uninstaller first is pointless (its registry/shortcut cleanup
+  // lives in the prefix we're about to delete). Skip it — win32 still runs it (no prefix; it must clean
+  // the shared system before the install dir is removed).
+  if (process.platform !== 'win32') return null;
+
+  // Step 1: FS search in the install dir, with self-built silent flags.
   const found = await findUninstallerInDir(install.dir, install.type);
   if (found !== null) {
     return {
@@ -211,9 +230,9 @@ async function resolveUninstaller(
     };
   }
   if (install.type === 'custom') return null; // no FS match and no silent convention → plain remove
-  if (process.platform !== 'win32') return null; // registry fallback is Windows-only (no registry under Proton — Р7)
 
-  // Step 2: registry fallback (rare — nonstandard NSIS uninstaller name).
+  // Step 2: registry fallback (rare — nonstandard NSIS uninstaller name). win32-only (reached only on
+  // win32; the non-win32 early return above skips the whole uninstaller path).
   const entry = await findUninstallEntry(install.dir);
   if (entry === null) return null;
   const command = entry.quietUninstallString ?? entry.uninstallString;
@@ -293,6 +312,10 @@ export class GameController {
   // A force-close (onKillRequested) is underway. Local try/finally flag (mirrors reloadInFlight, NOT the
   // launch sequence's finally — a kill has its own short-lived lifecycle) so a double Yes / repeat is a no-op.
   private killInFlight = false;
+  // "Configuring Proton" rotation (Р7g): the interval id while a winetricks provisioning screen is up, and
+  // the installing/launching state to restore once provisioning ends. Both null when not provisioning.
+  private protonConfigTimer: ReturnType<typeof setInterval> | null = null;
+  private protonConfigPriorState: AppState | null = null;
   // Audio for the current card, sent on its own channel (not on every AppState) — see AudioAssets.
   private currentAudio: AudioAssets | null = null;
   // Hero images for the current card, sent on their own channel (not on every AppState) — see HeroAssets.
@@ -336,6 +359,44 @@ export class GameController {
   /** The platform game launcher (win32 spawn/ShellExecuteEx / linux umu-run/Proton). */
   private get launcher(): Platform['gameLauncher'] {
     return this.deps.platform.gameLauncher;
+  }
+
+  /**
+   * Linux prefix provisioning (winetricks) started/finished — the launcher's onProvisioning callback
+   * (Р7g). On start: stash the current installing/launching state and show the rotating "Configuring
+   * Proton" screen. On finish: stop the rotation and restore the stashed state (the launch/install
+   * sequence then continues from where it was). No-op on win32 (the launcher never fires this).
+   */
+  private setProvisioning(active: boolean, game: GameInfo): void {
+    if (active) {
+      this.protonConfigPriorState = this.deps.state.get();
+      this.showProtonConfig(game, true);
+      this.protonConfigTimer = setInterval(
+        () => this.showProtonConfig(game, false),
+        PROTON_CONFIG_ROTATE_MS,
+      );
+    } else {
+      this.stopProvisioningTimer();
+      if (this.protonConfigPriorState !== null) {
+        this.deps.state.set(this.protonConfigPriorState);
+        this.protonConfigPriorState = null;
+      }
+    }
+  }
+
+  /** Sets the configuringProton state with the first (fixed) or a random subsequent status text. */
+  private showProtonConfig(game: GameInfo, first: boolean): void {
+    const index = first ? 0 : 1 + Math.floor(Math.random() * (PROTON_CONFIG_KEYS.length - 1));
+    const key = PROTON_CONFIG_KEYS[index] ?? PROTON_CONFIG_KEYS[0];
+    this.deps.state.set({ kind: 'configuringProton', game, message: this.t(key) });
+  }
+
+  /** Clears the rotation timer WITHOUT touching state — defensive cleanup for a sequence's finally. */
+  private stopProvisioningTimer(): void {
+    if (this.protonConfigTimer !== null) {
+      clearInterval(this.protonConfigTimer);
+      this.protonConfigTimer = null;
+    }
   }
 
   /** True if any of the given image names is currently running (fresh snapshot; empty list → false). */
@@ -1048,7 +1109,7 @@ export class GameController {
         // 2. launch → GameProcess (spawn, or elevated ShellExecuteEx per manifest.runAsAdmin)
         state.set({ kind: 'launching', game: info });
         try {
-          proc = await this.launcher.launchGame(manifest);
+          proc = await this.launcher.launchGame(manifest, (active) => this.setProvisioning(active, info));
         } catch (cause) {
           this.failSequence('launch', info, this.t('errors.launchGame', { cause: describe(cause) }));
           return;
@@ -1117,6 +1178,7 @@ export class GameController {
     } finally {
       // Release the elevated HANDLE (no-op for the normal spawn path).
       proc?.dispose();
+      this.stopProvisioningTimer(); // defensive: the launcher's finally already tore it down
       this.launchInFlight = false;
       // The game is done → unlock (game switching allowed again, "Select game" button reappears).
       this.locked = false;
@@ -1156,7 +1218,9 @@ export class GameController {
       // (needed for repacks that skip a crack/patch step under silent — `skipifsilent`).
       const silent = !(await this.deps.settings.read()).disableSilentInstall;
       try {
-        proc = await this.launcher.launchInstaller(install, silent);
+        proc = await this.launcher.launchInstaller(install, silent, (active) =>
+          this.setProvisioning(active, info),
+        );
       } catch (cause) {
         this.failSequence('install', info, this.t('errors.startInstaller', { cause: describe(cause) }));
         return;
@@ -1187,6 +1251,7 @@ export class GameController {
       this.failSequence('install', info, describe(cause));
     } finally {
       proc?.dispose();
+      this.stopProvisioningTimer(); // defensive: the launcher's finally already tore it down
       this.launchInFlight = false;
       this.abort = null;
       this.resumePendingInsert();
@@ -1243,9 +1308,11 @@ export class GameController {
         }
       }
 
-      // Always sweep the app-controlled install dir — after the uninstaller, and as the fallback when
-      // no target was resolved (custom / nothing found).
-      await removeWithRetry(install.dir, abort.signal);
+      // Sweep the platform's uninstall target — after the uninstaller, and as the fallback when no target
+      // was resolved (custom / nothing found). win32: the install dir. linux: the whole per-game Wine
+      // prefix (game files + provisioned runtimes), so the full disk footprint is reclaimed (Р7f).
+      const uninstallDir = this.launcher.uninstallDir(install);
+      await removeWithRetry(uninstallDir, abort.signal);
 
       // fse.remove is NOT interrupted by the signal (unlike waitForExit), so check the abort flag
       // manually — strictly BEFORE reading cardPresent / rebuilding info — so a mid-uninstall card swap
@@ -1265,7 +1332,7 @@ export class GameController {
       // is gone) → the button flips back to "Install" and "Uninstall" disappears.
       const currentStats = await stats.read(manifest.raw.id);
       const updatedInfo = await this.buildGameInfo(manifest, currentStats);
-      log.info(`[uninstall] completed id=${manifest.raw.id} dir="${install.dir}"`);
+      log.info(`[uninstall] completed id=${manifest.raw.id} removed="${uninstallDir}"`);
       this.enterReady(updatedInfo);
       window.showAndFocus();
     } catch (cause) {
