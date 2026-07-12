@@ -34,6 +34,46 @@ export interface LinuxGameLauncherDeps {
   readonly monitor: ProcessMonitor;
 }
 
+// ── Proton debug logging (opt-in via PLAYHOOK_PROTON_LOG) ────────────────────
+// When the env var is set at app launch, every umu run gets PROTON_LOG=1 pointing at
+// `<userData>/proton-logs`; after each run we log the file path + a tail into the app log, so a crash can
+// be diagnosed straight from the app's own logs without a manual terminal repro. Off by default (PROTON_LOG
+// is heavy — it slows the game and produces large files).
+
+/** The Proton debug-log dir when PLAYHOOK_PROTON_LOG is set, else undefined (feature off). */
+function protonLogDir(userData: string): string | undefined {
+  const flag = process.env['PLAYHOOK_PROTON_LOG'];
+  if (flag === undefined || flag === '' || flag === '0') return undefined;
+  return path.join(userData, 'proton-logs');
+}
+
+/** Ensures the Proton-log dir exists (Proton won't create PROTON_LOG_DIR itself). No-op when off. */
+async function ensureLogDir(logDir: string | undefined): Promise<void> {
+  if (logDir !== undefined) await fse.ensureDir(logDir);
+}
+
+/**
+ * After a umu run exits, finds the newest `*.log` Proton wrote in `logDir` and logs its path plus a tail
+ * into the app log. Best-effort: any error is a warned no-op (the primary launch outcome is unaffected).
+ * Called only when Proton logging is enabled (env carries PROTON_LOG_DIR).
+ */
+async function collectProtonLog(logDir: string): Promise<void> {
+  try {
+    const names = (await fse.readdir(logDir)).filter((name) => name.endsWith('.log'));
+    let newest: { readonly path: string; readonly mtimeMs: number } | null = null;
+    for (const name of names) {
+      const full = path.join(logDir, name);
+      const stat = await fse.stat(full);
+      if (newest === null || stat.mtimeMs > newest.mtimeMs) newest = { path: full, mtimeMs: stat.mtimeMs };
+    }
+    if (newest === null) return;
+    const tail = (await fse.readFile(newest.path, 'utf8')).slice(-UMU_OUTPUT_TAIL_BYTES);
+    log.info(`[umu] Proton debug log: ${newest.path}\n--- proton log tail ---\n${tail.trim()}`);
+  } catch (cause) {
+    log.warn(`[umu] failed to collect Proton debug log: ${cause instanceof Error ? cause.message : String(cause)}`);
+  }
+}
+
 let python3Available = false;
 
 /**
@@ -105,6 +145,9 @@ function spawnUmuProcess(
             `[umu] exited code=${code} signal=${signal ?? ''} — output tail:\n${outputTail.trim()}`,
           );
         }
+        // Opt-in: pull Proton's own verbose log (its path was set in the env by buildUmuEnv) into ours.
+        const logDir = env['PROTON_LOG_DIR'];
+        if (logDir !== undefined && logDir !== '') void collectProtonLog(logDir);
       });
       resolve({
         pid,
@@ -147,9 +190,10 @@ function runWinetricks(
   umuRunPath: string,
   prefix: string,
   verbs: readonly string[],
+  logDir: string | undefined,
 ): Promise<boolean> {
   return new Promise<boolean>((resolve) => {
-    const env = buildUmuEnv(process.env, { prefix, proton: DEFAULT_PROTON });
+    const env = buildUmuEnv(process.env, { prefix, proton: DEFAULT_PROTON, protonLogDir: logDir });
     const child = spawn('python3', [umuRunPath, 'winetricks', '-q', ...verbs], {
       cwd: prefix,
       env,
@@ -167,6 +211,7 @@ function runWinetricks(
       resolve(false);
     });
     child.once('exit', (code) => {
+      if (logDir !== undefined) void collectProtonLog(logDir);
       if (code === 0 || code === null) {
         resolve(true);
         return;
@@ -188,12 +233,13 @@ async function ensurePrefixDeps(
   umuRunPath: string,
   prefix: string,
   extra: readonly string[],
+  logDir: string | undefined,
 ): Promise<void> {
   const done = await readDoneVerbs(prefix);
   const pending = pendingWinetricks(extra, done);
   if (pending.length === 0) return;
   log.info(`[install] provisioning prefix winetricks: ${pending.join(' ')}`);
-  const ok = await runWinetricks(umuRunPath, prefix, pending);
+  const ok = await runWinetricks(umuRunPath, prefix, pending, logDir);
   if (!ok) {
     log.warn('[install] winetricks provisioning failed — proceeding; installer may fail on missing runtimes');
     return;
@@ -220,7 +266,9 @@ export function createLinuxGameLauncher(deps: LinuxGameLauncherDeps): GameProces
       await ensurePython3();
       const prefix = prefixDir(deps.userData, manifest.raw.id);
       await fse.ensureDir(prefix);
-      const env = buildUmuEnv(process.env, { prefix, proton: DEFAULT_PROTON });
+      const logDir = protonLogDir(deps.userData);
+      await ensureLogDir(logDir);
+      const env = buildUmuEnv(process.env, { prefix, proton: DEFAULT_PROTON, protonLogDir: logDir });
       const args = buildUmuArgs(deps.umuRunPath, manifest.executablePath, manifest.raw.args);
       log.info(`[launch] umu-run id=${manifest.raw.id} prefix="${prefix}" exe="${manifest.executablePath}"`);
       return spawnUmuProcess(args, manifest.cwd, env, deps.monitor);
@@ -237,11 +285,13 @@ export function createLinuxGameLauncher(deps: LinuxGameLauncherDeps): GameProces
       // The prefix that makes `install.installerDir` (C:\…) map onto `install.dir` (the host dir).
       const prefix = prefixForInstall(install.dir);
       await fse.ensureDir(prefix);
+      const logDir = protonLogDir(deps.userData);
+      await ensureLogDir(logDir);
       // Р7b: provision the runtimes the installer/game need (baseline + card extras) before it runs.
       // Also initializes the prefix (first `umu-run` here does the Proton upgrade), so the installer
       // launches into a ready environment.
-      await ensurePrefixDeps(deps.umuRunPath, prefix, install.winetricks);
-      const env = buildUmuEnv(process.env, { prefix, proton: DEFAULT_PROTON });
+      await ensurePrefixDeps(deps.umuRunPath, prefix, install.winetricks, logDir);
+      const env = buildUmuEnv(process.env, { prefix, proton: DEFAULT_PROTON, protonLogDir: logDir });
       // silent:false drops the silent flags → Proton shows the installer's wizard (no windowsHide concept
       // on linux — umu surfaces the Wine window whenever the installer isn't running silently).
       const installerArgs = buildInstallerArgs(install.type, install.installerDir, install.args, false, silent);
@@ -262,7 +312,9 @@ export function createLinuxGameLauncher(deps: LinuxGameLauncherDeps): GameProces
       // target.cwd is the (host-view) install dir → recover the prefix that owns it.
       const prefix = prefixForInstall(target.cwd);
       await fse.ensureDir(prefix);
-      const env = buildUmuEnv(process.env, { prefix, proton: DEFAULT_PROTON });
+      const logDir = protonLogDir(deps.userData);
+      await ensureLogDir(logDir);
+      const env = buildUmuEnv(process.env, { prefix, proton: DEFAULT_PROTON, protonLogDir: logDir });
       const args = buildUmuArgs(deps.umuRunPath, target.file, target.args);
       log.info(`[uninstall] umu-run uninstaller prefix="${prefix}" file="${target.file}"`);
       return spawnUmuProcess(args, target.cwd, env, deps.monitor);

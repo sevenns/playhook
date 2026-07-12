@@ -91,7 +91,7 @@ export function prefixForInstall(hostDir: string): string {
  */
 export function buildUmuEnv(
   base: NodeJS.ProcessEnv,
-  opts: { readonly prefix: string; readonly proton: string },
+  opts: { readonly prefix: string; readonly proton: string; readonly protonLogDir?: string },
 ): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {
     ...base,
@@ -99,6 +99,13 @@ export function buildUmuEnv(
     GAMEID: UMU_GAMEID,
     PROTONPATH: opts.proton,
   };
+  // Opt-in Proton debug logging: PROTON_LOG=1 makes Proton write its verbose Wine log to
+  // PROTON_LOG_DIR/steam-*.log (unhandled exceptions, DLL loads — what a crash diagnosis needs). Off by
+  // default (heavy: slows the game, big files); the launcher enables it only when PLAYHOOK_PROTON_LOG is set.
+  if (opts.protonLogDir !== undefined) {
+    env.PROTON_LOG = '1';
+    env.PROTON_LOG_DIR = opts.protonLogDir;
+  }
   // The Electron AppImage injects LD_LIBRARY_PATH / LD_PRELOAD pointing at its OWN bundled libraries. A
   // spawned system binary (python3 → umu → Proton) that inherits them loads mismatched libs and dies
   // instantly (§5.1). Strip them so umu-run runs against the clean system libraries. umu/Proton set up

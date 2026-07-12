@@ -100,6 +100,21 @@ describe('umu launch helpers (Proton exe mode)', () => {
       expect(env.PROTONPATH).toBe('/steam/common/Proton 9.0');
     });
 
+    it('leaves PROTON_LOG unset when no protonLogDir is given', () => {
+      const env = buildUmuEnv({}, { prefix: '/pfx/x', proton: DEFAULT_PROTON });
+      expect(env.PROTON_LOG).toBeUndefined();
+      expect(env.PROTON_LOG_DIR).toBeUndefined();
+    });
+
+    it('enables PROTON_LOG=1 + PROTON_LOG_DIR when protonLogDir is given', () => {
+      const env = buildUmuEnv(
+        {},
+        { prefix: '/pfx/x', proton: DEFAULT_PROTON, protonLogDir: '/home/deck/.config/playhook/proton-logs' },
+      );
+      expect(env.PROTON_LOG).toBe('1');
+      expect(env.PROTON_LOG_DIR).toBe('/home/deck/.config/playhook/proton-logs');
+    });
+
     it('strips the AppImage linker vars so system python3/Proton use clean libs (§5.1)', () => {
       const env = buildUmuEnv(
         {
