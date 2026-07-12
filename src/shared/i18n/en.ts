@@ -199,6 +199,12 @@ export const en = {
   'configure.fieldInstallArgs': 'Installer arguments',
   'configure.installArgsDirHint':
     'For a custom installer exactly one argument must contain the {dir} placeholder.',
+  'configure.fieldWinetricks': 'Game winetricks (Linux)',
+  'configure.winetricksHint':
+    'Extra winetricks verbs/settings (e.g. d3dx9, or vd=1920x1080 for a virtual desktop) applied to the Wine prefix before the game launches, on top of the built-in set. Linux/Proton only; ignored on Windows.',
+  'configure.fieldInstallWinetricks': 'Installer winetricks (Linux)',
+  'configure.installWinetricksHint':
+    'Extra winetricks verbs provisioned before the installer runs, on top of the built-in set. Linux/Proton only; ignored on Windows.',
   'configure.fieldAppid': 'Steam appid',
   'configure.fieldWatchProcesses': 'Watched processes',
   'configure.watchProcessesHint': '1–16 process image names ending in .exe.',
@@ -270,7 +276,7 @@ export const en = {
   'manifest.idPattern': 'id must match [A-Za-z0-9._-]',
   'manifest.idDots': 'id must not be . or ..',
   'manifest.watchProcessesName': 'watchProcesses entries must be a bare *.exe name',
-  'manifest.winetricksName': 'install.winetricks entries must be winetricks verb names (letters, digits, _.-)',
+  'manifest.winetricksName': 'winetricks entries must be verb names or key=value settings (letters, digits, _.=-)',
   'manifest.installRunAsAdminCustom': 'install.runAsAdmin is not allowed with type "custom"',
   'manifest.installArgsDir':
     'install.args (type "custom") must contain exactly one token with a {dir} placeholder',

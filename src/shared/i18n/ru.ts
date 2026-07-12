@@ -172,6 +172,12 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'configure.fieldInstallArgs': 'Аргументы установщика',
   'configure.installArgsDirHint':
     'Для установщика custom ровно один аргумент должен содержать плейсхолдер {dir}.',
+  'configure.fieldWinetricks': 'Winetricks игры (Linux)',
+  'configure.winetricksHint':
+    'Доп. winetricks-вербы/настройки (например d3dx9, или vd=1920x1080 для виртуального рабочего стола), применяемые к Wine-префиксу перед запуском игры, поверх встроенного набора. Только Linux/Proton; на Windows игнорируется.',
+  'configure.fieldInstallWinetricks': 'Winetricks установщика (Linux)',
+  'configure.installWinetricksHint':
+    'Доп. winetricks-вербы, устанавливаемые перед запуском установщика, поверх встроенного набора. Только Linux/Proton; на Windows игнорируется.',
   'configure.fieldAppid': 'Steam appid',
   'configure.fieldWatchProcesses': 'Отслеживаемые процессы',
   'configure.watchProcessesHint': '1–16 имён процессов с расширением .exe.',
@@ -232,7 +238,7 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'manifest.idPattern': 'id должен соответствовать [A-Za-z0-9._-]',
   'manifest.idDots': 'id не может быть . или ..',
   'manifest.watchProcessesName': 'элементы watchProcesses должны быть простым именем *.exe',
-  'manifest.winetricksName': 'элементы install.winetricks должны быть именами winetricks-вербов (буквы, цифры, _.-)',
+  'manifest.winetricksName': 'элементы winetricks должны быть именами вербов или настройками key=value (буквы, цифры, _.=-)',
   'manifest.installRunAsAdminCustom': 'install.runAsAdmin недопустим с типом "custom"',
   'manifest.installArgsDir':
     'install.args (тип "custom") должен содержать ровно один токен с плейсхолдером {dir}',

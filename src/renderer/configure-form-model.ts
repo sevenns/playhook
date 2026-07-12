@@ -33,6 +33,8 @@ export interface InstallModel {
   readonly type: InstallType;
   readonly runAsAdmin: boolean;
   readonly args: readonly string[];
+  /** Extra winetricks verbs provisioned into the prefix before the installer runs (Linux; Р7b). */
+  readonly winetricks: readonly string[];
   readonly rest: Readonly<Record<string, unknown>>;
 }
 
@@ -63,6 +65,8 @@ export interface ManifestFormModel {
   readonly killTimeoutSec: string;
   readonly sounds: SoundsModel;
   readonly backgroundMusic: string;
+  /** Extra winetricks verbs provisioned into the prefix before the GAME launches (Linux; Р7b). */
+  readonly winetricks: readonly string[];
   readonly install: InstallModel;
   readonly steam: SteamModel;
 }
@@ -99,6 +103,7 @@ export const KNOWN_MANIFEST_KEYS: readonly string[] = [
   'killTimeoutSec',
   'sounds',
   'backgroundMusic',
+  'winetricks',
   'install',
   'steam',
 ];
@@ -118,7 +123,7 @@ function emptySounds(): SoundsModel {
 }
 
 function emptyInstall(): InstallModel {
-  return { installer: '', type: 'nsis', runAsAdmin: false, args: [], rest: {} };
+  return { installer: '', type: 'nsis', runAsAdmin: false, args: [], winetricks: [], rest: {} };
 }
 
 function emptySteam(): SteamModel {
@@ -143,6 +148,7 @@ export function emptyFormModel(): ManifestFormModel {
     killTimeoutSec: '',
     sounds: emptySounds(),
     backgroundMusic: '',
+    winetricks: [],
     install: emptyInstall(),
     steam: emptySteam(),
   };
@@ -174,6 +180,7 @@ function parseInstall(source: Record<string, unknown>): InstallModel | null {
   let type: InstallType = 'nsis';
   let runAsAdmin = false;
   let args: readonly string[] = [];
+  let winetricks: readonly string[] = [];
   const rest: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(source)) {
     switch (key) {
@@ -193,11 +200,15 @@ function parseInstall(source: Record<string, unknown>): InstallModel | null {
         if (!isStringArray(value)) return null;
         args = value;
         break;
+      case 'winetricks':
+        if (!isStringArray(value)) return null;
+        winetricks = value;
+        break;
       default:
         rest[key] = value;
     }
   }
-  return { installer, type, runAsAdmin, args, rest };
+  return { installer, type, runAsAdmin, args, winetricks, rest };
 }
 
 /** Parses a `steam` object; null = appid had the wrong type (→ the block is corrupt). */
@@ -287,6 +298,12 @@ function valueToFormResult(parsed: unknown): ParseFormResult {
     else corrupt['watchProcesses'] = source['watchProcesses'];
   }
 
+  let winetricks: readonly string[] = [];
+  if (has('winetricks')) {
+    if (isStringArray(source['winetricks'])) winetricks = source['winetricks'];
+    else corrupt['winetricks'] = source['winetricks'];
+  }
+
   let heroImage: readonly string[] = [];
   if (has('heroImage')) {
     const value = source['heroImage'];
@@ -351,6 +368,7 @@ function valueToFormResult(parsed: unknown): ParseFormResult {
     killTimeoutSec,
     sounds,
     backgroundMusic,
+    winetricks,
     install,
     steam,
   };
@@ -393,6 +411,8 @@ function buildInstall(install: InstallModel): Record<string, unknown> {
   if (install.runAsAdmin) out.runAsAdmin = true;
   const args = nonEmpty(install.args);
   if (args.length > 0) out.args = args;
+  const winetricks = nonEmpty(install.winetricks);
+  if (winetricks.length > 0) out.winetricks = winetricks;
   for (const [key, value] of Object.entries(install.rest)) out[key] = value;
   return out;
 }
@@ -453,6 +473,10 @@ function buildManifestObject(
     if (args.length > 0) out.args = args;
     if (model.runAsAdmin) out.runAsAdmin = true;
     if (model.launchMode === 'installer') out.install = buildInstall(model.install);
+    // Game-launch prefix provisioning (Linux; Р7b) — applies to our own prefix (executable/installer
+    // modes), not steam (which runs in Steam's compatdata).
+    const winetricks = nonEmpty(model.winetricks);
+    if (winetricks.length > 0) out.winetricks = winetricks;
   }
 
   const watch = nonEmpty(model.watchProcesses);

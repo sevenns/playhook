@@ -268,6 +268,11 @@ export function createLinuxGameLauncher(deps: LinuxGameLauncherDeps): GameProces
       await fse.ensureDir(prefix);
       const logDir = protonLogDir(deps.userData);
       await ensureLogDir(logDir);
+      // Р7b: provision the game's own winetricks verbs (baseline + card `winetricks`) before launch — only
+      // when the card lists any, so an ordinary game with no verbs launches unchanged (no extra step).
+      if (manifest.raw.winetricks.length > 0) {
+        await ensurePrefixDeps(deps.umuRunPath, prefix, manifest.raw.winetricks, logDir);
+      }
       const env = buildUmuEnv(process.env, { prefix, proton: DEFAULT_PROTON, protonLogDir: logDir });
       const args = buildUmuArgs(deps.umuRunPath, manifest.executablePath, manifest.raw.args);
       log.info(`[launch] umu-run id=${manifest.raw.id} prefix="${prefix}" exe="${manifest.executablePath}"`);

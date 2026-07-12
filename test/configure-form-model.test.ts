@@ -117,6 +117,44 @@ describe('round-trip on the three launch-mode shapes', () => {
   });
 });
 
+describe('winetricks round-trip (game + installer prefix provisioning — Р7b)', () => {
+  it('parses top-level and install.winetricks into the model', () => {
+    const text =
+      '{"schemaVersion":1,"id":"g","title":"G","executable":"g.exe","heroImage":"h.jpg",' +
+      '"winetricks":["d3dx9","vcrun2010"],' +
+      '"install":{"installer":"s/s.exe","type":"inno","winetricks":["mfc42"]}}';
+    const { model } = parseOk(text);
+    expect(model.winetricks).toEqual(['d3dx9', 'vcrun2010']);
+    expect(model.install.winetricks).toEqual(['mfc42']);
+  });
+
+  it('serializes both back losslessly into a VALID manifest', () => {
+    const text =
+      '{"schemaVersion":1,"id":"g","title":"G","executable":"g.exe","heroImage":"h.jpg",' +
+      '"winetricks":["d3dx9"],' +
+      '"install":{"installer":"s/s.exe","type":"inno","winetricks":["mfc42","gdiplus"]}}';
+    const out = serialize(text);
+    const parsed = JSON.parse(out) as Record<string, unknown>;
+    expect(parsed['winetricks']).toEqual(['d3dx9']);
+    expect((parsed['install'] as Record<string, unknown>)['winetricks']).toEqual(['mfc42', 'gdiplus']);
+    expect(validateManifestText(out, t).ok).toBe(true);
+  });
+
+  it('omits empty winetricks arrays (default) from the serialized manifest', () => {
+    const text = '{"schemaVersion":1,"id":"g","title":"G","executable":"g.exe","heroImage":"h.jpg"}';
+    const parsed = JSON.parse(serialize(text)) as Record<string, unknown>;
+    expect(parsed).not.toHaveProperty('winetricks');
+  });
+
+  it('accepts a key=value winetricks setting (e.g. vd=1920x1080) as a valid entry', () => {
+    const text =
+      '{"schemaVersion":1,"id":"g","title":"G","executable":"g.exe","heroImage":"h.jpg","winetricks":["vd=1920x1080"]}';
+    const { model } = parseOk(text);
+    expect(model.winetricks).toEqual(['vd=1920x1080']);
+    expect(validateManifestText(serialize(text), t).ok).toBe(true);
+  });
+});
+
 describe('killTimeoutSec round-trip (force-close wait)', () => {
   const withKill = (value: number): string =>
     `{"schemaVersion":1,"id":"g","title":"G","executable":"g.exe","heroImage":"h.jpg","killTimeoutSec":${value}}`;

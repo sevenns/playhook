@@ -76,6 +76,7 @@ type FieldKey =
   | 'saveOnCard'
   | 'pcSavePath'
   | 'backgroundMusic'
+  | 'winetricks'
   | 'launchTimeoutSec'
   | 'killTimeoutSec'
   | 'steam.appid'
@@ -83,6 +84,7 @@ type FieldKey =
   | 'install.type'
   | 'install.runAsAdmin'
   | 'install.args'
+  | 'install.winetricks'
   | 'sounds.play'
   | 'sounds.navigate'
   | 'sounds.button'
@@ -131,6 +133,8 @@ export class FormView {
   private readonly watchList: DynamicList;
   private readonly heroList: DynamicList;
   private readonly installArgsList: DynamicList;
+  private readonly installWinetricksList: DynamicList;
+  private readonly gameWinetricksList: DynamicList;
 
   // Section wrappers toggled by the launch mode.
   private readonly execSection: HTMLElement;
@@ -286,9 +290,27 @@ export class FormView {
     // ── Advanced ──────────────────────────────────────────────────────────────
     this.launchTimeoutInput = this.numberInput('launchTimeoutSec');
     this.killTimeoutInput = this.numberInput('killTimeoutSec');
+    // Custom winetricks verbs (Linux/Proton, Р7b): added ON TOP of the app's baseline set, empty by
+    // default. `game` verbs are provisioned before the game launches; `installer` verbs before the
+    // installer runs. Share the install block's corrupt-clear (errorKey keeps a distinct error slot).
+    this.gameWinetricksList = this.dynamicList('winetricks', 'configure.fieldWinetricks', { reorder: true });
+    const gameWinetricksHint = document.createElement('div');
+    gameWinetricksHint.className = 'field-hint';
+    this.labelRefs.push({ el: gameWinetricksHint, key: 'configure.winetricksHint' });
+    this.gameWinetricksList.wrapper.append(gameWinetricksHint);
+    this.installWinetricksList = this.dynamicList('install', 'configure.fieldInstallWinetricks', {
+      reorder: true,
+      errorKey: 'install.winetricks',
+    });
+    const installWinetricksHint = document.createElement('div');
+    installWinetricksHint.className = 'field-hint';
+    this.labelRefs.push({ el: installWinetricksHint, key: 'configure.installWinetricksHint' });
+    this.installWinetricksList.wrapper.append(installWinetricksHint);
     this.addSection('advanced', [
       this.field('configure.fieldLaunchTimeout', 'launchTimeoutSec', this.launchTimeoutInput),
       this.field('configure.fieldKillTimeout', 'killTimeoutSec', this.killTimeoutInput),
+      this.gameWinetricksList.wrapper,
+      this.installWinetricksList.wrapper,
     ]);
 
     this.applyLabels();
@@ -330,6 +352,7 @@ export class FormView {
     this.setList('args', this.argsList, model.args);
     this.setList('watchProcesses', this.watchList, model.watchProcesses);
     this.setList('heroImage', this.heroList, model.heroImage);
+    this.setList('winetricks', this.gameWinetricksList, model.winetricks);
 
     // install block (corrupt = whole block).
     const installCorrupt = 'install' in this.corrupt;
@@ -337,6 +360,7 @@ export class FormView {
     this.installType.value = model.install.type;
     this.installRunAsAdminSwitch.checked = installCorrupt ? false : model.install.runAsAdmin;
     this.installArgsList.setValues(installCorrupt ? [] : model.install.args);
+    this.installWinetricksList.setValues(installCorrupt ? [] : model.install.winetricks);
     this.updateInstallRunAsAdminState(model.install.type);
 
     // steam block (corrupt = whole block).
@@ -398,7 +422,14 @@ export class FormView {
       ...[...this.deps.root.querySelectorAll('.field-row fluent-button')].map((e) => e as HTMLElement),
     ];
     for (const el of controls) setElDisabled(el, disabled);
-    for (const list of [this.argsList, this.watchList, this.heroList, this.installArgsList]) {
+    for (const list of [
+      this.argsList,
+      this.watchList,
+      this.heroList,
+      this.installArgsList,
+      this.installWinetricksList,
+      this.gameWinetricksList,
+    ]) {
       list.setDisabled(disabled);
     }
     for (const audio of [this.soundPlay, this.soundNavigate, this.soundButton, this.soundBack, this.music]) {
@@ -426,6 +457,7 @@ export class FormView {
       args: this.argsList.values(),
       runAsAdmin: getChecked(this.runAsAdminSwitch),
       watchProcesses: this.watchList.values(),
+      winetricks: this.gameWinetricksList.values(),
       heroImage: this.heroList.values(),
       saveOnCard: getValue(this.saveOnCardInput),
       pcSavePath: getValue(this.pcSavePathInput),
@@ -444,6 +476,7 @@ export class FormView {
         type: toInstallType(getValue(this.installType)),
         runAsAdmin: getChecked(this.installRunAsAdminSwitch),
         args: this.installArgsList.values(),
+        winetricks: this.installWinetricksList.values(),
         rest: this.installRest,
       },
       steam: { appid: getValue(this.appidInput), rest: this.steamRest },
@@ -712,6 +745,9 @@ export class FormView {
       readonly preview?: boolean;
       readonly reorder?: boolean;
       readonly noAdd?: boolean;
+      /** Error slot / container key, when it must differ from `corruptKey` (e.g. a second list sharing the
+       * `install` block's corrupt-clear but needing its own error slot). Defaults to the corruptKey rule. */
+      readonly errorKey?: FieldKey;
     } = {},
   ): DynamicList {
     const wrapper = document.createElement('div');
@@ -868,7 +904,8 @@ export class FormView {
       buttonRow.append(browse);
     }
 
-    const errorKey: FieldKey = corruptKey === 'install' ? 'install.args' : (corruptKey as FieldKey);
+    const errorKey: FieldKey =
+      opts.errorKey ?? (corruptKey === 'install' ? 'install.args' : (corruptKey as FieldKey));
     wrapper.append(this.fieldLabel(labelKey), rows, buttonRow, this.errorSlot(errorKey));
     this.registerContainer(errorKey, wrapper);
 
@@ -1079,11 +1116,13 @@ function fieldKeyForPath(path: string): FieldKey | null {
       break;
   }
   if (path === 'heroImage' || path.startsWith('heroImage.')) return 'heroImage';
+  if (path === 'winetricks' || path.startsWith('winetricks.')) return 'winetricks';
   if (path === 'steam' || path.startsWith('steam.')) return 'steam.appid';
   if (path === 'install') return 'install.installer';
   if (path === 'install.installer') return 'install.installer';
   if (path === 'install.type') return 'install.type';
   if (path === 'install.runAsAdmin') return 'install.runAsAdmin';
+  if (path.startsWith('install.winetricks')) return 'install.winetricks';
   if (path.startsWith('install.args')) return 'install.args';
   if (path === 'sounds' || path === 'sounds.play') return 'sounds.play';
   if (path === 'sounds.navigate') return 'sounds.navigate';

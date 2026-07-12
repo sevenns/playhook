@@ -109,6 +109,12 @@ export interface GameManifest {
   readonly sounds?: SoundManifest;
   /** Optional looping background music (card-relative path), played while the window is visible. */
   readonly backgroundMusic?: string;
+  /**
+   * Linux-only (Р7b): extra winetricks verbs provisioned into the game's Wine prefix before the game
+   * launches, on top of the app's baseline set (e.g. `d3dx9` for an old DX9 title). Ignored on Windows.
+   * Empty by default (schema `.default([])`).
+   */
+  readonly winetricks: readonly string[];
 }
 
 /** UI sound-effect slots. Each maps to a file in game.json (all optional). */

@@ -29,13 +29,12 @@ const installSchema = z
     runAsAdmin: z.boolean().default(false),
     // For `custom`: the full argv with exactly one {dir} token. For nsis/inno: optional extra flags.
     args: z.array(z.string()).default([]),
-    // Linux-only (Р7b): extra winetricks verbs provisioned into the game's Wine prefix BEFORE the
-    // installer runs, on top of the app's baseline set. Lets a card cover runtimes its installer/game
-    // needs (e.g. a skinned Inno installer needing mfc42/gdiplus, or a game needing dotnet). Ignored on
-    // Windows (native runtimes exist). Verb names only — strictly validated (shell-less execFile, but we
-    // guard anyway) against injection into the umu `winetricks` argv.
+    // Linux-only (Р7b): extra winetricks verbs/settings provisioned into the game's Wine prefix BEFORE the
+    // installer runs, on top of the app's baseline set. Lets a card cover runtimes its installer needs
+    // (e.g. a skinned Inno installer needing mfc42/gdiplus) or a setting like `vd=1920x1080`. Ignored on
+    // Windows. Strictly validated (`=` allowed for `key=value` settings; shell-less execFile — defense in depth).
     winetricks: z
-      .array(z.string().regex(/^[A-Za-z0-9_.-]+$/, 'manifest.winetricksName'))
+      .array(z.string().regex(/^[A-Za-z0-9_.=-]+$/, 'manifest.winetricksName'))
       .default([]),
   })
   // `custom` hands argv control to the card; running THAT elevated would escalate the attack
@@ -107,6 +106,14 @@ const manifestSchema = z
       })
       .optional(),
     backgroundMusic: z.string().min(1).optional(),
+    // Linux-only (Р7b): extra winetricks verbs/settings provisioned into the game's Wine prefix BEFORE the
+    // game launches, on top of the app's baseline set — a runtime a game needs on a bare Proton prefix
+    // (e.g. `d3dx9`) OR a winetricks SETTING like `vd=1920x1080` (virtual desktop — fixes old games that
+    // crash on a fullscreen display-mode change). Ignored on Windows. Strictly validated (`=` allowed for
+    // `key=value` settings; the `winetricks` argv is shell-less execFile, so this is defense-in-depth).
+    winetricks: z
+      .array(z.string().regex(/^[A-Za-z0-9_.=-]+$/, 'manifest.winetricksName'))
+      .default([]),
     install: installSchema.optional(),
     // Steam mode: a pointer to a Steam app by appid (no game files on the card). Mutually exclusive with
     // install/executable and requires watchProcesses — enforced by the superRefine below.
