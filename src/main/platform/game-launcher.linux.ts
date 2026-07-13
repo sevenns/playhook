@@ -18,6 +18,7 @@ import {
   buildUmuEnv,
   buildUmuArgs,
   DEFAULT_PROTON,
+  UMU_GAMEID,
 } from './umu';
 import { buildInstallerArgs } from '../launch-args';
 import { log } from '../logger';
@@ -283,14 +284,12 @@ export function createLinuxGameLauncher(deps: LinuxGameLauncherDeps): GameProces
       }
       // Р7i: a card-specified umu GAMEID (Steam appid / UMU_ID) → umu applies that game's protonfix; absent
       // → `umu-default`. Only for the game launch (the installer/winetricks steps stay generic).
-      const env = buildUmuEnv(process.env, {
-        prefix,
-        proton: DEFAULT_PROTON,
-        protonLogDir: logDir,
-        gameId: manifest.raw.umuGameId,
-      });
+      const gameId = manifest.raw.umuGameId ?? UMU_GAMEID;
+      const env = buildUmuEnv(process.env, { prefix, proton: DEFAULT_PROTON, protonLogDir: logDir, gameId });
       const args = buildUmuArgs(deps.umuRunPath, manifest.executablePath, manifest.raw.args);
-      log.info(`[launch] umu-run id=${manifest.raw.id} prefix="${prefix}" exe="${manifest.executablePath}"`);
+      log.info(
+        `[launch] umu-run id=${manifest.raw.id} gameId=${gameId} prefix="${prefix}" exe="${manifest.executablePath}"`,
+      );
       return spawnUmuProcess(args, manifest.cwd, env, deps.monitor);
     },
     // Install mode (Р7): run the card's installer .exe through umu-run in the game's Wine prefix, feeding
