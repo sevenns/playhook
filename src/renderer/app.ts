@@ -6,7 +6,7 @@
 // info panel, title slide, music gating).
 // IMPORTANT: title/data come from the card (untrusted) — rendered via textContent, never innerHTML.
 import type { AppState, GameInfo } from '../shared/types';
-import { createTranslator, type Locale, type Translator } from '../shared/i18n/index.js';
+import { createTranslator, type Locale, type Translator, type MessageKey } from '../shared/i18n/index.js';
 import { localizeDocument } from './i18n-dom.js';
 import { createAudioController } from './audio.js';
 import { createHeroController } from './hero.js';
@@ -87,6 +87,77 @@ function syncMusic(): void {
   audio.setMusicPlaying(visible && !running);
 }
 
+// ── "Chatter": a rotating funny suffix for long busy phases (install / Proton config — Р7j) ──────────
+// The base status ("Установка..." / "Конфигурация Proton...") shows alone for the first minute; after that
+// a random funny suffix is APPENDED and swapped once a minute, so a long silent install/provision doesn't
+// feel stuck. Renderer-owned (pure presentation) — main only sets the base state.
+const CHATTER_ROTATE_MS = 60_000;
+const INSTALL_SUFFIX_KEYS: readonly MessageKey[] = [
+  'launcher.installChatter1',
+  'launcher.installChatter2',
+  'launcher.installChatter3',
+  'launcher.installChatter4',
+  'launcher.installChatter5',
+  'launcher.installChatter6',
+  'launcher.installChatter7',
+  'launcher.installChatter8',
+  'launcher.installChatter9',
+  'launcher.installChatter10',
+];
+// Reuse the Proton funny lines as suffixes appended to "Configuring Proton..." (protonConfig1 is the base).
+const PROTON_SUFFIX_KEYS: readonly MessageKey[] = [
+  'launcher.protonConfig2',
+  'launcher.protonConfig3',
+  'launcher.protonConfig4',
+  'launcher.protonConfig5',
+  'launcher.protonConfig6',
+  'launcher.protonConfig7',
+  'launcher.protonConfig8',
+  'launcher.protonConfig9',
+  'launcher.protonConfig10',
+  'launcher.protonConfig11',
+  'launcher.protonConfig12',
+];
+
+type ChatterKind = 'installing' | 'configuringProton';
+let chatterKind: ChatterKind | null = null;
+let chatterSuffix: MessageKey | null = null;
+let chatterTimer = 0;
+
+function chatterPool(kind: ChatterKind): readonly MessageKey[] {
+  return kind === 'installing' ? INSTALL_SUFFIX_KEYS : PROTON_SUFFIX_KEYS;
+}
+
+// Sets the status line: the base label for the current state, plus the current funny suffix when active.
+function applyStatus(): void {
+  const base = statusOf(currentState, translator);
+  statusEl.textContent =
+    chatterSuffix !== null && currentState.kind === chatterKind
+      ? `${base} ${translator(chatterSuffix)}`
+      : base;
+}
+
+// (Re)starts / stops the chatter timer as the state enters/leaves a long busy phase. First suffix appears
+// at the first tick (~1 min); base-only before that. A phase change resets it (each phase gets its minute).
+function syncChatter(state: AppState): void {
+  const kind: ChatterKind | null =
+    state.kind === 'installing' || state.kind === 'configuringProton' ? state.kind : null;
+  if (kind === chatterKind) return; // same phase (or same non-phase) — keep the running timer
+  if (chatterTimer !== 0) {
+    window.clearInterval(chatterTimer);
+    chatterTimer = 0;
+  }
+  chatterKind = kind;
+  chatterSuffix = null; // base only until the first tick
+  if (kind !== null) {
+    chatterTimer = window.setInterval(() => {
+      const pool = chatterPool(kind);
+      chatterSuffix = pool[Math.floor(Math.random() * pool.length)] ?? null;
+      applyStatus();
+    }, CHATTER_ROTATE_MS);
+  }
+}
+
 // ── Render ──────────────────────────────────────────────────────────────────
 
 function render(state: AppState): void {
@@ -134,7 +205,8 @@ function render(state: AppState): void {
   if (noPlay) app.dataset['layout'] = 'no-play';
   else delete app.dataset['layout'];
 
-  statusEl.textContent = statusOf(state, translator);
+  syncChatter(state);
+  applyStatus();
 
   // Force-close popups off the ready screen, then re-apply the focus highlight (see controls.refresh).
   controls.refresh();

@@ -323,10 +323,10 @@ export type AppState =
   | { readonly kind: 'uninstalling'; readonly game: GameInfo }
   /**
    * Linux-only (Р7g): the game's Wine prefix is being provisioned (winetricks) before the installer/game
-   * runs. A transient screen shown WITHIN installing/launching; `message` is the current (rotating,
-   * pre-translated) status text. Reverts to the prior installing/launching state when provisioning ends.
+   * runs. A transient screen shown WITHIN installing/launching; the renderer shows "Configuring Proton..."
+   * and appends a rotating funny suffix after a minute (Р7j). Reverts to the prior state when done.
    */
-  | { readonly kind: 'configuringProton'; readonly game: GameInfo; readonly message: string }
+  | { readonly kind: 'configuringProton'; readonly game: GameInfo }
   | { readonly kind: 'syncing-in'; readonly game: GameInfo }
   | { readonly kind: 'launching'; readonly game: GameInfo }
   | {

@@ -18,7 +18,7 @@ import {
   type Stats,
   type WallpaperResult,
 } from '../shared/types';
-import { type Translator, type MessageKey } from '../shared/i18n/index';
+import { type Translator } from '../shared/i18n/index';
 import { type StateManager } from './state';
 import { type GameWindow } from './window';
 import { type PcStore } from './pc-store';
@@ -91,20 +91,6 @@ const KILL_ELEVATE_GRACE_SEC = 3;
 // few backed-off retries let the lock clear before fse.remove succeeds.
 const REMOVE_RETRY_ATTEMPTS = 3;
 const REMOVE_RETRY_BASE_MS = 300;
-
-// ── "Configuring Proton" rotating status (Linux prefix provisioning — Р7g) ──
-// While winetricks provisions the prefix (can be minutes for dotnet), a fun rotating status keeps the wait
-// from feeling stuck. The FIRST entry is always shown; the rest rotate at random once a minute.
-const PROTON_CONFIG_KEYS = [
-  'launcher.protonConfig1',
-  'launcher.protonConfig2',
-  'launcher.protonConfig3',
-  'launcher.protonConfig4',
-  'launcher.protonConfig5',
-  'launcher.protonConfig6',
-  'launcher.protonConfig7',
-] as const satisfies readonly MessageKey[];
-const PROTON_CONFIG_ROTATE_MS = 60_000;
 
 // ── Uninstaller resolution (FS search in the install dir → registry fallback) ──
 
@@ -312,9 +298,8 @@ export class GameController {
   // A force-close (onKillRequested) is underway. Local try/finally flag (mirrors reloadInFlight, NOT the
   // launch sequence's finally — a kill has its own short-lived lifecycle) so a double Yes / repeat is a no-op.
   private killInFlight = false;
-  // "Configuring Proton" rotation (Р7g): the interval id while a winetricks provisioning screen is up, and
-  // the installing/launching state to restore once provisioning ends. Both null when not provisioning.
-  private protonConfigTimer: ReturnType<typeof setInterval> | null = null;
+  // The installing/launching state to restore once winetricks provisioning ends (Р7g). Null when not
+  // provisioning. The "Configuring Proton" screen + its rotating funny suffix are the renderer's job (Р7j).
   private protonConfigPriorState: AppState | null = null;
   // Audio for the current card, sent on its own channel (not on every AppState) — see AudioAssets.
   private currentAudio: AudioAssets | null = null;
@@ -370,32 +355,10 @@ export class GameController {
   private setProvisioning(active: boolean, game: GameInfo): void {
     if (active) {
       this.protonConfigPriorState = this.deps.state.get();
-      this.showProtonConfig(game, true);
-      this.protonConfigTimer = setInterval(
-        () => this.showProtonConfig(game, false),
-        PROTON_CONFIG_ROTATE_MS,
-      );
-    } else {
-      this.stopProvisioningTimer();
-      if (this.protonConfigPriorState !== null) {
-        this.deps.state.set(this.protonConfigPriorState);
-        this.protonConfigPriorState = null;
-      }
-    }
-  }
-
-  /** Sets the configuringProton state with the first (fixed) or a random subsequent status text. */
-  private showProtonConfig(game: GameInfo, first: boolean): void {
-    const index = first ? 0 : 1 + Math.floor(Math.random() * (PROTON_CONFIG_KEYS.length - 1));
-    const key = PROTON_CONFIG_KEYS[index] ?? PROTON_CONFIG_KEYS[0];
-    this.deps.state.set({ kind: 'configuringProton', game, message: this.t(key) });
-  }
-
-  /** Clears the rotation timer WITHOUT touching state — defensive cleanup for a sequence's finally. */
-  private stopProvisioningTimer(): void {
-    if (this.protonConfigTimer !== null) {
-      clearInterval(this.protonConfigTimer);
-      this.protonConfigTimer = null;
+      this.deps.state.set({ kind: 'configuringProton', game });
+    } else if (this.protonConfigPriorState !== null) {
+      this.deps.state.set(this.protonConfigPriorState);
+      this.protonConfigPriorState = null;
     }
   }
 
@@ -1178,7 +1141,6 @@ export class GameController {
     } finally {
       // Release the elevated HANDLE (no-op for the normal spawn path).
       proc?.dispose();
-      this.stopProvisioningTimer(); // defensive: the launcher's finally already tore it down
       this.launchInFlight = false;
       // The game is done → unlock (game switching allowed again, "Select game" button reappears).
       this.locked = false;
@@ -1251,7 +1213,6 @@ export class GameController {
       this.failSequence('install', info, describe(cause));
     } finally {
       proc?.dispose();
-      this.stopProvisioningTimer(); // defensive: the launcher's finally already tore it down
       this.launchInFlight = false;
       this.abort = null;
       this.resumePendingInsert();
