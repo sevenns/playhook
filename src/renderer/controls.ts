@@ -48,6 +48,8 @@ export interface Controls {
   setGames(list: readonly LibraryEntry[]): void;
   /** Starts the gamepad polling loop. */
   start(): void;
+  /** Pause/resume acting on gamepad input (paused while the launcher is backgrounded — a game on top). */
+  setGamepadPaused(paused: boolean): void;
 }
 
 export function createControls(deps: ControlsDeps): Controls {
@@ -918,5 +920,7 @@ export function createControls(deps: ControlsDeps): Controls {
       gamepad.start();
       armIdleTimer(); // begin the countdown so an untouched launcher hides its cursor (IDLE_MS)
     },
+    /** Pause/resume acting on gamepad input (paused while the launcher is backgrounded — a game on top). */
+    setGamepadPaused: (paused: boolean) => gamepad.setPaused(paused),
   };
 }

@@ -114,6 +114,10 @@ const manifestSchema = z
     winetricks: z
       .array(z.string().regex(/^[A-Za-z0-9_.=-]+$/, 'manifest.winetricksName'))
       .default([]),
+    // Linux-only (Р7i): the umu `GAMEID` used when LAUNCHING the game — a Steam appid (e.g. `814380`) or a
+    // custom UMU_ID (e.g. `umu-nfsu2`), so umu applies that game's protonfix instead of the generic
+    // `umu-default`. Absent → `umu-default` (current behaviour). Ignored on Windows.
+    umuGameId: z.string().regex(/^[A-Za-z0-9_-]+$/, 'manifest.umuGameIdName').optional(),
     install: installSchema.optional(),
     // Steam mode: a pointer to a Steam app by appid (no game files on the card). Mutually exclusive with
     // install/executable and requires watchProcesses — enforced by the superRefine below.

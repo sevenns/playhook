@@ -77,6 +77,7 @@ type FieldKey =
   | 'pcSavePath'
   | 'backgroundMusic'
   | 'winetricks'
+  | 'umuGameId'
   | 'launchTimeoutSec'
   | 'killTimeoutSec'
   | 'steam.appid'
@@ -135,6 +136,7 @@ export class FormView {
   private readonly installArgsList: DynamicList;
   private readonly installWinetricksList: DynamicList;
   private readonly gameWinetricksList: DynamicList;
+  private readonly umuGameIdInput: ValueEl;
 
   // Section wrappers toggled by the launch mode.
   private readonly execSection: HTMLElement;
@@ -306,11 +308,19 @@ export class FormView {
     installWinetricksHint.className = 'field-hint';
     this.labelRefs.push({ el: installWinetricksHint, key: 'configure.installWinetricksHint' });
     this.installWinetricksList.wrapper.append(installWinetricksHint);
+    // umu GAMEID (Р7i): Steam appid or custom UMU_ID for the game's protonfix. A hint clarifies the value.
+    this.umuGameIdInput = this.textInput('umuGameId');
+    const umuGameIdField = this.field('configure.fieldUmuGameId', 'umuGameId', this.umuGameIdInput);
+    const umuGameIdHint = document.createElement('div');
+    umuGameIdHint.className = 'field-hint';
+    this.labelRefs.push({ el: umuGameIdHint, key: 'configure.umuGameIdHint' });
+    umuGameIdField.append(umuGameIdHint);
     this.addSection('advanced', [
       this.field('configure.fieldLaunchTimeout', 'launchTimeoutSec', this.launchTimeoutInput),
       this.field('configure.fieldKillTimeout', 'killTimeoutSec', this.killTimeoutInput),
       this.gameWinetricksList.wrapper,
       this.installWinetricksList.wrapper,
+      umuGameIdField,
     ]);
 
     this.applyLabels();
@@ -353,6 +363,7 @@ export class FormView {
     this.setList('watchProcesses', this.watchList, model.watchProcesses);
     this.setList('heroImage', this.heroList, model.heroImage);
     this.setList('winetricks', this.gameWinetricksList, model.winetricks);
+    this.setScalar('umuGameId', this.umuGameIdInput, model.umuGameId);
 
     // install block (corrupt = whole block).
     const installCorrupt = 'install' in this.corrupt;
@@ -417,6 +428,7 @@ export class FormView {
       this.appidInput,
       this.saveOnCardInput,
       this.pcSavePathInput,
+      this.umuGameIdInput,
       this.launchTimeoutInput,
       this.killTimeoutInput,
       ...[...this.deps.root.querySelectorAll('.field-row fluent-button')].map((e) => e as HTMLElement),
@@ -458,6 +470,7 @@ export class FormView {
       runAsAdmin: getChecked(this.runAsAdminSwitch),
       watchProcesses: this.watchList.values(),
       winetricks: this.gameWinetricksList.values(),
+      umuGameId: getValue(this.umuGameIdInput),
       heroImage: this.heroList.values(),
       saveOnCard: getValue(this.saveOnCardInput),
       pcSavePath: getValue(this.pcSavePathInput),
@@ -1109,6 +1122,7 @@ function fieldKeyForPath(path: string): FieldKey | null {
     case 'saveOnCard':
     case 'pcSavePath':
     case 'backgroundMusic':
+    case 'umuGameId':
     case 'launchTimeoutSec':
     case 'killTimeoutSec':
       return path;

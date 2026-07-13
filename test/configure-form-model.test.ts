@@ -153,6 +153,19 @@ describe('winetricks round-trip (game + installer prefix provisioning — Р7b)'
     expect(model.winetricks).toEqual(['vd=1920x1080']);
     expect(validateManifestText(serialize(text), t).ok).toBe(true);
   });
+
+  it('round-trips umuGameId (Steam appid / UMU_ID) and omits it when empty', () => {
+    const withId =
+      '{"schemaVersion":1,"id":"g","title":"G","executable":"g.exe","heroImage":"h.jpg","umuGameId":"umu-nfsu2"}';
+    const { model } = parseOk(withId);
+    expect(model.umuGameId).toBe('umu-nfsu2');
+    const parsed = JSON.parse(serialize(withId)) as Record<string, unknown>;
+    expect(parsed['umuGameId']).toBe('umu-nfsu2');
+    expect(validateManifestText(serialize(withId), t).ok).toBe(true);
+
+    const without = '{"schemaVersion":1,"id":"g","title":"G","executable":"g.exe","heroImage":"h.jpg"}';
+    expect(JSON.parse(serialize(without))).not.toHaveProperty('umuGameId');
+  });
 });
 
 describe('killTimeoutSec round-trip (force-close wait)', () => {

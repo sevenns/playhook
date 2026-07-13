@@ -91,12 +91,18 @@ export function prefixForInstall(hostDir: string): string {
  */
 export function buildUmuEnv(
   base: NodeJS.ProcessEnv,
-  opts: { readonly prefix: string; readonly proton: string; readonly protonLogDir?: string },
+  opts: {
+    readonly prefix: string;
+    readonly proton: string;
+    readonly protonLogDir?: string;
+    /** umu GAMEID — a Steam appid or custom UMU_ID for the game's protonfix (Р7i). Defaults to `umu-default`. */
+    readonly gameId?: string;
+  },
 ): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {
     ...base,
     WINEPREFIX: opts.prefix,
-    GAMEID: UMU_GAMEID,
+    GAMEID: opts.gameId ?? UMU_GAMEID,
     PROTONPATH: opts.proton,
   };
   // Opt-in Proton debug logging: PROTON_LOG=1 makes Proton write its verbose Wine log to

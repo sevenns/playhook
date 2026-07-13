@@ -6,9 +6,11 @@
 // switching back to the game/Steam. A focused fullscreen window already hides the taskbar.
 import path from 'node:path';
 import { BrowserWindow, Menu, clipboard } from 'electron';
+import { IPC } from '../shared/types';
 import { type Translator } from '../shared/i18n/index';
 import { installHideOnClose, type HideOnCloseGuard } from './window-hide-guard';
 import { forceForegroundWindow } from './foreground';
+import { log } from './logger';
 
 export class GameWindow {
   private window: BrowserWindow | null = null;
@@ -51,6 +53,18 @@ export class GameWindow {
         autoplayPolicy: 'no-user-gesture-required',
       },
     });
+
+    // Forward OS focus changes to the renderer so it can gate gamepad input: a BACKGROUND launcher must
+    // not act on presses meant for the running game. Under gamescope the renderer's own Chromium focus is
+    // unreliable (it keeps feeding the unfocused window gamepad input), so we drive this from the NATIVE
+    // window focus events, which reflect the compositor's real foreground. Logged so we can confirm on the
+    // Deck that gamescope actually delivers them.
+    const sendFocus = (focused: boolean): void => {
+      log.info(`[window] focus=${focused}`);
+      if (!window.isDestroyed()) window.webContents.send(IPC.windowFocus, focused);
+    };
+    window.on('focus', () => sendFocus(true));
+    window.on('blur', () => sendFocus(false));
 
     // Right-click on selected text → a minimal "Copy" menu. The UI is non-selectable except the
     // install path in the confirmation popup, so this only ever appears there (selectionText empty

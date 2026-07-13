@@ -67,6 +67,8 @@ export interface ManifestFormModel {
   readonly backgroundMusic: string;
   /** Extra winetricks verbs provisioned into the prefix before the GAME launches (Linux; Р7b). */
   readonly winetricks: readonly string[];
+  /** umu GAMEID for launch — a Steam appid or custom UMU_ID (Linux; Р7i). '' = default `umu-default`. */
+  readonly umuGameId: string;
   readonly install: InstallModel;
   readonly steam: SteamModel;
 }
@@ -104,6 +106,7 @@ export const KNOWN_MANIFEST_KEYS: readonly string[] = [
   'sounds',
   'backgroundMusic',
   'winetricks',
+  'umuGameId',
   'install',
   'steam',
 ];
@@ -149,6 +152,7 @@ export function emptyFormModel(): ManifestFormModel {
     sounds: emptySounds(),
     backgroundMusic: '',
     winetricks: [],
+    umuGameId: '',
     install: emptyInstall(),
     steam: emptySteam(),
   };
@@ -279,6 +283,7 @@ function valueToFormResult(parsed: unknown): ParseFormResult {
   const saveOnCard = readString('saveOnCard');
   const pcSavePath = readString('pcSavePath');
   const backgroundMusic = readString('backgroundMusic');
+  const umuGameId = readString('umuGameId');
 
   let runAsAdmin = false;
   if (has('runAsAdmin')) {
@@ -369,6 +374,7 @@ function valueToFormResult(parsed: unknown): ParseFormResult {
     sounds,
     backgroundMusic,
     winetricks,
+    umuGameId,
     install,
     steam,
   };
@@ -477,6 +483,8 @@ function buildManifestObject(
     // modes), not steam (which runs in Steam's compatdata).
     const winetricks = nonEmpty(model.winetricks);
     if (winetricks.length > 0) out.winetricks = winetricks;
+    // umu GAMEID for the launch (Linux; Р7i) — same scope: our own umu-run, not steam://.
+    if (model.umuGameId !== '') out.umuGameId = model.umuGameId;
   }
 
   const watch = nonEmpty(model.watchProcesses);

@@ -115,6 +115,12 @@ export interface GameManifest {
    * Empty by default (schema `.default([])`).
    */
   readonly winetricks: readonly string[];
+  /**
+   * Linux-only (Р7i): the umu `GAMEID` used when launching the game — a Steam appid or a custom UMU_ID —
+   * so umu applies that game's protonfix instead of the generic `umu-default`. Absent → `umu-default`.
+   * Ignored on Windows.
+   */
+  readonly umuGameId?: string;
 }
 
 /** UI sound-effect slots. Each maps to a file in game.json (all optional). */
@@ -433,6 +439,10 @@ export const IPC = {
   stateUpdate: 'state:update',
   /** renderer → main: request the current state (on window startup). */
   stateRequest: 'state:request',
+  /** main → game-renderer: the launcher window gained (true) / lost (false) OS focus. The renderer gates
+   * gamepad input on this so a BACKGROUND launcher (e.g. under gamescope, where Chromium keeps feeding the
+   * unfocused window gamepad input) doesn't act on presses meant for the running game. */
+  windowFocus: 'window:focus',
   /** renderer → main: the user pressed A / clicked "Play". */
   actionLaunch: 'action:launch',
   /** renderer → main: the user confirmed "Uninstall" — remove the installed install-mode game. */
@@ -672,6 +682,8 @@ export type ConfigPickResult =
 /** API that preload exposes on `window.api`. */
 export interface RendererApi {
   onStateUpdate(callback: (state: AppState) => void): void;
+  /** Launcher window focus changes (true = foreground). Used to gate gamepad input while backgrounded. */
+  onWindowFocus(callback: (focused: boolean) => void): void;
   requestState(): Promise<AppState>;
   requestLaunch(): void;
   requestUninstall(): void;

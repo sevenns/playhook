@@ -213,6 +213,9 @@ export const en = {
   'configure.fieldInstallWinetricks': 'Installer winetricks (Linux)',
   'configure.installWinetricksHint':
     'Extra winetricks verbs provisioned before the installer runs, on top of the built-in set. Linux/Proton only; ignored on Windows.',
+  'configure.fieldUmuGameId': 'umu GAMEID (Linux)',
+  'configure.umuGameIdHint':
+    'A Steam appid or a custom UMU_ID — umu applies that game’s protonfix instead of the generic default. Leave empty for umu-default. Linux/Proton only.',
   'configure.fieldAppid': 'Steam appid',
   'configure.fieldWatchProcesses': 'Watched processes',
   'configure.watchProcessesHint': '1–16 process image names ending in .exe.',
@@ -285,6 +288,7 @@ export const en = {
   'manifest.idDots': 'id must not be . or ..',
   'manifest.watchProcessesName': 'watchProcesses entries must be a bare *.exe name',
   'manifest.winetricksName': 'winetricks entries must be verb names or key=value settings (letters, digits, _.=-)',
+  'manifest.umuGameIdName': 'umuGameId must be a Steam appid or a UMU_ID (letters, digits, _-)',
   'manifest.installRunAsAdminCustom': 'install.runAsAdmin is not allowed with type "custom"',
   'manifest.installArgsDir':
     'install.args (type "custom") must contain exactly one token with a {dir} placeholder',

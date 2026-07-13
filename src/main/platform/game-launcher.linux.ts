@@ -281,7 +281,14 @@ export function createLinuxGameLauncher(deps: LinuxGameLauncherDeps): GameProces
       if (manifest.raw.winetricks.length > 0) {
         await ensurePrefixDeps(deps.umuRunPath, prefix, manifest.raw.winetricks, logDir, onProvisioning);
       }
-      const env = buildUmuEnv(process.env, { prefix, proton: DEFAULT_PROTON, protonLogDir: logDir });
+      // Р7i: a card-specified umu GAMEID (Steam appid / UMU_ID) → umu applies that game's protonfix; absent
+      // → `umu-default`. Only for the game launch (the installer/winetricks steps stay generic).
+      const env = buildUmuEnv(process.env, {
+        prefix,
+        proton: DEFAULT_PROTON,
+        protonLogDir: logDir,
+        gameId: manifest.raw.umuGameId,
+      });
       const args = buildUmuArgs(deps.umuRunPath, manifest.executablePath, manifest.raw.args);
       log.info(`[launch] umu-run id=${manifest.raw.id} prefix="${prefix}" exe="${manifest.executablePath}"`);
       return spawnUmuProcess(args, manifest.cwd, env, deps.monitor);

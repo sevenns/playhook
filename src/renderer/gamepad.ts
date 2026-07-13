@@ -8,6 +8,10 @@
 export interface GamepadController {
   start(): void;
   stop(): void;
+  /** Pauses/resumes ACTING on input while keeping the poll alive: paused, presses are read (so button
+   * state stays in sync — no phantom edge fires on resume) but no handler runs. Used to ignore gamepad
+   * while the launcher is backgrounded (a game is on top). */
+  setPaused(paused: boolean): void;
 }
 
 export interface GamepadHandlers {
@@ -27,6 +31,7 @@ const STICK_DEADZONE = 0.5;
 export function createGamepadController(handlers: GamepadHandlers): GamepadController {
   let rafId = 0;
   let running = false;
+  let paused = false;
   const prev = { left: false, right: false, up: false, down: false, a: false, b: false };
 
   const isDown = (index: number): boolean => {
@@ -59,12 +64,16 @@ export function createGamepadController(handlers: GamepadHandlers): GamepadContr
     const a = isDown(BTN.a);
     const b = isDown(BTN.b);
 
-    if (left && !prev.left) handlers.onLeft();
-    if (right && !prev.right) handlers.onRight();
-    if (up && !prev.up) handlers.onUp();
-    if (down && !prev.down) handlers.onDown();
-    if (a && !prev.a) handlers.onA();
-    if (b && !prev.b) handlers.onB();
+    // While paused (launcher backgrounded), read inputs but don't act — prev is still updated below, so a
+    // button held across resume won't fire a phantom edge.
+    if (!paused) {
+      if (left && !prev.left) handlers.onLeft();
+      if (right && !prev.right) handlers.onRight();
+      if (up && !prev.up) handlers.onUp();
+      if (down && !prev.down) handlers.onDown();
+      if (a && !prev.a) handlers.onA();
+      if (b && !prev.b) handlers.onB();
+    }
 
     prev.left = left;
     prev.right = right;
@@ -84,6 +93,9 @@ export function createGamepadController(handlers: GamepadHandlers): GamepadContr
     stop(): void {
       running = false;
       cancelAnimationFrame(rafId);
+    },
+    setPaused(value: boolean): void {
+      paused = value;
     },
   };
 }

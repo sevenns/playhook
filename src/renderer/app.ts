@@ -193,6 +193,11 @@ const applyVolumes = (volumes: { music: number; sfx: number }): void => {
 window.api.onVolumesUpdate(applyVolumes);
 void window.api.requestVolumes().then(applyVolumes);
 
+// Gate gamepad input on window focus: a backgrounded launcher (a game on top — most visibly under
+// gamescope, where Chromium keeps feeding the unfocused window input) must not act on presses meant for
+// the game. Resumes the instant the user switches back to the launcher (it regains focus).
+window.api.onWindowFocus((focused) => controls.setGamepadPaused(!focused));
+
 // Hero images are delivered on their own channel (not in AppState): the renderer rotates through them
 // locally, so we never re-send this large payload on every state transition. See hero.applyAssets.
 window.api.onHeroUpdate((assets) => hero.applyAssets(assets));

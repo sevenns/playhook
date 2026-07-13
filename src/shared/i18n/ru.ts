@@ -186,6 +186,9 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'configure.fieldInstallWinetricks': 'Winetricks установщика (Linux)',
   'configure.installWinetricksHint':
     'Доп. winetricks-вербы, устанавливаемые перед запуском установщика, поверх встроенного набора. Только Linux/Proton; на Windows игнорируется.',
+  'configure.fieldUmuGameId': 'umu GAMEID (Linux)',
+  'configure.umuGameIdHint':
+    'Steam appid или кастомный UMU_ID — umu применит protonfix этой игры вместо дефолтного. Пусто = umu-default. Только Linux/Proton.',
   'configure.fieldAppid': 'Steam appid',
   'configure.fieldWatchProcesses': 'Отслеживаемые процессы',
   'configure.watchProcessesHint': '1–16 имён процессов с расширением .exe.',
@@ -247,6 +250,7 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'manifest.idDots': 'id не может быть . или ..',
   'manifest.watchProcessesName': 'элементы watchProcesses должны быть простым именем *.exe',
   'manifest.winetricksName': 'элементы winetricks должны быть именами вербов или настройками key=value (буквы, цифры, _.=-)',
+  'manifest.umuGameIdName': 'umuGameId должен быть Steam appid или UMU_ID (буквы, цифры, _-)',
   'manifest.installRunAsAdminCustom': 'install.runAsAdmin недопустим с типом "custom"',
   'manifest.installArgsDir':
     'install.args (тип "custom") должен содержать ровно один токен с плейсхолдером {dir}',

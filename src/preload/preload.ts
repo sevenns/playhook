@@ -25,6 +25,7 @@ const CHANNELS = {
   errorShow: 'error:show',
   audioUpdate: 'audio:update',
   audioRequest: 'audio:request',
+  windowFocus: 'window:focus',
   heroUpdate: 'hero:update',
   heroRequest: 'hero:request',
   libraryUpdate: 'library:update',
@@ -42,6 +43,11 @@ const api: RendererApi = {
   onStateUpdate(callback: (state: AppState) => void): void {
     ipcRenderer.on(CHANNELS.stateUpdate, (_event: IpcRendererEvent, state: AppState) => {
       callback(state);
+    });
+  },
+  onWindowFocus(callback: (focused: boolean) => void): void {
+    ipcRenderer.on(CHANNELS.windowFocus, (_event: IpcRendererEvent, focused: boolean) => {
+      callback(focused);
     });
   },
   requestState(): Promise<AppState> {
