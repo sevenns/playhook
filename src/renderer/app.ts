@@ -88,10 +88,11 @@ function syncMusic(): void {
 }
 
 // ── "Chatter": a rotating funny suffix for long busy phases (install / Proton config — Р7j) ──────────
-// The base status ("Установка..." / "Конфигурация Proton...") shows alone for the first minute; after that
-// a random funny suffix is APPENDED and swapped once a minute, so a long silent install/provision doesn't
-// feel stuck. Renderer-owned (pure presentation) — main only sets the base state.
-const CHATTER_ROTATE_MS = 60_000;
+// The base status ("Установка..." / "Конфигурация Proton...") shows alone for the first MINUTE; after that
+// a random funny suffix is APPENDED and swapped every 20s, so a long silent install/provision doesn't feel
+// stuck. Renderer-owned (pure presentation) — main only sets the base state.
+const CHATTER_DELAY_MS = 60_000; // base-only for the first minute
+const CHATTER_ROTATE_MS = 20_000; // then swap the funny suffix every 20 seconds
 const INSTALL_SUFFIX_KEYS: readonly MessageKey[] = [
   'launcher.installChatter1',
   'launcher.installChatter2',
@@ -122,10 +123,28 @@ const PROTON_SUFFIX_KEYS: readonly MessageKey[] = [
 type ChatterKind = 'installing' | 'configuringProton';
 let chatterKind: ChatterKind | null = null;
 let chatterSuffix: MessageKey | null = null;
-let chatterTimer = 0;
+let chatterDelayTimer = 0;
+let chatterRotateTimer = 0;
 
 function chatterPool(kind: ChatterKind): readonly MessageKey[] {
   return kind === 'installing' ? INSTALL_SUFFIX_KEYS : PROTON_SUFFIX_KEYS;
+}
+
+function stopChatterTimers(): void {
+  if (chatterDelayTimer !== 0) {
+    window.clearTimeout(chatterDelayTimer);
+    chatterDelayTimer = 0;
+  }
+  if (chatterRotateTimer !== 0) {
+    window.clearInterval(chatterRotateTimer);
+    chatterRotateTimer = 0;
+  }
+}
+
+function rotateChatter(kind: ChatterKind): void {
+  const pool = chatterPool(kind);
+  chatterSuffix = pool[Math.floor(Math.random() * pool.length)] ?? null;
+  applyStatus();
 }
 
 // Sets the status line: the base label for the current state, plus the current funny suffix when active.
@@ -142,19 +161,16 @@ function applyStatus(): void {
 function syncChatter(state: AppState): void {
   const kind: ChatterKind | null =
     state.kind === 'installing' || state.kind === 'configuringProton' ? state.kind : null;
-  if (kind === chatterKind) return; // same phase (or same non-phase) — keep the running timer
-  if (chatterTimer !== 0) {
-    window.clearInterval(chatterTimer);
-    chatterTimer = 0;
-  }
+  if (kind === chatterKind) return; // same phase (or same non-phase) — keep the running timers
+  stopChatterTimers();
   chatterKind = kind;
-  chatterSuffix = null; // base only until the first tick
+  chatterSuffix = null; // base only for the first minute
   if (kind !== null) {
-    chatterTimer = window.setInterval(() => {
-      const pool = chatterPool(kind);
-      chatterSuffix = pool[Math.floor(Math.random() * pool.length)] ?? null;
-      applyStatus();
-    }, CHATTER_ROTATE_MS);
+    chatterDelayTimer = window.setTimeout(() => {
+      chatterDelayTimer = 0;
+      rotateChatter(kind); // first funny suffix at 1 minute
+      chatterRotateTimer = window.setInterval(() => rotateChatter(kind), CHATTER_ROTATE_MS); // then every 20s
+    }, CHATTER_DELAY_MS);
   }
 }
 
