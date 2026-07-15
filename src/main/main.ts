@@ -238,6 +238,7 @@ async function bootstrap(): Promise<void> {
     getActiveRoot: () => watcher.getActiveRoot(),
     reloadManifest: (root) => controller.reloadManifest(root),
     getTranslator,
+    toManifestPcSavePath: (absolute) => platform.savePathResolver.toManifestPcSavePath(absolute),
   });
   gameConfig.init();
   const configureWindow = new ConfigureWindow(gameConfig, getTranslator);

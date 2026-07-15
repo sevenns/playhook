@@ -619,11 +619,23 @@ export class GameController {
     await this.rebaseSyncStateAfterFlush(manifest);
   }
 
+  /**
+   * Resolves the manifest's DEFERRED pcSavePath (Р5/Э6) to a physical folder for THIS game via the
+   * platform SavePathResolver, or null when there's nothing to sync yet (no pcSavePath declared, or the
+   * game's Wine prefix / Steam compatdata doesn't exist until the first launch). win32 keeps the exact
+   * env-based expansion the manifest used to do eagerly; linux maps inside the game's prefix.
+   */
+  private async resolvePcSavePath(manifest: ResolvedManifest): Promise<string | null> {
+    if (manifest.pcSavePath === undefined) return null;
+    return this.deps.platform.savePathResolver.resolvePcSavePath(manifest, manifest.pcSavePath);
+  }
+
   /** Records a fresh sync baseline from both real save folders (used after a direct pending-flush). */
   private async rebaseSyncStateAfterFlush(manifest: ResolvedManifest): Promise<void> {
     const cardPath = manifest.saveOnCardPath;
-    const pcPath = manifest.pcSavePath;
-    if (cardPath === undefined || pcPath === undefined) return;
+    if (cardPath === undefined || manifest.pcSavePath === undefined) return;
+    const pcPath = await this.resolvePcSavePath(manifest);
+    if (pcPath === null) return;
     await this.deps.store.writeSyncState(manifest.raw.id, {
       card: await snapshotTree(cardPath),
       pc: await snapshotTree(pcPath),
@@ -1001,16 +1013,25 @@ export class GameController {
       // the first-run fallback (no baseline yet).
       state.set({ kind: 'syncing-in', game: info });
       if (manifest.pcSavePath !== undefined && manifest.saveOnCardPath !== undefined) {
-        // Soft catch: sync-in can now WRITE to the card (change-detection may pick PC→card) — a new
-        // failure point BEFORE launch (a full / write-protected / slow card). The launch never depended
-        // on a card write before, so keep it that way: log and start the game regardless (mirrors sync-out).
-        try {
+        // Resolve the deferred pcSavePath to a physical folder for this game (Р5/Э6). null → the prefix
+        // doesn't exist yet (first run) so there's nothing on the PC side to sync — a logged no-op.
+        const pcPath = await this.resolvePcSavePath(manifest);
+        if (pcPath === null) {
           log.info(
-            `[sync-in] change-based sync between card "${manifest.saveOnCardPath}" and PC "${manifest.pcSavePath}"`,
+            `[sync-in] pcSavePath "${manifest.pcSavePath}" not resolvable yet (prefix missing) — skipping sync`,
           );
-          await this.runSaveSync(manifest, 'card-to-pc');
-        } catch (cause) {
-          log.warn('[sync-in] change-based sync failed, launching anyway:', describe(cause));
+        } else {
+          // Soft catch: sync-in can now WRITE to the card (change-detection may pick PC→card) — a new
+          // failure point BEFORE launch (a full / write-protected / slow card). The launch never depended
+          // on a card write before, so keep it that way: log and start the game regardless (mirrors sync-out).
+          try {
+            log.info(
+              `[sync-in] change-based sync between card "${manifest.saveOnCardPath}" and PC "${pcPath}"`,
+            );
+            await this.runSaveSync(manifest, manifest.saveOnCardPath, pcPath, 'card-to-pc');
+          } catch (cause) {
+            log.warn('[sync-in] change-based sync failed, launching anyway:', describe(cause));
+          }
         }
       }
 
@@ -1357,11 +1378,10 @@ export class GameController {
    */
   private async runSaveSync(
     manifest: ResolvedManifest,
+    cardPath: string,
+    pcPath: string,
     fallback: 'card-to-pc' | 'pc-to-card',
   ): Promise<void> {
-    const cardPath = manifest.saveOnCardPath;
-    const pcPath = manifest.pcSavePath;
-    if (cardPath === undefined || pcPath === undefined) return;
     const id = manifest.raw.id;
     const baseline = await this.deps.store.readSyncState(id);
     const result = await syncByChange(cardPath, pcPath, baseline, fallback);
@@ -1380,33 +1400,36 @@ export class GameController {
 
   private async performSyncOut(manifest: ResolvedManifest, stats: Stats): Promise<void> {
     const id = manifest.raw.id;
+    // Resolve the deferred pcSavePath once for this game (Р5/Э6). The game just ran, so its prefix exists
+    // and (on win32) the env expansion always succeeds — this matches the pre-port physical path exactly.
+    const pcPath = await this.resolvePcSavePath(manifest);
     // The card is already removed (the expected scenario) → defer PC→SD into pending-flush.
     if (!this.cardPresent) {
-      if (manifest.pcSavePath !== undefined) {
-        await this.deps.store.enqueuePcToSd(id, manifest.pcSavePath);
+      if (pcPath !== null) {
+        await this.deps.store.enqueuePcToSd(id, pcPath);
       }
       return;
     }
-    if (manifest.pcSavePath !== undefined && manifest.saveOnCardPath !== undefined) {
+    if (pcPath !== null && manifest.saveOnCardPath !== undefined) {
       // Diagnostic (silent-failure guard): syncDir no-ops when the source is missing. If the PC save
       // folder doesn't exist after a play session, pcSavePath is almost certainly wrong in game.json
       // (e.g. %APPDATA% used for an AppData\LocalLow path) — warn instead of failing silently.
-      if (!(await fse.pathExists(manifest.pcSavePath))) {
+      if (!(await fse.pathExists(pcPath))) {
         log.warn(
-          `[sync-out] pcSavePath does not exist — nothing copied to the card. Check the manifest path: "${manifest.pcSavePath}"`,
+          `[sync-out] pcSavePath does not exist — nothing copied to the card. Check the manifest path: "${manifest.pcSavePath}" (resolved: "${pcPath}")`,
         );
       } else {
         try {
           // Change-based sync after the game (phase = sync-out). The old blind PC→card is only the
           // first-run fallback; normally the changed side wins (this PC just played → usually PC→card).
           log.info(
-            `[sync-out] change-based sync between PC "${manifest.pcSavePath}" and card "${manifest.saveOnCardPath}"`,
+            `[sync-out] change-based sync between PC "${pcPath}" and card "${manifest.saveOnCardPath}"`,
           );
-          await this.runSaveSync(manifest, 'pc-to-card');
+          await this.runSaveSync(manifest, manifest.saveOnCardPath, pcPath, 'pc-to-card');
         } catch (cause) {
           // The card may have been yanked during the sync → saves.bak is intact, we'll finish on insertion.
           log.warn('[sync-out] failed, deferring to pending-flush:', describe(cause));
-          await this.deps.store.enqueuePcToSd(id, manifest.pcSavePath);
+          await this.deps.store.enqueuePcToSd(id, pcPath);
           return;
         }
       }

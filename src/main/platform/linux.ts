@@ -8,21 +8,12 @@ import type {
   Platform,
   PlatformDeps,
   PowerBackend,
-  SavePathResolver,
 } from './types';
 import { createLinuxProcessMonitor } from './proc';
 import { createLinuxSteamLocator } from './steam-locator.linux';
 import { createLinuxGameLauncher } from './game-launcher.linux';
+import { createLinuxSavePathResolver } from './save-path.linux';
 import { installDirs } from './umu';
-
-// ── SavePathResolver — Э5/Э6 (map %PREFIX% inside the Wine/compatdata prefix). Placeholder: unresolvable. ──
-function createSavePathResolver(): SavePathResolver {
-  return {
-    // null = "nothing to sync" (the prefix doesn't exist yet) — a logged no-op, not an error (Р5).
-    resolvePcSavePath: () => Promise.resolve(null),
-    toManifestPcSavePath: () => null,
-  };
-}
 
 // ── PowerBackend — Э7 (systemctl poweroff/reboot/suspend via logind). Placeholder: unsupported. ──
 function createPowerBackend(): PowerBackend {
@@ -37,15 +28,16 @@ function createPowerBackend(): PowerBackend {
  * needs userData (Wine prefixes) + the bundled umu-run path. */
 export function createLinuxPlatform(deps: PlatformDeps): Platform {
   const processMonitor = createLinuxProcessMonitor();
+  const steamLocator = createLinuxSteamLocator();
   return {
     processMonitor,
-    steamLocator: createLinuxSteamLocator(),
+    steamLocator,
     gameLauncher: createLinuxGameLauncher({
       userData: deps.userData,
       umuRunPath: deps.umuRunPath,
       monitor: processMonitor,
     }),
-    savePathResolver: createSavePathResolver(),
+    savePathResolver: createLinuxSavePathResolver({ userData: deps.userData, steamLocator }),
     powerBackend: createPowerBackend(),
     // Install mode is always supported on linux — the prefix is created on demand (Р7). Both views come
     // from umu.installDirs (host path inside the prefix + the `C:\playhook\games\<id>` installer view).

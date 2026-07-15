@@ -161,6 +161,13 @@ export interface ResolvedManifest {
   /** Resolved, card-relative hero image paths (normalized to an array when at least one is set). */
   readonly heroImagePaths?: readonly string[];
   readonly saveOnCardPath?: string;
+  /**
+   * The Windows-dictionary save location (`%APPDATA%\…`), stored VERBATIM — a DEFERRED field (Р5/Э6).
+   * Only its syntax is validated at read time (prefix allowlist + no traversal); the physical folder is
+   * resolved per-game at sync time via the platform SavePathResolver. This matters on Linux, where the
+   * real location lives inside the game's Wine prefix / Steam compatdata and may not exist until the first
+   * launch — resolving it eagerly (and rejecting the card when absent) would break install/steam modes.
+   */
   readonly pcSavePath?: string;
   /** Resolved, card-relative sound-effect file paths (any subset present). */
   readonly soundPaths?: Partial<Record<SfxName, string>>;

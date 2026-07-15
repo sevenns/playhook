@@ -28,7 +28,7 @@ import { type Translator } from '../shared/i18n/index';
 import { type AppSettingsStore } from './app-settings';
 import { AUDIO_EXTENSIONS, IMAGE_EXTENSIONS, readImageDataUrl } from './asset-reader';
 import { listDriveCandidates } from './drive-watcher';
-import { absoluteToPcSavePath, resolveInside, validateManifestText, manifestJsonSchema } from './manifest';
+import { resolveInside, validateManifestText, manifestJsonSchema } from './manifest';
 import { writeFileAtomic } from './save-sync';
 import { describe } from './util';
 import { log } from './logger';
@@ -69,6 +69,12 @@ export interface GameConfigDeps {
   readonly reloadManifest: (root: string) => Promise<{ ok: true } | { ok: false; message: string }>;
   /** The current translator (read live so a language change applies to labels/validation/errors). */
   readonly getTranslator: () => Translator;
+  /**
+   * Reverse-maps an absolute PC folder (from the pcSavePath Browse dialog) to a `%PREFIX%/…` manifest
+   * string via the platform SavePathResolver (Р5), or null when it lives under none of the allowed bases.
+   * win32 uses the env-based table; linux returns null (the user types the Windows-dictionary string).
+   */
+  readonly toManifestPcSavePath: (absolute: string) => string | null;
 }
 
 export class GameConfigService {
@@ -229,7 +235,7 @@ export class GameConfigService {
         parent !== null ? await dialog.showOpenDialog(parent, options) : await dialog.showOpenDialog(options);
       const chosen = picked.filePaths[0];
       if (picked.canceled || chosen === undefined) return { ok: false, cancelled: true };
-      const pcSavePath = absoluteToPcSavePath(chosen, { documents: app.getPath('documents'), t });
+      const pcSavePath = this.deps.toManifestPcSavePath(chosen);
       if (pcSavePath === null) return { ok: false, message: t('configure.pickPcSaveOutside') };
       return { ok: true, paths: [pcSavePath] };
     }

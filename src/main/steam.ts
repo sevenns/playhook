@@ -35,7 +35,7 @@ export type SteamInstallStatus =
  * `libraryfolders.vdf`. Robust (not naive): matches ALL `"path"` entries and unescapes VDF's `\\` → `\`.
  * The default library is always included even when the VDF is missing/unreadable.
  */
-async function steamLibraryDirs(steamPath: string): Promise<readonly string[]> {
+export async function steamLibraryDirs(steamPath: string): Promise<readonly string[]> {
   const defaultLib = steamPath;
   const vdfPath = path.join(steamPath, 'steamapps', 'libraryfolders.vdf');
   let content: string;

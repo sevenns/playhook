@@ -546,11 +546,15 @@ async function resolveOne(
 
   let pcSavePath: string | undefined;
   if (raw.pcSavePath !== undefined) {
-    const expanded = expandPcSavePath(raw.pcSavePath, env);
-    if (!expanded.ok) {
-      return { ok: false, message: expanded.message };
+    // Deferred resolution (Р5/Э6): validate only the SYNTAX here (prefix allowlist + no traversal). The
+    // physical folder is resolved per-game at sync time via the platform SavePathResolver — on Linux a
+    // location inside the game's Wine prefix / Steam compatdata that may not exist until first launch,
+    // which must NOT reject the card at read time. The stored value is the Windows-dictionary string.
+    const problem = validatePcSavePathStatic(raw.pcSavePath, t);
+    if (problem !== null) {
+      return { ok: false, message: problem };
     }
-    pcSavePath = expanded.value;
+    pcSavePath = raw.pcSavePath;
   }
 
   let soundPaths: Record<string, string> | undefined;
