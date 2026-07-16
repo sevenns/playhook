@@ -4,6 +4,8 @@
 // behaviour on the untouched paths is unchanged. Each service is filled in by its own stage:
 //   ProcessMonitor → Э2 (/proc scan)   SteamLocator → Э3 (known paths)   GameProcessLauncher → Э4 (umu-run)
 //   SavePathResolver → Э5/Э6 (Wine prefix / compatdata)   PowerBackend → Э7 (systemctl / logind)
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import type {
   Platform,
   PlatformDeps,
@@ -15,12 +17,22 @@ import { createLinuxGameLauncher } from './game-launcher.linux';
 import { createLinuxSavePathResolver } from './save-path.linux';
 import { installDirs } from './umu';
 
-// ── PowerBackend — Э7 (systemctl poweroff/reboot/suspend via logind). Placeholder: unsupported. ──
+const execFileAsync = promisify(execFile);
+
+// ── PowerBackend — Э7 (systemctl poweroff/reboot/suspend via logind). ──
+// SteamOS runs logind, which lets the active session's user issue poweroff/reboot/suspend without root
+// (the standard polkit policy for a logged-in seat — Р9). No `--no-wall`/root needed; `systemctl` is on
+// PATH. Rejects propagate to PowerService, which surfaces the error copy and does NOT quit.
 function createPowerBackend(): PowerBackend {
   return {
-    supported: false,
-    run: () => Promise.reject(new Error('power actions are not supported on Linux yet (Proton port stage 7)')),
-    suspend: () => Promise.reject(new Error('suspend is not supported on Linux yet (Proton port stage 7)')),
+    supported: true,
+    async run(action): Promise<void> {
+      const verb = action === 'shutdown' ? 'poweroff' : 'reboot';
+      await execFileAsync('systemctl', [verb]);
+    },
+    async suspend(): Promise<void> {
+      await execFileAsync('systemctl', ['suspend']);
+    },
   };
 }
 

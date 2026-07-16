@@ -327,6 +327,7 @@ export const en = {
   'manifest.executableEscapesInstall': 'executable path escapes install dir: {path}',
   'manifest.executableEscapes': 'executable path escapes card root: {path}',
   'manifest.executableNotFound': 'executable not found: {path}',
+  'manifest.executableNotFoundCase': 'executable not found: {path} — found "{found}" instead (fix the case on this filesystem)',
   'manifest.heroEscapes': 'heroImage path escapes card root: {path}',
   'manifest.saveOnCardEscapes': 'saveOnCard path escapes card root: {path}',
   'manifest.soundEscapes': 'sound "{name}" path escapes card root: {path}',

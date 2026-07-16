@@ -3,8 +3,6 @@
 // no game it stays hidden in the tray. Closing the window hides it to the tray, not quits.
 import path from 'node:path';
 import fs from 'node:fs';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
 import { app, ipcMain, Menu, powerSaveBlocker, shell, type Tray } from 'electron';
 import { log, logFilePath } from './logger';
 import { StateManager } from './state';
@@ -22,7 +20,6 @@ import { GameConfigService } from './game-config';
 import { ConfigureWindow } from './configure-window';
 import { LocaleService } from './locale';
 import { createPowerService } from './power';
-import { suspendToSleep } from './power-native';
 import { createKeepAwakeService, type KeepAwakeService } from './keep-awake';
 import { createPlatform } from './platform';
 import { isGamescopeSession } from './gamescope';
@@ -33,8 +30,6 @@ import { type Locale } from '../shared/i18n/index';
 // In Game Mode there is no tray, the window is always shown (empty/error screen), and closing it quits the
 // app. Read by the controller (hide/show decisions), the tray bootstrap and the window-all-closed handler.
 const gameModeSession = isGamescopeSession();
-
-const execFileAsync = promisify(execFile);
 
 // Keep-alive reference so the Tray (and its icon) isn't garbage-collected; also read to rebuild the
 // context menu on a language change (setContextMenu in applyLanguage).
@@ -285,11 +280,7 @@ async function bootstrap(): Promise<void> {
   // free of power concerns. The renderer confirms each action before sending; shutdown/reboot quit via
   // the bootstrap quit() (drops the window close-guards), sleep suspends in place.
   const power = createPowerService({
-    platform: process.platform,
-    exec: async (file, args) => {
-      await execFileAsync(file, [...args], { windowsHide: true });
-    },
-    suspend: suspendToSleep,
+    backend: platform.powerBackend,
     quit: () => quit(),
     showError: (message) => {
       const bw = window.browserWindow;

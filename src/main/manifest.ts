@@ -214,13 +214,36 @@ const ENV_PREFIXES = ['APPDATA', 'LOCALAPPDATA', 'USERPROFILE'] as const;
 
 /** Resolves a card-relative path strictly inside its root. null = rejected. Exported for unit tests. */
 export function resolveInside(root: string, relative: string): string | null {
-  if (path.isAbsolute(relative)) return null;
-  const resolved = path.resolve(root, relative);
+  // Card-relative manifest paths are authored on Windows and may use `\` (e.g. `"bin\\game.exe"`). On
+  // Linux `\` is NOT a separator, so `path.resolve` would treat the whole thing as one filename with
+  // literal backslashes → "not found" and the card falls apart (Р12). Normalize `\`→`/` on BOTH platforms
+  // (Windows `path.resolve` already accepts both, so its behaviour is unchanged) before resolving.
+  const normalized = relative.replaceAll('\\', '/');
+  if (path.isAbsolute(normalized)) return null;
+  const resolved = path.resolve(root, normalized);
   const back = path.relative(root, resolved);
   if (back === '..' || back.startsWith(`..${path.sep}`) || path.isAbsolute(back)) {
     return null;
   }
   return resolved;
+}
+
+/**
+ * One-level case-insensitive lookup for a diagnostic hint when a card-relative file isn't found (Р12).
+ * On a case-sensitive FS (ext4/Linux) a Windows-authored `"Game.EXE"` won't match the on-disk `game.exe`
+ * → the existence check fails. This scans the parent directory for an entry that differs from the wanted
+ * name only in case and returns it, so the error can say "found game.exe, fix the case". Platform-agnostic
+ * by construction: on a case-INsensitive FS (Windows/exFAT) the file is found and this branch is never
+ * reached, so a match here always means a genuine case mismatch. Best-effort — any fs error → null.
+ */
+async function findCaseInsensitiveName(absentPath: string): Promise<string | null> {
+  const wanted = path.basename(absentPath).toLowerCase();
+  try {
+    const entries = await fse.readdir(path.dirname(absentPath));
+    return entries.find((entry) => entry.toLowerCase() === wanted) ?? null;
+  } catch {
+    return null;
+  }
 }
 
 type ExpandResult =
@@ -495,6 +518,15 @@ async function resolveOne(
       return { ok: false, message: t('manifest.executableEscapes', { path: raw.executable }) };
     }
     if (!(await fse.pathExists(resolved))) {
+      // On ext4 a wrong-case executable (Windows-authored `Game.EXE` vs on-disk `game.exe`) reads as
+      // missing — add a case-fix hint when exactly that is the case (Р12).
+      const found = await findCaseInsensitiveName(resolved);
+      if (found !== null) {
+        return {
+          ok: false,
+          message: t('manifest.executableNotFoundCase', { path: raw.executable, found }),
+        };
+      }
       return { ok: false, message: t('manifest.executableNotFound', { path: raw.executable }) };
     }
     executablePath = resolved;

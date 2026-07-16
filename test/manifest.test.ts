@@ -37,6 +37,20 @@ describe('resolveInside', () => {
   it('rejects absolute paths', () => {
     expect(resolveInside(root, '/etc/passwd')).toBeNull();
   });
+
+  it('normalizes Windows backslash separators (Р12)', () => {
+    // A Windows-authored `"bin\\game.exe"` must resolve INSIDE the root on Linux too, where `\` is not a
+    // separator — the normalization turns it into `bin/game.exe` before resolving.
+    const resolved = resolveInside(root, 'bin\\game.exe');
+    expect(resolved).not.toBeNull();
+    expect(isInside(root, resolved as string)).toBe(true);
+    // Same target as the forward-slash form → identical resolution on every platform.
+    expect(resolved).toBe(resolveInside(root, 'bin/game.exe'));
+  });
+
+  it('still rejects traversal written with backslashes (Р12)', () => {
+    expect(resolveInside(root, '..\\outside.exe')).toBeNull();
+  });
 });
 
 describe('expandPcSavePath', () => {

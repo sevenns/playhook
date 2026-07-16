@@ -177,6 +177,7 @@ function syncChatter(state: AppState): void {
 // ── Render ──────────────────────────────────────────────────────────────────
 
 function render(state: AppState): void {
+  const prev = currentState;
   currentState = state;
   const phase = phaseOf(state);
   const game = gameOf(state);
@@ -227,6 +228,14 @@ function render(state: AppState): void {
   // Force-close popups off the ready screen, then re-apply the focus highlight (see controls.refresh).
   controls.refresh();
   syncMusic();
+
+  // Empty-screen error (Р8, point 1): a card that fails to load sets state=error with no game. In Game
+  // Mode the window is shown (no tray to hide into), so surface the reason over the empty screen via the
+  // error popup. Only on ENTERING the error (prev not already error) so a locale/wallpaper re-render
+  // doesn't re-pop a popup the user has closed. Desktop/Windows keep hiding, so this rarely fires there.
+  if (state.kind === 'error' && game === undefined && prev.kind !== 'error') {
+    controls.showError(state.message);
+  }
 }
 
 // ── Wiring ──────────────────────────────────────────────────────────────────

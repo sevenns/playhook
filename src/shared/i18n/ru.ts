@@ -287,6 +287,7 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'manifest.executableEscapesInstall': 'путь executable выходит за пределы папки установки: {path}',
   'manifest.executableEscapes': 'путь executable выходит за пределы корня карты: {path}',
   'manifest.executableNotFound': 'executable не найден: {path}',
+  'manifest.executableNotFoundCase': 'executable не найден: {path} - на диске есть "{found}" (исправьте регистр, файловая система чувствительна к нему)',
   'manifest.heroEscapes': 'путь heroImage выходит за пределы корня карты: {path}',
   'manifest.saveOnCardEscapes': 'путь saveOnCard выходит за пределы корня карты: {path}',
   'manifest.soundEscapes': 'путь звука "{name}" выходит за пределы корня карты: {path}',
