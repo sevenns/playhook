@@ -246,7 +246,6 @@ async function bootstrap(): Promise<void> {
     reloadManifest: (root) => controller.reloadManifest(root),
     getTranslator,
     toManifestPcSavePath: (absolute) => platform.savePathResolver.toManifestPcSavePath(absolute),
-    pcSaveBrowseDir: (gameId) => platform.savePathResolver.pcSaveBrowseDir(gameId),
   });
   gameConfig.init();
   const configureWindow = new ConfigureWindow(gameConfig, getTranslator);

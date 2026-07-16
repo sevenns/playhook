@@ -72,18 +72,6 @@ export function winePrefixToManifestPcSavePath(absolute: string): string | null 
   return null;
 }
 
-/**
- * The Windows-profile home inside a game's own Wine prefix (`<pfx>/drive_c/users/steamuser`) — where every
- * `%PREFIX%` the manifest can name lives, and therefore where the Configure Browse dialog should open.
- * Pure. `id` must already be a safe path segment (the caller validates it).
- */
-export function prefixUserHome(userData: string, id: string): string {
-  return path.posix.join(prefixDir(userData, id), 'drive_c', ...WINE_USER_HOME);
-}
-
-/** The `drive_c`-relative Windows profile root shared by every entry of WINE_PREFIX_SUBPATHS. */
-const WINE_USER_HOME = ['users', 'steamuser'] as const;
-
 /** Deps for the linux resolver: the app userData (exe/install prefixes) and the Steam locator (compatdata). */
 export interface LinuxSavePathDeps {
   readonly userData: string;
@@ -147,15 +135,5 @@ export function createLinuxSavePathResolver(deps: LinuxSavePathDeps): SavePathRe
       return { path: resolved, containerExists: prefix.exists };
     },
     toManifestPcSavePath: (absolute) => winePrefixToManifestPcSavePath(absolute),
-    async pcSaveBrowseDir(gameId): Promise<string | null> {
-      // Deepest-first: the game's own Windows profile is the useful landing spot, but it only exists once
-      // the game has run. Before that, the prefixes root at least puts the user in the right place instead
-      // of a dot-directory they'd have to unhide. Neither present (nothing installed yet) → let the dialog
-      // decide rather than pointing it at a path that isn't there.
-      const home = prefixUserHome(deps.userData, gameId);
-      if (await fse.pathExists(home)) return home;
-      const root = path.posix.join(deps.userData, 'prefixes');
-      return (await fse.pathExists(root)) ? root : null;
-    },
   };
 }

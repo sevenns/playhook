@@ -150,14 +150,6 @@ export interface SavePathResolver {
    * lives under none of the allowed bases (so it can't be expressed and the caller rejects it).
    */
   toManifestPcSavePath(absolute: string): string | null;
-  /**
-   * Where the Configure window's pcSavePath Browse dialog should OPEN for this game, or null to leave the
-   * dialog at its own default. linux: the game's Wine prefix — its saves live nowhere else, and the prefix
-   * sits under a dot-directory the user would otherwise have to unhide and walk by hand. win32: null, so
-   * the dialog keeps remembering the last place (unchanged behaviour). `gameId` is caller-validated as a
-   * safe path segment; a location that doesn't exist yet resolves to null rather than a dead path.
-   */
-  pcSaveBrowseDir(gameId: string): Promise<string | null>;
 }
 
 /**

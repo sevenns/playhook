@@ -63,8 +63,8 @@ const api: ConfigureApi = {
   saveConfig(root: string, text: string): Promise<ConfigSaveResult> {
     return ipcRenderer.invoke(CHANNELS.configSave, { root, text }) as Promise<ConfigSaveResult>;
   },
-  pickPath(root: string, kind: ConfigPickKind, gameId?: string): Promise<ConfigPickResult> {
-    return ipcRenderer.invoke(CHANNELS.configPickPath, { root, kind, gameId }) as Promise<ConfigPickResult>;
+  pickPath(root: string, kind: ConfigPickKind): Promise<ConfigPickResult> {
+    return ipcRenderer.invoke(CHANNELS.configPickPath, { root, kind }) as Promise<ConfigPickResult>;
   },
   getImagePreview(root: string, path: string): Promise<string | null> {
     return ipcRenderer.invoke(CHANNELS.configImagePreview, { root, path }) as Promise<string | null>;

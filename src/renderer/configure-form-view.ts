@@ -55,7 +55,7 @@ export interface FormViewDeps {
   /** A field changed → the owner re-serializes, validates and marks dirty. */
   readonly onChange: () => void;
   /** Pick file(s)/a folder for a Browse… button (root is closed over in configure.ts). */
-  readonly pickPath: (kind: ConfigPickKind, gameId?: string) => Promise<ConfigPickResult>;
+  readonly pickPath: (kind: ConfigPickKind) => Promise<ConfigPickResult>;
   /** Read a card-relative image into a data URL for a hero thumbnail (null when unreadable). */
   readonly imagePreview: (relative: string) => Promise<string | null>;
   /** Open an external https URL (the appid helper link). */
@@ -764,11 +764,7 @@ export class FormView {
     const row = document.createElement('div');
     row.className = 'field-row';
     const browse = this.textButton('configure.browse', async () => {
-      // pc-save points OUTSIDE the card, at a location that on Linux lives inside this game's Wine prefix —
-      // so hand main the id being edited and it can open the dialog right there instead of at some default
-      // the user then has to walk out of. Other kinds pick from the card and don't need it.
-      const gameId = kind === 'pc-save' ? getValue(this.idInput) : undefined;
-      const result = await this.deps.pickPath(kind, gameId);
+      const result = await this.deps.pickPath(kind);
       if (result.ok) {
         const picked = result.paths[0] ?? getValue(control);
         const next = transform === undefined ? picked : transform(picked);

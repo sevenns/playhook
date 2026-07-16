@@ -75,24 +75,6 @@ export interface GameConfigDeps {
    * win32 uses the env-based table; linux returns null (the user types the Windows-dictionary string).
    */
   readonly toManifestPcSavePath: (absolute: string) => string | null;
-  /**
-   * Where the pcSavePath Browse dialog should open for this game (platform SavePathResolver): on Linux the
-   * game's Wine prefix, on Windows null (the dialog keeps its own default). null → no defaultPath.
-   */
-  readonly pcSaveBrowseDir: (gameId: string) => Promise<string | null>;
-}
-
-/**
- * The `id` charset the manifest schema enforces — a safe single path segment. The gameId that arrives with
- * a pick request is RAW EDITOR TEXT (the user may be mid-typing anything), and it is about to be joined
- * into a filesystem path, so it is re-validated here at the IPC boundary rather than trusted.
- */
-const SAFE_GAME_ID = /^[A-Za-z0-9._-]+$/;
-
-function isSafeGameId(gameId: string | undefined): gameId is string {
-  return (
-    gameId !== undefined && gameId !== '.' && gameId !== '..' && SAFE_GAME_ID.test(gameId)
-  );
 }
 
 export class GameConfigService {
@@ -123,7 +105,7 @@ export class GameConfigService {
     ipcMain.handle(
       IPC.configPickPath,
       (event, payload: ConfigPickRequest): Promise<ConfigPickResult> =>
-        this.pickPath(event.sender, payload.root, payload.kind, payload.gameId),
+        this.pickPath(event.sender, payload.root, payload.kind),
     );
     ipcMain.handle(
       IPC.configImagePreview,
@@ -239,7 +221,6 @@ export class GameConfigService {
     sender: WebContents,
     root: string,
     kind: ConfigPickKind,
-    gameId?: string,
   ): Promise<ConfigPickResult> {
     const t = this.deps.getTranslator();
     if (!(await this.isAllowedRoot(root))) {
@@ -249,14 +230,7 @@ export class GameConfigService {
     // pcSavePath points at a PC folder OUTSIDE the card (env-prefixed), so it has its own dialog: no card
     // root restriction, and the absolute result is converted back to a %PREFIX%/… form the validator accepts.
     if (kind === 'pc-save') {
-      // Open in the game's own Wine prefix when we can (Linux): its saves live nowhere else, and the
-      // prefix sits under a dot-directory the user would otherwise have to unhide and walk by hand. A
-      // malformed/half-typed id simply yields no defaultPath — never a path built from unvalidated text.
-      const defaultPath = isSafeGameId(gameId) ? await this.deps.pcSaveBrowseDir(gameId) : null;
-      const options: Electron.OpenDialogOptions = {
-        properties: ['openDirectory'],
-        ...(defaultPath !== null ? { defaultPath } : {}),
-      };
+      const options: Electron.OpenDialogOptions = { properties: ['openDirectory'] };
       const picked =
         parent !== null ? await dialog.showOpenDialog(parent, options) : await dialog.showOpenDialog(options);
       const chosen = picked.filePaths[0];

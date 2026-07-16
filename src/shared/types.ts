@@ -714,12 +714,6 @@ export type ConfigPickKind =
 export interface ConfigPickRequest {
   readonly root: string;
   readonly kind: ConfigPickKind;
-  /**
-   * The `id` currently typed in the editor, sent for `pc-save` only: it lets main open the dialog straight
-   * in that game's Wine prefix on Linux (see SavePathResolver.pcSaveBrowseDir). Untrusted — it is raw
-   * editor text and main re-validates it as a safe path segment before touching a path with it.
-   */
-  readonly gameId?: string;
 }
 
 /**
@@ -832,9 +826,8 @@ export interface ConfigureApi {
   validateConfig(text: string): Promise<ConfigValidationResult>;
   /** Write game.json to the card and try to apply it without a restart. */
   saveConfig(root: string, text: string): Promise<ConfigSaveResult>;
-  /** Pick file(s)/a folder from the card via a native dialog; resolves with card-relative paths.
-   *  `gameId` (pc-save only) lets main open the dialog in that game's Wine prefix on Linux. */
-  pickPath(root: string, kind: ConfigPickKind, gameId?: string): Promise<ConfigPickResult>;
+  /** Pick file(s)/a folder from the card via a native dialog; resolves with card-relative paths. */
+  pickPath(root: string, kind: ConfigPickKind): Promise<ConfigPickResult>;
   /** Read a card-relative image into a data URL for the hero preview (null when unreadable). */
   getImagePreview(root: string, path: string): Promise<string | null>;
   /** Open an external https URL in the default browser (e.g. the SteamDB appid lookup). */
