@@ -11,6 +11,10 @@ import { type Translator } from '../shared/i18n/index';
 
 const DEFAULT_INTERVAL_MS = 1000;
 
+// How often the optional automount sweep may run (Game Mode only — see the constructor). Deliberately
+// slower than the 1s scan tick: the sweep shells out to lsblk, and an unmounted card is not a hot path.
+const AUTOMOUNT_INTERVAL_MS = 3000;
+
 // Internal bus types some machines still report as `isRemovable` (hot-swap SATA bays, second SSDs, etc.).
 // The Configure picker must only offer EXTERNAL media (SD/USB), so we exclude these buses on top of the
 // removable/non-system check. Removable media report USB / SD(CARD) / MMC / UNKNOWN and pass.
@@ -137,12 +141,22 @@ export class DriveWatcher {
   private timer: NodeJS.Timeout | null = null;
   private activeRoot: string | null = null;
   private scanning = false;
+  private lastAutomountAt = 0;
 
   private insertHandler: ((root: string) => void) | null = null;
   private removeHandler: ((root: string) => void) | null = null;
   private errorHandler: ((error: Error) => void) | null = null;
 
-  constructor(private readonly intervalMs: number = DEFAULT_INTERVAL_MS) {}
+  /**
+   * @param automount Optional sweep that mounts an inserted-but-unmounted removable card before scanning
+   *   (Р10). Wired ONLY in a SteamOS Game Mode session, where gamescope automounts ext4 but not
+   *   exFAT/NTFS — without it such a card has no mountpoint and scan() can never see it. null everywhere
+   *   else (Windows and the KDE desktop session automount on their own). Must never throw.
+   */
+  constructor(
+    private readonly intervalMs: number = DEFAULT_INTERVAL_MS,
+    private readonly automount: (() => Promise<void>) | null = null,
+  ) {}
 
   onInsert(handler: (root: string) => void): void {
     this.insertHandler = handler;
@@ -176,6 +190,7 @@ export class DriveWatcher {
     if (this.scanning) return;
     this.scanning = true;
     try {
+      await this.automountIfDue();
       const found = await this.scan();
       if (found !== null && found !== this.activeRoot) {
         // Card swap without an intermediate empty tick: remove the old one first.
@@ -196,6 +211,19 @@ export class DriveWatcher {
     } finally {
       this.scanning = false;
     }
+  }
+
+  /**
+   * Runs the automount sweep when one is wired, throttled and only while NO card is active: with a card
+   * already mounted there is nothing to mount (the launcher works one card at a time), so this stays quiet
+   * during play and only wakes up on the empty screen — exactly when a card may be waiting unmounted.
+   */
+  private async automountIfDue(): Promise<void> {
+    if (this.automount === null || this.activeRoot !== null) return;
+    const now = Date.now();
+    if (now - this.lastAutomountAt < AUTOMOUNT_INTERVAL_MS) return;
+    this.lastAutomountAt = now;
+    await this.automount();
   }
 
   /**

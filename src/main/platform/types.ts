@@ -131,6 +131,22 @@ export interface PowerBackend {
   suspend(): Promise<void>;
 }
 
+/**
+ * Mounts inserted-but-unmounted removable volumes so the drive watcher can see them (Р10). Only SteamOS
+ * **Game Mode** needs this: gamescope's session automounts ext4 only, so an exFAT/NTFS card appears as a
+ * block device with no mountpoint and `scan()` (which walks mountpoints) never finds it. win32 and the
+ * KDE desktop session automount on their own → no-op there. The caller decides WHEN to sweep; this is
+ * only the OS bit.
+ */
+export interface RemovableMounter {
+  /**
+   * Best-effort: mount every removable, unmounted volume that carries a filesystem. **Never throws** — a
+   * failure (no permission, device busy) is logged and the sweep moves on, because an automount failure
+   * must not break card detection. Idempotent: already-mounted volumes are skipped.
+   */
+  mountAll(): Promise<void>;
+}
+
 /** The full set of platform services, selected as a unit by createPlatform(process.platform). */
 export interface Platform {
   readonly processMonitor: ProcessMonitor;
@@ -138,6 +154,7 @@ export interface Platform {
   readonly gameLauncher: GameProcessLauncher;
   readonly savePathResolver: SavePathResolver;
   readonly powerBackend: PowerBackend;
+  readonly removableMounter: RemovableMounter;
   /**
    * Resolves the app-controlled install directory for an install-mode game id (Р7), injected into
    * readManifests. win32 derives `%LOCALAPPDATA%\playhook\games\<id>`; linux the game's Wine prefix.
