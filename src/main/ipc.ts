@@ -1526,7 +1526,7 @@ export class GameController {
     // install/normal branches, where it is real (in steam mode it is '' and we never reach that read).
     let requiresInstall: boolean;
     let canUninstall: boolean;
-    let installVia: 'steam' | undefined;
+    let installVia: 'steam' | 'copy' | undefined;
     let steamInstalling = false;
     let steamPaused = false;
     let steamPausedProgress: number | undefined;
@@ -1547,7 +1547,10 @@ export class GameController {
       const installed = await fse.pathExists(manifest.executablePath);
       requiresInstall = !installed;
       canUninstall = installed;
-      installVia = undefined;
+      // `copy` shares this branch but not its install-confirm copy: no installer runs, so the silent-mode
+      // caveat and the destination path (which exists only for the user to paste into an installer's
+      // picker) are meaningless there. Tell the renderer which of the two notes to show.
+      installVia = manifest.install.type === 'copy' ? 'copy' : undefined;
     } else {
       // Normal card game: always ready to play, nothing to uninstall.
       requiresInstall = false;

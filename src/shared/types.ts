@@ -330,10 +330,12 @@ export interface GameInfo {
   readonly installDir?: string;
   /**
    * How the game is installed/launched when `requiresInstall` is true. `'steam'` → the install action
-   * opens `steam://install/<appid>` (no card path, no silent-mode note). Undefined → an ordinary card
-   * game or a card-installer game. Lets the renderer pick the right confirm copy.
+   * opens `steam://install/<appid>` (no card path, no silent-mode note). `'copy'` → the card's game
+   * directory is copied to the PC (no installer runs: no silent-mode caveat, and the destination path is
+   * of no use to the user). Undefined → an ordinary card game or a card-INSTALLER game, the only case
+   * that shows the path. Lets the renderer pick the right confirm copy.
    */
-  readonly installVia?: 'steam';
+  readonly installVia?: 'steam' | 'copy';
   /**
    * Steam mode only: a download/update is in progress (the `.acf` exists but isn't fully installed).
    * Drives a non-blocking "Installing…" indicator — NOT a blocking `installing` state (a Steam download

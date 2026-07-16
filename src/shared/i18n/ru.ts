@@ -56,6 +56,8 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'launcher.confirm.sleep': 'Перевести компьютер в спящий режим?',
   'launcher.installPathNote':
     'Не все установщики поддерживают тихий режим, поэтому при установке нужно указать следующий путь:',
+  'launcher.copyNote':
+    'Игра будет скопирована на этот ПК и будет запускаться оттуда. С карты игра не удаляется.',
   'launcher.state.installing': 'Установка...',
   'launcher.state.uninstalling': 'Удаление...',
   'launcher.state.syncingIn': 'Синхронизация сохранений...',

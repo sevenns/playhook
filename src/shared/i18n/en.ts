@@ -73,6 +73,10 @@ export const en = {
   'launcher.confirm.sleep': 'Put the PC to sleep?',
   'launcher.installPathNote':
     'Since not all installers support silent mode, during installation you need to specify the following path:',
+  // The copy variant of the note: no installer runs, so neither the silent-mode caveat nor the
+  // destination path applies — say what actually happens instead.
+  'launcher.copyNote':
+    'The game will be copied to this PC and will run from there. It is not deleted from the card.',
   // Status labels (state-view.ts). Plain "..." (not the "…" glyph) on purpose — see state-view.ts.
   'launcher.state.installing': 'Installing...',
   'launcher.state.uninstalling': 'Uninstalling...',
