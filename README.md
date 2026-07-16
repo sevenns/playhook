@@ -396,12 +396,17 @@ and not sharing Windows' separator:
 
 | Filesystem | Hot-swap in Game Mode | Writable from Windows | Notes |
 |---|---|---|---|
-| **ext4** | ✅ (SteamOS automounts) | ❌ | Prepare the card on the Deck/Linux. Best for the cartridge (insert/eject) flow. |
-| **exFAT** | ❌ | ✅ | Mount once in **Desktop Mode**, then switch to Game Mode (the mount survives). No hot-swap: re-inserting or rebooting needs another Desktop-mode mount. Case-insensitive (a plus for Windows-made cards). |
+| **exFAT** | ✅ (Playhook mounts it) | ✅ | **The one to use for a card shared with a Windows PC.** Case-insensitive, so path case doesn't bite. |
+| **ext4** | ✅ (SteamOS automounts) | ❌ | Prepare the card on the Deck/Linux. Fine if the card never leaves the Deck. |
 
-Out of the box SteamOS Game Mode only automounts **ext4**; exFAT/NTFS need the Desktop-Mode workaround
-above. One physical "Windows + Deck Game Mode" card is therefore not possible out of the box — keep an
-ext4 (or Deck-formatted) card for the Deck and an exFAT card for Windows with an identical `game.json`.
+SteamOS Game Mode itself only automounts **ext4** — an exFAT/NTFS card is left unmounted and invisible to
+everything. Playhook closes that gap: in Game Mode it mounts an inserted-but-unmounted removable card
+itself (via udisks2, the same `/run/media/deck/<label>` the system would use), so exFAT cards hot-swap
+like ext4 ones and no Desktop-Mode detour is needed. Only removable volumes with a real filesystem are
+ever touched — the internal drive can't match.
+
+That makes **one physical card for both Windows and the Deck** the normal setup: format it exFAT, prepare
+it on Windows, and it works on both with the same `game.json`.
 
 ### Where installs and saves live
 
@@ -431,6 +436,8 @@ These are ignored on Windows, so a dual-platform card can carry them safely:
 - **No tray in Game Mode.** Playhook is a single window that always shows an empty "Insert a game card"
   screen when no card is present, and surfaces manifest errors on screen. **Settings and the card editor
   (Configure) open from the tray, so they are Desktop-Mode only.**
+- **Cards are mounted automatically**, including exFAT/NTFS ones that Game Mode itself ignores (see
+  [Which filesystem for the card](#preparing-a-card-for-the-deck)) — insert and eject just work.
 - **Power menu** (Shutdown/Reboot/Sleep) works from Game Mode via `systemctl` (logind).
 - **No autostart in Game Mode** — the app lives as a non-Steam game. In Desktop Mode it writes a
   `~/.config/autostart/playhook.desktop` entry.
