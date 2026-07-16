@@ -17,6 +17,7 @@ export type {
   GameProcessLauncher,
   SavePathResolver,
   PowerBackend,
+  RemovableMounter,
 } from './types';
 
 /** Builds the platform service bundle for the running OS. Bootstrapped once in main. */

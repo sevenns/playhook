@@ -147,7 +147,6 @@ async function bootstrap(): Promise<void> {
   const state = new StateManager();
   const window = new GameWindow(getTranslator);
   const stats = new StatsService(store);
-  const watcher = new DriveWatcher();
 
   // Platform services (process monitor / Steam locator / launcher / save-path resolver / power) selected
   // once for the running OS. Every OS-specific behaviour flows through this bundle (see platform/index.ts).
@@ -162,6 +161,14 @@ async function bootstrap(): Promise<void> {
     userData: app.getPath('userData'),
     umuRunPath,
   });
+
+  // Game Mode only (Р10): gamescope automounts ext4 but not exFAT/NTFS, so an inserted card can sit there
+  // unmounted and invisible to the scan. Sweeping it into /run/media restores hot-swap for those cards.
+  // Windows and the KDE desktop session automount on their own → no sweep wired there.
+  const watcher = new DriveWatcher(
+    undefined,
+    gameModeSession ? () => platform.removableMounter.mountAll() : null,
+  );
 
   windowRef = window;
   const controller = new GameController({ state, window, store, stats, watcher, settings, platform, isGamescope: gameModeSession, getTranslator });
