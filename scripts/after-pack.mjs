@@ -32,14 +32,12 @@ BIN="\${HERE}/${realBinary}"
 
 FLAGS=()
 
-# Configure's folder pickers pass a defaultPath (open in the game's Wine prefix). Through the XDG portal
-# that is unreachable by design: the FileChooser spec calls the start folder a suggestion implementations
-# "are free to ignore", and KDE's does — on the Deck (portal FileChooser v4, checked on hardware) the
-# picker always opened at $HOME. Chromium only uses the portal when its version >= this threshold, so an unreachable
-# number pins it to the GTK/KDE dialog, which honours the path. Safe here: an AppImage isn't sandboxed, so
-# a native dialog reads the disk fine — the portal buys us nothing.
+# Configure's folder pickers pass a defaultPath (open in the game's Wine prefix). Chromium ignores it when
+# it talks to an XDG desktop portal older than v4 — and its default threshold is 3, so a v3 portal (KDE on
+# SteamOS) is happily used and silently drops the path. Requiring v4 keeps the portal only where defaultPath
+# actually works and otherwise falls back to the GTK/KDE dialog, which honours it. Harmless everywhere else.
 if ! printf '%s\\n' "$@" | grep -q '^--xdg-portal-required-version' ; then
-  FLAGS+=(--xdg-portal-required-version=999)
+  FLAGS+=(--xdg-portal-required-version=4)
 fi
 
 # Chromium's sandbox can't start the renderer inside a gamescope (Game Mode) session. Mirror of
