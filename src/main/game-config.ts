@@ -253,6 +253,10 @@ export class GameConfigService {
       // prefix sits under a dot-directory the user would otherwise have to unhide and walk by hand. A
       // malformed/half-typed id simply yields no defaultPath — never a path built from unvalidated text.
       const defaultPath = isSafeGameId(gameId) ? await this.deps.pcSaveBrowseDir(gameId) : null;
+      // Logged because a wrong-looking dialog has two very different causes: no defaultPath resolved (id
+      // missing / prefix absent) vs the OS ignoring it (a pre-v4 XDG portal drops it — the launcher passes
+      // --xdg-portal-required-version=4 to avoid that). The log tells the two apart at a glance.
+      log.info(`[game-config] pc-save picker: id="${gameId ?? ''}" defaultPath=${defaultPath ?? '(none)'}`);
       const options: Electron.OpenDialogOptions = {
         properties: ['openDirectory'],
         ...(defaultPath !== null ? { defaultPath } : {}),
