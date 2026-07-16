@@ -12,6 +12,7 @@ import type {
   PowerBackend,
   ProcessMonitor,
   ProcessSnapshot,
+  RemovableMounter,
   SavePathResolver,
   SteamLocator,
 } from './types';
@@ -166,6 +167,13 @@ function createPowerBackend(): PowerBackend {
   };
 }
 
+// ── RemovableMounter (no-op) ─────────────────────────────────────────────────
+// Windows mounts removable media itself (a drive letter appears on insert), so there is nothing to sweep.
+
+function createRemovableMounter(): RemovableMounter {
+  return { mountAll: () => Promise.resolve() };
+}
+
 /** Assembles the win32 platform bundle. */
 export function createWin32Platform(deps: PlatformDeps): Platform {
   // The launcher's normal-path GameProcess monitors by pid through this same monitor (tasklist), so build
@@ -177,6 +185,7 @@ export function createWin32Platform(deps: PlatformDeps): Platform {
     gameLauncher: createGameLauncher(processMonitor),
     savePathResolver: createSavePathResolver(deps),
     powerBackend: createPowerBackend(),
+    removableMounter: createRemovableMounter(),
     resolveInstallDir: createInstallDirResolver(),
   };
 }

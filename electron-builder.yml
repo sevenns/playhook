@@ -6,6 +6,11 @@ directories:
   output: release
   buildResources: build
 
+# Linux only: wraps the packed executable in a launcher that injects --no-sandbox inside a gamescope
+# (Game Mode) session — the flag must be on the real argv, which neither app.commandLine.appendSwitch nor
+# AppRun's own user-namespace probe can deliver there. No-op for the Windows targets. See the script.
+afterPack: scripts/after-pack.mjs
+
 # Only the compiled JS, assets, and dependency manifests are included in the build.
 files:
   - dist/**/*

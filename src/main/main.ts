@@ -31,6 +31,11 @@ import { type Locale } from '../shared/i18n/index';
 // app. Read by the controller (hide/show decisions), the tray bootstrap and the window-all-closed handler.
 const gameModeSession = isGamescopeSession();
 
+// NOTE — the Game Mode `--no-sandbox` flag is NOT set here. Chromium consumes sandbox switches while it
+// boots, before this script runs, so `app.commandLine.appendSwitch('no-sandbox')` is silently ignored: the
+// flag has to be on the real argv. It is injected one layer down, by the Linux launcher wrapper that
+// scripts/after-pack.mjs bakes into the package (same gamescope gate as isGamescopeSession).
+
 // Keep-alive reference so the Tray (and its icon) isn't garbage-collected; also read to rebuild the
 // context menu on a language change (setContextMenu in applyLanguage).
 let trayRef: Tray | null = null;
@@ -138,7 +143,6 @@ async function bootstrap(): Promise<void> {
   const state = new StateManager();
   const window = new GameWindow(getTranslator);
   const stats = new StatsService(store);
-  const watcher = new DriveWatcher();
 
   // Platform services (process monitor / Steam locator / launcher / save-path resolver / power) selected
   // once for the running OS. Every OS-specific behaviour flows through this bundle (see platform/index.ts).
@@ -153,6 +157,14 @@ async function bootstrap(): Promise<void> {
     userData: app.getPath('userData'),
     umuRunPath,
   });
+
+  // Game Mode only (Р10): gamescope automounts ext4 but not exFAT/NTFS, so an inserted card can sit there
+  // unmounted and invisible to the scan. Sweeping it into /run/media restores hot-swap for those cards.
+  // Windows and the KDE desktop session automount on their own → no sweep wired there.
+  const watcher = new DriveWatcher(
+    undefined,
+    gameModeSession ? () => platform.removableMounter.mountAll() : null,
+  );
 
   windowRef = window;
   const controller = new GameController({ state, window, store, stats, watcher, settings, platform, isGamescope: gameModeSession, getTranslator });
