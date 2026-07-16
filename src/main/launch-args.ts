@@ -3,7 +3,7 @@
 // native FFI addon into any importer — impossible to unit-test in plain Node. These helpers are
 // pure string logic (quoting rules, installer flag families) with no koffi/electron dependency, so
 // they live here and can be covered directly. game-launcher.ts re-exports them for its own use.
-import { type InstallManifest } from '../shared/types';
+import { type InstallerRunType } from '../shared/types';
 
 /**
  * Quotes a single argument for ShellExecuteEx's raw lpParameters command line, following the
@@ -64,7 +64,7 @@ export function buildParameters(args: readonly string[]): string {
  *   `custom` is unaffected: the card owns its argv, so silent-vs-not is up to the card author.
  */
 export function buildInstallerArgs(
-  type: InstallManifest['type'],
+  type: InstallerRunType,
   dir: string,
   customArgs: readonly string[],
   quoteDir: boolean,

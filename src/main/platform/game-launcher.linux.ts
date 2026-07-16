@@ -10,6 +10,7 @@ import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import fse from 'fs-extra';
 import type { GameProcessLauncher, ProcessMonitor } from './types';
+import type { ResolvedInstall } from '../../shared/types';
 import type { GameProcess } from '../game-launcher';
 import {
   prefixDir,
@@ -263,6 +264,31 @@ async function ensurePrefixDeps(
   }
 }
 
+/**
+ * Brings the Wine prefix that backs an install dir into a ready state: created, Proton-initialized and
+ * provisioned with the baseline runtimes plus the card's `install.winetricks` (Р7b). Shared by
+ * launchInstaller (which needs it before the installer .exe runs) and prepareInstallDir (which needs it
+ * before `copy` writes the game's files in) — the two must init the prefix the SAME way, so a copied game
+ * lands in the same environment an installed one would.
+ * Returns the prefix and the Proton log dir, so the caller can build the umu env without recomputing them.
+ */
+async function preparePrefixForInstall(
+  deps: LinuxGameLauncherDeps,
+  install: ResolvedInstall,
+  onProvisioning?: (active: boolean) => void,
+): Promise<{ readonly prefix: string; readonly logDir: string | undefined }> {
+  await ensurePython3();
+  // The prefix that makes `install.installerDir` (C:\…) map onto `install.dir` (the host dir).
+  const prefix = prefixForInstall(install.dir);
+  await fse.ensureDir(prefix);
+  const logDir = protonLogDir(deps.userData);
+  await ensureLogDir(logDir);
+  // Р7b: provision the runtimes the installer/game need (baseline + card extras). Also initializes the
+  // prefix (the first `umu-run` here does the Proton upgrade).
+  await ensurePrefixDeps(deps.umuRunPath, prefix, install.winetricks, logDir, onProvisioning);
+  return { prefix, logDir };
+}
+
 /** Builds the linux GameProcessLauncher (umu-run / Proton). */
 export function createLinuxGameLauncher(deps: LinuxGameLauncherDeps): GameProcessLauncher {
   return {
@@ -300,16 +326,7 @@ export function createLinuxGameLauncher(deps: LinuxGameLauncherDeps): GameProces
       if (install.runAsAdmin) {
         log.warn('[install] runAsAdmin ignored on Linux (no elevation under Proton)');
       }
-      await ensurePython3();
-      // The prefix that makes `install.installerDir` (C:\…) map onto `install.dir` (the host dir).
-      const prefix = prefixForInstall(install.dir);
-      await fse.ensureDir(prefix);
-      const logDir = protonLogDir(deps.userData);
-      await ensureLogDir(logDir);
-      // Р7b: provision the runtimes the installer/game need (baseline + card extras) before it runs.
-      // Also initializes the prefix (first `umu-run` here does the Proton upgrade), so the installer
-      // launches into a ready environment.
-      await ensurePrefixDeps(deps.umuRunPath, prefix, install.winetricks, logDir, onProvisioning);
+      const { prefix, logDir } = await preparePrefixForInstall(deps, install, onProvisioning);
       const env = buildUmuEnv(process.env, { prefix, proton: DEFAULT_PROTON, protonLogDir: logDir });
       // silent:false drops the silent flags → Proton shows the installer's wizard (no windowsHide concept
       // on linux — umu surfaces the Wine window whenever the installer isn't running silently).
@@ -320,6 +337,14 @@ export function createLinuxGameLauncher(deps: LinuxGameLauncherDeps): GameProces
         `[install] umu-run installer silent=${silent} prefix="${prefix}" installer="${install.installerPath}" dir="${install.installerDir}"`,
       );
       return spawnUmuProcess(args, cwd, env, deps.monitor);
+    },
+    // `copy` install type: no installer runs, so nothing would ever create/provision the prefix that the
+    // copied files are about to be written INTO (launchGame only provisions when the card lists top-level
+    // winetricks, and never applies the install baseline). Do it here, before the copy — same order and
+    // same environment as the installer path: prefix first, game files second.
+    async prepareInstallDir(install, onProvisioning): Promise<void> {
+      const { prefix } = await preparePrefixForInstall(deps, install, onProvisioning);
+      log.info(`[install] prefix ready for copy prefix="${prefix}" dir="${install.dir}"`);
     },
     // Uninstall (Р7): the target (uninstaller .exe found in the install dir + silent flags) is resolved by
     // the controller; there is no registry fallback on linux. Run it through umu-run in the same prefix.

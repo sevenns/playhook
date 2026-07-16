@@ -18,22 +18,34 @@ export const CARD_STATS_FILENAME = 'stats.json' as const;
  * When present, the card carries an INSTALLER (not the game itself): the app runs it silently,
  * feeding it the install directory through the installer's own dir-key, and only afterwards does
  * `executable` resolve relative to that install directory (not the card root). See ResolvedManifest.
+ *
+ * `type: 'copy'` is the exception: nothing is installed and no process runs — the card carries the
+ * game's directory and the app copies it into the install dir ("move game to PC" in the UI). It reuses
+ * this block because everything AROUND the installer run is identical (install dir, Install/Play
+ * routing, requiresInstall, uninstall).
  */
 export interface InstallManifest {
-  /** Path to the installer (e.g. setup.exe) RELATIVE to the card root. */
+  /**
+   * Path RELATIVE to the card root. For `nsis`/`inno`/`custom`: the installer file (e.g. setup.exe).
+   * For `copy`: the root of the game DIRECTORY to copy to the PC.
+   */
   readonly installer: string;
   /**
    * Installer family — decides how the install directory is passed silently:
    * `nsis` → `/S /D=<dir>`, `inno` → `/VERYSILENT /DIR="<dir>"`, `custom` → caller-supplied `args`
    * with a single `{dir}` placeholder. MSI is out of MVP (its dir-property name isn't standardized).
+   * `copy` runs no installer at all — the app copies `installer` (a directory) into the install dir.
    */
-  readonly type: 'nsis' | 'inno' | 'custom';
-  /** Run the installer elevated (UAC). Forbidden for `custom` (the card would control elevated argv). */
+  readonly type: 'nsis' | 'inno' | 'custom' | 'copy';
+  /**
+   * Run the installer elevated (UAC). Forbidden for `custom` (the card would control elevated argv)
+   * and for `copy` (no process to elevate).
+   */
   readonly runAsAdmin: boolean;
   /**
    * For `custom`: the full argument list, with exactly one token containing the `{dir}` placeholder
    * (the install directory is substituted in). For `nsis`/`inno`: optional EXTRA flags appended to the
-   * built-in silent + dir flags.
+   * built-in silent + dir flags. Forbidden (must be empty) for `copy`.
    */
   readonly args: readonly string[];
   /**
@@ -43,6 +55,55 @@ export interface InstallManifest {
    */
   readonly winetricks: readonly string[];
 }
+
+/**
+ * The install types that actually RUN an installer process, i.e. everything but `copy`.
+ * Narrowing a parameter to this makes the compiler PROVE that `copy` never reaches installer-argv or
+ * uninstaller code (where it would otherwise be silently mistaken for nsis) — the caller must rule it
+ * out explicitly. Preferred over a runtime throw: the guarantee holds at compile time.
+ */
+export type InstallerRunType = Exclude<InstallManifest['type'], 'copy'>;
+
+/** Fields shared by every resolved install descriptor, whatever the type (see ResolvedInstall). */
+interface ResolvedInstallBase {
+  /** Absolute path on the card: the installer file, or — for `copy` — the game directory to copy. */
+  readonly installerPath: string;
+  readonly runAsAdmin: boolean;
+  readonly args: readonly string[];
+  /**
+   * Extra winetricks verbs (Р7b) provisioned into the game's Wine prefix before install, on top of the
+   * linux baseline set. Linux-only; ignored on Windows. Empty by default.
+   */
+  readonly winetricks: readonly string[];
+  /**
+   * Host-view of the app-controlled install directory: every fs op (pre-clean, uninstaller search,
+   * sweep) and the resolved `executable` live under it. win32: `%LOCALAPPDATA%\playhook\games\<id>`;
+   * linux: `<pfx>/drive_c/playhook/games/<id>` (inside the game's Wine prefix — Р7).
+   */
+  readonly dir: string;
+  /**
+   * Installer-view of the SAME directory, fed to the silent dir-arg (`/DIR=` / `/D=`). win32: identical
+   * to `dir`; linux: `C:\playhook\games\<id>` — the path the installer sees under Wine (Р7).
+   */
+  readonly installerDir: string;
+}
+
+/** A resolved install that RUNS an installer — the only shape installer/uninstaller code accepts. */
+export interface ResolvedInstallerRun extends ResolvedInstallBase {
+  readonly type: InstallerRunType;
+}
+
+/** A resolved `copy` install: `installerPath` is a DIRECTORY, copied wholesale into `dir`. */
+export interface ResolvedCopyInstall extends ResolvedInstallBase {
+  readonly type: 'copy';
+}
+
+/**
+ * Resolved install descriptor. A discriminated union on `type` so that ruling out `copy` narrows the
+ * whole descriptor — that is what lets the compiler prove `copy` never reaches installer-argv or
+ * uninstaller code, instead of it silently falling into the nsis branch.
+ */
+export type ResolvedInstall = ResolvedInstallerRun | ResolvedCopyInstall;
 
 /**
  * Optional `steam` block in `game.json` (Steam mode).
@@ -174,29 +235,7 @@ export interface ResolvedManifest {
   /** Resolved background-music file path. */
   readonly backgroundMusicPath?: string;
   /** Resolved install descriptor (install mode only). */
-  readonly install?: {
-    /** Absolute path to the installer (setup.exe) on the card. */
-    readonly installerPath: string;
-    readonly type: InstallManifest['type'];
-    readonly runAsAdmin: boolean;
-    readonly args: readonly string[];
-    /**
-     * Extra winetricks verbs (Р7b) provisioned into the game's Wine prefix before install, on top of the
-     * linux baseline set. Linux-only; ignored on Windows. Empty by default.
-     */
-    readonly winetricks: readonly string[];
-    /**
-     * Host-view of the app-controlled install directory: every fs op (pre-clean, uninstaller search,
-     * sweep) and the resolved `executable` live under it. win32: `%LOCALAPPDATA%\playhook\games\<id>`;
-     * linux: `<pfx>/drive_c/playhook/games/<id>` (inside the game's Wine prefix — Р7).
-     */
-    readonly dir: string;
-    /**
-     * Installer-view of the SAME directory, fed to the silent dir-arg (`/DIR=` / `/D=`). win32: identical
-     * to `dir`; linux: `C:\playhook\games\<id>` — the path the installer sees under Wine (Р7).
-     */
-    readonly installerDir: string;
-  };
+  readonly install?: ResolvedInstall;
   /** Resolved Steam descriptor (Steam mode only). When present, launch/install go through steam://. */
   readonly steam?: {
     readonly appid: number;

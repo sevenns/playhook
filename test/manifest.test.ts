@@ -133,6 +133,56 @@ describe('validateManifestText', () => {
     expect(validateManifestText(text, t).ok).toBe(false);
   });
 
+  it('accepts install.type "copy" (move game to PC — the installer field is the game directory)', () => {
+    const text = JSON.stringify({
+      schemaVersion: 1,
+      id: 'x',
+      title: 'X',
+      executable: 'bin/game.exe',
+      heroImage: 'hero.jpg',
+      install: { installer: 'Games/Witcher', type: 'copy' },
+    });
+    expect(validateManifestText(text, t).ok).toBe(true);
+  });
+
+  it('rejects install.args with type "copy" (nothing is launched — schema refine)', () => {
+    const text = JSON.stringify({
+      schemaVersion: 1,
+      id: 'x',
+      title: 'X',
+      executable: 'bin/game.exe',
+      install: { installer: 'Games/Witcher', type: 'copy', args: ['/S'] },
+    });
+    const result = validateManifestText(text, t);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.issues.some((i) => i.path === 'install.args')).toBe(true);
+  });
+
+  it('rejects install.runAsAdmin with type "copy" (no process to elevate — schema refine)', () => {
+    const text = JSON.stringify({
+      schemaVersion: 1,
+      id: 'x',
+      title: 'X',
+      executable: 'bin/game.exe',
+      install: { installer: 'Games/Witcher', type: 'copy', runAsAdmin: true },
+    });
+    const result = validateManifestText(text, t);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.issues.some((i) => i.path === 'install.runAsAdmin')).toBe(true);
+  });
+
+  it('ACCEPTS install.winetricks with type "copy" (the prefix is provisioned before the copy)', () => {
+    const text = JSON.stringify({
+      schemaVersion: 1,
+      id: 'x',
+      title: 'X',
+      executable: 'bin/game.exe',
+      heroImage: 'hero.jpg',
+      install: { installer: 'Games/Witcher', type: 'copy', winetricks: ['dotnet48'] },
+    });
+    expect(validateManifestText(text, t).ok).toBe(true);
+  });
+
   it('rejects executable path traversal (semantic, fs-free)', () => {
     const text = JSON.stringify({
       schemaVersion: 1,
@@ -295,5 +345,15 @@ describe('manifestJsonSchema', () => {
     // Second branch: an array of the same object schema.
     expect(arraySchema?.type).toBe('array');
     expect(arraySchema?.items?.type).toBe('object');
+  });
+
+  // The schema is GENERATED from the zod schema, so `copy` needs no hand-editing here — this guards that
+  // generation (a hand-maintained enum drifting from zod would leave the editor red on a valid manifest).
+  it('carries the install.type enum incl. "copy", straight from the zod schema', () => {
+    const schema = manifestJsonSchema() as { oneOf?: ObjectSchema[] };
+    const json = JSON.stringify(schema.oneOf?.[0]?.properties?.['install'] ?? {});
+    for (const type of ['nsis', 'inno', 'custom', 'copy']) {
+      expect(json).toContain(`"${type}"`);
+    }
   });
 });

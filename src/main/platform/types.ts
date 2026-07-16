@@ -7,7 +7,12 @@
 // Types only — no koffi/electron here, so this file is import-safe from anywhere (incl. unit tests). The
 // concrete win32/linux implementations (which DO pull koffi on Windows) live in ./win32 and ./linux and
 // are selected at runtime by ./index.
-import type { ResolvedManifest, LaunchTarget } from '../../shared/types';
+import type {
+  ResolvedManifest,
+  LaunchTarget,
+  ResolvedInstall,
+  ResolvedInstallerRun,
+} from '../../shared/types';
 import type { GameProcess } from '../game-launcher';
 import type { PowerAction } from '../power';
 import type { InstallDirResolver } from '../manifest';
@@ -83,10 +88,23 @@ export interface GameProcessLauncher {
    * launchGame. Throws on failure.
    */
   launchInstaller(
-    install: NonNullable<ResolvedManifest['install']>,
+    install: ResolvedInstallerRun,
     silent: boolean,
     onProvisioning?: (active: boolean) => void,
   ): Promise<GameProcess>;
+  /**
+   * Prepares the install directory's ENVIRONMENT before files are put there by other means than an
+   * installer run — i.e. the `copy` install type, which starts no process of its own and would otherwise
+   * never trigger the setup that launchInstaller performs implicitly.
+   * win32: nothing to do (no-op). linux: creates and provisions the game's Wine prefix (baseline +
+   * `install.winetricks`), exactly as launchInstaller does before running an installer — so the copied
+   * files land in a ready prefix rather than a bare one. `onProvisioning` — see launchGame.
+   * Throws on failure.
+   */
+  prepareInstallDir(
+    install: ResolvedInstall,
+    onProvisioning?: (active: boolean) => void,
+  ): Promise<void>;
   /** Launches a resolved uninstaller target silently. Throws on failure. */
   launchUninstaller(target: LaunchTarget): Promise<GameProcess>;
   /**
