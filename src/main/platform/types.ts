@@ -121,13 +121,30 @@ export interface GameProcessLauncher {
  * that doesn't exist yet) is a no-op sync, not a rejected card. win32 keeps the env-based mapping; linux
  * maps every prefix inside the game's Wine prefix (exe/install) or the Steam compatdata prefix (steam).
  */
+export interface PcSaveLocation {
+  /** The ABSOLUTE host folder this game's saves live in. May not exist yet (the game hasn't saved). */
+  readonly path: string;
+  /**
+   * Whether the CONTAINER that owns this location is present — win32: always true (the user profile);
+   * linux: the game's Wine prefix / Steam compatdata.
+   *
+   * False is NOT "the saves were deleted", it is "the whole environment is absent" (first launch, or the
+   * prefix was wiped by an uninstall). The distinction is critical for change-detection: an empty PC side
+   * with a stale baseline reads as "every save was deleted here" and would propagate that phantom deletion
+   * onto the card, destroying the only copy. The caller must discard the baseline instead and restore from
+   * the card — see GameController.runSaveSync.
+   */
+  readonly containerExists: boolean;
+}
+
 export interface SavePathResolver {
   /**
-   * Resolves a manifest `pcSavePath` (`%APPDATA%\rest`, …) to the ABSOLUTE folder for this game, or null
-   * when the location can't exist yet (prefix not created) — the caller treats null as "nothing to sync"
+   * Resolves a manifest `pcSavePath` (`%APPDATA%\rest`, …) to this game's save location, or null when the
+   * location is genuinely unknowable — steam mode with no compatdata AND no appmanifest (the game isn't
+   * installed, so there is nothing to launch or sync either). The caller treats null as "nothing to sync"
    * (a logged no-op), not an error. Async + per-game.
    */
-  resolvePcSavePath(manifest: ResolvedManifest, pcSavePath: string): Promise<string | null>;
+  resolvePcSavePath(manifest: ResolvedManifest, pcSavePath: string): Promise<PcSaveLocation | null>;
   /**
    * Reverse (Configure window): an absolute PC folder → a `%PREFIX%/…` manifest string, or null when it
    * lives under none of the allowed bases (so it can't be expressed and the caller rejects it).

@@ -41,7 +41,7 @@ import {
 } from './game-launcher';
 import { findUninstallEntry } from './registry';
 import { steamInstallStatus, openSteamUri } from './steam';
-import { type Platform, type ProcessMonitor } from './platform';
+import { type PcSaveLocation, type Platform, type ProcessMonitor } from './platform';
 import { AssetReader } from './asset-reader';
 import { type AppSettingsStore } from './app-settings';
 import { focusGameWindow } from './window-finder';
@@ -624,12 +624,13 @@ export class GameController {
   }
 
   /**
-   * Resolves the manifest's DEFERRED pcSavePath (Р5/Э6) to a physical folder for THIS game via the
-   * platform SavePathResolver, or null when there's nothing to sync yet (no pcSavePath declared, or the
-   * game's Wine prefix / Steam compatdata doesn't exist until the first launch). win32 keeps the exact
-   * env-based expansion the manifest used to do eagerly; linux maps inside the game's prefix.
+   * Resolves the manifest's DEFERRED pcSavePath (Р5/Э6) to this game's save location via the platform
+   * SavePathResolver, or null when there's nothing to sync (no pcSavePath declared, or a steam game with
+   * no compatdata yet). win32 keeps the exact env-based expansion the manifest used to do eagerly; linux
+   * maps inside the game's prefix. `containerExists` tells whether that prefix is actually there — see
+   * runSaveSync for why that matters.
    */
-  private async resolvePcSavePath(manifest: ResolvedManifest): Promise<string | null> {
+  private async resolvePcSavePath(manifest: ResolvedManifest): Promise<PcSaveLocation | null> {
     if (manifest.pcSavePath === undefined) return null;
     return this.deps.platform.savePathResolver.resolvePcSavePath(manifest, manifest.pcSavePath);
   }
@@ -638,11 +639,13 @@ export class GameController {
   private async rebaseSyncStateAfterFlush(manifest: ResolvedManifest): Promise<void> {
     const cardPath = manifest.saveOnCardPath;
     if (cardPath === undefined || manifest.pcSavePath === undefined) return;
-    const pcPath = await this.resolvePcSavePath(manifest);
-    if (pcPath === null) return;
+    const pcSave = await this.resolvePcSavePath(manifest);
+    // No prefix → no PC half worth recording: a baseline whose `pc` describes a non-existent container is
+    // exactly what makes the next sync-in mistake "prefix wiped" for "saves deleted" (see runSaveSync).
+    if (pcSave === null || !pcSave.containerExists) return;
     await this.deps.store.writeSyncState(manifest.raw.id, {
       card: await snapshotTree(cardPath),
-      pc: await snapshotTree(pcPath),
+      pc: await snapshotTree(pcSave.path),
       syncedAt: Date.now(),
     });
   }
@@ -1017,22 +1020,32 @@ export class GameController {
       // the first-run fallback (no baseline yet).
       state.set({ kind: 'syncing-in', game: info });
       if (manifest.pcSavePath !== undefined && manifest.saveOnCardPath !== undefined) {
-        // Resolve the deferred pcSavePath to a physical folder for this game (Р5/Э6). null → the prefix
-        // doesn't exist yet (first run) so there's nothing on the PC side to sync — a logged no-op.
-        const pcPath = await this.resolvePcSavePath(manifest);
-        if (pcPath === null) {
+        // Resolve the deferred pcSavePath to this game's save location (Р5/Э6). null → nothing to sync
+        // with at all (a steam game with no compatdata) — a logged no-op.
+        const pcSave = await this.resolvePcSavePath(manifest);
+        if (pcSave === null) {
           log.info(
-            `[sync-in] pcSavePath "${manifest.pcSavePath}" not resolvable yet (prefix missing) — skipping sync`,
+            `[sync-in] pcSavePath "${manifest.pcSavePath}" not resolvable yet — skipping sync`,
           );
         } else {
-          // Soft catch: sync-in can now WRITE to the card (change-detection may pick PC→card) — a new
-          // failure point BEFORE launch (a full / write-protected / slow card). The launch never depended
-          // on a card write before, so keep it that way: log and start the game regardless (mirrors sync-out).
+          // A MISSING prefix is not a reason to skip: the launch below creates it, and the card's saves
+          // must be in place before the game reads them (e.g. after an uninstall wiped the prefix). The
+          // copy targets the prefix path directly — launchGame ensureDir's that prefix anyway — and
+          // runSaveSync drops the stale baseline so the empty PC side can't erase the card.
           try {
             log.info(
-              `[sync-in] change-based sync between card "${manifest.saveOnCardPath}" and PC "${pcPath}"`,
+              `[sync-in] change-based sync between card "${manifest.saveOnCardPath}" and PC "${pcSave.path}"${pcSave.containerExists ? '' : ' (prefix absent — restoring from card)'}`,
             );
-            await this.runSaveSync(manifest, manifest.saveOnCardPath, pcPath, 'card-to-pc');
+            // Soft catch: sync-in can now WRITE to the card (change-detection may pick PC→card) — a new
+            // failure point BEFORE launch (a full / write-protected / slow card). The launch never depended
+            // on a card write before, so keep it that way: log and start the game regardless (mirrors sync-out).
+            await this.runSaveSync(
+              manifest,
+              manifest.saveOnCardPath,
+              pcSave.path,
+              'card-to-pc',
+              pcSave.containerExists,
+            );
           } catch (cause) {
             log.warn('[sync-in] change-based sync failed, launching anyway:', describe(cause));
           }
@@ -1454,14 +1467,28 @@ export class GameController {
    * chosen by which side changed since the last sync. A conflict (both changed) and a fallback are logged.
    * Throws propagate to the caller (sync-in swallows them softly; sync-out defers to pending-flush).
    */
+  /**
+   * Runs one change-detected sync between the card and this game's PC save folder.
+   *
+   * `containerExists=false` (linux: the game's Wine prefix is gone — never created, or wiped by an
+   * uninstall) DISCARDS the baseline. That is a data-integrity rule, not an optimisation: change-detection
+   * reads an empty PC side against a baseline that lists files as "every save was deleted here" and would
+   * replicate that deletion onto the card — destroying the only surviving copy. The container being absent
+   * means the PC side has no authority at all, so the baseline describes a world that no longer exists;
+   * dropping it falls back to the phase direction (card→PC on sync-in), which restores the card's saves.
+   */
   private async runSaveSync(
     manifest: ResolvedManifest,
     cardPath: string,
     pcPath: string,
     fallback: 'card-to-pc' | 'pc-to-card',
+    containerExists: boolean,
   ): Promise<void> {
     const id = manifest.raw.id;
-    const baseline = await this.deps.store.readSyncState(id);
+    const baseline = containerExists ? await this.deps.store.readSyncState(id) : null;
+    if (!containerExists) {
+      log.info(`[save-sync] id=${id} PC container absent → baseline discarded, card is authoritative`);
+    }
     const result = await syncByChange(cardPath, pcPath, baseline, fallback);
     if (result.conflict) {
       // The only branch that can lose data: both sides changed, LWW picked one. The losing side survives
@@ -1480,7 +1507,13 @@ export class GameController {
     const id = manifest.raw.id;
     // Resolve the deferred pcSavePath once for this game (Р5/Э6). The game just ran, so its prefix exists
     // and (on win32) the env expansion always succeeds — this matches the pre-port physical path exactly.
-    const pcPath = await this.resolvePcSavePath(manifest);
+    // A prefix that is somehow absent here means the game wrote nothing we could carry back: there is no
+    // source to copy from, so treat it as "no PC side" rather than syncing an emptiness onto the card.
+    const resolved = await this.resolvePcSavePath(manifest);
+    const pcPath = resolved !== null && resolved.containerExists ? resolved.path : null;
+    if (resolved !== null && !resolved.containerExists) {
+      log.warn(`[sync-out] the Wine prefix for id=${id} is gone — nothing to copy back to the card`);
+    }
     // The card is already removed (the expected scenario) → defer PC→SD into pending-flush.
     if (!this.cardPresent) {
       if (pcPath !== null) {
@@ -1503,7 +1536,9 @@ export class GameController {
           log.info(
             `[sync-out] change-based sync between PC "${pcPath}" and card "${manifest.saveOnCardPath}"`,
           );
-          await this.runSaveSync(manifest, manifest.saveOnCardPath, pcPath, 'pc-to-card');
+          // containerExists is true here by construction (pcPath is null otherwise), so the baseline is
+          // honoured exactly as before — sync-out semantics are unchanged.
+          await this.runSaveSync(manifest, manifest.saveOnCardPath, pcPath, 'pc-to-card', true);
         } catch (cause) {
           // The card may have been yanked during the sync → saves.bak is intact, we'll finish on insertion.
           log.warn('[sync-out] failed, deferring to pending-flush:', describe(cause));

@@ -6,7 +6,7 @@
 import path from 'node:path';
 import fse from 'fs-extra';
 import type { ResolvedManifest } from '../../shared/types';
-import type { SavePathResolver, SteamLocator } from './types';
+import type { PcSaveLocation, SavePathResolver, SteamLocator } from './types';
 import { prefixDir } from './umu';
 import { steamLibraryDirs } from '../steam';
 import { log } from '../logger';
@@ -67,28 +67,44 @@ async function findCompatdataPrefix(appid: number, steamLocator: SteamLocator): 
 }
 
 /**
- * The Wine prefix that owns this game's saves: the Steam compatdata prefix (steam mode) or the app's
- * per-game prefix `<userData>/prefixes/<id>` (exe/install modes — Р2). null when it doesn't exist yet
- * (first run, before any launch/install created it), which the caller treats as "nothing to sync".
+ * The Wine prefix that owns this game's saves, and whether it exists yet.
+ *
+ * exe/install: the path is DETERMINISTIC (`<userData>/prefixes/<id>` — Р2), so it is always returned, even
+ * before the prefix exists. That is what lets sync-in restore card saves into a prefix that a launch is
+ * about to create (launchGame ensureDir's it anyway); `exists: false` tells the caller the PC side has no
+ * authority, so a stale baseline must not turn the empty prefix into a phantom deletion on the card.
+ *
+ * steam: compatdata is Steam's to create, so we only ever point at one that already exists — never
+ * pre-seeding a prefix Steam hasn't made. Not found → null ("nothing to sync").
  */
-async function prefixForManifest(manifest: ResolvedManifest, deps: LinuxSavePathDeps): Promise<string | null> {
+async function prefixForManifest(
+  manifest: ResolvedManifest,
+  deps: LinuxSavePathDeps,
+): Promise<{ readonly pfx: string; readonly exists: boolean } | null> {
   if (manifest.steam !== undefined) {
-    return findCompatdataPrefix(manifest.steam.appid, deps.steamLocator);
+    const compat = await findCompatdataPrefix(manifest.steam.appid, deps.steamLocator);
+    return compat === null ? null : { pfx: compat, exists: true };
   }
   const pfx = prefixDir(deps.userData, manifest.raw.id);
-  return (await fse.pathExists(pfx)) ? pfx : null;
+  return { pfx, exists: await fse.pathExists(pfx) };
 }
 
 export function createLinuxSavePathResolver(deps: LinuxSavePathDeps): SavePathResolver {
   return {
-    async resolvePcSavePath(manifest, pcSavePath): Promise<string | null> {
-      const pfx = await prefixForManifest(manifest, deps);
-      if (pfx === null) {
-        // The prefix/compatdata doesn't exist yet → nothing on the PC side to sync (a logged no-op, Р5).
-        log.info(`[save-sync] no Wine prefix for "${manifest.raw.id}" yet — pcSavePath "${pcSavePath}" unresolved`);
+    async resolvePcSavePath(manifest, pcSavePath): Promise<PcSaveLocation | null> {
+      const prefix = await prefixForManifest(manifest, deps);
+      if (prefix === null) {
+        // Steam mode with no compatdata: the game has never run under Proton (or isn't installed), so
+        // there is no location to sync with — a logged no-op, not an error (Р5).
+        log.info(`[save-sync] no Steam compatdata for "${manifest.raw.id}" yet — pcSavePath "${pcSavePath}" unresolved`);
         return null;
       }
-      return resolveInsideWinePrefix(pfx, pcSavePath);
+      const resolved = resolveInsideWinePrefix(prefix.pfx, pcSavePath);
+      if (resolved === null) return null;
+      if (!prefix.exists) {
+        log.info(`[save-sync] Wine prefix for "${manifest.raw.id}" does not exist yet — card saves are authoritative`);
+      }
+      return { path: resolved, containerExists: prefix.exists };
     },
     // Reverse mapping (Configure Browse) is a Windows-authoring concern: a picked host folder can't be
     // expressed as a `%PREFIX%/…` without a game-specific prefix context. On Linux the user types the

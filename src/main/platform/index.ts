@@ -16,6 +16,7 @@ export type {
   SteamLocator,
   GameProcessLauncher,
   SavePathResolver,
+  PcSaveLocation,
   PowerBackend,
   RemovableMounter,
 } from './types';

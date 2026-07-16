@@ -130,7 +130,10 @@ function createSavePathResolver(deps: PlatformDeps): SavePathResolver {
   return {
     resolvePcSavePath: (_manifest, pcSavePath) => {
       const result = expandPcSavePath(pcSavePath, env());
-      return Promise.resolve(result.ok ? result.value : null);
+      // containerExists is always true here: the env-based location lives under the user profile, which
+      // exists for as long as the app runs. There is no Wine prefix to wipe, so the pre-port change-
+      // detection semantics (an empty save folder DOES mean the saves were deleted) are preserved 1:1.
+      return Promise.resolve(result.ok ? { path: result.value, containerExists: true } : null);
     },
     toManifestPcSavePath: (absolute) => absoluteToPcSavePath(absolute, env()),
   };
