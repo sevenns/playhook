@@ -19,7 +19,11 @@
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import koffi from 'koffi';
-import { type LaunchTarget, type ResolvedManifest } from '../shared/types';
+import {
+  type LaunchTarget,
+  type ResolvedManifest,
+  type ResolvedInstallerRun,
+} from '../shared/types';
 import { type ProcessMonitor, type ProcessSnapshot } from './platform/types';
 import { buildInstallerArgs, buildParameters } from './launch-args';
 import { delay } from './util';
@@ -400,7 +404,7 @@ export async function launchGame(
  * pre-cleaned, and the installer creates it). Returns a GameProcess; throws on failure.
  */
 export async function launchInstaller(
-  install: NonNullable<ResolvedManifest['install']>,
+  install: ResolvedInstallerRun,
   silent: boolean,
   monitor: ProcessMonitor,
 ): Promise<GameProcess> {

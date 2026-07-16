@@ -109,6 +109,9 @@ function createGameLauncher(monitor: ProcessMonitor): GameProcessLauncher {
   return {
     launchGame: (manifest) => launchGame(manifest, monitor),
     launchInstaller: (install, silent) => launchInstaller(install, silent, monitor),
+    // No Wine prefix on Windows: the install dir needs no preparation beyond the controller's own
+    // pre-clean, and `copy` can write into it straight away.
+    prepareInstallDir: () => Promise.resolve(),
     launchUninstaller: (target) => launchUninstaller(target, monitor),
     // win32: no Wine prefix — uninstall removes the app-controlled install dir (after the game's own
     // uninstaller runs). 1:1 with the pre-port behaviour.

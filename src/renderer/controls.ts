@@ -146,9 +146,13 @@ export function createControls(deps: ControlsDeps): Controls {
       if (mode === 'uninstall' && !game.canUninstall) return; // nothing to uninstall
       confirmReturnTo = 'details';
       const isSteam = game.installVia === 'steam';
+      const isCopy = game.installVia === 'copy';
       const isSteamInstall = mode === 'install' && isSteam;
-      popup.dataset['mode'] = mode; // 'install' shows the path note (card install only, see styles.css)
+      popup.dataset['mode'] = mode; // 'install' shows the note (card install only, see styles.css)
+      // Picks WHICH note the confirm shows: steam → none, copy → "it will be copied here and run from
+      // here", absent → the card-installer one with the destination path.
       if (isSteamInstall) popup.dataset['installVia'] = 'steam';
+      else if (mode === 'install' && isCopy) popup.dataset['installVia'] = 'copy';
       else delete popup.dataset['installVia'];
       if (isSteam) {
         confirmMessage.textContent = t()(
@@ -159,8 +163,11 @@ export function createControls(deps: ControlsDeps): Controls {
           mode === 'install' ? 'launcher.confirm.install' : 'launcher.confirm.uninstall',
         );
       }
-      // Card path only for a card-installer install (empty for steam — there is no install dir).
-      if (mode === 'install') confirmPath.textContent = isSteamInstall ? '' : (game.installDir ?? '');
+      // Card path only for a card-INSTALLER install: steam has no install dir, and for copy the path is
+      // ours to manage — the user has nothing to type it into.
+      if (mode === 'install') {
+        confirmPath.textContent = isSteamInstall || isCopy ? '' : (game.installDir ?? '');
+      }
     } else if (mode === 'kill') {
       // Force-close confirm (from Details): no path note; returns to Details. The message warns about
       // unsaved progress. data-mode ≠ 'install' hides the path note (styles.css).

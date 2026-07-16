@@ -73,6 +73,10 @@ export const en = {
   'launcher.confirm.sleep': 'Put the PC to sleep?',
   'launcher.installPathNote':
     'Since not all installers support silent mode, during installation you need to specify the following path:',
+  // The copy variant of the note: no installer runs, so neither the silent-mode caveat nor the
+  // destination path applies — say what actually happens instead.
+  'launcher.copyNote':
+    'The game will be copied to this PC and will run from there. It is not deleted from the card.',
   // Status labels (state-view.ts). Plain "..." (not the "…" glyph) on purpose — see state-view.ts.
   'launcher.state.installing': 'Installing...',
   'launcher.state.uninstalling': 'Uninstalling...',
@@ -216,13 +220,24 @@ export const en = {
   'configure.launchExecutable': 'Executable',
   'configure.launchInstaller': 'Installer',
   'configure.fieldExecutable': 'Executable path',
+  'configure.executableNote': 'Relative to the card root.',
   'configure.fieldArgs': 'Arguments',
   'configure.fieldRunAsAdmin': 'Run as administrator',
+  'configure.fieldCopyToPc': 'Move game to PC',
+  'configure.copyExecutableNote':
+    'Relative to the game directory below — the game is copied to the PC, and the executable is looked up inside the copy.',
+  'configure.fieldCopySource': 'Game directory on the card',
+  'configure.copySourceHint':
+    'The root of the game’s own folder on the card. It is copied to the PC on “Install”; the copy on the card is kept.',
+  'configure.copySourceOutside':
+    'That file is outside the game directory ({source}) — pick one inside it, or fix the directory first.',
   'configure.fieldInstaller': 'Installer path',
   'configure.fieldInstallType': 'Installer type',
   'configure.fieldInstallArgs': 'Installer arguments',
   'configure.installArgsDirHint':
     'For a custom installer exactly one argument must contain the {dir} placeholder.',
+  'configure.installerLinuxWarning':
+    'Installers are unpredictable on Linux/Steam Deck: they come in many flavours, and under Proton some fail or hang. Prefer “Move game to PC”, or a plain Executable.',
   'configure.fieldWinetricks': 'Game winetricks (Linux)',
   'configure.winetricksHint':
     'Extra winetricks verbs/settings (e.g. d3dx9, or vd=1920x1080 for a virtual desktop) applied to the Wine prefix before the game launches, on top of the built-in set. Linux/Proton only; ignored on Windows.',
@@ -284,6 +299,11 @@ export const en = {
   'errors.gameDidNotStart': 'the game did not start (process wait timed out)',
   'errors.startInstaller': 'failed to start the installer: {cause}',
   'errors.installIncomplete': 'installation did not complete (the game executable did not appear)',
+  'errors.copyGameFailed': 'failed to copy the game to the PC: {cause}',
+  'errors.copyExeNotFound':
+    'the game was copied, but the executable is not there: {path} — check that the game directory points at the game’s own root',
+  'errors.copyExeNotFoundCase':
+    'the game was copied, but the executable is not there: {path} — found "{found}" instead (fix the case on this filesystem)',
   'errors.killFailed': 'could not force-close the game (some processes are still running)',
   'errors.finishBeforeInstall': 'Finish what’s running before installing the update.',
   'errors.driveUnavailable': 'the selected drive is no longer available',
@@ -306,6 +326,8 @@ export const en = {
   'manifest.winetricksName': 'winetricks entries must be verb names or key=value settings (letters, digits, _.=-)',
   'manifest.umuGameIdName': 'umuGameId must be a Steam appid or a UMU_ID (letters, digits, _-)',
   'manifest.installRunAsAdminCustom': 'install.runAsAdmin is not allowed with type "custom"',
+  'manifest.copyArgs': 'install.args is not allowed with type "copy" (no installer is run)',
+  'manifest.copyRunAsAdmin': 'install.runAsAdmin is not allowed with type "copy" (no installer is run)',
   'manifest.installArgsDir':
     'install.args (type "custom") must contain exactly one token with a {dir} placeholder',
   'manifest.installWithSteam': 'install is not allowed together with steam',

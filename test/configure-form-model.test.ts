@@ -89,6 +89,20 @@ const LAUNCH_MODE_FIXTURES = {
     null,
     2,
   ),
+  // The 4th shape: executable mode with "move game to PC" on. `install.installer` is the game DIRECTORY,
+  // and `executable` is relative to it — not to the card root.
+  copy: JSON.stringify(
+    {
+      schemaVersion: 1,
+      id: 'my-game',
+      title: 'My Game',
+      executable: 'bin/MyGame.exe',
+      install: { installer: 'Games/MyGame', type: 'copy' },
+      heroImage: 'assets/hero.jpg',
+    },
+    null,
+    2,
+  ),
 };
 
 describe('round-trip on the three launch-mode shapes', () => {
@@ -114,6 +128,83 @@ describe('round-trip on the three launch-mode shapes', () => {
     expect(parsed).not.toHaveProperty('args');
     expect(parsed).not.toHaveProperty('runAsAdmin');
     expect(parsed).not.toHaveProperty('launchTimeoutSec');
+  });
+});
+
+describe('copy install type ("move game to PC" — a checkbox inside Executable mode)', () => {
+  it('parses into EXECUTABLE mode with the checkbox on, not into Installer mode', () => {
+    const { model } = parseOk(LAUNCH_MODE_FIXTURES.copy);
+    expect(launchModeOf(model)).toBe('executable');
+    expect(model.copyToPc).toBe(true);
+    expect(model.copyInstall.installer).toBe('Games/MyGame');
+    expect(model.copyInstall.type).toBe('copy');
+    // The installer slot stays pristine — a copy block is not an installer.
+    expect(model.install.installer).toBe('');
+    expect(model.install.type).toBe('nsis');
+  });
+
+  it('round-trips back to install.type copy', () => {
+    const parsed = JSON.parse(serialize(LAUNCH_MODE_FIXTURES.copy)) as Record<string, unknown>;
+    expect(parsed['install']).toEqual({ installer: 'Games/MyGame', type: 'copy' });
+  });
+
+  it('emits no install block when the checkbox is off, even with a source typed in', () => {
+    const { model, rest, corrupt } = parseOk(LAUNCH_MODE_FIXTURES.copy);
+    const off: ManifestFormModel = { ...model, copyToPc: false };
+    const parsed = JSON.parse(formModelToText(off, rest, corrupt)) as Record<string, unknown>;
+    expect(parsed).not.toHaveProperty('install');
+  });
+
+  it('keeps unknown keys inside the copy block across the round-trip (the block has its own rest)', () => {
+    const text = JSON.stringify({
+      schemaVersion: 1,
+      id: 'x',
+      title: 'X',
+      executable: 'bin/game.exe',
+      heroImage: 'hero.jpg',
+      install: { installer: 'Games/X', type: 'copy', futureField: 42 },
+    });
+    const parsed = JSON.parse(serialize(text)) as { install?: Record<string, unknown> };
+    expect(parsed.install?.['futureField']).toBe(42);
+  });
+
+  it('keeps the two install slots independent (switching modes loses neither side)', () => {
+    // Start from an installer manifest, then turn on the copy checkbox in executable mode: the installer
+    // slot must survive untouched, and the emitted block must be the COPY one.
+    const { model, rest, corrupt } = parseOk(LAUNCH_MODE_FIXTURES.installer);
+    expect(model.install.installer).toBe('setup/setup.exe');
+    const switched: ManifestFormModel = {
+      ...model,
+      launchMode: 'executable',
+      copyToPc: true,
+      copyInstall: { ...model.copyInstall, installer: 'Games/MyGame' },
+    };
+    const parsed = JSON.parse(formModelToText(switched, rest, corrupt)) as {
+      install?: Record<string, unknown>;
+    };
+    expect(parsed.install).toEqual({ installer: 'Games/MyGame', type: 'copy' });
+    // Switching back re-emits the installer slot, with its original value.
+    const back: ManifestFormModel = { ...switched, launchMode: 'installer' };
+    const backParsed = JSON.parse(formModelToText(back, rest, corrupt)) as {
+      install?: Record<string, unknown>;
+    };
+    expect(backParsed.install?.['installer']).toBe('setup/setup.exe');
+    expect(backParsed.install?.['type']).toBe('nsis');
+  });
+
+  it('treats an install block with an unknown type as corrupt (not as a copy)', () => {
+    const text = JSON.stringify({
+      schemaVersion: 1,
+      id: 'x',
+      title: 'X',
+      executable: 'bin/game.exe',
+      heroImage: 'hero.jpg',
+      install: { installer: 'setup.exe', type: 'msi' },
+    });
+    const { model, corrupt } = parseOk(text);
+    expect(corrupt).toHaveProperty('install');
+    expect(model.copyToPc).toBe(false);
+    expect(launchModeOf(model)).toBe('installer');
   });
 });
 

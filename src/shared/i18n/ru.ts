@@ -56,6 +56,8 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'launcher.confirm.sleep': 'Перевести компьютер в спящий режим?',
   'launcher.installPathNote':
     'Не все установщики поддерживают тихий режим, поэтому при установке нужно указать следующий путь:',
+  'launcher.copyNote':
+    'Игра будет скопирована на этот ПК и будет запускаться оттуда. С карты игра не удаляется.',
   'launcher.state.installing': 'Установка...',
   'launcher.state.uninstalling': 'Удаление...',
   'launcher.state.syncingIn': 'Синхронизация сохранений...',
@@ -189,13 +191,24 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'configure.launchExecutable': 'Исполняемый файл',
   'configure.launchInstaller': 'Установщик',
   'configure.fieldExecutable': 'Путь к исполняемому файлу',
+  'configure.executableNote': 'Относительно корня карты.',
   'configure.fieldArgs': 'Аргументы',
   'configure.fieldRunAsAdmin': 'Запуск от имени администратора',
+  'configure.fieldCopyToPc': 'Переместить игру на ПК',
+  'configure.copyExecutableNote':
+    'Относительно директории игры, указанной ниже: игра копируется на ПК, и исполняемый файл ищется внутри копии.',
+  'configure.fieldCopySource': 'Директория игры на карте',
+  'configure.copySourceHint':
+    'Корень папки самой игры на карте. По нажатию «Install» она копируется на ПК; копия на карте остаётся.',
+  'configure.copySourceOutside':
+    'Этот файл вне директории игры ({source}) - выберите файл внутри неё или сначала поправьте директорию.',
   'configure.fieldInstaller': 'Путь к установщику',
   'configure.fieldInstallType': 'Тип установщика',
   'configure.fieldInstallArgs': 'Аргументы установщика',
   'configure.installArgsDirHint':
     'Для установщика custom ровно один аргумент должен содержать плейсхолдер {dir}.',
+  'configure.installerLinuxWarning':
+    'На Linux/Steam Deck установщики непредсказуемы: их много разных видов, и под Proton часть из них падает или зависает. Лучше использовать «Переместить игру на ПК» или обычный исполняемый файл.',
   'configure.fieldWinetricks': 'Winetricks игры (Linux)',
   'configure.winetricksHint':
     'Доп. winetricks-вербы/настройки (например d3dx9, или vd=1920x1080 для виртуального рабочего стола), применяемые к Wine-префиксу перед запуском игры, поверх встроенного набора. Только Linux/Proton; на Windows игнорируется.',
@@ -249,6 +262,11 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'errors.gameDidNotStart': 'игра не запустилась (истекло время ожидания процесса)',
   'errors.startInstaller': 'не удалось запустить установщик: {cause}',
   'errors.installIncomplete': 'установка не завершена (исполняемый файл игры не появился)',
+  'errors.copyGameFailed': 'не удалось скопировать игру на ПК: {cause}',
+  'errors.copyExeNotFound':
+    'игра скопирована, но исполняемого файла на месте нет: {path} - проверьте, что директория игры указывает на её собственный корень',
+  'errors.copyExeNotFoundCase':
+    'игра скопирована, но исполняемого файла на месте нет: {path} - на диске есть "{found}" (исправьте регистр, файловая система чувствительна к нему)',
   'errors.killFailed': 'не удалось принудительно закрыть игру (часть процессов ещё работает)',
   'errors.finishBeforeInstall': 'Завершите текущие операции перед установкой обновления.',
   'errors.driveUnavailable': 'выбранный диск больше недоступен',
@@ -268,6 +286,8 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'manifest.winetricksName': 'элементы winetricks должны быть именами вербов или настройками key=value (буквы, цифры, _.=-)',
   'manifest.umuGameIdName': 'umuGameId должен быть Steam appid или UMU_ID (буквы, цифры, _-)',
   'manifest.installRunAsAdminCustom': 'install.runAsAdmin недопустим с типом "custom"',
+  'manifest.copyArgs': 'install.args недопустим с типом "copy" (установщик не запускается)',
+  'manifest.copyRunAsAdmin': 'install.runAsAdmin недопустим с типом "copy" (установщик не запускается)',
   'manifest.installArgsDir':
     'install.args (тип "custom") должен содержать ровно один токен с плейсхолдером {dir}',
   'manifest.installWithSteam': 'install недопустим вместе со steam',

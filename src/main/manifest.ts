@@ -21,18 +21,26 @@ import { log } from './logger';
 
 // Install-mode block (optional). When present, the card holds an installer and `executable` is
 // resolved relative to the app-controlled install dir (see readManifest), not the card root.
+// `type: 'copy'` is the odd one out: no installer runs — the card holds the game's own directory and
+// the app COPIES it into the install dir ("move game to PC"). The install machinery (install dir,
+// requiresInstall, Install/Play routing, uninstall) is identical, which is why it lives here and not
+// in a block of its own.
 const installSchema = z
   .object({
+    // For nsis/inno/custom: the installer file. For `copy`: the ROOT OF THE GAME DIRECTORY on the card
+    // that gets copied to the PC. Card-relative either way.
     installer: z.string().min(1),
-    type: z.enum(['nsis', 'inno', 'custom']),
-    // Run the installer elevated. Forbidden for `custom` (see the refine below).
+    type: z.enum(['nsis', 'inno', 'custom', 'copy']),
+    // Run the installer elevated. Forbidden for `custom` and `copy` (see the refines below).
     runAsAdmin: z.boolean().default(false),
     // For `custom`: the full argv with exactly one {dir} token. For nsis/inno: optional extra flags.
+    // Forbidden for `copy` (no process is started).
     args: z.array(z.string()).default([]),
     // Linux-only (Р7b): extra winetricks verbs/settings provisioned into the game's Wine prefix BEFORE the
     // installer runs, on top of the app's baseline set. Lets a card cover runtimes its installer needs
     // (e.g. a skinned Inno installer needing mfc42/gdiplus) or a setting like `vd=1920x1080`. Ignored on
     // Windows. Strictly validated (`=` allowed for `key=value` settings; shell-less execFile — defense in depth).
+    // Applies to `copy` too: the prefix is provisioned before the files are copied in (prepareInstallDir).
     winetricks: z
       .array(z.string().regex(/^[A-Za-z0-9_.=-]+$/, 'manifest.winetricksName'))
       .default([]),
@@ -55,7 +63,18 @@ const installSchema = z
       message: 'manifest.installArgsDir',
       path: ['args'],
     },
-  );
+  )
+  // `copy` starts no process, so there is nowhere to apply argv or elevation — reject them instead of
+  // silently ignoring what the card asked for. `winetricks` stays allowed: the prefix IS provisioned
+  // (prepareInstallDir), so the field keeps its meaning.
+  .refine((v) => !(v.type === 'copy' && v.args.length > 0), {
+    message: 'manifest.copyArgs',
+    path: ['args'],
+  })
+  .refine((v) => !(v.type === 'copy' && v.runAsAdmin), {
+    message: 'manifest.copyRunAsAdmin',
+    path: ['runAsAdmin'],
+  });
 
 const manifestSchema = z
   .object({
@@ -236,7 +255,7 @@ export function resolveInside(root: string, relative: string): string | null {
  * by construction: on a case-INsensitive FS (Windows/exFAT) the file is found and this branch is never
  * reached, so a match here always means a genuine case mismatch. Best-effort — any fs error → null.
  */
-async function findCaseInsensitiveName(absentPath: string): Promise<string | null> {
+export async function findCaseInsensitiveName(absentPath: string): Promise<string | null> {
   const wanted = path.basename(absentPath).toLowerCase();
   try {
     const entries = await fse.readdir(path.dirname(absentPath));
@@ -384,7 +403,12 @@ async function resolveInstall(
   if (installerPath === null) {
     return { ok: false, message: t('manifest.installerEscapes', { path: install.installer }) };
   }
-  if (!(await fse.pathExists(installerPath))) {
+  // `copy` is exempt: the source directory is allowed to be GONE. A user who copied the game to the PC
+  // may well delete it from the card afterwards (that is the point of "move game to PC") — failing the
+  // resolve here would drop a perfectly playable, already-copied game out of the library (see the
+  // failure policy below). If it is missing and the game is NOT copied yet, "Install" reports it
+  // visibly instead. Installer types keep the check: a missing installer means nothing can happen.
+  if (install.type !== 'copy' && !(await fse.pathExists(installerPath))) {
     return { ok: false, message: t('manifest.installerNotFound', { path: install.installer }) };
   }
 
