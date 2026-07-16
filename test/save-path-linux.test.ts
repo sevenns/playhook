@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  prefixUserHome,
   resolveInsideWinePrefix,
   winePrefixToManifestPcSavePath,
 } from '../src/main/platform/save-path.linux';
@@ -56,6 +57,18 @@ describe('resolveInsideWinePrefix — %PREFIX% → Wine prefix mapping (Р5)', (
 
   it('rejects a traversal in the tail', () => {
     expect(resolveInsideWinePrefix(PFX, '%APPDATA%\\..\\..\\Windows')).toBeNull();
+  });
+});
+
+describe('prefixUserHome — where the Configure Browse dialog opens', () => {
+  it('points at the game prefix Windows profile (every %PREFIX% lives under it)', () => {
+    expect(prefixUserHome('/home/deck/.config/playhook', 'mygame')).toBe(HOME);
+  });
+
+  it('is the base every forward-mapped save path starts with', () => {
+    const home = prefixUserHome('/home/deck/.config/playhook', 'mygame');
+    expect(resolveInsideWinePrefix(PFX, '%APPDATA%\\Game')?.startsWith(home)).toBe(true);
+    expect(resolveInsideWinePrefix(PFX, '%DOCUMENTS%\\Game')?.startsWith(home)).toBe(true);
   });
 });
 

@@ -136,6 +136,9 @@ function createSavePathResolver(deps: PlatformDeps): SavePathResolver {
       return Promise.resolve(result.ok ? { path: result.value, containerExists: true } : null);
     },
     toManifestPcSavePath: (absolute) => absoluteToPcSavePath(absolute, env()),
+    // No prefix to steer the user into: saves live under the user profile, which the dialog reaches on its
+    // own. null keeps the pre-port behaviour (the dialog reopens wherever it was last used).
+    pcSaveBrowseDir: () => Promise.resolve(null),
   };
 }
 

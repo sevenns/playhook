@@ -1015,7 +1015,8 @@ async function init(): Promise<void> {
       dirty = true;
       scheduleValidate();
     },
-    pickPath: (kind: ConfigPickKind) => window.configureApi.pickPath(selectedRoot ?? '', kind),
+    pickPath: (kind: ConfigPickKind, gameId?: string) =>
+      window.configureApi.pickPath(selectedRoot ?? '', kind, gameId),
     imagePreview: (relative: string) => window.configureApi.getImagePreview(selectedRoot ?? '', relative),
     openExternal: (url: string) => window.configureApi.openExternal(url),
     onPickError: (message) => setStatus(message),
