@@ -31,14 +31,10 @@ import { type Locale } from '../shared/i18n/index';
 // app. Read by the controller (hide/show decisions), the tray bootstrap and the window-all-closed handler.
 const gameModeSession = isGamescopeSession();
 
-// Chromium's sandbox (setuid helper / user namespaces) needs kernel support that gamescope's restricted
-// session doesn't provide — confirmed on Deck hardware (Э7): the renderer fails to start under gamescope
-// without this. Scoped to Game Mode only via the same detector as the rest of the port (Р8) — Desktop
-// Mode, desktop Linux and Windows keep the sandbox. Must run before app 'ready' (and before any window is
-// created), so it sits right after gameModeSession is computed.
-if (gameModeSession) {
-  app.commandLine.appendSwitch('no-sandbox');
-}
+// NOTE — the Game Mode `--no-sandbox` flag is NOT set here. Chromium consumes sandbox switches while it
+// boots, before this script runs, so `app.commandLine.appendSwitch('no-sandbox')` is silently ignored: the
+// flag has to be on the real argv. It is injected one layer down, by the Linux launcher wrapper that
+// scripts/after-pack.mjs bakes into the package (same gamescope gate as isGamescopeSession).
 
 // Keep-alive reference so the Tray (and its icon) isn't garbage-collected; also read to rebuild the
 // context menu on a language change (setContextMenu in applyLanguage).
