@@ -44,6 +44,34 @@ export function resolveInsideWinePrefix(pfx: string, pcSavePath: string): string
   return path.posix.join(pfx, 'drive_c', ...base, ...tail);
 }
 
+/**
+ * Reverse of resolveInsideWinePrefix, for the Configure window's pcSavePath Browse (Р5). Takes an
+ * ABSOLUTE host folder the user picked and expresses it as a `%PREFIX%/…` manifest string, or null when it
+ * lives in no Wine prefix at all (then it cannot be a Windows game's save location and the picker rejects
+ * it). Pure.
+ *
+ * Which prefix it belongs to is irrelevant — only the part below `drive_c` decides the token — so this
+ * works for both the app's own per-game prefixes and Steam's compatdata. The realistic flow is: run the
+ * game once, then Browse to the folder it actually saved into and get the portable Windows-dictionary
+ * string back. Matching is segment-wise (never string-prefix), so `AppData/LocalLow` can't be mistaken for
+ * `AppData/Local`, and the longest base wins so the bare steamuser home (%USERPROFILE%) is the last resort.
+ */
+export function winePrefixToManifestPcSavePath(absolute: string): string | null {
+  const segments = absolute.split(/[\\/]+/).filter((segment) => segment.length > 0);
+  const driveIndex = segments.lastIndexOf('drive_c');
+  if (driveIndex === -1) return null;
+  const inside = segments.slice(driveIndex + 1);
+  const byLongestBase = Object.entries(WINE_PREFIX_SUBPATHS).sort(([, a], [, b]) => b.length - a.length);
+  for (const [token, base] of byLongestBase) {
+    if (inside.length < base.length) continue;
+    const matches = base.every((segment, i) => inside[i]?.toLowerCase() === segment.toLowerCase());
+    if (!matches) continue;
+    const rest = inside.slice(base.length);
+    return rest.length === 0 ? `%${token}%` : `%${token}%/${rest.join('/')}`;
+  }
+  return null;
+}
+
 /** Deps for the linux resolver: the app userData (exe/install prefixes) and the Steam locator (compatdata). */
 export interface LinuxSavePathDeps {
   readonly userData: string;
@@ -106,9 +134,6 @@ export function createLinuxSavePathResolver(deps: LinuxSavePathDeps): SavePathRe
       }
       return { path: resolved, containerExists: prefix.exists };
     },
-    // Reverse mapping (Configure Browse) is a Windows-authoring concern: a picked host folder can't be
-    // expressed as a `%PREFIX%/…` without a game-specific prefix context. On Linux the user types the
-    // Windows-dictionary string directly, so this returns null (the picker reports "outside allowed bases").
-    toManifestPcSavePath: () => null,
+    toManifestPcSavePath: (absolute) => winePrefixToManifestPcSavePath(absolute),
   };
 }
