@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="icon.png" width="128" height="128" alt="Playhook icon">
+  <img src="icon-tray.png" width="128" height="128" alt="Playhook icon">
   <h1>Playhook</h1>
   <p><strong>Bring console vibes to your PC.</strong></p>
   <p>
