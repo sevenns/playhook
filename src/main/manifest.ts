@@ -248,6 +248,23 @@ export function resolveInside(root: string, relative: string): string | null {
 }
 
 /**
+ * Copy mode ("move game to PC") copies the SOURCE directory's CONTENTS into the install dir, so
+ * `executable` must be relative to that directory. But a card author (or the Configure form on manual
+ * entry, unlike its Browse picker which already trims) often gives it card-root-relative — INCLUDING the
+ * source dir, e.g. source `game`, executable `game/game.exe`. Strip a leading `<source>/` so both spellings
+ * resolve to the same copied file. Separators are normalized first (Р12: a Windows card uses `\`). No-op
+ * when the executable isn't under the source (already relative to it, or an unrelated path). Exported for
+ * unit tests.
+ */
+export function stripCopySourcePrefix(executable: string, source: string): string {
+  const exe = executable.replace(/\\/g, '/').replace(/^\/+/, '');
+  const src = source.replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+  if (src === '') return executable;
+  const prefix = `${src}/`;
+  return exe.startsWith(prefix) ? exe.slice(prefix.length) : executable;
+}
+
+/**
  * One-level case-insensitive lookup for a diagnostic hint when a card-relative file isn't found (Р12).
  * On a case-sensitive FS (ext4/Linux) a Windows-authored `"Game.EXE"` won't match the on-disk `game.exe`
  * → the existence check fails. This scans the parent directory for an entry that differs from the wanted
@@ -421,8 +438,13 @@ async function resolveInstall(
   }
 
   // `executable` resolves relative to the HOST-view install dir — traversal forbidden, but existence is
-  // NOT checked here (it appears only after a successful install).
-  const executablePath = resolveInside(dirs.hostDir, executable);
+  // NOT checked here (it appears only after a successful install). Copy mode flattens the source dir's
+  // contents into the install dir, so a card-root-relative executable that includes the source prefix is
+  // trimmed (source `game` + `game/game.exe` → `game.exe`) — otherwise it would resolve one level too deep
+  // and read as "not installed" forever.
+  const relExecutable =
+    install.type === 'copy' ? stripCopySourcePrefix(executable, install.installer) : executable;
+  const executablePath = resolveInside(dirs.hostDir, relExecutable);
   if (executablePath === null) {
     return { ok: false, message: t('manifest.executableEscapesInstall', { path: executable }) };
   }

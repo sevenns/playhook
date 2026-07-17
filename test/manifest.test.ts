@@ -5,6 +5,7 @@ import {
   expandPcSavePath,
   manifestJsonSchema,
   resolveInside,
+  stripCopySourcePrefix,
   validateManifestText,
 } from '../src/main/manifest';
 import { createTranslator } from '../src/shared/i18n/index';
@@ -50,6 +51,36 @@ describe('resolveInside', () => {
 
   it('still rejects traversal written with backslashes (Р12)', () => {
     expect(resolveInside(root, '..\\outside.exe')).toBeNull();
+  });
+});
+
+describe('stripCopySourcePrefix (copy mode: executable relative to the copied dir)', () => {
+  it('trims a leading <source>/ from a card-root-relative executable', () => {
+    expect(stripCopySourcePrefix('game/game.exe', 'game')).toBe('game.exe');
+    expect(stripCopySourcePrefix('Games/MyGame/bin/game.exe', 'Games/MyGame')).toBe('bin/game.exe');
+  });
+
+  it('leaves an executable already relative to the copied dir untouched', () => {
+    expect(stripCopySourcePrefix('game.exe', 'game')).toBe('game.exe');
+    expect(stripCopySourcePrefix('bin/game.exe', 'Games/MyGame')).toBe('bin/game.exe');
+  });
+
+  it('normalizes Windows backslashes on both sides (Р12)', () => {
+    expect(stripCopySourcePrefix('game\\game.exe', 'game')).toBe('game.exe');
+    expect(stripCopySourcePrefix('Games\\MyGame\\bin\\game.exe', 'Games\\MyGame')).toBe('bin/game.exe');
+  });
+
+  it('tolerates a trailing slash on the source', () => {
+    expect(stripCopySourcePrefix('game/game.exe', 'game/')).toBe('game.exe');
+  });
+
+  it('does not trim a same-named prefix that is not a full path segment', () => {
+    // source `game`, executable `gameplay/x.exe` — `gameplay` is not the `game` segment.
+    expect(stripCopySourcePrefix('gameplay/x.exe', 'game')).toBe('gameplay/x.exe');
+  });
+
+  it('is a no-op with an empty source', () => {
+    expect(stripCopySourcePrefix('game/game.exe', '')).toBe('game/game.exe');
   });
 });
 
