@@ -63,8 +63,9 @@ export const en = {
   // Confirmation popup copy (controls.ts). The Yes/No buttons use the shared common.* keys.
   'launcher.confirm.install': 'Do you want to install game?',
   'launcher.confirm.uninstall': 'Do you want to uninstall game from your PC?',
-  'launcher.confirm.uninstallPrefix':
-    "Clear this game's Proton prefix? The game stays on the card; only the prefix (runtimes and any saves inside it) is removed.",
+  'launcher.confirm.uninstallPrefix': 'Clear the Proton prefix?',
+  'launcher.confirm.uninstallPrefixNote':
+    'The game stays on the card - only the prefix is removed (saves inside it too).',
   'launcher.confirm.steamInstall': 'Open Steam to install this game?',
   'launcher.confirm.steamUninstall': 'Open Steam to uninstall this game?',
   // Force-close confirmation — warns that unsaved in-game progress may be lost (the game is killed, so it

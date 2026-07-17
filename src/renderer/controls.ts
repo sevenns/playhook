@@ -160,6 +160,9 @@ export function createControls(deps: ControlsDeps): Controls {
       if (isSteamInstall) popup.dataset['installVia'] = 'steam';
       else if (mode === 'install' && isCopy) popup.dataset['installVia'] = 'copy';
       else delete popup.dataset['installVia'];
+      // Prefix-cleanup uninstall shows its own note in the detail (CSS) — the heading stays a short question.
+      if (mode === 'uninstall' && game.prefixCleanupOnly === true) popup.dataset['uninstallVia'] = 'prefix';
+      else delete popup.dataset['uninstallVia'];
       if (isSteam) {
         confirmMessage.textContent = t()(
           mode === 'install' ? 'launcher.confirm.steamInstall' : 'launcher.confirm.steamUninstall',

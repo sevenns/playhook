@@ -418,8 +418,10 @@ it on Windows, and it works on both with the same `game.json`.
   and likewise for `%LOCALAPPDATA%`/`%LOCALLOW%`/`%USERPROFILE%`/`%DOCUMENTS%`. For Steam-mode cards the
   save lives in that game's Steam **compatdata** prefix. The card still holds the traveling copy via
   `saveOnCard`, so progress moves between machines as usual.
-- **Uninstall removes the whole prefix** for that game (the game files *and* its provisioned runtimes),
-  reclaiming the disk. The canonical save stays on the card.
+- **Uninstall clears the whole prefix** for that game (game files, provisioned runtimes, and any in-prefix
+  saves), reclaiming the disk. Available for install-mode games **and** for a plain **Executable** game
+  once its prefix exists — there the game stays on the card and only the prefix is cleared. The canonical
+  save survives on the card when `saveOnCard` is set.
 
 ### Advanced (Linux-only manifest fields)
 
