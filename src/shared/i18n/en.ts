@@ -237,6 +237,8 @@ export const en = {
   'configure.fieldInstallArgs': 'Installer arguments',
   'configure.installArgsDirHint':
     'For a custom installer exactly one argument must contain the {dir} placeholder.',
+  'configure.installerExperimental':
+    '⚠ Experimental: the Installer type may behave unpredictably (especially on Linux).',
   'configure.installerLinuxWarning':
     'Installers are unpredictable on Linux/Steam Deck: they come in many flavours, and under Proton some fail or hang. Prefer “Move game to PC”, or a plain Executable.',
   'configure.fieldWinetricks': 'Game winetricks (Linux)',

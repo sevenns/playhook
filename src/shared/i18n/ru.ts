@@ -208,6 +208,8 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'configure.fieldInstallArgs': 'Аргументы установщика',
   'configure.installArgsDirHint':
     'Для установщика custom ровно один аргумент должен содержать плейсхолдер {dir}.',
+  'configure.installerExperimental':
+    '⚠ Экспериментально: тип «Установщик» может работать непредсказуемо (особенно на Linux).',
   'configure.installerLinuxWarning':
     'На Linux/Steam Deck установщики непредсказуемы: их много разных видов, и под Proton часть из них падает или зависает. Лучше использовать «Переместить игру на ПК» или обычный исполняемый файл.',
   'configure.fieldWinetricks': 'Winetricks игры (Linux)',

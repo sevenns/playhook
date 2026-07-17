@@ -265,7 +265,14 @@ export class FormView {
     const installerLinuxWarning = document.createElement('div');
     installerLinuxWarning.className = 'field-hint';
     this.labelRefs.push({ el: installerLinuxWarning, key: 'configure.installerLinuxWarning' });
+    // Experimental-mode banner: sits at the TOP of the section (right under the launch-type dropdown), so
+    // choosing "Installer" immediately flags that the whole mode is rough. Amber `field-warning` sets it
+    // apart from the grey hints below.
+    const installerExperimental = document.createElement('div');
+    installerExperimental.className = 'field-hint field-warning';
+    this.labelRefs.push({ el: installerExperimental, key: 'configure.installerExperimental' });
     this.installSection = this.group([
+      installerExperimental,
       this.fieldWithBrowse(
         'configure.fieldInstaller',
         'install.installer',

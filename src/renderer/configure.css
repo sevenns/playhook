@@ -269,6 +269,11 @@ fluent-dropdown {
   color: var(--colorNeutralForeground3, #8a8a8a);
 }
 
+/* A hint that is a WARNING (e.g. an experimental mode) — amber, to stand out from the grey hints. */
+.field-hint.field-warning {
+  color: var(--colorStatusWarningForeground1, #e6b800);
+}
+
 /* Dynamic string lists (args, watchProcesses, heroImage, install.args): a stack of rows + an Add button. */
 .list-rows {
   display: flex;
