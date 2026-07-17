@@ -305,6 +305,10 @@ void window.api.requestHero().then((assets) => hero.applyAssets(assets));
 window.api.onLibraryUpdate((library) => controls.setGames(library?.games ?? []));
 void window.api.requestLibrary().then((library) => controls.setGames(library?.games ?? []));
 
+// Game Mode (gamescope) is static for the process — seed it once so the power menu shows "Close Playhook"
+// (full quit) instead of the no-op "Minimize Playhook".
+void window.api.requestGameMode().then((value) => controls.setGameMode(value));
+
 // Pause/resume music AND the hero rotation when the window is hidden to tray or restored. The active
 // layer keeps showing the current hero, so no force-show is needed on return — just (re)start the timer.
 document.addEventListener('visibilitychange', () => {

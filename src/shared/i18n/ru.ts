@@ -44,6 +44,7 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'launcher.menu.reboot': 'Перезагрузить',
   'launcher.menu.sleep': 'Спящий режим',
   'launcher.menu.minimize': 'Свернуть Playhook',
+  'launcher.menu.quit': 'Закрыть Playhook',
   'launcher.menu.forceClose': 'Закрыть принудительно',
   'launcher.menu.selectGame': 'Выбрать игру',
   'launcher.confirm.install': 'Установить игру?',

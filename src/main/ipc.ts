@@ -420,6 +420,8 @@ export class GameController {
     watcher.onError((error) => log.error('[drive-watcher]', error));
 
     ipcMain.handle(IPC.stateRequest, (): AppState => state.get());
+    // Static for the process lifetime — seeds the renderer's Game Mode UI (e.g. "Close Playhook").
+    ipcMain.handle(IPC.gameModeRequest, (): boolean => this.deps.isGamescope);
     ipcMain.handle(IPC.audioRequest, (): AudioAssets | null => this.currentAudio);
     ipcMain.handle(IPC.heroRequest, (): HeroAssets | null => this.currentHero);
     ipcMain.handle(IPC.libraryRequest, (): GameLibrary | null => this.currentLibrary);

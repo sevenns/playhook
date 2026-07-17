@@ -135,7 +135,10 @@
               <button id="power-shutdown" class="text-button" type="button" data-i18n="launcher.menu.shutdown">Shutdown</button>
               <button id="power-reboot" class="text-button" type="button" data-i18n="launcher.menu.reboot">Reboot</button>
               <button id="power-sleep" class="text-button" type="button" data-i18n="launcher.menu.sleep">Sleep</button>
-              <button id="power-minimize" class="text-button" type="button" data-i18n="launcher.menu.minimize">Minimize Playhook</button>
+              <!-- Label set from JS (applyPowerPrimary): "Minimize Playhook" on Desktop/Windows, "Close
+                   Playhook" (full quit) in Game Mode where there is no tray to minimize into. No data-i18n
+                   so it stays out of the i18n HTML test and a language change relabels it at render time. -->
+              <button id="power-minimize" class="text-button" type="button">Minimize Playhook</button>
               <button id="power-close" class="text-button" type="button" data-i18n="launcher.menu.close">Close</button>
             </div>
             <div class="actions-group" data-group="confirm">

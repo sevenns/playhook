@@ -55,6 +55,7 @@ export const en = {
   'launcher.menu.reboot': 'Reboot',
   'launcher.menu.sleep': 'Sleep',
   'launcher.menu.minimize': 'Minimize Playhook',
+  'launcher.menu.quit': 'Close Playhook',
   // Force-close the running game (Details menu item, visible only while a game is running).
   'launcher.menu.forceClose': 'Force close',
   // Opens the "Select game" list (Details menu item, visible only for a multi-game card on the ready screen).

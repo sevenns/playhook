@@ -497,6 +497,12 @@ export const IPC = {
   actionUninstall: 'action:uninstall',
   /** renderer → main: hide the launcher window to the tray (the "Hide" button on the empty screen). */
   actionHide: 'action:hide',
+  /** renderer → main: quit the whole app. In Game Mode (gamescope) the power menu's primary item becomes
+   * "Close Playhook" (there is no tray to minimize into), which sends this instead of actionHide. */
+  actionQuit: 'action:quit',
+  /** renderer → main (invoke): whether this is a SteamOS Game Mode (gamescope) session. Seeded once at
+   * startup so the renderer can adapt the UI (e.g. "Minimize" → "Close Playhook"). */
+  gameModeRequest: 'app:game-mode-request',
   /** renderer → main: open Steam's Downloads page (steam://open/downloads) — used by the Play button
    * while a Steam download is in progress, so the user can pause/resume it in Steam itself. */
   actionOpenSteamDownloads: 'action:open-steam-downloads',
@@ -736,6 +742,10 @@ export interface RendererApi {
   requestLaunch(): void;
   requestUninstall(): void;
   requestHide(): void;
+  /** Quit the whole app (Game Mode's "Close Playhook" — no tray to minimize into). */
+  requestQuit(): void;
+  /** Whether this is a SteamOS Game Mode (gamescope) session, seeded once at startup. */
+  requestGameMode(): Promise<boolean>;
   /** Open Steam's Downloads page so the user can pause/resume a Steam download from Steam itself. */
   openSteamDownloads(): void;
   /** Power off the PC (after the in-launcher confirm). */

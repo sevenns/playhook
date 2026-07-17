@@ -17,6 +17,8 @@ const CHANNELS = {
   actionLaunch: 'action:launch',
   actionUninstall: 'action:uninstall',
   actionHide: 'action:hide',
+  actionQuit: 'action:quit',
+  gameModeRequest: 'app:game-mode-request',
   actionOpenSteamDownloads: 'action:open-steam-downloads',
   actionShutdown: 'action:shutdown',
   actionReboot: 'action:reboot',
@@ -61,6 +63,12 @@ const api: RendererApi = {
   },
   requestHide(): void {
     ipcRenderer.send(CHANNELS.actionHide);
+  },
+  requestQuit(): void {
+    ipcRenderer.send(CHANNELS.actionQuit);
+  },
+  requestGameMode(): Promise<boolean> {
+    return ipcRenderer.invoke(CHANNELS.gameModeRequest) as Promise<boolean>;
   },
   openSteamDownloads(): void {
     ipcRenderer.send(CHANNELS.actionOpenSteamDownloads);

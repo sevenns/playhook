@@ -303,6 +303,9 @@ async function bootstrap(): Promise<void> {
   ipcMain.on(IPC.actionShutdown, () => void power.perform('shutdown'));
   ipcMain.on(IPC.actionReboot, () => void power.perform('reboot'));
   ipcMain.on(IPC.actionSleep, () => void power.perform('sleep'));
+  // Game Mode "Close Playhook": full quit via the same bootstrap path as the tray Quit (drops the window
+  // close-guards, disposes services). Only ever sent from the Game Mode power menu — Desktop keeps hiding.
+  ipcMain.on(IPC.actionQuit, () => quit());
 
   // Applies a language change everywhere: re-resolve the locale, rebuild the tray menu, re-title the plain
   // windows, and push the effective locale to every live webContents (game/settings/configure). Called

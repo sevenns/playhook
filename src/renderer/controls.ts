@@ -46,6 +46,9 @@ export interface Controls {
   showError(message: string): void;
   /** Sets the card's game list ({id,title}) — drives the "Select game" popup (rebuilds it if open). */
   setGames(list: readonly LibraryEntry[]): void;
+  /** Seeds whether this is a Game Mode (gamescope) session — flips the power menu's primary item from
+   *  "Minimize Playhook" (hide to tray) to "Close Playhook" (full quit). Called once at startup. */
+  setGameMode(gameMode: boolean): void;
   /** Starts the gamepad polling loop. */
   start(): void;
   /** Pause/resume acting on gamepad input (paused while the launcher is backgrounded — a game on top). */
@@ -59,6 +62,9 @@ export function createControls(deps: ControlsDeps): Controls {
   // The card's games ({id,title}), delivered by main; drives the "Select game" popup. ≥2 → the button
   // shows and the list has entries (the current game is filtered out).
   let games: readonly LibraryEntry[] = [];
+  // SteamOS Game Mode (gamescope): no tray, so the power menu's primary item quits instead of minimizing.
+  // Seeded once at startup (setGameMode); false until then — the power menu isn't reachable that early.
+  let gameMode = false;
 
   // Bar buttons.
   const playButton = req<HTMLButtonElement>('play-button');
@@ -262,6 +268,14 @@ export function createControls(deps: ControlsDeps): Controls {
     const running = s.kind === 'running' && s.killing !== true;
     menuKill.classList.toggle('is-hidden', !running);
     if (running) menuKill.textContent = t()('launcher.menu.forceClose');
+  }
+
+  // The power menu's primary item. Desktop/Windows: "Minimize Playhook" (hide to tray). Game Mode: "Close
+  // Playhook" — a full quit, since there is no tray to minimize into (mirrors how closing the window quits
+  // in Game Mode). Label from JS (no data-i18n) so a language change relabels it at render time and it
+  // stays out of the i18n HTML test.
+  function applyPowerPrimary(): void {
+    powerMinimize.textContent = t()(gameMode ? 'launcher.menu.quit' : 'launcher.menu.minimize');
   }
 
   // ── Menu item: Select game (opens the multi-game picker) ─────────────────────
@@ -719,11 +733,14 @@ export function createControls(deps: ControlsDeps): Controls {
       audio.play('button');
       openConfirm('sleep');
     } else if (btn === powerMinimize) {
-      // Hide the launcher to the tray (same effect as the empty-screen Hide button). No confirm — it's
-      // non-destructive. Close the popup first so a re-summoned launcher shows a clean bar, not this menu.
+      // Desktop/Windows: hide to the tray (same as the empty-screen Hide button). Game Mode: quit the app
+      // ("Close Playhook") — there is no tray, so hide is a no-op there. No confirm either way — hide is
+      // non-destructive, and a quit is as recoverable as relaunching from the Steam library. Close the
+      // popup first so a re-summoned launcher shows a clean bar, not this menu.
       audio.play('back');
       closePopup();
-      window.api.requestHide();
+      if (gameMode) window.api.requestQuit();
+      else window.api.requestHide();
     } else if (btn === confirmYes) {
       acceptConfirm();
     } else if (btn === confirmNo) {
@@ -899,6 +916,7 @@ export function createControls(deps: ControlsDeps): Controls {
     const active = phaseOf(state()) === 'busy' || steamBusy(state());
     if (active && !wasActive) focusRevealed = false;
     wasActive = active;
+    applyPowerPrimary(); // re-label on a language change (refresh runs after applyLocale → render)
     applyFocus();
     applyStackFocus();
     applyPlayAria();
@@ -923,6 +941,10 @@ export function createControls(deps: ControlsDeps): Controls {
     refresh,
     showError: openError,
     setGames,
+    setGameMode: (value: boolean) => {
+      gameMode = value;
+      applyPowerPrimary();
+    },
     start: () => {
       gamepad.start();
       armIdleTimer(); // begin the countdown so an untouched launcher hides its cursor (IDLE_MS)
