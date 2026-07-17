@@ -113,6 +113,13 @@ export interface GameProcessLauncher {
    * dir AND the game's provisioned runtimes (dotnet/GE-Proton env), so uninstall reclaims all of it.
    */
   uninstallDir(install: NonNullable<ResolvedManifest['install']>): string;
+  /**
+   * The per-game cleanup target for a NORMAL executable game (no install block): the Wine prefix a launch
+   * created, or null when there is nothing to clean — win32 (an exe runs directly, no prefix) or linux
+   * before the first launch (prefix not created yet). Lets the launcher offer "clear the Proton prefix"
+   * for a play-only game whose only PC footprint is that prefix; the game itself stays on the card.
+   */
+  prefixCleanupDir(gameId: string): Promise<string | null>;
 }
 
 /**

@@ -164,9 +164,15 @@ export function createControls(deps: ControlsDeps): Controls {
         confirmMessage.textContent = t()(
           mode === 'install' ? 'launcher.confirm.steamInstall' : 'launcher.confirm.steamUninstall',
         );
+      } else if (mode === 'install') {
+        confirmMessage.textContent = t()('launcher.confirm.install');
       } else {
+        // Uninstall: a normal exe game's "uninstall" only clears its Proton prefix (the game stays on the
+        // card) — a different message from removing an installed game. prefixCleanupOnly flags that case.
         confirmMessage.textContent = t()(
-          mode === 'install' ? 'launcher.confirm.install' : 'launcher.confirm.uninstall',
+          game.prefixCleanupOnly === true
+            ? 'launcher.confirm.uninstallPrefix'
+            : 'launcher.confirm.uninstall',
         );
       }
       // Card path only for a card-INSTALLER install: steam has no install dir, and for copy the path is

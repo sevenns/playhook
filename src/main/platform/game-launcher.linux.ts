@@ -366,5 +366,11 @@ export function createLinuxGameLauncher(deps: LinuxGameLauncherDeps): GameProces
     // Р7f: uninstall removes the WHOLE per-game prefix (it contains the install dir + the game's runtimes),
     // reclaiming the full disk footprint — not just the game files under drive_c/playhook/games/<id>.
     uninstallDir: (install) => prefixForInstall(install.dir),
+    // A normal executable game creates its prefix on first launch; offer to clear it once it exists. Same
+    // path uninstallDir would return for a copy-mode game of the same id (both live at prefixes/<id>).
+    async prefixCleanupDir(gameId): Promise<string | null> {
+      const prefix = prefixDir(deps.userData, gameId);
+      return (await fse.pathExists(prefix)) ? prefix : null;
+    },
   };
 }

@@ -947,8 +947,55 @@ export class GameController {
       void this.runSteamUninstall(manifest, snapshot.game);
       return;
     }
-    if (manifest.install === undefined) return;
+    if (manifest.install === undefined) {
+      // Normal executable game: the only "uninstall" is clearing its Wine prefix (Linux; the game stays on
+      // the card). canUninstall is set only when that prefix exists — see buildGameInfo / prefixCleanupOnly.
+      if (snapshot.game.prefixCleanupOnly === true) {
+        void this.runPrefixCleanupSequence(manifest, snapshot.game);
+      }
+      return;
+    }
     void this.runUninstallSequence(manifest, snapshot.game);
+  }
+
+  /**
+   * Clears a normal executable game's Wine prefix (Linux). No installer/uninstaller is involved — the game
+   * lives on the card, its only PC footprint is the prefix — so this is just the directory sweep + the same
+   * card-swap / rebuild-info handling as runUninstallSequence, minus the uninstaller run.
+   */
+  private async runPrefixCleanupSequence(manifest: ResolvedManifest, info: GameInfo): Promise<void> {
+    const dir = await this.deps.platform.gameLauncher.prefixCleanupDir(manifest.raw.id);
+    if (dir === null) return; // defensive: canUninstall was set only when the prefix existed
+    const { state, window, stats } = this.deps;
+    this.launchInFlight = true;
+    const abort = new AbortController();
+    this.abort = abort;
+    try {
+      state.set({ kind: 'uninstalling', game: info });
+      await removeWithRetry(dir, abort.signal);
+      if (abort.signal.aborted) return;
+      // Card yanked mid-cleanup (this targets the PC, so it completed): idle + hide, like runUninstall.
+      if (!this.cardPresent) {
+        this.clearCard();
+        state.set({ kind: 'idle' });
+        this.hideToTrayOrKeepEmpty();
+        return;
+      }
+      // Prefix gone → prefixCleanupDir now returns null → canUninstall recomputes false → "Uninstall"
+      // disappears, leaving just "Play".
+      const currentStats = await stats.read(manifest.raw.id);
+      const updatedInfo = await this.buildGameInfo(manifest, currentStats);
+      log.info(`[prefix-cleanup] removed "${dir}" id=${manifest.raw.id}`);
+      this.enterReady(updatedInfo);
+      window.showAndFocus();
+    } catch (cause) {
+      if (cause instanceof LaunchAbortedError) return; // aborted by shutdown or a card swap
+      this.failSequence('uninstall', info, describe(cause));
+    } finally {
+      this.launchInFlight = false;
+      this.abort = null;
+      this.resumePendingInsert();
+    }
   }
 
   /**
@@ -1579,6 +1626,7 @@ export class GameController {
     let requiresInstall: boolean;
     let canUninstall: boolean;
     let installVia: 'steam' | 'copy' | undefined;
+    let prefixCleanupOnly = false;
     let steamInstalling = false;
     let steamPaused = false;
     let steamPausedProgress: number | undefined;
@@ -1604,9 +1652,13 @@ export class GameController {
       // picker) are meaningless there. Tell the renderer which of the two notes to show.
       installVia = manifest.install.type === 'copy' ? 'copy' : undefined;
     } else {
-      // Normal card game: always ready to play, nothing to uninstall.
+      // Normal card game: always ready to play. On Linux it still creates a per-game Wine prefix on first
+      // launch — offer to clear that prefix (the game stays on the card). win32 has no prefix → null → no
+      // Uninstall button (unchanged). "Uninstall" here means prefix cleanup, not removing an install.
       requiresInstall = false;
-      canUninstall = false;
+      const cleanupDir = await this.deps.platform.gameLauncher.prefixCleanupDir(manifest.raw.id);
+      canUninstall = cleanupDir !== null;
+      prefixCleanupOnly = canUninstall;
       installVia = undefined;
     }
     return {
@@ -1621,6 +1673,7 @@ export class GameController {
       // non-silent Wine picker; on win32 it equals the host dir.
       ...(manifest.install !== undefined ? { installDir: manifest.install.installerDir } : {}),
       ...(installVia !== undefined ? { installVia } : {}),
+      ...(prefixCleanupOnly ? { prefixCleanupOnly: true } : {}),
       ...(steamInstalling ? { steamInstalling: true } : {}),
       ...(steamPaused ? { steamPaused: true } : {}),
       ...(steamPausedProgress !== undefined ? { steamPausedProgress } : {}),

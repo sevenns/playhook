@@ -116,6 +116,8 @@ function createGameLauncher(monitor: ProcessMonitor): GameProcessLauncher {
     // win32: no Wine prefix — uninstall removes the app-controlled install dir (after the game's own
     // uninstaller runs). 1:1 with the pre-port behaviour.
     uninstallDir: (install) => install.dir,
+    // win32: an executable game runs directly with no Wine prefix, so there is nothing to clean up.
+    prefixCleanupDir: () => Promise.resolve(null),
   };
 }
 

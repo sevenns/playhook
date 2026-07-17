@@ -49,6 +49,8 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'launcher.menu.selectGame': 'Выбрать игру',
   'launcher.confirm.install': 'Установить игру?',
   'launcher.confirm.uninstall': 'Удалить игру с компьютера?',
+  'launcher.confirm.uninstallPrefix':
+    'Очистить Proton-префикс этой игры? Игра останется на карте - удалится только префикс (рантаймы и сейвы внутри него).',
   'launcher.confirm.steamInstall': 'Открыть Steam, чтобы установить игру?',
   'launcher.confirm.steamUninstall': 'Открыть Steam, чтобы удалить игру?',
   'launcher.confirm.shutdown': 'Выключить компьютер?',

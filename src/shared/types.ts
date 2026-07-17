@@ -337,6 +337,13 @@ export interface GameInfo {
    */
   readonly installVia?: 'steam' | 'copy';
   /**
+   * Linux only: `canUninstall` is set for a NORMAL executable game whose Wine prefix exists — so the
+   * "Uninstall" action clears that Proton prefix (runtimes + any in-prefix saves), NOT an installed game.
+   * The game itself stays on the card. Lets the renderer show the prefix-cleanup confirm copy instead of
+   * the "uninstall from PC" one. Undefined for install/steam/copy modes and on Windows.
+   */
+  readonly prefixCleanupOnly?: boolean;
+  /**
    * Steam mode only: a download/update is in progress (the `.acf` exists but isn't fully installed).
    * Drives a non-blocking "Installing…" indicator — NOT a blocking `installing` state (a Steam download
    * can run for hours; the window stays usable). No percent: Steam exposes no reliable real-time
