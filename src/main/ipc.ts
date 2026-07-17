@@ -307,6 +307,9 @@ export class GameController {
   private protonConfigPriorState: AppState | null = null;
   // Audio for the current card, sent on its own channel (not on every AppState) — see AudioAssets.
   private currentAudio: AudioAssets | null = null;
+  // The bundled default UI sounds, delivered on the empty "insert a card" screen so navigation there is
+  // audible even without a game's own sounds. Read once at init (warmDefaultAudio); null until then.
+  private defaultAudio: AudioAssets | null = null;
   // Hero images for the current card, sent on their own channel (not on every AppState) — see HeroAssets.
   private currentHero: HeroAssets | null = null;
   // The light list of games ({id,title}) on the current card, delivered once per card on its own channel
@@ -389,7 +392,9 @@ export class GameController {
     this.selectedIndex = 0;
     this.locked = false;
     this.statsById.clear();
-    this.setAudio(null);
+    // Empty screen keeps the default UI sounds (navigation there must stay audible) — not silence. Music
+    // is card-only, so the default set carries sounds without music. null only until warmDefaultAudio runs.
+    this.setAudio(this.defaultAudio);
     this.setHero(null);
     this.setLibrary(null);
   }
@@ -443,6 +448,16 @@ export class GameController {
     ipcMain.on(IPC.actionOpenSteamDownloads, () => void this.onOpenSteamDownloads());
     ipcMain.on(IPC.actionKill, () => void this.onKillRequested());
     ipcMain.on(IPC.actionSelect, (_event, id: unknown) => void this.onSelectRequested(id));
+
+    void this.warmDefaultAudio();
+  }
+
+  /** Reads the bundled default UI sounds once and delivers them to the empty screen (the initial state,
+   *  before any card). Later empty transitions reuse the cached set via clearCard. */
+  private async warmDefaultAudio(): Promise<void> {
+    this.defaultAudio = await this.assets.readDefaultAudioAssets();
+    // Only the startup empty screen still has null audio here; a card loaded meanwhile owns the channel.
+    if (this.currentAudio === null) this.setAudio(this.defaultAudio);
   }
 
   /** Sends a transient error to the renderer to surface in the error popup. */
