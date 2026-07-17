@@ -439,6 +439,8 @@ These are ignored on Windows, so a dual-platform card can carry them safely:
 - **Cards are mounted automatically**, including exFAT/NTFS ones that Game Mode itself ignores (see
   [Which filesystem for the card](#preparing-a-card-for-the-deck)) — insert and eject just work.
 - **Power menu** (Shutdown/Reboot/Sleep) works from Game Mode via `systemctl` (logind).
+- **The System menu's primary item is "Close Playhook"** (a full quit) instead of "Minimize Playhook" —
+  there is no tray to minimize into; quitting returns you to the Steam library.
 - **No autostart in Game Mode** — the app lives as a non-Steam game. In Desktop Mode it writes a
   `~/.config/autostart/playhook.desktop` entry.
 
@@ -466,7 +468,7 @@ These are ignored on Windows, so a dual-platform card can carry them safely:
   - Python 3.x in `PATH`.
 
   (`koffi` ships prebuilt, so the C++ toolchain is needed only for `drivelist`.)
-- **Xbox gamepad** (optional — there is a mouse fallback).
+- **Xbox gamepad** (optional — keyboard and mouse work too).
 - A removable storage device (USB drive, SD card, etc.) with a prepared `game.json` manifest.
 
 ### Install, build, run
@@ -622,7 +624,7 @@ silently fails.
 src/
   main/        # all work with the FS/processes/disks (Electron main)
   preload/     # typed contextBridge bridge
-  renderer/    # UI + gamepad reading (no Node)
+  renderer/    # UI + gamepad/keyboard input (no Node)
   shared/      # shared contract of types/IPC channels
 ```
 
@@ -644,8 +646,9 @@ functional style). Please run `npm run typecheck` before opening a PR.
 - **Does it run on the Steam Deck / Linux?** **Yes.** The same Windows game cards launch through Proton
   (via umu-launcher) on SteamOS/Linux — see [Steam Deck](#steam-deck-linux--steamos). Native Linux/ELF
   games and macOS are not supported.
-- **Does it work without a gamepad?** Yes. Every gamepad action has a mouse fallback (click
-  **Play**, etc.).
+- **Does it work without a gamepad?** Yes — mouse and keyboard both work. Keyboard: **WASD / arrow keys**
+  to move, **Space / Enter** to activate, **Tab / Backspace** (or **Esc**) to go back. Every gamepad
+  action also has a mouse fallback (click **Play**, etc.).
 - **Can I use it with Steam games?** **Yes** — via [Steam mode](#steam-mode-launch-and-install-steam-games):
   a `game.json` with a `steam` block launches, installs and uninstalls the game through your local Steam
   client (the card is just a pointer by `appid`). For a **non-Steam** wrapper/launcher `.exe`, point it at
