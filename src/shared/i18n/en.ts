@@ -215,6 +215,7 @@ export const en = {
   'configure.sectionAdvanced': 'Advanced',
   // Field labels.
   'configure.fieldId': 'Game id',
+  'configure.idHint': 'Auto-filled from the name. Edit it to set your own; clear it to auto-fill again.',
   'configure.fieldTitle': 'Title',
   'configure.schemaVersion': 'Schema version: 1',
   'configure.launchType': 'Launch type',

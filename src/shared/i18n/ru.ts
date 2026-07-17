@@ -186,6 +186,7 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'configure.sectionAudio': 'Звук',
   'configure.sectionAdvanced': 'Дополнительно',
   'configure.fieldId': 'Идентификатор игры',
+  'configure.idHint': 'Заполняется из названия. Отредактируйте, чтобы задать свой; очистите - снова подставится.',
   'configure.fieldTitle': 'Название',
   'configure.schemaVersion': 'Версия схемы: 1',
   'configure.launchType': 'Тип запуска',

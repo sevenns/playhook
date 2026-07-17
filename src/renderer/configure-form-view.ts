@@ -10,6 +10,7 @@
 // translator and are re-applied on a language change via applyLabels().
 import {
   formModelToText,
+  slugifyId,
   textToFormModel,
   type InstallType,
   type InstallerFamily,
@@ -174,6 +175,10 @@ export class FormView {
 
   // View state.
   private launchMode: LaunchMode = 'executable';
+  // Whether the user has taken manual control of the `id` field. While false, the title auto-fills the id
+  // (slugified). Set on a manual id edit, re-armed when the id is cleared, seeded on load from whether the
+  // card already carries an id.
+  private idTouched = false;
   private rest: Readonly<Record<string, unknown>> = {};
   // Unknown keys nested inside the sounds/install/steam blocks: the form has no field for them, so they
   // must be remembered from load() and put back in readModel() (else serialize() drops them — the blocks'
@@ -197,14 +202,25 @@ export class FormView {
     this.mixedBanner.hidden = true;
 
     // ── Basics ──────────────────────────────────────────────────────────────
-    this.idInput = this.textInput('id');
-    this.titleInput = this.textInput('title');
+    // Editing the id by hand marks it "touched" so the title no longer overwrites it; clearing it re-arms
+    // the auto-fill. A programmatic set (syncIdFromTitle) does NOT fire 'input', so it never self-marks.
+    this.idInput = this.textInput('id', () => {
+      this.idTouched = getValue(this.idInput) !== '';
+    });
+    // The title drives the id (slugified) until the user takes over the id field — see syncIdFromTitle.
+    this.titleInput = this.textInput('title', () => this.syncIdFromTitle());
+    const idHint = document.createElement('div');
+    idHint.className = 'field-hint';
+    this.labelRefs.push({ el: idHint, key: 'configure.idHint' });
+    const idField = this.field('configure.fieldId', 'id', this.idInput);
+    idField.append(idHint);
     const schemaLine = document.createElement('div');
     schemaLine.className = 'field-static';
     this.labelRefs.push({ el: schemaLine, key: 'configure.schemaVersion' });
+    // Name first: it's what the author types, and the id auto-derives from it (slug), so it reads top-down.
     this.addSection('basics', [
-      this.field('configure.fieldId', 'id', this.idInput),
       this.field('configure.fieldTitle', 'title', this.titleInput),
+      idField,
       schemaLine,
     ]);
 
@@ -421,6 +437,9 @@ export class FormView {
 
     this.setScalar('id', this.idInput, model.id);
     this.setScalar('title', this.titleInput, model.title);
+    // A card that already carries an id owns it — don't let a title edit clobber it. A blank card re-arms
+    // the title→id auto-fill.
+    this.idTouched = model.id !== '';
     this.setScalar('executable', this.executableInput, model.executable);
     this.setScalarChecked('runAsAdmin', this.runAsAdminSwitch, model.runAsAdmin);
     this.setScalar('saveOnCard', this.saveOnCardInput, model.saveOnCard);
@@ -673,6 +692,16 @@ export class FormView {
   // resolved inside the COPIED directory, not from the card root. The stored value is deliberately left
   // untouched — silently rewriting a path the user typed would be worse than telling them it changed
   // meaning (Browse does trim, where the intent is unambiguous — see executableFromPick).
+  // Fills the id from the current title (slugified), unless the user has taken over the id field. A
+  // programmatic `.value` set doesn't fire 'input', so this never marks the id as touched. Empty slug
+  // (e.g. an all-Cyrillic name) leaves the id empty — the schema forbids non-latin ids, so the user types
+  // one by hand.
+  private syncIdFromTitle(): void {
+    if (this.idTouched) return;
+    this.idInput.value = slugifyId(getValue(this.titleInput));
+    this.clearCorrupt('id');
+  }
+
   private updateCopyToPcState(): void {
     const copy = this.isCopyMode();
     this.copySourceField.hidden = !copy;
@@ -1084,11 +1113,14 @@ export class FormView {
     };
   }
 
-  private textInput(corruptKey: string): ValueEl {
+  private textInput(corruptKey: string, beforeChange?: () => void): ValueEl {
     const input = document.createElement('fluent-text-input') as ValueEl;
     input.setAttribute('type', 'text');
     input.addEventListener('input', () => {
       this.clearCorrupt(corruptKey);
+      // Runs BEFORE onChange so a derived field (e.g. id from the title) is already in the DOM when the
+      // form re-serializes — otherwise the serialized value would lag one keystroke behind.
+      beforeChange?.();
       this.deps.onChange();
     });
     return input;

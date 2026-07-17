@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   formModelToText,
+  slugifyId,
   textToFormModel,
   textToGames,
   gamesToText,
@@ -425,5 +426,33 @@ describe('drift guard: form keys vs the zod schema', () => {
     const objectSchema = schema.oneOf?.[0];
     const schemaKeys = new Set(Object.keys(objectSchema?.properties ?? {}));
     expect(schemaKeys).toEqual(new Set(KNOWN_MANIFEST_KEYS));
+  });
+});
+
+describe('slugifyId', () => {
+  const ID_RE = /^[A-Za-z0-9._-]+$/; // the manifest id schema regex
+
+  it('slugifies the canonical example', () => {
+    expect(slugifyId('Clair Obscur: Expedition 33')).toBe('clair-obscur-expedition-33');
+  });
+
+  it('lowercases, collapses runs of punctuation/space, and trims dashes', () => {
+    expect(slugifyId('  The   Witcher 3: Wild Hunt!  ')).toBe('the-witcher-3-wild-hunt');
+    expect(slugifyId('A---B__C')).toBe('a-b-c');
+  });
+
+  it('strips accents to plain latin (é → e)', () => {
+    expect(slugifyId('Café Society')).toBe('cafe-society');
+  });
+
+  it('returns empty for a name with no latin/digit characters (all-Cyrillic)', () => {
+    expect(slugifyId('Ведьмак')).toBe('');
+  });
+
+  it('produces a schema-valid id or empty for a range of names', () => {
+    for (const name of ['Portal 2', 'HELLO', 'x', '  spaced  ', 'Ori & the Blind Forest']) {
+      const id = slugifyId(name);
+      if (id !== '') expect(id).toMatch(ID_RE);
+    }
   });
 });

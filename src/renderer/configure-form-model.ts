@@ -16,6 +16,22 @@
 export type LaunchMode = 'executable' | 'installer' | 'steam';
 
 /**
+ * Derives a manifest `id` from a game's display name for the Configure form: accents stripped, lowercased,
+ * every run of non-alphanumerics collapsed to a single dash, trimmed. `Clair Obscur: Expedition 33` →
+ * `clair-obscur-expedition-33`. The result is always a valid id (`[A-Za-z0-9._-]`) or empty — a name with
+ * no Latin/digit characters (e.g. all-Cyrillic) yields '', and the user types the id by hand (the schema
+ * forbids non-latin ids anyway). Pure.
+ */
+export function slugifyId(name: string): string {
+  return name
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '') // drop the combining marks NFKD split off (e-acute -> e + accent)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-') // any run of non-alphanumerics → a single dash
+    .replace(/^-+|-+$/g, ''); // trim leading/trailing dashes
+}
+
+/**
  * install.type enum. `copy` is NOT an installer family: it means "move the game to the PC" and is driven
  * by a checkbox inside the Executable mode, not by the installer type dropdown (which only offers the
  * three real families). See `copyToPc` / `copyInstall` on ManifestFormModel.
