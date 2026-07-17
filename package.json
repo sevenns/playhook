@@ -1,6 +1,6 @@
 {
   "name": "playhook",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Background launcher that detects installed game on external device, syncs saves and tracks playtime. Bring console vibes to your PC.",
   "private": true,
   "main": "dist/main/main.js",
@@ -18,6 +18,7 @@
     "build:settings": "esbuild src/renderer/settings.ts --bundle --format=esm --platform=browser --outfile=dist/renderer/settings.js",
     "build:configure": "esbuild src/renderer/configure.ts --bundle --format=esm --platform=browser --outfile=dist/renderer/configure.js",
     "build:assets": "node scripts/copy-assets.mjs",
+    "build:umu": "node scripts/fetch-umu.mjs",
     "build": "npm run build:renderer && npm run build:app && npm run build:settings && npm run build:configure && npm run build:main && npm run build:assets",
     "start": "npm run build && electron .",
     "rebuild": "electron-rebuild -f -w drivelist",

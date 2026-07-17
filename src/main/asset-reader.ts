@@ -235,6 +235,23 @@ export class AssetReader {
     return { sounds, ...(music !== undefined ? { music } : {}) };
   }
 
+  /**
+   * The bundled default UI sounds alone (no music), for the empty "insert a card" screen — so navigating
+   * the System menu there is audible even without a game's own sounds. Same per-slot defaults readAudio-
+   * Assets falls back to, minus any game/music. The files never change, so the result is memoized.
+   */
+  async readDefaultAudioAssets(): Promise<AudioAssets> {
+    if (this.defaultAudioAssets !== undefined) return this.defaultAudioAssets;
+    const sounds: Record<string, string> = {};
+    for (const name of SFX_NAMES) {
+      const url = await this.readAudioDataUrl(defaultSfxPath(name));
+      if (url !== undefined) sounds[name] = url;
+    }
+    this.defaultAudioAssets = { sounds };
+    return this.defaultAudioAssets;
+  }
+  private defaultAudioAssets: AudioAssets | undefined;
+
   private async readAudioDataUrl(filePath: string): Promise<string | undefined> {
     try {
       const mime = AUDIO_MIME[path.extname(filePath).toLowerCase()] ?? 'application/octet-stream';

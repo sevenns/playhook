@@ -530,9 +530,9 @@ html:not(.cursor-hidden) .rect-button:hover,
   color: var(--fg);
 }
 
-/* Install-only description with the destination path. Hidden by default; shown only in confirm view for
-   the card-installer install (data-mode='install'). Steam install has no card path / silent-mode note,
-   so a more specific selector (data-install-via='steam') hides it again for the steam variant. */
+/* Install-only description. Hidden by default; shown only in confirm view for the card-installer install
+   (data-mode='install'). Steam install has no card path / silent-mode note, so a more specific selector
+   (data-install-via='steam') hides it again for the steam variant. */
 .popup-confirm .popup-detail {
   display: none;
 }
@@ -541,6 +541,32 @@ html:not(.cursor-hidden) .rect-button:hover,
 }
 #popup[data-view='confirm'][data-mode='install'][data-install-via='steam'] .popup-confirm .popup-detail {
   display: none;
+}
+/* Prefix-cleanup uninstall (a plain exe game's Wine prefix): the confirm shows a short question in the
+   heading and this explanatory note in the detail — not the installer/copy ones. */
+#popup[data-view='confirm'][data-uninstall-via='prefix'] .popup-confirm .popup-detail {
+  display: block;
+}
+
+/* Which of the two notes shows: the installer one (silent-mode caveat + destination path) by default,
+   the copy one for data-install-via='copy'. Copying runs unattended and needs no path from the user, so
+   the installer note would be actively misleading there. */
+.note-copy,
+.note-prefix {
+  display: none;
+}
+#popup[data-install-via='copy'] .note-installer {
+  display: none;
+}
+#popup[data-install-via='copy'] .note-copy {
+  display: inline;
+}
+/* Prefix-cleanup uninstall: show only the prefix note (the installer one is the default, so hide it). */
+#popup[data-uninstall-via='prefix'] .note-installer {
+  display: none;
+}
+#popup[data-uninstall-via='prefix'] .note-prefix {
+  display: inline;
 }
 
 /* The path flows inline at the end of the description (same light style as the mockup), but is

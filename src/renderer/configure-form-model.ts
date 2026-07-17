@@ -15,8 +15,31 @@
 /** The three mutually-exclusive launch methods (mirrors the manifest superRefine). */
 export type LaunchMode = 'executable' | 'installer' | 'steam';
 
-/** Installer family (install.type enum). */
-export type InstallType = 'nsis' | 'inno' | 'custom';
+/**
+ * Derives a manifest `id` from a game's display name for the Configure form: accents stripped, lowercased,
+ * every run of non-alphanumerics collapsed to a single dash, trimmed. `Clair Obscur: Expedition 33` →
+ * `clair-obscur-expedition-33`. The result is always a valid id (`[A-Za-z0-9._-]`) or empty — a name with
+ * no Latin/digit characters (e.g. all-Cyrillic) yields '', and the user types the id by hand (the schema
+ * forbids non-latin ids anyway). Pure.
+ */
+export function slugifyId(name: string): string {
+  return name
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '') // drop the combining marks NFKD split off (e-acute -> e + accent)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-') // any run of non-alphanumerics → a single dash
+    .replace(/^-+|-+$/g, ''); // trim leading/trailing dashes
+}
+
+/**
+ * install.type enum. `copy` is NOT an installer family: it means "move the game to the PC" and is driven
+ * by a checkbox inside the Executable mode, not by the installer type dropdown (which only offers the
+ * three real families). See `copyToPc` / `copyInstall` on ManifestFormModel.
+ */
+export type InstallType = 'nsis' | 'inno' | 'custom' | 'copy';
+
+/** The installer families the type dropdown offers — everything but `copy` (see InstallType). */
+export type InstallerFamily = Exclude<InstallType, 'copy'>;
 
 /** The `sounds` block as form state: one string per slot ('' = empty) plus this block's unknown keys. */
 export interface SoundsModel {
@@ -33,6 +56,8 @@ export interface InstallModel {
   readonly type: InstallType;
   readonly runAsAdmin: boolean;
   readonly args: readonly string[];
+  /** Extra winetricks verbs provisioned into the prefix before the installer runs (Linux; Р7b). */
+  readonly winetricks: readonly string[];
   readonly rest: Readonly<Record<string, unknown>>;
 }
 
@@ -63,7 +88,25 @@ export interface ManifestFormModel {
   readonly killTimeoutSec: string;
   readonly sounds: SoundsModel;
   readonly backgroundMusic: string;
+  /** Extra winetricks verbs provisioned into the prefix before the GAME launches (Linux; Р7b). */
+  readonly winetricks: readonly string[];
+  /** umu GAMEID for launch — a Steam appid or custom UMU_ID (Linux; Р7i). '' = default `umu-default`. */
+  readonly umuGameId: string;
+  /** The `install` block for INSTALLER mode (types nsis/inno/custom). Never holds `copy`. */
   readonly install: InstallModel;
+  /**
+   * "Move game to PC" — a checkbox inside Executable mode. On: the manifest emits `install` with
+   * `type: 'copy'`, where `copyInstall.installer` is the game DIRECTORY on the card to copy.
+   */
+  readonly copyToPc: boolean;
+  /**
+   * The `install` block for the copy checkbox — a SECOND, independent slot rather than a flat field, for
+   * two reasons: the block's unknown keys (`rest`) must survive the round-trip like every other block's,
+   * and keeping it apart from `install` means toggling Installer ↔ Executable+checkbox never mixes the
+   * two modes' input (in particular `type: 'copy'` can never surface in the installer type dropdown).
+   * `type` is always `copy`.
+   */
+  readonly copyInstall: InstallModel;
   readonly steam: SteamModel;
 }
 
@@ -99,6 +142,8 @@ export const KNOWN_MANIFEST_KEYS: readonly string[] = [
   'killTimeoutSec',
   'sounds',
   'backgroundMusic',
+  'winetricks',
+  'umuGameId',
   'install',
   'steam',
 ];
@@ -118,7 +163,12 @@ function emptySounds(): SoundsModel {
 }
 
 function emptyInstall(): InstallModel {
-  return { installer: '', type: 'nsis', runAsAdmin: false, args: [], rest: {} };
+  return { installer: '', type: 'nsis', runAsAdmin: false, args: [], winetricks: [], rest: {} };
+}
+
+/** The copy slot's pristine state: same block, pinned to `copy` (its type is never user-editable). */
+function emptyCopyInstall(): InstallModel {
+  return { installer: '', type: 'copy', runAsAdmin: false, args: [], winetricks: [], rest: {} };
 }
 
 function emptySteam(): SteamModel {
@@ -143,7 +193,11 @@ export function emptyFormModel(): ManifestFormModel {
     killTimeoutSec: '',
     sounds: emptySounds(),
     backgroundMusic: '',
+    winetricks: [],
+    umuGameId: '',
     install: emptyInstall(),
+    copyToPc: false,
+    copyInstall: emptyCopyInstall(),
     steam: emptySteam(),
   };
 }
@@ -174,6 +228,7 @@ function parseInstall(source: Record<string, unknown>): InstallModel | null {
   let type: InstallType = 'nsis';
   let runAsAdmin = false;
   let args: readonly string[] = [];
+  let winetricks: readonly string[] = [];
   const rest: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(source)) {
     switch (key) {
@@ -182,7 +237,7 @@ function parseInstall(source: Record<string, unknown>): InstallModel | null {
         installer = value;
         break;
       case 'type':
-        if (value !== 'nsis' && value !== 'inno' && value !== 'custom') return null;
+        if (value !== 'nsis' && value !== 'inno' && value !== 'custom' && value !== 'copy') return null;
         type = value;
         break;
       case 'runAsAdmin':
@@ -193,11 +248,15 @@ function parseInstall(source: Record<string, unknown>): InstallModel | null {
         if (!isStringArray(value)) return null;
         args = value;
         break;
+      case 'winetricks':
+        if (!isStringArray(value)) return null;
+        winetricks = value;
+        break;
       default:
         rest[key] = value;
     }
   }
-  return { installer, type, runAsAdmin, args, rest };
+  return { installer, type, runAsAdmin, args, winetricks, rest };
 }
 
 /** Parses a `steam` object; null = appid had the wrong type (→ the block is corrupt). */
@@ -268,6 +327,7 @@ function valueToFormResult(parsed: unknown): ParseFormResult {
   const saveOnCard = readString('saveOnCard');
   const pcSavePath = readString('pcSavePath');
   const backgroundMusic = readString('backgroundMusic');
+  const umuGameId = readString('umuGameId');
 
   let runAsAdmin = false;
   if (has('runAsAdmin')) {
@@ -285,6 +345,12 @@ function valueToFormResult(parsed: unknown): ParseFormResult {
   if (has('watchProcesses')) {
     if (isStringArray(source['watchProcesses'])) watchProcesses = source['watchProcesses'];
     else corrupt['watchProcesses'] = source['watchProcesses'];
+  }
+
+  let winetricks: readonly string[] = [];
+  if (has('winetricks')) {
+    if (isStringArray(source['winetricks'])) winetricks = source['winetricks'];
+    else corrupt['winetricks'] = source['winetricks'];
   }
 
   let heroImage: readonly string[] = [];
@@ -315,12 +381,20 @@ function valueToFormResult(parsed: unknown): ParseFormResult {
     else corrupt['sounds'] = value;
   }
 
+  // One `install` block in the file feeds one of TWO slots, picked by its type: `copy` belongs to the
+  // Executable mode's checkbox, everything else to Installer mode. A corrupt block feeds neither and
+  // falls through to `corrupt` — it still selects Installer mode below (presence decides), as before.
   let install = emptyInstall();
+  let copyInstall = emptyCopyInstall();
+  let copyToPc = false;
   if (has('install')) {
     const value = source['install'];
     const parsedInstall = isRecord(value) ? parseInstall(value) : null;
-    if (parsedInstall !== null) install = parsedInstall;
-    else corrupt['install'] = value;
+    if (parsedInstall === null) corrupt['install'] = value;
+    else if (parsedInstall.type === 'copy') {
+      copyInstall = parsedInstall;
+      copyToPc = true;
+    } else install = parsedInstall;
   }
 
   let steam = emptySteam();
@@ -333,7 +407,13 @@ function valueToFormResult(parsed: unknown): ParseFormResult {
 
   // Launch mode: steam > install > executable (plan R5). Presence (not validity) decides — a corrupt
   // block still selects its mode, and its raw value is re-emitted from `corrupt` so the error shows.
-  const launchMode: LaunchMode = has('steam') ? 'steam' : has('install') ? 'installer' : 'executable';
+  // `install` with `type: 'copy'` is the exception: it is Executable mode with the checkbox on, so it
+  // must NOT be shown as an Installer (the user never chose that mode).
+  const launchMode: LaunchMode = has('steam')
+    ? 'steam'
+    : has('install') && !copyToPc
+      ? 'installer'
+      : 'executable';
   const mixed = has('steam') && (has('install') || has('executable'));
 
   const model: ManifestFormModel = {
@@ -351,7 +431,11 @@ function valueToFormResult(parsed: unknown): ParseFormResult {
     killTimeoutSec,
     sounds,
     backgroundMusic,
+    winetricks,
+    umuGameId,
     install,
+    copyToPc,
+    copyInstall,
     steam,
   };
   return { ok: true, model, rest, corrupt, mixed };
@@ -393,6 +477,8 @@ function buildInstall(install: InstallModel): Record<string, unknown> {
   if (install.runAsAdmin) out.runAsAdmin = true;
   const args = nonEmpty(install.args);
   if (args.length > 0) out.args = args;
+  const winetricks = nonEmpty(install.winetricks);
+  if (winetricks.length > 0) out.winetricks = winetricks;
   for (const [key, value] of Object.entries(install.rest)) out[key] = value;
   return out;
 }
@@ -452,7 +538,16 @@ function buildManifestObject(
     const args = nonEmpty(model.args);
     if (args.length > 0) out.args = args;
     if (model.runAsAdmin) out.runAsAdmin = true;
+    // Both modes emit an `install` block, from their own slot: Installer mode the real installer, the
+    // Executable checkbox a `type: 'copy'` one (its `installer` being the game directory to copy).
     if (model.launchMode === 'installer') out.install = buildInstall(model.install);
+    else if (model.copyToPc) out.install = buildInstall(model.copyInstall);
+    // Game-launch prefix provisioning (Linux; Р7b) — applies to our own prefix (executable/installer
+    // modes), not steam (which runs in Steam's compatdata).
+    const winetricks = nonEmpty(model.winetricks);
+    if (winetricks.length > 0) out.winetricks = winetricks;
+    // umu GAMEID for the launch (Linux; Р7i) — same scope: our own umu-run, not steam://.
+    if (model.umuGameId !== '') out.umuGameId = model.umuGameId;
   }
 
   const watch = nonEmpty(model.watchProcesses);

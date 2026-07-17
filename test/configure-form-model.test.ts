@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   formModelToText,
+  slugifyId,
   textToFormModel,
   textToGames,
   gamesToText,
@@ -89,6 +90,20 @@ const LAUNCH_MODE_FIXTURES = {
     null,
     2,
   ),
+  // The 4th shape: executable mode with "move game to PC" on. `install.installer` is the game DIRECTORY,
+  // and `executable` is relative to it — not to the card root.
+  copy: JSON.stringify(
+    {
+      schemaVersion: 1,
+      id: 'my-game',
+      title: 'My Game',
+      executable: 'bin/MyGame.exe',
+      install: { installer: 'Games/MyGame', type: 'copy' },
+      heroImage: 'assets/hero.jpg',
+    },
+    null,
+    2,
+  ),
 };
 
 describe('round-trip on the three launch-mode shapes', () => {
@@ -114,6 +129,134 @@ describe('round-trip on the three launch-mode shapes', () => {
     expect(parsed).not.toHaveProperty('args');
     expect(parsed).not.toHaveProperty('runAsAdmin');
     expect(parsed).not.toHaveProperty('launchTimeoutSec');
+  });
+});
+
+describe('copy install type ("move game to PC" — a checkbox inside Executable mode)', () => {
+  it('parses into EXECUTABLE mode with the checkbox on, not into Installer mode', () => {
+    const { model } = parseOk(LAUNCH_MODE_FIXTURES.copy);
+    expect(launchModeOf(model)).toBe('executable');
+    expect(model.copyToPc).toBe(true);
+    expect(model.copyInstall.installer).toBe('Games/MyGame');
+    expect(model.copyInstall.type).toBe('copy');
+    // The installer slot stays pristine — a copy block is not an installer.
+    expect(model.install.installer).toBe('');
+    expect(model.install.type).toBe('nsis');
+  });
+
+  it('round-trips back to install.type copy', () => {
+    const parsed = JSON.parse(serialize(LAUNCH_MODE_FIXTURES.copy)) as Record<string, unknown>;
+    expect(parsed['install']).toEqual({ installer: 'Games/MyGame', type: 'copy' });
+  });
+
+  it('emits no install block when the checkbox is off, even with a source typed in', () => {
+    const { model, rest, corrupt } = parseOk(LAUNCH_MODE_FIXTURES.copy);
+    const off: ManifestFormModel = { ...model, copyToPc: false };
+    const parsed = JSON.parse(formModelToText(off, rest, corrupt)) as Record<string, unknown>;
+    expect(parsed).not.toHaveProperty('install');
+  });
+
+  it('keeps unknown keys inside the copy block across the round-trip (the block has its own rest)', () => {
+    const text = JSON.stringify({
+      schemaVersion: 1,
+      id: 'x',
+      title: 'X',
+      executable: 'bin/game.exe',
+      heroImage: 'hero.jpg',
+      install: { installer: 'Games/X', type: 'copy', futureField: 42 },
+    });
+    const parsed = JSON.parse(serialize(text)) as { install?: Record<string, unknown> };
+    expect(parsed.install?.['futureField']).toBe(42);
+  });
+
+  it('keeps the two install slots independent (switching modes loses neither side)', () => {
+    // Start from an installer manifest, then turn on the copy checkbox in executable mode: the installer
+    // slot must survive untouched, and the emitted block must be the COPY one.
+    const { model, rest, corrupt } = parseOk(LAUNCH_MODE_FIXTURES.installer);
+    expect(model.install.installer).toBe('setup/setup.exe');
+    const switched: ManifestFormModel = {
+      ...model,
+      launchMode: 'executable',
+      copyToPc: true,
+      copyInstall: { ...model.copyInstall, installer: 'Games/MyGame' },
+    };
+    const parsed = JSON.parse(formModelToText(switched, rest, corrupt)) as {
+      install?: Record<string, unknown>;
+    };
+    expect(parsed.install).toEqual({ installer: 'Games/MyGame', type: 'copy' });
+    // Switching back re-emits the installer slot, with its original value.
+    const back: ManifestFormModel = { ...switched, launchMode: 'installer' };
+    const backParsed = JSON.parse(formModelToText(back, rest, corrupt)) as {
+      install?: Record<string, unknown>;
+    };
+    expect(backParsed.install?.['installer']).toBe('setup/setup.exe');
+    expect(backParsed.install?.['type']).toBe('nsis');
+  });
+
+  it('treats an install block with an unknown type as corrupt (not as a copy)', () => {
+    const text = JSON.stringify({
+      schemaVersion: 1,
+      id: 'x',
+      title: 'X',
+      executable: 'bin/game.exe',
+      heroImage: 'hero.jpg',
+      install: { installer: 'setup.exe', type: 'msi' },
+    });
+    const { model, corrupt } = parseOk(text);
+    expect(corrupt).toHaveProperty('install');
+    expect(model.copyToPc).toBe(false);
+    expect(launchModeOf(model)).toBe('installer');
+  });
+});
+
+describe('winetricks round-trip (game + installer prefix provisioning — Р7b)', () => {
+  it('parses top-level and install.winetricks into the model', () => {
+    const text =
+      '{"schemaVersion":1,"id":"g","title":"G","executable":"g.exe","heroImage":"h.jpg",' +
+      '"winetricks":["d3dx9","vcrun2010"],' +
+      '"install":{"installer":"s/s.exe","type":"inno","winetricks":["mfc42"]}}';
+    const { model } = parseOk(text);
+    expect(model.winetricks).toEqual(['d3dx9', 'vcrun2010']);
+    expect(model.install.winetricks).toEqual(['mfc42']);
+  });
+
+  it('serializes both back losslessly into a VALID manifest', () => {
+    const text =
+      '{"schemaVersion":1,"id":"g","title":"G","executable":"g.exe","heroImage":"h.jpg",' +
+      '"winetricks":["d3dx9"],' +
+      '"install":{"installer":"s/s.exe","type":"inno","winetricks":["mfc42","gdiplus"]}}';
+    const out = serialize(text);
+    const parsed = JSON.parse(out) as Record<string, unknown>;
+    expect(parsed['winetricks']).toEqual(['d3dx9']);
+    expect((parsed['install'] as Record<string, unknown>)['winetricks']).toEqual(['mfc42', 'gdiplus']);
+    expect(validateManifestText(out, t).ok).toBe(true);
+  });
+
+  it('omits empty winetricks arrays (default) from the serialized manifest', () => {
+    const text = '{"schemaVersion":1,"id":"g","title":"G","executable":"g.exe","heroImage":"h.jpg"}';
+    const parsed = JSON.parse(serialize(text)) as Record<string, unknown>;
+    expect(parsed).not.toHaveProperty('winetricks');
+  });
+
+  it('accepts a key=value winetricks setting (e.g. vd=1920x1080) as a valid entry', () => {
+    const text =
+      '{"schemaVersion":1,"id":"g","title":"G","executable":"g.exe","heroImage":"h.jpg","winetricks":["vd=1920x1080"]}';
+    const { model } = parseOk(text);
+    expect(model.winetricks).toEqual(['vd=1920x1080']);
+    expect(validateManifestText(serialize(text), t).ok).toBe(true);
+  });
+
+  it('round-trips umuGameId (Steam appid / UMU_ID) and omits it when empty', () => {
+    const withId =
+      '{"schemaVersion":1,"id":"g","title":"G","executable":"g.exe","heroImage":"h.jpg","umuGameId":"umu-nfsu2"}';
+    const { model } = parseOk(withId);
+    expect(model.umuGameId).toBe('umu-nfsu2');
+    const parsed = JSON.parse(serialize(withId)) as Record<string, unknown>;
+    expect(parsed['umuGameId']).toBe('umu-nfsu2');
+    expect(validateManifestText(serialize(withId), t).ok).toBe(true);
+
+    const without = '{"schemaVersion":1,"id":"g","title":"G","executable":"g.exe","heroImage":"h.jpg"}';
+    expect(JSON.parse(serialize(without))).not.toHaveProperty('umuGameId');
   });
 });
 
@@ -283,5 +426,33 @@ describe('drift guard: form keys vs the zod schema', () => {
     const objectSchema = schema.oneOf?.[0];
     const schemaKeys = new Set(Object.keys(objectSchema?.properties ?? {}));
     expect(schemaKeys).toEqual(new Set(KNOWN_MANIFEST_KEYS));
+  });
+});
+
+describe('slugifyId', () => {
+  const ID_RE = /^[A-Za-z0-9._-]+$/; // the manifest id schema regex
+
+  it('slugifies the canonical example', () => {
+    expect(slugifyId('Clair Obscur: Expedition 33')).toBe('clair-obscur-expedition-33');
+  });
+
+  it('lowercases, collapses runs of punctuation/space, and trims dashes', () => {
+    expect(slugifyId('  The   Witcher 3: Wild Hunt!  ')).toBe('the-witcher-3-wild-hunt');
+    expect(slugifyId('A---B__C')).toBe('a-b-c');
+  });
+
+  it('strips accents to plain latin (é → e)', () => {
+    expect(slugifyId('Café Society')).toBe('cafe-society');
+  });
+
+  it('returns empty for a name with no latin/digit characters (all-Cyrillic)', () => {
+    expect(slugifyId('Ведьмак')).toBe('');
+  });
+
+  it('produces a schema-valid id or empty for a range of names', () => {
+    for (const name of ['Portal 2', 'HELLO', 'x', '  spaced  ', 'Ori & the Blind Forest']) {
+      const id = slugifyId(name);
+      if (id !== '') expect(id).toMatch(ID_RE);
+    }
   });
 });

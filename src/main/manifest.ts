@@ -21,14 +21,29 @@ import { log } from './logger';
 
 // Install-mode block (optional). When present, the card holds an installer and `executable` is
 // resolved relative to the app-controlled install dir (see readManifest), not the card root.
+// `type: 'copy'` is the odd one out: no installer runs — the card holds the game's own directory and
+// the app COPIES it into the install dir ("move game to PC"). The install machinery (install dir,
+// requiresInstall, Install/Play routing, uninstall) is identical, which is why it lives here and not
+// in a block of its own.
 const installSchema = z
   .object({
+    // For nsis/inno/custom: the installer file. For `copy`: the ROOT OF THE GAME DIRECTORY on the card
+    // that gets copied to the PC. Card-relative either way.
     installer: z.string().min(1),
-    type: z.enum(['nsis', 'inno', 'custom']),
-    // Run the installer elevated. Forbidden for `custom` (see the refine below).
+    type: z.enum(['nsis', 'inno', 'custom', 'copy']),
+    // Run the installer elevated. Forbidden for `custom` and `copy` (see the refines below).
     runAsAdmin: z.boolean().default(false),
     // For `custom`: the full argv with exactly one {dir} token. For nsis/inno: optional extra flags.
+    // Forbidden for `copy` (no process is started).
     args: z.array(z.string()).default([]),
+    // Linux-only (Р7b): extra winetricks verbs/settings provisioned into the game's Wine prefix BEFORE the
+    // installer runs, on top of the app's baseline set. Lets a card cover runtimes its installer needs
+    // (e.g. a skinned Inno installer needing mfc42/gdiplus) or a setting like `vd=1920x1080`. Ignored on
+    // Windows. Strictly validated (`=` allowed for `key=value` settings; shell-less execFile — defense in depth).
+    // Applies to `copy` too: the prefix is provisioned before the files are copied in (prepareInstallDir).
+    winetricks: z
+      .array(z.string().regex(/^[A-Za-z0-9_.=-]+$/, 'manifest.winetricksName'))
+      .default([]),
   })
   // `custom` hands argv control to the card; running THAT elevated would escalate the attack
   // surface beyond the read-only tasklist we use today. The app builds nsis/inno args itself, so
@@ -48,7 +63,18 @@ const installSchema = z
       message: 'manifest.installArgsDir',
       path: ['args'],
     },
-  );
+  )
+  // `copy` starts no process, so there is nowhere to apply argv or elevation — reject them instead of
+  // silently ignoring what the card asked for. `winetricks` stays allowed: the prefix IS provisioned
+  // (prepareInstallDir), so the field keeps its meaning.
+  .refine((v) => !(v.type === 'copy' && v.args.length > 0), {
+    message: 'manifest.copyArgs',
+    path: ['args'],
+  })
+  .refine((v) => !(v.type === 'copy' && v.runAsAdmin), {
+    message: 'manifest.copyRunAsAdmin',
+    path: ['runAsAdmin'],
+  });
 
 const manifestSchema = z
   .object({
@@ -99,6 +125,18 @@ const manifestSchema = z
       })
       .optional(),
     backgroundMusic: z.string().min(1).optional(),
+    // Linux-only (Р7b): extra winetricks verbs/settings provisioned into the game's Wine prefix BEFORE the
+    // game launches, on top of the app's baseline set — a runtime a game needs on a bare Proton prefix
+    // (e.g. `d3dx9`) OR a winetricks SETTING like `vd=1920x1080` (virtual desktop — fixes old games that
+    // crash on a fullscreen display-mode change). Ignored on Windows. Strictly validated (`=` allowed for
+    // `key=value` settings; the `winetricks` argv is shell-less execFile, so this is defense-in-depth).
+    winetricks: z
+      .array(z.string().regex(/^[A-Za-z0-9_.=-]+$/, 'manifest.winetricksName'))
+      .default([]),
+    // Linux-only (Р7i): the umu `GAMEID` used when LAUNCHING the game — a Steam appid (e.g. `814380`) or a
+    // custom UMU_ID (e.g. `umu-nfsu2`), so umu applies that game's protonfix instead of the generic
+    // `umu-default`. Absent → `umu-default` (current behaviour). Ignored on Windows.
+    umuGameId: z.string().regex(/^[A-Za-z0-9_-]+$/, 'manifest.umuGameIdName').optional(),
     install: installSchema.optional(),
     // Steam mode: a pointer to a Steam app by appid (no game files on the card). Mutually exclusive with
     // install/executable and requires watchProcesses — enforced by the superRefine below.
@@ -195,13 +233,53 @@ const ENV_PREFIXES = ['APPDATA', 'LOCALAPPDATA', 'USERPROFILE'] as const;
 
 /** Resolves a card-relative path strictly inside its root. null = rejected. Exported for unit tests. */
 export function resolveInside(root: string, relative: string): string | null {
-  if (path.isAbsolute(relative)) return null;
-  const resolved = path.resolve(root, relative);
+  // Card-relative manifest paths are authored on Windows and may use `\` (e.g. `"bin\\game.exe"`). On
+  // Linux `\` is NOT a separator, so `path.resolve` would treat the whole thing as one filename with
+  // literal backslashes → "not found" and the card falls apart (Р12). Normalize `\`→`/` on BOTH platforms
+  // (Windows `path.resolve` already accepts both, so its behaviour is unchanged) before resolving.
+  const normalized = relative.replaceAll('\\', '/');
+  if (path.isAbsolute(normalized)) return null;
+  const resolved = path.resolve(root, normalized);
   const back = path.relative(root, resolved);
   if (back === '..' || back.startsWith(`..${path.sep}`) || path.isAbsolute(back)) {
     return null;
   }
   return resolved;
+}
+
+/**
+ * Copy mode ("move game to PC") copies the SOURCE directory's CONTENTS into the install dir, so
+ * `executable` must be relative to that directory. But a card author (or the Configure form on manual
+ * entry, unlike its Browse picker which already trims) often gives it card-root-relative — INCLUDING the
+ * source dir, e.g. source `game`, executable `game/game.exe`. Strip a leading `<source>/` so both spellings
+ * resolve to the same copied file. Separators are normalized first (Р12: a Windows card uses `\`). No-op
+ * when the executable isn't under the source (already relative to it, or an unrelated path). Exported for
+ * unit tests.
+ */
+export function stripCopySourcePrefix(executable: string, source: string): string {
+  const exe = executable.replace(/\\/g, '/').replace(/^\/+/, '');
+  const src = source.replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+  if (src === '') return executable;
+  const prefix = `${src}/`;
+  return exe.startsWith(prefix) ? exe.slice(prefix.length) : executable;
+}
+
+/**
+ * One-level case-insensitive lookup for a diagnostic hint when a card-relative file isn't found (Р12).
+ * On a case-sensitive FS (ext4/Linux) a Windows-authored `"Game.EXE"` won't match the on-disk `game.exe`
+ * → the existence check fails. This scans the parent directory for an entry that differs from the wanted
+ * name only in case and returns it, so the error can say "found game.exe, fix the case". Platform-agnostic
+ * by construction: on a case-INsensitive FS (Windows/exFAT) the file is found and this branch is never
+ * reached, so a match here always means a genuine case mismatch. Best-effort — any fs error → null.
+ */
+export async function findCaseInsensitiveName(absentPath: string): Promise<string | null> {
+  const wanted = path.basename(absentPath).toLowerCase();
+  try {
+    const entries = await fse.readdir(path.dirname(absentPath));
+    return entries.find((entry) => entry.toLowerCase() === wanted) ?? null;
+  } catch {
+    return null;
+  }
 }
 
 type ExpandResult =
@@ -305,10 +383,30 @@ type InstallResolveResult =
   | { readonly ok: false; readonly message: string };
 
 /**
+ * The app-controlled install directory in BOTH views (Р7). On win32 they are identical
+ * (`%LOCALAPPDATA%\playhook\games\<id>`); on linux they diverge:
+ * - `hostDir` — the real filesystem path inside the game's Wine prefix
+ *   (`<pfx>/drive_c/playhook/games/<id>`): every fs op and the resolved `executable` live under it;
+ * - `installerDir` — the SAME location as the installer sees it under Wine (`C:\playhook\games\<id>`),
+ *   fed to the silent dir-arg (`/DIR=` / `/D=`).
+ */
+export interface InstallDir {
+  readonly hostDir: string;
+  readonly installerDir: string;
+}
+
+/**
+ * Platform install-dir resolution, injected into readManifests (Р7): maps a game `id` to both views of
+ * its app-controlled install dir, or null when install mode is unsupported on this platform/config
+ * (win32 with `%LOCALAPPDATA%` unset). `id` is already validated as a safe single path segment.
+ */
+export type InstallDirResolver = (id: string) => InstallDir | null;
+
+/**
  * Resolves the install-mode block: verifies the installer exists on the card, derives the
- * app-controlled install dir `%LOCALAPPDATA%\playhook\games\<id>` (Windows-only — install mode is
- * impossible without it, like runAsAdmin off-Windows), and resolves `executable` RELATIVE to that
- * dir (traversal forbidden, existence NOT checked — its absence is exactly the "not installed" state).
+ * app-controlled install dir via the platform `resolveInstallDir` (win32 `%LOCALAPPDATA%\…`; linux the
+ * game's Wine prefix — Р7), and resolves `executable` RELATIVE to its HOST view (traversal forbidden,
+ * existence NOT checked — its absence is exactly the "not installed" state).
  */
 async function resolveInstall(
   root: string,
@@ -316,28 +414,37 @@ async function resolveInstall(
   executable: string,
   install: NonNullable<GameManifest['install']>,
   t: Translator,
+  resolveInstallDir: InstallDirResolver,
 ): Promise<InstallResolveResult> {
   const installerPath = resolveInside(root, install.installer);
   if (installerPath === null) {
     return { ok: false, message: t('manifest.installerEscapes', { path: install.installer }) };
   }
-  if (!(await fse.pathExists(installerPath))) {
+  // `copy` is exempt: the source directory is allowed to be GONE. A user who copied the game to the PC
+  // may well delete it from the card afterwards (that is the point of "move game to PC") — failing the
+  // resolve here would drop a perfectly playable, already-copied game out of the library (see the
+  // failure policy below). If it is missing and the game is NOT copied yet, "Install" reports it
+  // visibly instead. Installer types keep the check: a missing installer means nothing can happen.
+  if (install.type !== 'copy' && !(await fse.pathExists(installerPath))) {
     return { ok: false, message: t('manifest.installerNotFound', { path: install.installer }) };
   }
 
-  // The install root is derived straight from the env var — the same mechanism pcSavePath uses —
-  // so nothing is added to ManifestEnv. %LOCALAPPDATA% is per-user, per-machine, non-roaming and
-  // needs no admin rights. Absent (non-Windows / unusual setups) → install mode is rejected.
-  const localAppData = process.env['LOCALAPPDATA'];
-  if (localAppData === undefined || localAppData === '') {
+  // The install dir is platform-specific (Р7): win32 derives `%LOCALAPPDATA%\playhook\games\<id>`;
+  // linux places it inside the game's Wine prefix. null → install mode is unsupported here (e.g.
+  // `%LOCALAPPDATA%` absent) and the card is rejected, exactly as the pre-port Windows-only check did.
+  const dirs = resolveInstallDir(id);
+  if (dirs === null) {
     return { ok: false, message: t('manifest.installNeedsLocalAppData') };
   }
-  // `id` is already constrained to [A-Za-z0-9._-] (no separators / not . or ..) → a safe folder name.
-  const dir = path.join(localAppData, 'playhook', 'games', id);
 
-  // `executable` resolves relative to the install dir — traversal forbidden, but existence is NOT
-  // checked here (it appears only after a successful install).
-  const executablePath = resolveInside(dir, executable);
+  // `executable` resolves relative to the HOST-view install dir — traversal forbidden, but existence is
+  // NOT checked here (it appears only after a successful install). Copy mode flattens the source dir's
+  // contents into the install dir, so a card-root-relative executable that includes the source prefix is
+  // trimmed (source `game` + `game/game.exe` → `game.exe`) — otherwise it would resolve one level too deep
+  // and read as "not installed" forever.
+  const relExecutable =
+    install.type === 'copy' ? stripCopySourcePrefix(executable, install.installer) : executable;
+  const executablePath = resolveInside(dirs.hostDir, relExecutable);
   if (executablePath === null) {
     return { ok: false, message: t('manifest.executableEscapesInstall', { path: executable }) };
   }
@@ -350,7 +457,9 @@ async function resolveInstall(
       type: install.type,
       runAsAdmin: install.runAsAdmin,
       args: install.args,
-      dir,
+      winetricks: install.winetricks,
+      dir: dirs.hostDir,
+      installerDir: dirs.installerDir,
     },
   };
 }
@@ -366,7 +475,11 @@ async function resolveInstall(
  * the card is fatal with the first skip reason (so a single-game card keeps its precise message — BC).
  * Duplicate ids are fatal (ids key PC storage — a collision would corrupt stats/saves).
  */
-export async function readManifests(root: string, env: ManifestEnv): Promise<ManifestsResult> {
+export async function readManifests(
+  root: string,
+  env: ManifestEnv,
+  resolveInstallDir: InstallDirResolver,
+): Promise<ManifestsResult> {
   const { t } = env;
   const manifestPath = path.join(root, MANIFEST_FILENAME);
 
@@ -386,7 +499,7 @@ export async function readManifests(root: string, env: ManifestEnv): Promise<Man
   const manifests: ResolvedManifest[] = [];
   let firstError: string | null = null;
   for (const [index, item] of normalized.items.entries()) {
-    const resolved = await resolveOne(item, root, env);
+    const resolved = await resolveOne(item, root, env, resolveInstallDir);
     if (!resolved.ok) {
       if (firstError === null) firstError = resolved.message;
       log.warn(`[manifest] skipping game #${index}: ${resolved.message}`);
@@ -414,7 +527,12 @@ export async function readManifests(root: string, env: ManifestEnv): Promise<Man
  * semantics, exactly as the single-game reader did. `env` carries known-folder bases resolved in main
  * (e.g. Documents) for pcSavePath. Also checks that the executable exists (an edge case).
  */
-async function resolveOne(rawParsed: unknown, root: string, env: ManifestEnv): Promise<ManifestResult> {
+async function resolveOne(
+  rawParsed: unknown,
+  root: string,
+  env: ManifestEnv,
+  resolveInstallDir: InstallDirResolver,
+): Promise<ManifestResult> {
   const { t } = env;
   const parsed = manifestSchema.safeParse(rawParsed);
   if (!parsed.success) {
@@ -446,6 +564,15 @@ async function resolveOne(rawParsed: unknown, root: string, env: ManifestEnv): P
       return { ok: false, message: t('manifest.executableEscapes', { path: raw.executable }) };
     }
     if (!(await fse.pathExists(resolved))) {
+      // On ext4 a wrong-case executable (Windows-authored `Game.EXE` vs on-disk `game.exe`) reads as
+      // missing — add a case-fix hint when exactly that is the case (Р12).
+      const found = await findCaseInsensitiveName(resolved);
+      if (found !== null) {
+        return {
+          ok: false,
+          message: t('manifest.executableNotFoundCase', { path: raw.executable, found }),
+        };
+      }
       return { ok: false, message: t('manifest.executableNotFound', { path: raw.executable }) };
     }
     executablePath = resolved;
@@ -454,7 +581,14 @@ async function resolveOne(rawParsed: unknown, root: string, env: ManifestEnv): P
     if (raw.executable === undefined) {
       return { ok: false, message: t('manifest.executableRequired') };
     }
-    const resolvedInstall = await resolveInstall(root, raw.id, raw.executable, raw.install, t);
+    const resolvedInstall = await resolveInstall(
+      root,
+      raw.id,
+      raw.executable,
+      raw.install,
+      t,
+      resolveInstallDir,
+    );
     if (!resolvedInstall.ok) {
       return { ok: false, message: resolvedInstall.message };
     }
@@ -490,11 +624,15 @@ async function resolveOne(rawParsed: unknown, root: string, env: ManifestEnv): P
 
   let pcSavePath: string | undefined;
   if (raw.pcSavePath !== undefined) {
-    const expanded = expandPcSavePath(raw.pcSavePath, env);
-    if (!expanded.ok) {
-      return { ok: false, message: expanded.message };
+    // Deferred resolution (Р5/Э6): validate only the SYNTAX here (prefix allowlist + no traversal). The
+    // physical folder is resolved per-game at sync time via the platform SavePathResolver — on Linux a
+    // location inside the game's Wine prefix / Steam compatdata that may not exist until first launch,
+    // which must NOT reject the card at read time. The stored value is the Windows-dictionary string.
+    const problem = validatePcSavePathStatic(raw.pcSavePath, t);
+    if (problem !== null) {
+      return { ok: false, message: problem };
     }
-    pcSavePath = expanded.value;
+    pcSavePath = raw.pcSavePath;
   }
 
   let soundPaths: Record<string, string> | undefined;

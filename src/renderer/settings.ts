@@ -75,6 +75,7 @@ const prereleaseSwitch = req('prerelease');
 const summonSwitch = req('summon-hotkey');
 const preventScreensaverSwitch = req('prevent-screensaver');
 const alwaysShowEmptySwitch = req('always-show-empty');
+const disableSilentInstallSwitch = req('disable-silent-install');
 const musicSlider = req('music-volume');
 const musicValue = req('music-volume-value');
 const sfxSlider = req('sfx-volume');
@@ -290,6 +291,9 @@ preventScreensaverSwitch.addEventListener('change', () => {
 alwaysShowEmptySwitch.addEventListener('change', () => {
   window.settingsApi.setAlwaysShowEmptyScreen(readChecked(alwaysShowEmptySwitch));
 });
+disableSilentInstallSwitch.addEventListener('change', () => {
+  window.settingsApi.setDisableSilentInstall(readChecked(disableSilentInstallSwitch));
+});
 
 wireVolumeSlider(musicSlider, musicValue, (v) => window.settingsApi.setMusicVolume(v));
 wireVolumeSlider(sfxSlider, sfxValue, (v) => window.settingsApi.setSfxVolume(v));
@@ -356,6 +360,7 @@ function applySettings(settings: AppSettings): void {
   setChecked(summonSwitch, settings.summonHotkeyEnabled);
   setChecked(preventScreensaverSwitch, settings.preventScreensaver);
   setChecked(alwaysShowEmptySwitch, settings.alwaysShowEmptyScreen);
+  setChecked(disableSilentInstallSwitch, settings.disableSilentInstall);
   const musicPercent = Math.round(settings.musicVolume * 100);
   const sfxPercent = Math.round(settings.sfxVolume * 100);
   setSliderPercent(musicSlider, musicPercent);

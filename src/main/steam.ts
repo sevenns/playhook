@@ -10,7 +10,7 @@
 import path from 'node:path';
 import fse from 'fs-extra';
 import { shell } from 'electron';
-import { getSteamPath } from './registry';
+import { type SteamLocator } from './platform';
 import { log } from './logger';
 
 /** StateFlags bit set by Steam once an app is fully installed (not merely downloading/updating). */
@@ -35,7 +35,7 @@ export type SteamInstallStatus =
  * `libraryfolders.vdf`. Robust (not naive): matches ALL `"path"` entries and unescapes VDF's `\\` → `\`.
  * The default library is always included even when the VDF is missing/unreadable.
  */
-async function steamLibraryDirs(steamPath: string): Promise<readonly string[]> {
+export async function steamLibraryDirs(steamPath: string): Promise<readonly string[]> {
   const defaultLib = steamPath;
   const vdfPath = path.join(steamPath, 'steamapps', 'libraryfolders.vdf');
   let content: string;
@@ -117,12 +117,15 @@ async function readAcfState(acfPath: string): Promise<AcfState | null> {
 
 /**
  * Where the given Steam app stands locally (per Steam's own .acf state), walking every Steam library for
- * `appmanifest_<appid>.acf`. Best-effort: Steam not found, no manifest, or any error → `absent`.
- * Windows-only (off-Windows getSteamPath is null ⇒ `absent`).
+ * `appmanifest_<appid>.acf`. Best-effort: Steam not found, no manifest, or any error → `absent`. The
+ * SteamLocator is platform-injected (win32 registry / linux known paths), so this stays OS-agnostic.
  */
-export async function steamInstallStatus(appid: number): Promise<SteamInstallStatus> {
+export async function steamInstallStatus(
+  appid: number,
+  locator: SteamLocator,
+): Promise<SteamInstallStatus> {
   try {
-    const steamPath = await getSteamPath();
+    const steamPath = await locator.locateSteam();
     if (steamPath === null) return { state: 'absent' };
     const libs = await steamLibraryDirs(steamPath);
     let downloading: SteamInstallStatus | null = null;

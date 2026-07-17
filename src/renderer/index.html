@@ -74,16 +74,27 @@
           <div class="popup-content">
             <!-- details: game stats (built from JS, same #info-panel id/styles as before). -->
             <div class="popup-info" id="info-panel"></div>
-            <!-- confirm: question + (install-only) destination path note. data-mode/data-install-via on
-                 #popup drive the note's visibility, exactly as the old confirm popup did. -->
+            <!-- confirm: question + (install-only) note. data-mode/data-install-via on #popup drive
+                 which note shows, exactly as the old confirm popup did: the card-installer variant needs
+                 the destination path (the installer may ask for it), the copy variant just explains what
+                 will happen, and steam gets no note at all. -->
             <div class="popup-confirm">
               <div class="popup-message" id="confirm-message"></div>
               <!-- Mixed markup: only the leading TEXT is localized via its own [data-i18n] span; the
                    <br/> and #confirm-path (filled from JS) stay untouched — no textContent on the parent. -->
               <div class="popup-detail" id="confirm-description">
-                <span data-i18n="launcher.installPathNote"
-                  >Since not all installers support silent mode, during installation you need to specify the following path:</span
-                ><br /><span class="confirm-path" id="confirm-path"></span>
+                <span class="note-installer"
+                  ><span data-i18n="launcher.installPathNote"
+                    >Since not all installers support silent mode, during installation you need to specify the following path:</span
+                  ><br /><span class="confirm-path" id="confirm-path"></span
+                ></span>
+                <span class="note-copy" data-i18n="launcher.copyNote"
+                  >The game will be copied to this PC and will run from there. It is not deleted from the
+                  card.</span
+                >
+                <span class="note-prefix" data-i18n="launcher.confirm.uninstallPrefixNote"
+                  >The game stays on the card - only the prefix is removed (saves inside it too).</span
+                >
               </div>
             </div>
             <!-- error: title + detail (arbitrary error text from main). -->
@@ -127,7 +138,10 @@
               <button id="power-shutdown" class="text-button" type="button" data-i18n="launcher.menu.shutdown">Shutdown</button>
               <button id="power-reboot" class="text-button" type="button" data-i18n="launcher.menu.reboot">Reboot</button>
               <button id="power-sleep" class="text-button" type="button" data-i18n="launcher.menu.sleep">Sleep</button>
-              <button id="power-minimize" class="text-button" type="button" data-i18n="launcher.menu.minimize">Minimize Playhook</button>
+              <!-- Label set from JS (applyPowerPrimary): "Minimize Playhook" on Desktop/Windows, "Close
+                   Playhook" (full quit) in Game Mode where there is no tray to minimize into. No data-i18n
+                   so it stays out of the i18n HTML test and a language change relabels it at render time. -->
+              <button id="power-minimize" class="text-button" type="button">Minimize Playhook</button>
               <button id="power-close" class="text-button" type="button" data-i18n="launcher.menu.close">Close</button>
             </div>
             <div class="actions-group" data-group="confirm">

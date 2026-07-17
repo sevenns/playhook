@@ -46,6 +46,26 @@ The channel literal lives in **one** source of truth and is bridged with compile
 The `test/ipc-channels.test.ts` suite guards **completeness**: every `IPC` channel must be exposed by
 exactly one preload. `satisfies Partial<>` cannot catch a *forgotten* channel — that test can.
 
+## Platform layer (OS-specific code)
+
+Playhook runs on Windows and on the Steam Deck / Linux (Windows games via Proton/umu-launcher). **All
+OS-specific behaviour lives behind the `Platform` bundle in `src/main/platform/`**, not scattered
+`process.platform` checks. When you add code that differs per OS:
+
+- Add the capability to an interface in `platform/types.ts` (the bundle is `ProcessMonitor`,
+  `SteamLocator`, `GameProcessLauncher`, `SavePathResolver`, `PowerBackend`, `resolveInstallDir`).
+- Implement it in **both** `platform/win32.ts` and `platform/linux.ts` (linux Proton helpers live in
+  `platform/*.linux.ts` / `umu.ts`). `createPlatform(process.platform)` selects the bundle once at
+  bootstrap; the rest of the code is platform-agnostic and receives it via DI (`ControllerDeps.platform`).
+- **Never change Windows behaviour** when adding the Linux side — the win32 implementation must stay 1:1
+  (the port's guiding invariant). Keep the OS-neutral fs/parse code (manifest, save-sync, `.acf`/VDF,
+  drive-watcher) shared — don't fork it.
+- Card format is a **Windows dictionary** on both OSes (`%APPDATA%`, `*.exe`, `install.type`); on Linux it
+  is interpreted relative to the game's Wine prefix. A `game.json` must work unchanged on both platforms —
+  Linux-only manifest fields (`winetricks`, `umuGameId`) are ignored on Windows, never rejected.
+- Extract the pure bits (path/env/argv construction, `/proc` parsing, prefix mapping) into electron-free
+  helpers and unit-test them (see `umu.ts`, `proc.ts`, `save-path.linux.ts`).
+
 ## Tests
 
 - Runner: **vitest** (`npm test`). Tests live in `test/`, run in plain Node with **no electron**

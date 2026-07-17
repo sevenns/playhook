@@ -2,14 +2,14 @@
 // Two launch paths, dispatched by manifest.raw.runAsAdmin:
 //
 // 1. Normal (default): `spawn` the .exe. We've settled on a direct self-contained .exe → the pid from
-//    spawn is stable. We watch for exit via the built-in `tasklist /FI "PID eq <pid>"` (no ps-list
-//    dependency and no ESM conflict), with debounce N=3.
+//    spawn is stable. We watch for exit through the injected ProcessMonitor (win32: `tasklist`;
+//    linux: /proc), with debounce N=3 — the launcher stays platform-agnostic.
 //
-// 2. Elevated (runAsAdmin): `spawn` cannot raise rights, so an .exe whose embedded manifest requires
-//    administrator fails with EACCES (CreateProcess → ERROR_ELEVATION_REQUIRED 740). We launch it via
-//    ShellExecuteExW with the "runas" verb (triggers UAC) through koffi (same FFI pattern as
+// 2. Elevated (runAsAdmin, win32 only): `spawn` cannot raise rights, so an .exe whose embedded manifest
+//    requires administrator fails with EACCES (CreateProcess → ERROR_ELEVATION_REQUIRED 740). We launch it
+//    via ShellExecuteExW with the "runas" verb (triggers UAC) through koffi (same FFI pattern as
 //    gamepad-global.ts). Monitoring CANNOT go through `tasklist` here — see the limitation below — so we keep
-//    the real process HANDLE and poll it with WaitForSingleObject, bypassing tasklist entirely.
+//    the real process HANDLE and poll it with WaitForSingleObject, bypassing the monitor entirely.
 //
 // Both paths return a GameProcess, so waitForStart/waitForExit stay agnostic. Process-polling is started
 // ONLY by the controller and only in launching/running.
@@ -17,15 +17,17 @@
 // Limitation: from a non-elevated app, `tasklist` does NOT see an elevated process — that is exactly
 // why the elevated path watches by HANDLE instead. For a normal direct .exe we assume the rights suffice.
 import path from 'node:path';
-import { spawn, execFile } from 'node:child_process';
-import { promisify } from 'node:util';
+import { spawn } from 'node:child_process';
 import koffi from 'koffi';
-import { type LaunchTarget, type ResolvedManifest } from '../shared/types';
+import {
+  type LaunchTarget,
+  type ResolvedManifest,
+  type ResolvedInstallerRun,
+} from '../shared/types';
+import { type ProcessMonitor, type ProcessSnapshot } from './platform/types';
 import { buildInstallerArgs, buildParameters } from './launch-args';
 import { delay } from './util';
 import { log } from './logger';
-
-const execFileAsync = promisify(execFile);
 
 const START_POLL_INTERVAL_MS = 1000;
 const EXIT_POLL_INTERVAL_MS = 2500;
@@ -62,38 +64,12 @@ function throwIfAborted(signal: AbortSignal | undefined): void {
 }
 
 /**
- * Single unfiltered `tasklist /NH /FO CSV` snapshot, lower-cased. One process spawn per poll iteration
- * (vs N for per-name filters) and an atomic view of all visible processes. Watched-image presence is a
- * substring check against this stdout — no CSV column parsing, exactly like `isProcessAlive` does for a
- * pid. Any error → empty string (everything reads as absent), matching the "error = dead" convention.
+ * True if any watched image name is present in the process snapshot. The matching SEMANTICS are a platform
+ * detail (win32: substring over a tasklist CSV; linux: exact basename over /proc — see ProcessMonitor),
+ * so callers just pass bare image names.
  */
-async function snapshotProcesses(): Promise<string> {
-  try {
-    const { stdout } = await execFileAsync('tasklist', ['/NH', '/FO', 'CSV'], { windowsHide: true });
-    return stdout.toLowerCase();
-  } catch {
-    return '';
-  }
-}
-
-/** True if any watched image name (already lower-cased) is present in the snapshot. */
-function anyVisible(snapshot: string, watchNames: readonly string[]): boolean {
-  return watchNames.some((name) => snapshot.includes(name));
-}
-
-/** Checks whether the process with the given pid is alive, via `tasklist`. Any error → treated as dead. */
-async function isProcessAlive(pid: number): Promise<boolean> {
-  try {
-    const { stdout } = await execFileAsync(
-      'tasklist',
-      ['/FI', `PID eq ${pid}`, '/NH', '/FO', 'CSV'],
-      { windowsHide: true },
-    );
-    // The CSV line contains the pid in quotes: "image","<pid>",... Absence → "INFO: No tasks".
-    return stdout.includes(`"${pid}"`);
-  } catch {
-    return false;
-  }
+function anyVisible(snapshot: ProcessSnapshot, watchNames: readonly string[]): boolean {
+  return watchNames.some((name) => snapshot.hasImageName(name));
 }
 
 // ── Win32 FFI for elevated launch (ShellExecuteEx "runas") ───────────────────
@@ -204,41 +180,6 @@ function loadKernel(): KernelLib {
 }
 
 /**
- * Force-kills a whole process tree by pid via `taskkill /PID <pid> /T /F`. A non-zero exit (the pid is
- * already gone) is swallowed — for a force-close, "not found" is success. Exported-adjacent helper used
- * only by the normal GameProcess.kill().
- */
-async function killTreeByPid(pid: number): Promise<void> {
-  try {
-    await execFileAsync('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true });
-  } catch {
-    // taskkill exits non-zero when the pid no longer exists → already dead, nothing to do.
-  }
-}
-
-/**
- * Force-kills every process with image name `imageName` via `taskkill /F /IM <name>`. Errors are
- * swallowed — a non-zero exit means the image isn't running (already dead), which is success for a
- * force-close. Kills only same-integrity-level processes (an elevated game is unaffected — that one is
- * terminated via its HANDLE instead). `imageName` is expected already lower-cased (matching is
- * case-insensitive in taskkill regardless).
- */
-export async function killImageByName(imageName: string): Promise<void> {
-  try {
-    await execFileAsync('taskkill', ['/F', '/IM', imageName], { windowsHide: true });
-  } catch {
-    // Non-zero exit = the image isn't running (already dead) → nothing to do.
-  }
-}
-
-/** True if ANY of the (already lower-cased) image names is present in a fresh single tasklist snapshot. */
-export async function anyImageAlive(imageNames: readonly string[]): Promise<boolean> {
-  if (imageNames.length === 0) return false;
-  const snapshot = await snapshotProcesses();
-  return anyVisible(snapshot, imageNames);
-}
-
-/**
  * Force-kills the given image names ELEVATED: ShellExecuteExW("runas") runs
  * `taskkill /F /T /IM <name> …` — ONE UAC prompt for the whole set. Needed for a runAsAdmin game whose
  * high-integrity processes a non-elevated taskkill can't touch (ACCESS_DENIED) and whose ShellExecuteEx
@@ -300,13 +241,23 @@ interface LaunchMode {
 
 const GAME_MODE: LaunchMode = { verbatim: false, hide: false };
 const INSTALLER_MODE: LaunchMode = { verbatim: true, hide: true };
+// Interactive installer (user disabled silent mode): same verbatim arg passthrough, but the wizard window
+// is shown (not hidden) so the user can click through it — incl. steps a silent install would skip.
+const INSTALLER_INTERACTIVE_MODE: LaunchMode = { verbatim: true, hide: false };
 // Uninstaller: hidden (silent), but verbatim:FALSE — unlike the installer, the uninstaller target's
 // file/args are LOGICAL tokens (a found .exe path possibly with spaces/Cyrillic, or registry-parsed
 // argv), so Node/CommandLineToArgvW quoting must re-quote them correctly.
 const UNINSTALLER_MODE: LaunchMode = { verbatim: false, hide: true };
 
-/** Normal launch: spawn the file and watch by pid via tasklist. Behaviour for games is 1:1 with the old code. */
-async function launchNormal(target: LaunchTarget, mode: LaunchMode): Promise<GameProcess> {
+/**
+ * Normal launch: spawn the file and watch by pid via the injected ProcessMonitor (win32: tasklist; linux:
+ * /proc). Behaviour for games is 1:1 with the pre-port code on Windows.
+ */
+async function launchNormal(
+  target: LaunchTarget,
+  mode: LaunchMode,
+  monitor: ProcessMonitor,
+): Promise<GameProcess> {
   return new Promise<GameProcess>((resolve, reject) => {
     const child = spawn(target.file, [...target.args], {
       cwd: target.cwd,
@@ -330,12 +281,12 @@ async function launchNormal(target: LaunchTarget, mode: LaunchMode): Promise<Gam
       child.unref();
       resolve({
         pid,
-        isAlive: () => isProcessAlive(pid),
+        isAlive: () => monitor.isPidAlive(pid),
         kill: async () => {
           // Reused-pid guard: `running` can outlive the real process by ~7.5s (the exit debounce), so a
-          // blind taskkill /PID could take down an unrelated process that inherited this pid. Only kill
-          // while the pid is still alive — accepting the tiny residual TOCTOU as best-effort.
-          if (await isProcessAlive(pid)) await killTreeByPid(pid);
+          // blind kill-tree could take down an unrelated process that inherited this pid. Only kill while
+          // the pid is still alive — accepting the tiny residual TOCTOU as best-effort.
+          if (await monitor.isPidAlive(pid)) await monitor.killTree(pid);
         },
         dispose: () => {},
       });
@@ -419,40 +370,52 @@ function launchElevated(target: LaunchTarget, mode: LaunchMode): GameProcess {
   };
 }
 
-/** Dispatches a LaunchTarget to the elevated (UAC) or normal backend per `target.runAsAdmin`. */
-async function launch(target: LaunchTarget, mode: LaunchMode): Promise<GameProcess> {
+/** Dispatches a LaunchTarget to the elevated (UAC, win32-only) or normal backend per `target.runAsAdmin`.
+ * The elevated backend monitors by HANDLE (koffi), so it ignores the ProcessMonitor. */
+async function launch(
+  target: LaunchTarget,
+  mode: LaunchMode,
+  monitor: ProcessMonitor,
+): Promise<GameProcess> {
   if (target.runAsAdmin) {
     return launchElevated(target, mode);
   }
-  return launchNormal(target, mode);
+  return launchNormal(target, mode, monitor);
 }
 
 /** Launches the game .exe (elevated or normal per the manifest) and returns a GameProcess. Throws on failure. */
-export async function launchGame(manifest: ResolvedManifest): Promise<GameProcess> {
+export async function launchGame(
+  manifest: ResolvedManifest,
+  monitor: ProcessMonitor,
+): Promise<GameProcess> {
   const target: LaunchTarget = {
     file: manifest.executablePath,
     args: manifest.raw.args,
     cwd: manifest.cwd,
     runAsAdmin: manifest.raw.runAsAdmin,
   };
-  return launch(target, GAME_MODE);
+  return launch(target, GAME_MODE, monitor);
 }
 
 /**
- * Launches the installer silently, feeding it the app-controlled install directory through the
- * family's dir-key. cwd is the installer's own folder on the card (the install dir may not exist yet —
- * it was just pre-cleaned, and the installer creates it). Returns a GameProcess; throws on failure.
+ * Launches the installer, feeding it the app-controlled install directory through the family's dir-key.
+ * `silent` (from settings) picks unattended vs a visible wizard (see buildInstallerArgs / the launch mode).
+ * cwd is the installer's own folder on the card (the install dir may not exist yet — it was just
+ * pre-cleaned, and the installer creates it). Returns a GameProcess; throws on failure.
  */
 export async function launchInstaller(
-  install: NonNullable<ResolvedManifest['install']>,
+  install: ResolvedInstallerRun,
+  silent: boolean,
+  monitor: ProcessMonitor,
 ): Promise<GameProcess> {
   const target: LaunchTarget = {
     file: install.installerPath,
-    args: buildInstallerArgs(install.type, install.dir, install.args),
+    // win32: installer-view dir == host dir; quoteDir:true bakes Inno's quotes for verbatim passthrough.
+    args: buildInstallerArgs(install.type, install.installerDir, install.args, true, silent),
     cwd: path.dirname(install.installerPath),
     runAsAdmin: install.runAsAdmin,
   };
-  return launch(target, INSTALLER_MODE);
+  return launch(target, silent ? INSTALLER_MODE : INSTALLER_INTERACTIVE_MODE, monitor);
 }
 
 /**
@@ -461,8 +424,11 @@ export async function launchInstaller(
  * command parsed from the registry. UNINSTALLER_MODE uses verbatim:false so the logical file/args are
  * re-quoted correctly (paths with spaces / Cyrillic). Returns a GameProcess; throws on failure.
  */
-export async function launchUninstaller(target: LaunchTarget): Promise<GameProcess> {
-  return launch(target, UNINSTALLER_MODE);
+export async function launchUninstaller(
+  target: LaunchTarget,
+  monitor: ProcessMonitor,
+): Promise<GameProcess> {
+  return launch(target, UNINSTALLER_MODE, monitor);
 }
 
 /**
@@ -518,9 +484,9 @@ export async function waitForWatchedStart(
   launcherPid: number | null,
   watchNames: readonly string[],
   graceSec: number,
+  monitor: ProcessMonitor,
   signal?: AbortSignal,
 ): Promise<{ readonly started: boolean }> {
-  const lowered = watchNames.map((name) => name.toLowerCase());
   const startedAt = Date.now();
   // Deadline for "the launcher never even appeared" (tasklist lag right after spawn — see below).
   const initialDeadline = startedAt + graceSec * 1000;
@@ -530,8 +496,8 @@ export async function waitForWatchedStart(
 
   for (;;) {
     throwIfAborted(signal);
-    const snapshot = await snapshotProcesses();
-    const gameVisible = anyVisible(snapshot, lowered);
+    const snapshot = await monitor.snapshot();
+    const gameVisible = anyVisible(snapshot, watchNames);
     if (gameVisible) return { started: true };
 
     if (launcherPid === null) {
@@ -542,7 +508,7 @@ export async function waitForWatchedStart(
       continue;
     }
 
-    const launcherAlive = snapshot.includes(`"${launcherPid}"`);
+    const launcherAlive = snapshot.hasPid(launcherPid);
     if (launcherAlive) {
       // The user may sit in the launcher (Steam sync, config, resolution picker) indefinitely — no timeout.
       launcherSeenAlive = true;
@@ -562,14 +528,57 @@ export async function waitForWatchedStart(
 /** RUNNING phase: resolves after N=3 consecutive reads with no watched process present (debounce). */
 export async function waitForWatchedExit(
   watchNames: readonly string[],
+  monitor: ProcessMonitor,
   signal?: AbortSignal,
 ): Promise<void> {
-  const lowered = watchNames.map((name) => name.toLowerCase());
   let missedReads = 0;
   for (;;) {
     throwIfAborted(signal);
-    const snapshot = await snapshotProcesses();
-    if (anyVisible(snapshot, lowered)) {
+    const snapshot = await monitor.snapshot();
+    if (anyVisible(snapshot, watchNames)) {
+      missedReads = 0;
+    } else {
+      missedReads += 1;
+      if (missedReads >= EXIT_DEBOUNCE_READS) return;
+    }
+    await delay(EXIT_POLL_INTERVAL_MS);
+  }
+}
+
+// ── Steam-mode waits ─────────────────────────────────────────────────────────
+// Steam mode has no launcher pid of ours (steam://rungameid returns instantly), so "is the game up?" is
+// asked of the ProcessMonitor by appid: on win32 that maps to the watch image names (Windows Steam runs
+// the `.exe`), on linux to the SteamAppId in /proc environ (robust for native AND Proton games). Mirrors
+// waitForWatchedStart(launcherPid=null) / waitForWatchedExit, only the "visible" signal differs.
+
+/** HANDOFF: wait for the Steam game (by appid) to appear within `graceSec`. */
+export async function waitForSteamStart(
+  appid: number,
+  watchNames: readonly string[],
+  graceSec: number,
+  monitor: ProcessMonitor,
+  signal?: AbortSignal,
+): Promise<{ readonly started: boolean }> {
+  const deadline = Date.now() + graceSec * 1000;
+  for (;;) {
+    throwIfAborted(signal);
+    if (await monitor.isSteamGameRunning(appid, watchNames)) return { started: true };
+    if (Date.now() >= deadline) return { started: false };
+    await delay(START_POLL_INTERVAL_MS);
+  }
+}
+
+/** RUNNING: resolve after N=3 consecutive reads with the Steam game (by appid) absent (debounce). */
+export async function waitForSteamExit(
+  appid: number,
+  watchNames: readonly string[],
+  monitor: ProcessMonitor,
+  signal?: AbortSignal,
+): Promise<void> {
+  let missedReads = 0;
+  for (;;) {
+    throwIfAborted(signal);
+    if (await monitor.isSteamGameRunning(appid, watchNames)) {
       missedReads = 0;
     } else {
       missedReads += 1;

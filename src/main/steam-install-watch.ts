@@ -6,6 +6,7 @@
 // seam below (accessors + enterReady), so the delicate re-arm/staleness logic stays in one place.
 import { type AppState, type GameInfo, type ResolvedManifest } from '../shared/types';
 import { steamInstallStatus, type SteamInstallStatus } from './steam';
+import { type SteamLocator } from './platform';
 import { log } from './logger';
 import { describe } from './util';
 
@@ -32,6 +33,8 @@ export interface SteamWatchDeps {
   isCardPresent(): boolean;
   /** Transition to `ready` with the given info (also re-arms/stops the poller, exactly as before). */
   enterReady(info: GameInfo): void;
+  /** Platform Steam locator (win32 registry / linux known paths), used for the .acf state read. */
+  steamLocator(): SteamLocator;
 }
 
 export class SteamInstallWatch {
@@ -86,7 +89,7 @@ export class SteamInstallWatch {
     try {
       let status: SteamInstallStatus = { state: 'absent' };
       try {
-        status = await steamInstallStatus(appid);
+        status = await steamInstallStatus(appid, this.deps.steamLocator());
       } catch (cause) {
         log.warn('[steam-watch] detect failed:', describe(cause));
       }

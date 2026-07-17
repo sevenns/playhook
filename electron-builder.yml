@@ -6,6 +6,11 @@ directories:
   output: release
   buildResources: build
 
+# Linux only: wraps the packed executable in a launcher that injects --no-sandbox inside a gamescope
+# (Game Mode) session — the flag must be on the real argv, which neither app.commandLine.appendSwitch nor
+# AppRun's own user-namespace probe can deliver there. No-op for the Windows targets. See the script.
+afterPack: scripts/after-pack.mjs
+
 # Only the compiled JS, assets, and dependency manifests are included in the build.
 files:
   - dist/**/*
@@ -29,6 +34,23 @@ nsis:
   oneClick: false
   perMachine: false
   allowToChangeInstallationDirectory: true
+
+# Linux / SteamOS build (Steam Deck port). AppImage is the only target — self-contained, runnable from
+# any distro, and electron-updater supports AppImage in-place updates (blockmap deltas). `icon.png` is the
+# 256×256 app icon (electron-builder may warn about size but it works). `category: Game` sets the .desktop
+# category. The native drivelist/koffi unpack above applies to Linux too (koffi is unused there but stays
+# a dependency of the win32 build). The umu-launcher zipapp is bundled via extraResources (added in Э4).
+linux:
+  icon: icon.png
+  category: Game
+  target:
+    - AppImage
+  # Bundle the umu-launcher zipapp OUTSIDE asar (it is run as `python3 umu-run …` — Р1). Fetched into
+  # resources/umu by `npm run build:umu` (scripts/fetch-umu.mjs) before the Linux pack. Lands at
+  # <resourcesPath>/umu/umu-run in the AppImage.
+  extraResources:
+    - from: resources/umu
+      to: umu
 
 # Auto-update channel (electron-updater): the app reads `latest.yml` + the installer from this repo's
 # GitHub Releases. Public repo → no token on the client. Update `owner`/`repo` if the GitHub repo is

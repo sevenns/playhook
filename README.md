@@ -3,25 +3,30 @@
   <h1>Playhook</h1>
   <p><strong>Bring console vibes to your PC.</strong></p>
   <p>
-    <a href="#building-from-source-for-developers"><img src="https://img.shields.io/badge/platform-Windows%2010%2F11%20x64-0078D6?logo=windows&logoColor=white" alt="Platform"></a>
+    <a href="#building-from-source-for-developers"><img src="https://img.shields.io/badge/platform-Windows%2010%2F11%20%7C%20Steam%20Deck%20(Linux)-0078D6" alt="Platform"></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="License: MIT"></a>
     <a href="https://github.com/sevenns/playhook/actions/workflows/build-windows.yml"><img src="https://github.com/sevenns/playhook/actions/workflows/build-windows.yml/badge.svg" alt="Build Windows"></a>
+    <a href="https://github.com/sevenns/playhook/actions/workflows/build-linux.yml"><img src="https://github.com/sevenns/playhook/actions/workflows/build-linux.yml/badge.svg" alt="Build Linux"></a>
   </p>
 </div>
 
-Playhook is a background Windows app that turns a removable drive into a console-style game
+Playhook is a background app that turns a removable drive into a console-style game
 cartridge. It lives in the tray, detects when you insert a card carrying a game (a `game.json`
 manifest), and pops up a game card. Press **A** on an Xbox gamepad (or click **Play**) and it
 syncs your saves onto the PC, launches the game, tracks the playtime, then copies the saves
 back to the card when you quit — so your progress travels with the card across machines.
+
+It runs on **Windows** and on the **Steam Deck / Linux** (SteamOS), where the same Windows game
+cards launch through Proton — see [Steam Deck](#steam-deck-linux--steamos).
 
 The card can carry the game itself, an **installer** for heavy games
 ([Install mode](#install-mode-heavy-games-on-slow-media)), or just a **pointer to a Steam app** by
 `appid` that Playhook installs, launches and uninstalls through your local Steam client
 ([Steam mode](#steam-mode-launch-and-install-steam-games)).
 
-> **Windows-only by design.** The app uses `tasklist` and the native `drivelist` module; it
-> does not work on macOS/Linux.
+> **Cross-platform.** Playhook runs on Windows and on the Steam Deck / Linux (SteamOS). On Linux the
+> same Windows game cards run through **Proton** (via [umu-launcher](https://github.com/Open-Wine-Components/umu-launcher));
+> native Linux/ELF games are not a target. macOS is not supported. See [Steam Deck](#steam-deck-linux--steamos).
 
 > **Security note.** The card is untrusted input — every path in the manifest is validated
 > against directory traversal and an allowlist before anything is read or written. See
@@ -148,7 +153,9 @@ E:\
   (a plain launch fails with `EACCES` / `ERROR_ELEVATION_REQUIRED`). Playhook then launches it
   elevated via a UAC prompt (`ShellExecuteEx` `runas`) and monitors it by process HANDLE instead of
   `tasklist` (a non-elevated app can't see an elevated process). Opt-in on purpose — Playhook never
-  silently escalates an untrusted card's exe. Windows-only: `true` on other platforms is an error.
+  silently escalates an untrusted card's exe. On the Steam Deck / Linux there is no elevation under
+  Proton, so `runAsAdmin: true` is a **no-op** (logged) rather than an error — the same card stays
+  valid on both platforms.
 - `watchProcesses` — for **launcher / wrapper** games, where `executable` spawns a launcher that
   starts the game in a **separate process** and then exits (so watching the spawned pid would wrongly
   report "closed" the instant the launcher quits). List the **game's own** process image names here:
@@ -353,18 +360,117 @@ Other PC state under `%APPDATA%\playhook\`:
 
 ---
 
+## Steam Deck (Linux / SteamOS)
+
+Playhook runs on the Steam Deck (and desktop Linux/SteamOS). The **same `game.json` cards** work as on
+Windows — the Windows dictionary (`%APPDATA%`, `executable: *.exe`, `install.type: nsis|inno`) is kept,
+and on Linux it is interpreted **relative to each game's Proton (Wine) prefix**. Windows games run
+through [umu-launcher](https://github.com/Open-Wine-Components/umu-launcher) + GE-Proton; native
+Linux/ELF games are not a target.
+
+### Install
+
+1. Download the **`.AppImage`** from the [Releases](https://github.com/sevenns/playhook/releases/latest)
+   page, mark it executable (`chmod +x Playhook-*.AppImage`) and run it once in **Desktop Mode**.
+2. In Steam, **Add a Non-Steam Game** and pick the AppImage, so it appears in your library and can be
+   launched from **Game Mode** like any other title.
+3. **First launch needs the internet:** umu downloads GE-Proton and the Steam Runtime on the first run
+   (cached afterwards). The status just shows "Running" while this happens — give it a minute.
+
+`python3` must be present (preinstalled on SteamOS; on desktop Linux install it if the app reports it's
+missing — the bundled umu launcher is a Python zipapp).
+
+### Preparing a card for the Deck
+
+The card format is identical, with two filesystem caveats that come from Linux being **case-sensitive**
+and not sharing Windows' separator:
+
+- **Path case must match exactly.** `"executable": "Game.EXE"` won't find `game.exe` on ext4. Playhook
+  detects this specific case and the error suggests the right name ("found `game.exe`, fix the case"),
+  but the card should carry the exact on-disk case. `exFAT` is case-insensitive, so a card prepared on
+  Windows works as-is there.
+- **Backslashes are fine.** `"bin\\game.exe"` is normalized to `bin/game.exe`, so a Windows-authored
+  card loads unchanged.
+
+**Which filesystem for the card:**
+
+| Filesystem | Hot-swap in Game Mode | Writable from Windows | Notes |
+|---|---|---|---|
+| **exFAT** | ✅ (Playhook mounts it) | ✅ | **The one to use for a card shared with a Windows PC.** Case-insensitive, so path case doesn't bite. |
+| **ext4** | ✅ (SteamOS automounts) | ❌ | Prepare the card on the Deck/Linux. Fine if the card never leaves the Deck. |
+
+SteamOS Game Mode itself only automounts **ext4** — an exFAT/NTFS card is left unmounted and invisible to
+everything. Playhook closes that gap: in Game Mode it mounts an inserted-but-unmounted removable card
+itself (via udisks2, the same `/run/media/deck/<label>` the system would use), so exFAT cards hot-swap
+like ext4 ones and no Desktop-Mode detour is needed. Only removable volumes with a real filesystem are
+ever touched — the internal drive can't match.
+
+That makes **one physical card for both Windows and the Deck** the normal setup: format it exFAT, prepare
+it on Windows, and it works on both with the same `game.json`.
+
+### Where installs and saves live
+
+- **Per-game Proton prefix:** `~/.config/playhook/prefixes/<id>` — one Wine prefix per game (isolates
+  runtimes, DLL overrides and saves).
+- **Install mode** puts the game **inside that prefix** (`…/drive_c/playhook/games/<id>`) — i.e. on the
+  Deck's **internal drive**, not the card. On a 64 GB Deck this adds up; keep an eye on it.
+- **Saves** are resolved inside the prefix: `%APPDATA%` → `…/drive_c/users/steamuser/AppData/Roaming`,
+  and likewise for `%LOCALAPPDATA%`/`%LOCALLOW%`/`%USERPROFILE%`/`%DOCUMENTS%`. For Steam-mode cards the
+  save lives in that game's Steam **compatdata** prefix. The card still holds the traveling copy via
+  `saveOnCard`, so progress moves between machines as usual.
+- **Uninstall clears the whole prefix** for that game (game files, provisioned runtimes, and any in-prefix
+  saves), reclaiming the disk. Available for install-mode games **and** for a plain **Executable** game
+  once its prefix exists — there the game stays on the card and only the prefix is cleared. The canonical
+  save survives on the card when `saveOnCard` is set.
+
+### Advanced (Linux-only manifest fields)
+
+These are ignored on Windows, so a dual-platform card can carry them safely:
+
+- **`winetricks`** (per game) and **`install.winetricks`** — extra winetricks verbs provisioned into the
+  prefix before launch/install. Install mode always gets a baseline set (`mfc42 gdiplus vcrun6 vcrun2008
+  riched20`) so skinned Inno installers work; add more for a specific game (e.g. `dotnet48`, or
+  `vd=1920x1080` to force a virtual desktop).
+- **`umuGameId`** — a Steam appid or custom `umu-<id>` so umu applies that game's protonfix.
+
+### Game Mode notes
+
+- **No tray in Game Mode.** Playhook is a single window that always shows an empty "Insert a game card"
+  screen when no card is present, and surfaces manifest errors on screen. **Settings and the card editor
+  (Configure) open from the tray, so they are Desktop-Mode only.**
+- **Cards are mounted automatically**, including exFAT/NTFS ones that Game Mode itself ignores (see
+  [Which filesystem for the card](#preparing-a-card-for-the-deck)) — insert and eject just work.
+- **Power menu** (Shutdown/Reboot/Sleep) works from Game Mode via `systemctl` (logind).
+- **The System menu's primary item is "Close Playhook"** (a full quit) instead of "Minimize Playhook" —
+  there is no tray to minimize into; quitting returns you to the Steam library.
+- **No autostart in Game Mode** — the app lives as a non-Steam game. In Desktop Mode it writes a
+  `~/.config/autostart/playhook.desktop` entry.
+
+### Limitations on Linux
+
+- **Repacks with internal compression won't install.** FitGirl/DODI/RG-style repacks whose installer
+  unpacks with its own 32-bit decompressor (ISDone/freearc) exhaust Wine's 32-bit address space and
+  crash mid-install — this is a Wine/32-bit ceiling, not a Playhook bug, and retrying is a lottery. Use a
+  **clean distributive**, or pre-extract the game on Windows and copy the ready folder as a normal
+  (non-install) card.
+- **First run needs network** (GE-Proton / Steam Runtime download).
+- **Save-sync for Windows dictionary paths** only happens once the game's prefix exists (first launch);
+  before that there is simply nothing to sync.
+
+---
+
 ## Building from source (for developers)
 
 ### Requirements
 
-- **Windows 10/11 x64.**
+- **Windows 10/11 x64**, or **Linux / SteamOS** (for the Steam Deck build — see below).
 - **Node.js 18+** and npm.
 - **Native module build tools** — required to rebuild `drivelist` for Electron:
   - Visual Studio Build Tools with the "Desktop development with C++" component,
   - Python 3.x in `PATH`.
 
   (`koffi` ships prebuilt, so the C++ toolchain is needed only for `drivelist`.)
-- **Xbox gamepad** (optional — there is a mouse fallback).
+- **Xbox gamepad** (optional — keyboard and mouse work too).
 - A removable storage device (USB drive, SD card, etc.) with a prepared `game.json` manifest.
 
 ### Install, build, run
@@ -403,6 +509,22 @@ The configuration lives in [`electron-builder.yml`](electron-builder.yml). For `
 > ⚠️ Verify on a real packaged build that `drivelist` was unpacked from asar and the card is
 > detected. If not, make sure `node_modules/drivelist/**` is included in `asarUnpack`.
 
+#### Linux / Steam Deck build
+
+Build the `.AppImage` on Linux (or via the [Build Linux](.github/workflows/build-linux.yml) CI
+workflow — `workflow_dispatch` produces an artifact, a `v*` tag publishes to the release):
+
+```bash
+npm ci
+npm run build:umu      # fetch the bundled umu-launcher zipapp into resources/umu/ (pinned)
+npm run dist           # build + electron-builder → release/*.AppImage
+```
+
+`build:umu` downloads the umu-launcher zipapp that ships as `extraResources` (Linux target only). The
+`linux` block in [`electron-builder.yml`](electron-builder.yml) targets AppImage; `drivelist` is rebuilt
+for the Electron ABI by `electron-builder install-app-deps` on the Linux runner. `koffi` stays a
+dependency but is never called on Linux (all FFI is behind lazy `win32` guards).
+
 ---
 
 ## Releasing & auto-update
@@ -414,11 +536,13 @@ Release flow:
 
 1. Bump `version` in [`package.json`](package.json) (e.g. `0.1.1` → `0.1.2`).
 2. Commit, then push a matching tag: `git tag v0.1.2 && git push origin v0.1.2`.
-3. The [Build Windows](.github/workflows/build-windows.yml) workflow builds and uploads the
-   installer + `latest.yml` to a **draft** GitHub Release `v0.1.2`.
+3. The [Build Windows](.github/workflows/build-windows.yml) and [Build Linux](.github/workflows/build-linux.yml)
+   workflows build and upload the Windows installer + `latest.yml` and the Linux `.AppImage` +
+   `latest-linux.yml` to the same **draft** GitHub Release `v0.1.2`.
 4. **Publish the draft release** on GitHub to make it live (and visible on the Releases page).
 5. Each running app checks on startup and every 6h, downloads the update silently, and installs
    it on the **next quit** (it never interrupts a running game). See `[updater]` lines in the log.
+   The **NSIS** build and the **AppImage** both self-update; the portable `.exe` does not.
 
 Notes:
 
@@ -430,13 +554,17 @@ Notes:
 
 ### Autostart
 
-The app registers itself for autostart via `app.setLoginItemSettings({ openAtLogin: true })`.
+On **Windows** the app registers itself via `app.setLoginItemSettings({ openAtLogin: true })`.
 
 - It always starts hidden in the tray (no flag needed): the window appears only when a valid game
   card is detected.
 - Guaranteed for the **NSIS installation**; for **portable** it is best-effort (the path to the
   exe may change).
 - To disable: *Settings → Apps → Startup* in Windows.
+
+On **Linux** `setLoginItemSettings` doesn't exist. In **Desktop Mode** the app writes a
+`~/.config/autostart/playhook.desktop` entry (`Exec=` = the AppImage path, best-effort). In **Game Mode**
+there is no autostart — Playhook lives as a non-Steam game you launch from the library.
 
 ---
 
@@ -498,7 +626,7 @@ silently fails.
 src/
   main/        # all work with the FS/processes/disks (Electron main)
   preload/     # typed contextBridge bridge
-  renderer/    # UI + gamepad reading (no Node)
+  renderer/    # UI + gamepad/keyboard input (no Node)
   shared/      # shared contract of types/IPC channels
 ```
 
@@ -517,10 +645,12 @@ functional style). Please run `npm run typecheck` before opening a PR.
 
 - **Is the SmartScreen warning normal?** Yes. The builds aren't code-signed, so Windows warns on
   first run. Choose *More info → Run anyway*. Auto-update still works without signing.
-- **Why Windows-only?** Process detection uses `tasklist` and device detection uses the native
-  `drivelist` module — both Windows-specific.
-- **Does it work without a gamepad?** Yes. Every gamepad action has a mouse fallback (click
-  **Play**, etc.).
+- **Does it run on the Steam Deck / Linux?** **Yes.** The same Windows game cards launch through Proton
+  (via umu-launcher) on SteamOS/Linux — see [Steam Deck](#steam-deck-linux--steamos). Native Linux/ELF
+  games and macOS are not supported.
+- **Does it work without a gamepad?** Yes — mouse and keyboard both work. Keyboard: **WASD / arrow keys**
+  to move, **Space / Enter** to activate, **Tab / Backspace** (or **Esc**) to go back. Every gamepad
+  action also has a mouse fallback (click **Play**, etc.).
 - **Can I use it with Steam games?** **Yes** — via [Steam mode](#steam-mode-launch-and-install-steam-games):
   a `game.json` with a `steam` block launches, installs and uninstalls the game through your local Steam
   client (the card is just a pointer by `appid`). For a **non-Steam** wrapper/launcher `.exe`, point it at

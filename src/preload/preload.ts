@@ -17,6 +17,8 @@ const CHANNELS = {
   actionLaunch: 'action:launch',
   actionUninstall: 'action:uninstall',
   actionHide: 'action:hide',
+  actionQuit: 'action:quit',
+  gameModeRequest: 'app:game-mode-request',
   actionOpenSteamDownloads: 'action:open-steam-downloads',
   actionShutdown: 'action:shutdown',
   actionReboot: 'action:reboot',
@@ -25,6 +27,7 @@ const CHANNELS = {
   errorShow: 'error:show',
   audioUpdate: 'audio:update',
   audioRequest: 'audio:request',
+  windowFocus: 'window:focus',
   heroUpdate: 'hero:update',
   heroRequest: 'hero:request',
   libraryUpdate: 'library:update',
@@ -44,6 +47,11 @@ const api: RendererApi = {
       callback(state);
     });
   },
+  onWindowFocus(callback: (focused: boolean) => void): void {
+    ipcRenderer.on(CHANNELS.windowFocus, (_event: IpcRendererEvent, focused: boolean) => {
+      callback(focused);
+    });
+  },
   requestState(): Promise<AppState> {
     return ipcRenderer.invoke(CHANNELS.stateRequest) as Promise<AppState>;
   },
@@ -55,6 +63,12 @@ const api: RendererApi = {
   },
   requestHide(): void {
     ipcRenderer.send(CHANNELS.actionHide);
+  },
+  requestQuit(): void {
+    ipcRenderer.send(CHANNELS.actionQuit);
+  },
+  requestGameMode(): Promise<boolean> {
+    return ipcRenderer.invoke(CHANNELS.gameModeRequest) as Promise<boolean>;
   },
   openSteamDownloads(): void {
     ipcRenderer.send(CHANNELS.actionOpenSteamDownloads);

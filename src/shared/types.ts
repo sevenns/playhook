@@ -18,25 +18,92 @@ export const CARD_STATS_FILENAME = 'stats.json' as const;
  * When present, the card carries an INSTALLER (not the game itself): the app runs it silently,
  * feeding it the install directory through the installer's own dir-key, and only afterwards does
  * `executable` resolve relative to that install directory (not the card root). See ResolvedManifest.
+ *
+ * `type: 'copy'` is the exception: nothing is installed and no process runs — the card carries the
+ * game's directory and the app copies it into the install dir ("move game to PC" in the UI). It reuses
+ * this block because everything AROUND the installer run is identical (install dir, Install/Play
+ * routing, requiresInstall, uninstall).
  */
 export interface InstallManifest {
-  /** Path to the installer (e.g. setup.exe) RELATIVE to the card root. */
+  /**
+   * Path RELATIVE to the card root. For `nsis`/`inno`/`custom`: the installer file (e.g. setup.exe).
+   * For `copy`: the root of the game DIRECTORY to copy to the PC.
+   */
   readonly installer: string;
   /**
    * Installer family — decides how the install directory is passed silently:
    * `nsis` → `/S /D=<dir>`, `inno` → `/VERYSILENT /DIR="<dir>"`, `custom` → caller-supplied `args`
    * with a single `{dir}` placeholder. MSI is out of MVP (its dir-property name isn't standardized).
+   * `copy` runs no installer at all — the app copies `installer` (a directory) into the install dir.
    */
-  readonly type: 'nsis' | 'inno' | 'custom';
-  /** Run the installer elevated (UAC). Forbidden for `custom` (the card would control elevated argv). */
+  readonly type: 'nsis' | 'inno' | 'custom' | 'copy';
+  /**
+   * Run the installer elevated (UAC). Forbidden for `custom` (the card would control elevated argv)
+   * and for `copy` (no process to elevate).
+   */
   readonly runAsAdmin: boolean;
   /**
    * For `custom`: the full argument list, with exactly one token containing the `{dir}` placeholder
    * (the install directory is substituted in). For `nsis`/`inno`: optional EXTRA flags appended to the
-   * built-in silent + dir flags.
+   * built-in silent + dir flags. Forbidden (must be empty) for `copy`.
    */
   readonly args: readonly string[];
+  /**
+   * Linux-only (Р7b): extra winetricks verbs provisioned into the game's Wine prefix before the installer
+   * runs, on top of the app's baseline set (e.g. a skinned Inno installer needing `mfc42`/`gdiplus`, or a
+   * game needing `dotnet48`). Ignored on Windows. Empty by default (schema `.default([])`).
+   */
+  readonly winetricks: readonly string[];
 }
+
+/**
+ * The install types that actually RUN an installer process, i.e. everything but `copy`.
+ * Narrowing a parameter to this makes the compiler PROVE that `copy` never reaches installer-argv or
+ * uninstaller code (where it would otherwise be silently mistaken for nsis) — the caller must rule it
+ * out explicitly. Preferred over a runtime throw: the guarantee holds at compile time.
+ */
+export type InstallerRunType = Exclude<InstallManifest['type'], 'copy'>;
+
+/** Fields shared by every resolved install descriptor, whatever the type (see ResolvedInstall). */
+interface ResolvedInstallBase {
+  /** Absolute path on the card: the installer file, or — for `copy` — the game directory to copy. */
+  readonly installerPath: string;
+  readonly runAsAdmin: boolean;
+  readonly args: readonly string[];
+  /**
+   * Extra winetricks verbs (Р7b) provisioned into the game's Wine prefix before install, on top of the
+   * linux baseline set. Linux-only; ignored on Windows. Empty by default.
+   */
+  readonly winetricks: readonly string[];
+  /**
+   * Host-view of the app-controlled install directory: every fs op (pre-clean, uninstaller search,
+   * sweep) and the resolved `executable` live under it. win32: `%LOCALAPPDATA%\playhook\games\<id>`;
+   * linux: `<pfx>/drive_c/playhook/games/<id>` (inside the game's Wine prefix — Р7).
+   */
+  readonly dir: string;
+  /**
+   * Installer-view of the SAME directory, fed to the silent dir-arg (`/DIR=` / `/D=`). win32: identical
+   * to `dir`; linux: `C:\playhook\games\<id>` — the path the installer sees under Wine (Р7).
+   */
+  readonly installerDir: string;
+}
+
+/** A resolved install that RUNS an installer — the only shape installer/uninstaller code accepts. */
+export interface ResolvedInstallerRun extends ResolvedInstallBase {
+  readonly type: InstallerRunType;
+}
+
+/** A resolved `copy` install: `installerPath` is a DIRECTORY, copied wholesale into `dir`. */
+export interface ResolvedCopyInstall extends ResolvedInstallBase {
+  readonly type: 'copy';
+}
+
+/**
+ * Resolved install descriptor. A discriminated union on `type` so that ruling out `copy` narrows the
+ * whole descriptor — that is what lets the compiler prove `copy` never reaches installer-argv or
+ * uninstaller code, instead of it silently falling into the nsis branch.
+ */
+export type ResolvedInstall = ResolvedInstallerRun | ResolvedCopyInstall;
 
 /**
  * Optional `steam` block in `game.json` (Steam mode).
@@ -103,6 +170,18 @@ export interface GameManifest {
   readonly sounds?: SoundManifest;
   /** Optional looping background music (card-relative path), played while the window is visible. */
   readonly backgroundMusic?: string;
+  /**
+   * Linux-only (Р7b): extra winetricks verbs provisioned into the game's Wine prefix before the game
+   * launches, on top of the app's baseline set (e.g. `d3dx9` for an old DX9 title). Ignored on Windows.
+   * Empty by default (schema `.default([])`).
+   */
+  readonly winetricks: readonly string[];
+  /**
+   * Linux-only (Р7i): the umu `GAMEID` used when launching the game — a Steam appid or a custom UMU_ID —
+   * so umu applies that game's protonfix instead of the generic `umu-default`. Absent → `umu-default`.
+   * Ignored on Windows.
+   */
+  readonly umuGameId?: string;
 }
 
 /** UI sound-effect slots. Each maps to a file in game.json (all optional). */
@@ -143,21 +222,20 @@ export interface ResolvedManifest {
   /** Resolved, card-relative hero image paths (normalized to an array when at least one is set). */
   readonly heroImagePaths?: readonly string[];
   readonly saveOnCardPath?: string;
+  /**
+   * The Windows-dictionary save location (`%APPDATA%\…`), stored VERBATIM — a DEFERRED field (Р5/Э6).
+   * Only its syntax is validated at read time (prefix allowlist + no traversal); the physical folder is
+   * resolved per-game at sync time via the platform SavePathResolver. This matters on Linux, where the
+   * real location lives inside the game's Wine prefix / Steam compatdata and may not exist until the first
+   * launch — resolving it eagerly (and rejecting the card when absent) would break install/steam modes.
+   */
   readonly pcSavePath?: string;
   /** Resolved, card-relative sound-effect file paths (any subset present). */
   readonly soundPaths?: Partial<Record<SfxName, string>>;
   /** Resolved background-music file path. */
   readonly backgroundMusicPath?: string;
   /** Resolved install descriptor (install mode only). */
-  readonly install?: {
-    /** Absolute path to the installer (setup.exe) on the card. */
-    readonly installerPath: string;
-    readonly type: InstallManifest['type'];
-    readonly runAsAdmin: boolean;
-    readonly args: readonly string[];
-    /** The install directory the app controls: `%LOCALAPPDATA%\playhook\games\<id>`. */
-    readonly dir: string;
-  };
+  readonly install?: ResolvedInstall;
   /** Resolved Steam descriptor (Steam mode only). When present, launch/install go through steam://. */
   readonly steam?: {
     readonly appid: number;
@@ -252,10 +330,19 @@ export interface GameInfo {
   readonly installDir?: string;
   /**
    * How the game is installed/launched when `requiresInstall` is true. `'steam'` → the install action
-   * opens `steam://install/<appid>` (no card path, no silent-mode note). Undefined → an ordinary card
-   * game or a card-installer game. Lets the renderer pick the right confirm copy.
+   * opens `steam://install/<appid>` (no card path, no silent-mode note). `'copy'` → the card's game
+   * directory is copied to the PC (no installer runs: no silent-mode caveat, and the destination path is
+   * of no use to the user). Undefined → an ordinary card game or a card-INSTALLER game, the only case
+   * that shows the path. Lets the renderer pick the right confirm copy.
    */
-  readonly installVia?: 'steam';
+  readonly installVia?: 'steam' | 'copy';
+  /**
+   * Linux only: `canUninstall` is set for a NORMAL executable game whose Wine prefix exists — so the
+   * "Uninstall" action clears that Proton prefix (runtimes + any in-prefix saves), NOT an installed game.
+   * The game itself stays on the card. Lets the renderer show the prefix-cleanup confirm copy instead of
+   * the "uninstall from PC" one. Undefined for install/steam/copy modes and on Windows.
+   */
+  readonly prefixCleanupOnly?: boolean;
   /**
    * Steam mode only: a download/update is in progress (the `.acf` exists but isn't fully installed).
    * Drives a non-blocking "Installing…" indicator — NOT a blocking `installing` state (a Steam download
@@ -289,6 +376,12 @@ export type AppState =
   | { readonly kind: 'ready'; readonly game: GameInfo }
   | { readonly kind: 'installing'; readonly game: GameInfo }
   | { readonly kind: 'uninstalling'; readonly game: GameInfo }
+  /**
+   * Linux-only (Р7g): the game's Wine prefix is being provisioned (winetricks) before the installer/game
+   * runs. A transient screen shown WITHIN installing/launching; the renderer shows "Configuring Proton..."
+   * and appends a rotating funny suffix after a minute (Р7j). Reverts to the prior state when done.
+   */
+  | { readonly kind: 'configuringProton'; readonly game: GameInfo }
   | { readonly kind: 'syncing-in'; readonly game: GameInfo }
   | { readonly kind: 'launching'; readonly game: GameInfo }
   | {
@@ -369,6 +462,13 @@ export interface AppSettings {
    * the empty screen stays on card removal AND is shown at startup.
    */
   readonly alwaysShowEmptyScreen: boolean;
+  /**
+   * Disable trying silent mode for install-mode installers (Linux/Proton). Default false (installers run
+   * unattended). When true, the installer shows its wizard so the user can click through steps a silent
+   * install would skip — e.g. a repack's crack/patch flagged `skipifsilent`. The app still steers the
+   * install directory via the dir-key; the user must keep it for the completion check to find the exe.
+   */
+  readonly disableSilentInstall: boolean;
 }
 
 /**
@@ -394,12 +494,22 @@ export const IPC = {
   stateUpdate: 'state:update',
   /** renderer → main: request the current state (on window startup). */
   stateRequest: 'state:request',
+  /** main → game-renderer: the launcher window gained (true) / lost (false) OS focus. The renderer gates
+   * gamepad input on this so a BACKGROUND launcher (e.g. under gamescope, where Chromium keeps feeding the
+   * unfocused window gamepad input) doesn't act on presses meant for the running game. */
+  windowFocus: 'window:focus',
   /** renderer → main: the user pressed A / clicked "Play". */
   actionLaunch: 'action:launch',
   /** renderer → main: the user confirmed "Uninstall" — remove the installed install-mode game. */
   actionUninstall: 'action:uninstall',
   /** renderer → main: hide the launcher window to the tray (the "Hide" button on the empty screen). */
   actionHide: 'action:hide',
+  /** renderer → main: quit the whole app. In Game Mode (gamescope) the power menu's primary item becomes
+   * "Close Playhook" (there is no tray to minimize into), which sends this instead of actionHide. */
+  actionQuit: 'action:quit',
+  /** renderer → main (invoke): whether this is a SteamOS Game Mode (gamescope) session. Seeded once at
+   * startup so the renderer can adapt the UI (e.g. "Minimize" → "Close Playhook"). */
+  gameModeRequest: 'app:game-mode-request',
   /** renderer → main: open Steam's Downloads page (steam://open/downloads) — used by the Play button
    * while a Steam download is in progress, so the user can pause/resume it in Steam itself. */
   actionOpenSteamDownloads: 'action:open-steam-downloads',
@@ -459,6 +569,8 @@ export const IPC = {
   settingsSetAutoUpdate: 'settings:set-auto-update',
   /** settings-renderer → main: toggle keeping the empty "no card" screen visible (payload boolean). */
   settingsSetAlwaysShowEmptyScreen: 'settings:set-always-show-empty-screen',
+  /** settings-renderer → main: toggle disabling silent installer mode (payload boolean). */
+  settingsSetDisableSilentInstall: 'settings:set-disable-silent-install',
   /** settings-renderer → main: change the UI theme (payload ThemeMode). */
   settingsSetTheme: 'settings:set-theme',
   /** settings-renderer → main: toggle pre-release (beta) updates (payload boolean). */
@@ -631,10 +743,16 @@ export type ConfigPickResult =
 /** API that preload exposes on `window.api`. */
 export interface RendererApi {
   onStateUpdate(callback: (state: AppState) => void): void;
+  /** Launcher window focus changes (true = foreground). Used to gate gamepad input while backgrounded. */
+  onWindowFocus(callback: (focused: boolean) => void): void;
   requestState(): Promise<AppState>;
   requestLaunch(): void;
   requestUninstall(): void;
   requestHide(): void;
+  /** Quit the whole app (Game Mode's "Close Playhook" — no tray to minimize into). */
+  requestQuit(): void;
+  /** Whether this is a SteamOS Game Mode (gamescope) session, seeded once at startup. */
+  requestGameMode(): Promise<boolean>;
   /** Open Steam's Downloads page so the user can pause/resume a Steam download from Steam itself. */
   openSteamDownloads(): void;
   /** Power off the PC (after the in-launcher confirm). */
@@ -679,6 +797,8 @@ export interface SettingsApi {
   setAutoUpdate(mode: AutoUpdateMode): void;
   /** Toggle keeping the empty "no card" screen visible instead of hiding to the tray. */
   setAlwaysShowEmptyScreen(on: boolean): void;
+  /** Toggle disabling silent installer mode (installers show their wizard when on). */
+  setDisableSilentInstall(on: boolean): void;
   setTheme(mode: ThemeMode): void;
   setPrerelease(on: boolean): void;
   setSummonHotkey(on: boolean): void;

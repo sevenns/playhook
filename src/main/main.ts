@@ -3,8 +3,6 @@
 // no game it stays hidden in the tray. Closing the window hides it to the tray, not quits.
 import path from 'node:path';
 import fs from 'node:fs';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
 import { app, ipcMain, Menu, powerSaveBlocker, shell, type Tray } from 'electron';
 import { log, logFilePath } from './logger';
 import { StateManager } from './state';
@@ -22,12 +20,21 @@ import { GameConfigService } from './game-config';
 import { ConfigureWindow } from './configure-window';
 import { LocaleService } from './locale';
 import { createPowerService } from './power';
-import { suspendToSleep } from './power-native';
 import { createKeepAwakeService, type KeepAwakeService } from './keep-awake';
+import { createPlatform } from './platform';
+import { isGamescopeSession } from './gamescope';
 import { IPC } from '../shared/types';
 import { type Locale } from '../shared/i18n/index';
 
-const execFileAsync = promisify(execFile);
+// SteamOS Game Mode (gamescope) session, computed once from the environment (it never changes at runtime).
+// In Game Mode there is no tray, the window is always shown (empty/error screen), and closing it quits the
+// app. Read by the controller (hide/show decisions), the tray bootstrap and the window-all-closed handler.
+const gameModeSession = isGamescopeSession();
+
+// NOTE — the Game Mode `--no-sandbox` flag is NOT set here. Chromium consumes sandbox switches while it
+// boots, before this script runs, so `app.commandLine.appendSwitch('no-sandbox')` is silently ignored: the
+// flag has to be on the real argv. It is injected one layer down, by the Linux launcher wrapper that
+// scripts/after-pack.mjs bakes into the package (same gamescope gate as isGamescopeSession).
 
 // Keep-alive reference so the Tray (and its icon) isn't garbage-collected; also read to rebuild the
 // context menu on a language change (setContextMenu in applyLanguage).
@@ -46,8 +53,41 @@ let summonHotkeyEnabled = true;
 function configureAutoLaunch(): void {
   // openAtLogin is reliable for an NSIS install; portable is best-effort.
   // No `--hidden` arg needed: the app always starts hidden and only shows on a valid card.
-  if (process.platform !== 'win32') return;
-  app.setLoginItemSettings({ openAtLogin: true });
+  if (process.platform === 'win32') {
+    app.setLoginItemSettings({ openAtLogin: true });
+    return;
+  }
+  if (process.platform === 'linux') {
+    configureLinuxAutoLaunch();
+  }
+}
+
+/**
+ * Linux autostart (Р11). Electron's app.setLoginItemSettings is macOS/Windows-only, so we write an XDG
+ * autostart entry by hand. Only meaningful for the packaged AppImage (Exec points at $APPIMAGE) and only
+ * in Desktop Mode — in Game Mode the app runs as a non-Steam game with no autostart mechanism, so we skip
+ * it there. Best-effort: any failure is logged, never fatal.
+ */
+function configureLinuxAutoLaunch(): void {
+  if (gameModeSession) return; // Game Mode: no XDG autostart — Steam owns the lifecycle.
+  const appImage = process.env['APPIMAGE'];
+  if (appImage === undefined || appImage === '') return; // dev / non-AppImage run — nothing to register.
+  try {
+    const autostartDir = path.join(app.getPath('home'), '.config', 'autostart');
+    fs.mkdirSync(autostartDir, { recursive: true });
+    const desktopEntry = [
+      '[Desktop Entry]',
+      'Type=Application',
+      'Name=Playhook',
+      `Exec=${appImage}`,
+      'X-GNOME-Autostart-enabled=true',
+      'Terminal=false',
+      '',
+    ].join('\n');
+    fs.writeFileSync(path.join(autostartDir, 'playhook.desktop'), desktopEntry, 'utf8');
+  } catch (cause) {
+    log.warn('[main] failed to write Linux autostart entry:', cause instanceof Error ? cause.message : String(cause));
+  }
 }
 
 // Opens the log folder (settings window "Open logs" — moved here from the tray menu).
@@ -103,10 +143,31 @@ async function bootstrap(): Promise<void> {
   const state = new StateManager();
   const window = new GameWindow(getTranslator);
   const stats = new StatsService(store);
-  const watcher = new DriveWatcher();
+
+  // Platform services (process monitor / Steam locator / launcher / save-path resolver / power) selected
+  // once for the running OS. Every OS-specific behaviour flows through this bundle (see platform/index.ts).
+  // The bundled umu-run zipapp (extraResources, linux only): packaged it lives under resourcesPath; in dev
+  // it sits in the repo's resources/ (fetched by scripts/fetch-umu.mjs). Resolved here so platform/ stays
+  // electron-free.
+  const umuRunPath = app.isPackaged
+    ? path.join(process.resourcesPath, 'umu', 'umu-run')
+    : path.join(app.getAppPath(), 'resources', 'umu', 'umu-run');
+  const platform = createPlatform(process.platform, {
+    getDocuments: () => app.getPath('documents'),
+    userData: app.getPath('userData'),
+    umuRunPath,
+  });
+
+  // Game Mode only (Р10): gamescope automounts ext4 but not exFAT/NTFS, so an inserted card can sit there
+  // unmounted and invisible to the scan. Sweeping it into /run/media restores hot-swap for those cards.
+  // Windows and the KDE desktop session automount on their own → no sweep wired there.
+  const watcher = new DriveWatcher(
+    undefined,
+    gameModeSession ? () => platform.removableMounter.mountAll() : null,
+  );
 
   windowRef = window;
-  const controller = new GameController({ state, window, store, stats, watcher, settings, getTranslator });
+  const controller = new GameController({ state, window, store, stats, watcher, settings, platform, isGamescope: gameModeSession, getTranslator });
   controllerRef = controller;
   controller.init();
 
@@ -184,15 +245,21 @@ async function bootstrap(): Promise<void> {
     getActiveRoot: () => watcher.getActiveRoot(),
     reloadManifest: (root) => controller.reloadManifest(root),
     getTranslator,
+    toManifestPcSavePath: (absolute) => platform.savePathResolver.toManifestPcSavePath(absolute),
   });
   gameConfig.init();
   const configureWindow = new ConfigureWindow(gameConfig, getTranslator);
   configureWindowRef = configureWindow;
 
-  window.create((shown) => {
-    windowVisible = shown;
-    recomputeKeepAwake();
-  });
+  window.create(
+    (shown) => {
+      windowVisible = shown;
+      recomputeKeepAwake();
+    },
+    // Game Mode: no tray to hide into, and Steam closes a non-Steam game by closing its window → let the
+    // close through and quit on window-all-closed (Р8, point 5). Desktop/Windows keep the hide-to-tray guard.
+    { hideToTrayOnClose: !gameModeSession },
+  );
   // Normally start hidden in the tray — the window appears only when a valid game card is detected
   // (GameController shows it on the 'ready' state). But if "always show the no-card screen" is enabled,
   // seed the controller with it now so it shows the empty screen at startup (reconciles: idle + no card).
@@ -204,7 +271,14 @@ async function bootstrap(): Promise<void> {
     onOpenSettings: () => settingsWindow.openOrFocus(),
     onQuit: () => quit(),
   };
-  trayRef = createTray(localeService.t, trayCallbacks);
+  // SteamOS Game Mode has no system tray (gamescope). Skip it there — the window is always shown and Steam
+  // manages the app as a non-Steam game. Desktop Mode (KDE) and Windows keep the tray (applyLanguage's
+  // `trayRef?.setContextMenu` no-ops when it's null).
+  if (!gameModeSession) {
+    trayRef = createTray(localeService.t, trayCallbacks);
+  } else {
+    log.info('[main] SteamOS Game Mode detected — running without a tray');
+  }
 
   // UI-locale wiring. Each window seeds via an invoke (effective Locale) and receives live pushes; the
   // set-language SEND lives in UpdaterService (with the other settings:* writes). No did-finish-load hooks
@@ -218,11 +292,7 @@ async function bootstrap(): Promise<void> {
   // free of power concerns. The renderer confirms each action before sending; shutdown/reboot quit via
   // the bootstrap quit() (drops the window close-guards), sleep suspends in place.
   const power = createPowerService({
-    platform: process.platform,
-    exec: async (file, args) => {
-      await execFileAsync(file, [...args], { windowsHide: true });
-    },
-    suspend: suspendToSleep,
+    backend: platform.powerBackend,
     quit: () => quit(),
     showError: (message) => {
       const bw = window.browserWindow;
@@ -233,6 +303,9 @@ async function bootstrap(): Promise<void> {
   ipcMain.on(IPC.actionShutdown, () => void power.perform('shutdown'));
   ipcMain.on(IPC.actionReboot, () => void power.perform('reboot'));
   ipcMain.on(IPC.actionSleep, () => void power.perform('sleep'));
+  // Game Mode "Close Playhook": full quit via the same bootstrap path as the tray Quit (drops the window
+  // close-guards, disposes services). Only ever sent from the Game Mode power menu — Desktop keeps hiding.
+  ipcMain.on(IPC.actionQuit, () => quit());
 
   // Applies a language change everywhere: re-resolve the locale, rebuild the tray menu, re-title the plain
   // windows, and push the effective locale to every live webContents (game/settings/configure). Called
@@ -283,9 +356,11 @@ if (!gotSingleInstanceLock) {
     windowRef?.showAndFocus();
   });
 
-  // A background app doesn't quit when the window is closed/hidden — it lives in the tray.
+  // A background app doesn't quit when the window is closed/hidden — it lives in the tray. Exception:
+  // SteamOS Game Mode has no tray and the window's close isn't guarded, so a real close means the user
+  // ended the (non-Steam) game → quit (Р8, point 5).
   app.on('window-all-closed', () => {
-    if (quitting) app.quit();
+    if (quitting || gameModeSession) app.quit();
   });
 
   app.on('before-quit', () => {

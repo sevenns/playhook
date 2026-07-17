@@ -12,7 +12,9 @@ import {
   type GameInfo,
   type GameLibrary,
   type HeroAssets,
-  type InstallManifest,
+  type InstallerRunType,
+  type ResolvedInstallerRun,
+  type ResolvedCopyInstall,
   type LaunchTarget,
   type ResolvedManifest,
   type Stats,
@@ -24,24 +26,22 @@ import { type GameWindow } from './window';
 import { type PcStore } from './pc-store';
 import { type StatsService } from './stats';
 import { type DriveWatcher } from './drive-watcher';
-import { readManifests, type ManifestEnv } from './manifest';
+import { readManifests, findCaseInsensitiveName, type ManifestEnv } from './manifest';
 import { syncDir, syncByChange, snapshotTree } from './save-sync';
 import {
-  launchGame,
-  launchInstaller,
-  launchUninstaller,
   waitForExit,
   waitForStart,
   waitForWatchedExit,
   waitForWatchedStart,
-  killImageByName,
-  anyImageAlive,
+  waitForSteamStart,
+  waitForSteamExit,
   killImagesElevated,
   LaunchAbortedError,
   type GameProcess,
 } from './game-launcher';
-import { findUninstallEntry, getSteamPath } from './registry';
+import { findUninstallEntry } from './registry';
 import { steamInstallStatus, openSteamUri } from './steam';
+import { type PcSaveLocation, type Platform, type ProcessMonitor } from './platform';
 import { AssetReader } from './asset-reader';
 import { type AppSettingsStore } from './app-settings';
 import { focusGameWindow } from './window-finder';
@@ -58,6 +58,14 @@ export interface ControllerDeps {
   readonly watcher: DriveWatcher;
   /** App-wide settings store — read/patched by the custom-wallpaper handlers (they own AssetReader). */
   readonly settings: AppSettingsStore;
+  /** Platform services (process monitor, Steam locator, launcher, save-path resolver, power) for the OS. */
+  readonly platform: Platform;
+  /**
+   * Whether this is a SteamOS Game Mode (gamescope) session. In Game Mode there is no tray, so every path
+   * that would hide the window to the tray instead keeps the empty/error screen up (Р8). Always false on
+   * Windows/desktop, so their behaviour is unchanged.
+   */
+  readonly isGamescope: boolean;
   /** The current translator (read live so a language change applies to freshly-generated messages). */
   readonly getTranslator: () => Translator;
 }
@@ -90,7 +98,7 @@ const REMOVE_RETRY_BASE_MS = 300;
 
 /** Silent flags we build ourselves per installer family (the same families' silent semantics, minus
  * the dir-key). Never used for `custom` (it has no known silent-uninstall convention). */
-function silentUninstallArgs(type: InstallManifest['type']): string[] {
+function silentUninstallArgs(type: InstallerRunType): string[] {
   switch (type) {
     case 'nsis':
       return ['/S'];
@@ -105,10 +113,14 @@ function silentUninstallArgs(type: InstallManifest['type']): string[] {
  * Step 1 — deterministic FS search for the uninstaller INSIDE the app-controlled install dir (we put
  * it there via the installer's dir-key, so it lives in the root): Inno drops `unins###.exe` (pick the
  * highest if several), NSIS drops `Uninstall.exe`/`uninst*.exe`. `custom` has no known convention → null.
+ *
+ * `copy` is excluded by TYPE, not by a branch: a copied directory is a game somebody else installed
+ * earlier, so it may well carry a foreign `unins000.exe` that the nsis fallback below would happily
+ * find and run with `/S` — silently uninstalling from the wrong machine's point of view.
  */
 async function findUninstallerInDir(
   dir: string,
-  type: InstallManifest['type'],
+  type: InstallerRunType,
 ): Promise<string | null> {
   if (type === 'custom') return null;
   let names: readonly string[];
@@ -190,12 +202,14 @@ function parseCommandLine(command: string): string[] {
  * (deterministic, no parsing/encoding issues — we build the silent args), then a registry fallback for a
  * rare nonstandard NSIS uninstaller name. Returns null → the caller does a plain directory removal.
  */
-async function resolveUninstaller(
-  install: NonNullable<ResolvedManifest['install']>,
-): Promise<LaunchTarget | null> {
-  if (process.platform !== 'win32') return null; // install mode is Windows-only
+async function resolveUninstaller(install: ResolvedInstallerRun): Promise<LaunchTarget | null> {
+  // Linux (Р7f): uninstall removes the WHOLE per-game Wine prefix (see GameProcessLauncher.uninstallDir),
+  // so running the game's own in-prefix uninstaller first is pointless (its registry/shortcut cleanup
+  // lives in the prefix we're about to delete). Skip it — win32 still runs it (no prefix; it must clean
+  // the shared system before the install dir is removed).
+  if (process.platform !== 'win32') return null;
 
-  // Step 1: FS search in install.dir, with self-built silent flags.
+  // Step 1: FS search in the install dir, with self-built silent flags.
   const found = await findUninstallerInDir(install.dir, install.type);
   if (found !== null) {
     return {
@@ -207,7 +221,8 @@ async function resolveUninstaller(
   }
   if (install.type === 'custom') return null; // no FS match and no silent convention → plain remove
 
-  // Step 2: registry fallback (rare — nonstandard NSIS uninstaller name).
+  // Step 2: registry fallback (rare — nonstandard NSIS uninstaller name). win32-only (reached only on
+  // win32; the non-win32 early return above skips the whole uninstaller path).
   const entry = await findUninstallEntry(install.dir);
   if (entry === null) return null;
   const command = entry.quietUninstallString ?? entry.uninstallString;
@@ -287,8 +302,14 @@ export class GameController {
   // A force-close (onKillRequested) is underway. Local try/finally flag (mirrors reloadInFlight, NOT the
   // launch sequence's finally — a kill has its own short-lived lifecycle) so a double Yes / repeat is a no-op.
   private killInFlight = false;
+  // The installing/launching state to restore once winetricks provisioning ends (Р7g). Null when not
+  // provisioning. The "Configuring Proton" screen + its rotating funny suffix are the renderer's job (Р7j).
+  private protonConfigPriorState: AppState | null = null;
   // Audio for the current card, sent on its own channel (not on every AppState) — see AudioAssets.
   private currentAudio: AudioAssets | null = null;
+  // The bundled default UI sounds, delivered on the empty "insert a card" screen so navigation there is
+  // audible even without a game's own sounds. Read once at init (warmDefaultAudio); null until then.
+  private defaultAudio: AudioAssets | null = null;
   // Hero images for the current card, sent on their own channel (not on every AppState) — see HeroAssets.
   private currentHero: HeroAssets | null = null;
   // The light list of games ({id,title}) on the current card, delivered once per card on its own channel
@@ -312,6 +333,7 @@ export class GameController {
     getState: () => this.deps.state.get(),
     isCardPresent: () => this.cardPresent,
     enterReady: (info) => this.enterReady(info),
+    steamLocator: () => this.deps.platform.steamLocator,
   });
 
   constructor(private readonly deps: ControllerDeps) {}
@@ -319,6 +341,39 @@ export class GameController {
   /** The current translator (a message is fixed at the language of the moment it is generated). */
   private get t(): Translator {
     return this.deps.getTranslator();
+  }
+
+  /** The platform process monitor (win32 tasklist / linux /proc), threaded into the launcher + waits. */
+  private get monitor(): ProcessMonitor {
+    return this.deps.platform.processMonitor;
+  }
+
+  /** The platform game launcher (win32 spawn/ShellExecuteEx / linux umu-run/Proton). */
+  private get launcher(): Platform['gameLauncher'] {
+    return this.deps.platform.gameLauncher;
+  }
+
+  /**
+   * Linux prefix provisioning (winetricks) started/finished — the launcher's onProvisioning callback
+   * (Р7g). On start: stash the current installing/launching state and show the rotating "Configuring
+   * Proton" screen. On finish: stop the rotation and restore the stashed state (the launch/install
+   * sequence then continues from where it was). No-op on win32 (the launcher never fires this).
+   */
+  private setProvisioning(active: boolean, game: GameInfo): void {
+    if (active) {
+      this.protonConfigPriorState = this.deps.state.get();
+      this.deps.state.set({ kind: 'configuringProton', game });
+    } else if (this.protonConfigPriorState !== null) {
+      this.deps.state.set(this.protonConfigPriorState);
+      this.protonConfigPriorState = null;
+    }
+  }
+
+  /** True if any of the given image names is currently running (fresh snapshot; empty list → false). */
+  private async anyTargetAlive(targets: readonly string[]): Promise<boolean> {
+    if (targets.length === 0) return false;
+    const snapshot = await this.monitor.snapshot();
+    return targets.some((name) => snapshot.hasImageName(name));
   }
 
   /**
@@ -337,9 +392,21 @@ export class GameController {
     this.selectedIndex = 0;
     this.locked = false;
     this.statsById.clear();
-    this.setAudio(null);
+    // Empty screen keeps the default UI sounds (navigation there must stay audible) — not silence. Music
+    // is card-only, so the default set carries sounds without music. null only until warmDefaultAudio runs.
+    this.setAudio(this.defaultAudio);
     this.setHero(null);
     this.setLibrary(null);
+  }
+
+  /**
+   * Hides the launcher to the tray (the background-app default), OR — in SteamOS Game Mode, where there is
+   * no tray to hide into — keeps the empty "insert a card" screen up instead (Р8). Used at every "no card"
+   * exit point. On Windows/desktop this is a plain hide (unchanged behaviour).
+   */
+  private hideToTrayOrKeepEmpty(): void {
+    if (this.deps.isGamescope) this.deps.window.showAndFocus();
+    else this.deps.window.hide();
   }
 
   /** Subscriptions to drive-watcher, state replication to the window, IPC handlers. */
@@ -358,6 +425,8 @@ export class GameController {
     watcher.onError((error) => log.error('[drive-watcher]', error));
 
     ipcMain.handle(IPC.stateRequest, (): AppState => state.get());
+    // Static for the process lifetime — seeds the renderer's Game Mode UI (e.g. "Close Playhook").
+    ipcMain.handle(IPC.gameModeRequest, (): boolean => this.deps.isGamescope);
     ipcMain.handle(IPC.audioRequest, (): AudioAssets | null => this.currentAudio);
     ipcMain.handle(IPC.heroRequest, (): HeroAssets | null => this.currentHero);
     ipcMain.handle(IPC.libraryRequest, (): GameLibrary | null => this.currentLibrary);
@@ -371,10 +440,24 @@ export class GameController {
     }));
     ipcMain.on(IPC.actionLaunch, () => void this.onLaunchRequested());
     ipcMain.on(IPC.actionUninstall, () => void this.onUninstallRequested());
-    ipcMain.on(IPC.actionHide, () => this.deps.window.hide());
+    // Game Mode: hiding is meaningless (no tray, and on Linux no summon hotkey) — ignore the Hide button
+    // so the only window can't vanish with no way back. Desktop/Windows hide to the tray as before.
+    ipcMain.on(IPC.actionHide, () => {
+      if (!this.deps.isGamescope) this.deps.window.hide();
+    });
     ipcMain.on(IPC.actionOpenSteamDownloads, () => void this.onOpenSteamDownloads());
     ipcMain.on(IPC.actionKill, () => void this.onKillRequested());
     ipcMain.on(IPC.actionSelect, (_event, id: unknown) => void this.onSelectRequested(id));
+
+    void this.warmDefaultAudio();
+  }
+
+  /** Reads the bundled default UI sounds once and delivers them to the empty screen (the initial state,
+   *  before any card). Later empty transitions reuse the cached set via clearCard. */
+  private async warmDefaultAudio(): Promise<void> {
+    this.defaultAudio = await this.assets.readDefaultAudioAssets();
+    // Only the startup empty screen still has null audio here; a card loaded meanwhile owns the channel.
+    if (this.currentAudio === null) this.setAudio(this.defaultAudio);
   }
 
   /** Sends a transient error to the renderer to surface in the error popup. */
@@ -445,14 +528,18 @@ export class GameController {
     // so %DOCUMENTS% in the manifest maps to the real save folder regardless of UI
     // language or OneDrive redirection. Safe to read here — app is ready by now.
     const env: ManifestEnv = { documents: app.getPath('documents'), t: this.t };
-    const result = await readManifests(root, env);
+    const result = await readManifests(root, env, this.deps.platform.resolveInstallDir);
     if (!result.ok) {
       // No valid game determined → keep the window hidden (the reason is in the log). We still set
       // the error state so a manually-summoned window can show it, but we never auto-surface it.
       log.warn(`[insert] manifest rejected: ${result.message}`);
       this.clearCard();
       this.deps.state.set({ kind: 'error', message: result.message });
-      this.deps.window.hide();
+      // Desktop/Windows: keep the window hidden (background app — the error is in the log and only shows
+      // if the user summons the window). Game Mode: there is no tray to hide into, so surface the manifest
+      // error on screen instead of hiding (Р8, point 1).
+      if (this.deps.isGamescope) this.deps.window.showAndFocus();
+      else this.deps.window.hide();
       return { ok: false, message: result.message };
     }
     const manifests = result.manifests;
@@ -553,14 +640,29 @@ export class GameController {
     await this.rebaseSyncStateAfterFlush(manifest);
   }
 
+  /**
+   * Resolves the manifest's DEFERRED pcSavePath (Р5/Э6) to this game's save location via the platform
+   * SavePathResolver, or null when there's nothing to sync (no pcSavePath declared, or a steam game with
+   * no compatdata yet). win32 keeps the exact env-based expansion the manifest used to do eagerly; linux
+   * maps inside the game's prefix. `containerExists` tells whether that prefix is actually there — see
+   * runSaveSync for why that matters.
+   */
+  private async resolvePcSavePath(manifest: ResolvedManifest): Promise<PcSaveLocation | null> {
+    if (manifest.pcSavePath === undefined) return null;
+    return this.deps.platform.savePathResolver.resolvePcSavePath(manifest, manifest.pcSavePath);
+  }
+
   /** Records a fresh sync baseline from both real save folders (used after a direct pending-flush). */
   private async rebaseSyncStateAfterFlush(manifest: ResolvedManifest): Promise<void> {
     const cardPath = manifest.saveOnCardPath;
-    const pcPath = manifest.pcSavePath;
-    if (cardPath === undefined || pcPath === undefined) return;
+    if (cardPath === undefined || manifest.pcSavePath === undefined) return;
+    const pcSave = await this.resolvePcSavePath(manifest);
+    // No prefix → no PC half worth recording: a baseline whose `pc` describes a non-existent container is
+    // exactly what makes the next sync-in mistake "prefix wiped" for "saves deleted" (see runSaveSync).
+    if (pcSave === null || !pcSave.containerExists) return;
     await this.deps.store.writeSyncState(manifest.raw.id, {
       card: await snapshotTree(cardPath),
-      pc: await snapshotTree(pcPath),
+      pc: await snapshotTree(pcSave.path),
       syncedAt: Date.now(),
     });
   }
@@ -595,7 +697,10 @@ export class GameController {
     // Normally the background app hides to the tray when no card is present. With "always show the no-card
     // screen" on, keep the launcher up on the empty screen instead — BUT only if it's currently on screen.
     // If the user minimized it to the tray, pulling the card must not pop it back up (respect that intent).
-    if (this.alwaysShowEmptyScreen) {
+    if (this.deps.isGamescope) {
+      // Game Mode: no tray — always keep the empty "insert a card" screen up (forces alwaysShowEmptyScreen).
+      this.deps.window.showAndFocus();
+    } else if (this.alwaysShowEmptyScreen) {
       if (this.deps.window.isShown()) this.deps.window.showAndFocus();
     } else {
       this.deps.window.hide();
@@ -611,7 +716,10 @@ export class GameController {
   setAlwaysShowEmptyScreen(on: boolean): void {
     this.alwaysShowEmptyScreen = on;
     if (this.cardPresent || this.deps.state.get().kind !== 'idle') return;
-    if (on) this.deps.window.showAndFocus();
+    // Game Mode (gamescope): there is no tray to hide into, and a HIDDEN window leaves gamescope with no
+    // surface to present — Steam's launch spinner then hangs forever. So the window is ALWAYS shown there
+    // (the empty "insert a card" screen), regardless of the setting. Desktop/Windows honour the flag.
+    if (on || this.deps.isGamescope) this.deps.window.showAndFocus();
     else this.deps.window.hide();
   }
 
@@ -720,46 +828,59 @@ export class GameController {
     // Show "Force closing…" and hide the Force close button immediately (cleared back on failure).
     this.deps.state.set({ ...snapshot, killing: true });
     try {
-      // Targets are computed HERE from this.current, leaving runningImageNames untouched: a union there
-      // would regress return-to-game (focusGameWindow picks the first Z-order match — the launcher name
-      // could steal focus from the game). Steam's executablePath is '' and drops out in normalization.
-      const targets = normalizeImageNames([
-        manifest.executablePath,
-        ...(manifest.raw.watchProcesses ?? []),
-      ]);
-      log.info(`[kill] force-close requested id=${manifest.raw.id} targets=[${targets.join(',')}]`);
+      // Steam mode is tracked/killed by SteamAppId (native + Proton games), with no owned pid and no
+      // elevation (the schema forbids runAsAdmin there). Every other mode kills the owned process + the
+      // target image names, escalating to an elevated taskkill for a runAsAdmin game. Both end in the same
+      // fact-based verdict below (stillAlive).
+      let stillAlive: boolean;
+      if (manifest.steam !== undefined) {
+        const appid = manifest.steam.appid;
+        const names = manifest.raw.watchProcesses ?? [];
+        log.info(`[kill] force-close requested id=${manifest.raw.id} steam appid=${appid}`);
+        await this.monitor.killSteamGame(appid, names);
+        stillAlive = await this.steamGameStillAlive(appid, names, manifest.raw.killTimeoutSec);
+      } else {
+        // Targets are computed HERE from this.current, leaving runningImageNames untouched: a union there
+        // would regress return-to-game (focusGameWindow picks the first Z-order match — the launcher name
+        // could steal focus from the game).
+        const targets = normalizeImageNames([
+          manifest.executablePath,
+          ...(manifest.raw.watchProcesses ?? []),
+        ]);
+        log.info(`[kill] force-close requested id=${manifest.raw.id} targets=[${targets.join(',')}]`);
 
-      // 1. Terminate the owned process (elevated HANDLE, or the normal pid tree with an isAlive re-check
-      //    inside kill()). In the watched path this is usually the already-dead launcher — its "not
-      //    found" is normal, not an error.
-      const proc = this.runningProc;
-      if (proc !== null) {
-        try {
-          await proc.kill();
-        } catch (cause) {
-          log.warn('[kill] owned-process kill failed (continuing to taskkill by name):', describe(cause));
+        // 1. Terminate the owned process (elevated HANDLE, or the normal pid tree with an isAlive re-check
+        //    inside kill()). In the watched path this is usually the already-dead launcher — its "not
+        //    found" is normal, not an error.
+        const proc = this.runningProc;
+        if (proc !== null) {
+          try {
+            await proc.kill();
+          } catch (cause) {
+            log.warn('[kill] owned-process kill failed (continuing to kill by name):', describe(cause));
+          }
         }
+
+        // 2. Kill each target image by name (non-elevated): win32 `taskkill /F /IM`, linux SIGTERM/SIGKILL
+        //    to every /proc match. Failures are normal ("not found" = already dead).
+        await this.monitor.killByName(targets);
+
+        // 2b. Elevated escalation (runAsAdmin games only). A non-elevated taskkill / the ShellExecuteEx
+        //     HANDLE can't terminate high-integrity processes, so if the targets survive a short grace we
+        //     run ONE elevated `taskkill /F /T /IM …` (a single UAC prompt). Non-elevated games never reach
+        //     here (no UAC for them). A declined UAC just leaves the targets up → killFailed below.
+        if (manifest.raw.runAsAdmin && (await this.killTargetsStillAlive(targets, proc, KILL_ELEVATE_GRACE_SEC))) {
+          log.info(`[kill] elevated game survived non-elevated kill id=${manifest.raw.id} — escalating to elevated taskkill (UAC)`);
+          killImagesElevated(targets);
+        }
+
+        // 3. Fact-based verdict over a window bounded by killTimeoutSec (a killed process lingers for a
+        //    beat — a single instant snapshot would false-positive).
+        stillAlive = await this.killTargetsStillAlive(targets, proc, manifest.raw.killTimeoutSec);
       }
 
-      // 2. taskkill /F /IM per target image name (non-elevated). Per-name failures are normal ("not
-      //    found" = already dead); the verdict is the control poll below, not these exit codes.
-      for (const name of targets) {
-        await killImageByName(name);
-      }
-
-      // 2b. Elevated escalation (runAsAdmin games only). A non-elevated taskkill / the ShellExecuteEx
-      //     HANDLE can't terminate high-integrity processes, so if the targets survive a short grace we
-      //     run ONE elevated `taskkill /F /T /IM …` (a single UAC prompt). Non-elevated games never reach
-      //     here (no UAC for them). A declined UAC just leaves the targets up → killFailed below.
-      if (manifest.raw.runAsAdmin && (await this.killTargetsStillAlive(targets, proc, KILL_ELEVATE_GRACE_SEC))) {
-        log.info(`[kill] elevated game survived non-elevated kill id=${manifest.raw.id} — escalating to elevated taskkill (UAC)`);
-        killImagesElevated(targets);
-      }
-
-      // 3. Fact-based verdict over a window bounded by killTimeoutSec (a killed process lingers in
-      //    tasklist for a beat — a single instant snapshot would false-positive). killFailed only if
-      //    something is STILL alive when the window elapses.
-      if (await this.killTargetsStillAlive(targets, proc, manifest.raw.killTimeoutSec)) {
+      // killFailed only if something is STILL alive when the window elapsed.
+      if (stillAlive) {
         log.warn(`[kill] targets still alive after force-close id=${manifest.raw.id} — reporting killFailed`);
         // The game is still up → back to plain running (status "Running…", Force close button returns),
         // then surface the error. Re-read in case a waiter advanced the state (then leave it be).
@@ -790,8 +911,26 @@ export class GameController {
       // An exit waiter that already left `running` proves the process is gone — treat as killed.
       if (this.deps.state.get().kind !== 'running') return false;
       const ownedAlive = proc !== null && (await proc.isAlive());
-      if (!ownedAlive && !(await anyImageAlive(targets))) return false;
+      if (!ownedAlive && !(await this.anyTargetAlive(targets))) return false;
       if (Date.now() >= deadline) return true; // window elapsed and something is still alive → real fail
+      await delay(KILL_VERIFY_INTERVAL_MS);
+    }
+  }
+
+  /**
+   * Steam-mode analogue of killTargetsStillAlive: polls the monitor's SteamAppId signal (linux) / watch
+   * names (win32) until the game is gone or the window elapses. Returns true only if it is STILL running.
+   */
+  private async steamGameStillAlive(
+    appid: number,
+    watchNames: readonly string[],
+    timeoutSec: number,
+  ): Promise<boolean> {
+    const deadline = Date.now() + timeoutSec * 1000;
+    for (;;) {
+      if (this.deps.state.get().kind !== 'running') return false; // an exit waiter already left `running`
+      if (!(await this.monitor.isSteamGameRunning(appid, watchNames))) return false;
+      if (Date.now() >= deadline) return true;
       await delay(KILL_VERIFY_INTERVAL_MS);
     }
   }
@@ -808,8 +947,55 @@ export class GameController {
       void this.runSteamUninstall(manifest, snapshot.game);
       return;
     }
-    if (manifest.install === undefined) return;
+    if (manifest.install === undefined) {
+      // Normal executable game: the only "uninstall" is clearing its Wine prefix (Linux; the game stays on
+      // the card). canUninstall is set only when that prefix exists — see buildGameInfo / prefixCleanupOnly.
+      if (snapshot.game.prefixCleanupOnly === true) {
+        void this.runPrefixCleanupSequence(manifest, snapshot.game);
+      }
+      return;
+    }
     void this.runUninstallSequence(manifest, snapshot.game);
+  }
+
+  /**
+   * Clears a normal executable game's Wine prefix (Linux). No installer/uninstaller is involved — the game
+   * lives on the card, its only PC footprint is the prefix — so this is just the directory sweep + the same
+   * card-swap / rebuild-info handling as runUninstallSequence, minus the uninstaller run.
+   */
+  private async runPrefixCleanupSequence(manifest: ResolvedManifest, info: GameInfo): Promise<void> {
+    const dir = await this.deps.platform.gameLauncher.prefixCleanupDir(manifest.raw.id);
+    if (dir === null) return; // defensive: canUninstall was set only when the prefix existed
+    const { state, window, stats } = this.deps;
+    this.launchInFlight = true;
+    const abort = new AbortController();
+    this.abort = abort;
+    try {
+      state.set({ kind: 'uninstalling', game: info });
+      await removeWithRetry(dir, abort.signal);
+      if (abort.signal.aborted) return;
+      // Card yanked mid-cleanup (this targets the PC, so it completed): idle + hide, like runUninstall.
+      if (!this.cardPresent) {
+        this.clearCard();
+        state.set({ kind: 'idle' });
+        this.hideToTrayOrKeepEmpty();
+        return;
+      }
+      // Prefix gone → prefixCleanupDir now returns null → canUninstall recomputes false → "Uninstall"
+      // disappears, leaving just "Play".
+      const currentStats = await stats.read(manifest.raw.id);
+      const updatedInfo = await this.buildGameInfo(manifest, currentStats);
+      log.info(`[prefix-cleanup] removed "${dir}" id=${manifest.raw.id}`);
+      this.enterReady(updatedInfo);
+      window.showAndFocus();
+    } catch (cause) {
+      if (cause instanceof LaunchAbortedError) return; // aborted by shutdown or a card swap
+      this.failSequence('uninstall', info, describe(cause));
+    } finally {
+      this.launchInFlight = false;
+      this.abort = null;
+      this.resumePendingInsert();
+    }
   }
 
   /**
@@ -823,7 +1009,7 @@ export class GameController {
   private async runSteamInstall(manifest: ResolvedManifest, info: GameInfo): Promise<void> {
     const appid = manifest.steam?.appid;
     if (appid === undefined) return; // defensive: onLaunchRequested only calls this in steam mode
-    if ((await getSteamPath()) === null) {
+    if ((await this.deps.platform.steamLocator.locateSteam()) === null) {
       this.sendError(this.t('errors.steamNotInstalled'));
       return;
     }
@@ -863,7 +1049,7 @@ export class GameController {
   private async runSteamUninstall(manifest: ResolvedManifest, info: GameInfo): Promise<void> {
     const appid = manifest.steam?.appid;
     if (appid === undefined) return; // defensive: onUninstallRequested only calls this in steam mode
-    if ((await getSteamPath()) === null) {
+    if ((await this.deps.platform.steamLocator.locateSteam()) === null) {
       this.sendError(this.t('errors.steamNotInstalled'));
       return;
     }
@@ -898,16 +1084,35 @@ export class GameController {
       // the first-run fallback (no baseline yet).
       state.set({ kind: 'syncing-in', game: info });
       if (manifest.pcSavePath !== undefined && manifest.saveOnCardPath !== undefined) {
-        // Soft catch: sync-in can now WRITE to the card (change-detection may pick PC→card) — a new
-        // failure point BEFORE launch (a full / write-protected / slow card). The launch never depended
-        // on a card write before, so keep it that way: log and start the game regardless (mirrors sync-out).
-        try {
+        // Resolve the deferred pcSavePath to this game's save location (Р5/Э6). null → nothing to sync
+        // with at all (a steam game with no compatdata) — a logged no-op.
+        const pcSave = await this.resolvePcSavePath(manifest);
+        if (pcSave === null) {
           log.info(
-            `[sync-in] change-based sync between card "${manifest.saveOnCardPath}" and PC "${manifest.pcSavePath}"`,
+            `[sync-in] pcSavePath "${manifest.pcSavePath}" not resolvable yet — skipping sync`,
           );
-          await this.runSaveSync(manifest, 'card-to-pc');
-        } catch (cause) {
-          log.warn('[sync-in] change-based sync failed, launching anyway:', describe(cause));
+        } else {
+          // A MISSING prefix is not a reason to skip: the launch below creates it, and the card's saves
+          // must be in place before the game reads them (e.g. after an uninstall wiped the prefix). The
+          // copy targets the prefix path directly — launchGame ensureDir's that prefix anyway — and
+          // runSaveSync drops the stale baseline so the empty PC side can't erase the card.
+          try {
+            log.info(
+              `[sync-in] change-based sync between card "${manifest.saveOnCardPath}" and PC "${pcSave.path}"${pcSave.containerExists ? '' : ' (prefix absent — restoring from card)'}`,
+            );
+            // Soft catch: sync-in can now WRITE to the card (change-detection may pick PC→card) — a new
+            // failure point BEFORE launch (a full / write-protected / slow card). The launch never depended
+            // on a card write before, so keep it that way: log and start the game regardless (mirrors sync-out).
+            await this.runSaveSync(
+              manifest,
+              manifest.saveOnCardPath,
+              pcSave.path,
+              'card-to-pc',
+              pcSave.containerExists,
+            );
+          } catch (cause) {
+            log.warn('[sync-in] change-based sync failed, launching anyway:', describe(cause));
+          }
         }
       }
 
@@ -927,7 +1132,7 @@ export class GameController {
         state.set({ kind: 'launching', game: info });
         // Pre-check: openExternal doesn't reliably reject when steam:// is unregistered, so gate the
         // launch on Steam actually being installed instead of relying on a reject.
-        if ((await getSteamPath()) === null) {
+        if ((await this.deps.platform.steamLocator.locateSteam()) === null) {
           this.failSequence('launch', info, this.t('errors.steamNotInstalled'));
           return;
         }
@@ -937,11 +1142,13 @@ export class GameController {
           this.failSequence('launch', info, this.t('errors.launchViaSteam', { cause: describe(cause) }));
           return;
         }
-        // No launcher pid → null. watchProcesses is guaranteed non-empty by the schema in steam mode.
-        const { started } = await waitForWatchedStart(
-          null,
+        // Track by SteamAppId (via the monitor): on linux that reads /proc environ, so native-Linux AND
+        // Proton games are detected regardless of their binary name; on win32 it maps to the watch names.
+        const { started } = await waitForSteamStart(
+          manifest.steam.appid,
           watchProcesses ?? [],
           manifest.raw.launchTimeoutSec,
+          this.monitor,
           abort.signal,
         );
         if (!started) {
@@ -961,13 +1168,13 @@ export class GameController {
         this.runningProc = null;
         state.set({ kind: 'running', game: info, since });
         log.info(`[launch] running (steam) id=${manifest.raw.id} appid=${manifest.steam.appid}`);
-        await waitForWatchedExit(watchProcesses ?? [], abort.signal);
+        await waitForSteamExit(manifest.steam.appid, watchProcesses ?? [], this.monitor, abort.signal);
         log.info(`[launch] exited (steam) id=${manifest.raw.id}`);
       } else {
         // 2. launch → GameProcess (spawn, or elevated ShellExecuteEx per manifest.runAsAdmin)
         state.set({ kind: 'launching', game: info });
         try {
-          proc = await launchGame(manifest);
+          proc = await this.launcher.launchGame(manifest, (active) => this.setProvisioning(active, info));
         } catch (cause) {
           this.failSequence('launch', info, this.t('errors.launchGame', { cause: describe(cause) }));
           return;
@@ -977,6 +1184,7 @@ export class GameController {
             proc.pid,
             watchProcesses,
             manifest.raw.launchTimeoutSec,
+            this.monitor,
             abort.signal,
           );
           if (!started) {
@@ -993,7 +1201,7 @@ export class GameController {
           this.runningProc = proc;
           state.set({ kind: 'running', game: info, since });
           log.info(`[launch] running (watched) id=${manifest.raw.id} watch=${watchProcesses.join(',')}`);
-          await waitForWatchedExit(watchProcesses, abort.signal);
+          await waitForWatchedExit(watchProcesses, this.monitor, abort.signal);
           log.info(`[launch] exited (watched) id=${manifest.raw.id}`);
         } else {
           const started = await waitForStart(proc, manifest.raw.launchTimeoutSec, abort.signal);
@@ -1070,24 +1278,34 @@ export class GameController {
       // a bogus "Play". We're (re)installing anyway, so a clean directory is safe.
       await fse.remove(install.dir);
 
-      try {
-        proc = await launchInstaller(install);
-      } catch (cause) {
-        this.failSequence('install', info, this.t('errors.startInstaller', { cause: describe(cause) }));
-        return;
-      }
+      if (install.type === 'copy') {
+        // "Move game to PC": no installer to run — copy the card's game directory into the install dir.
+        if (!(await this.runCopyInstall(install, manifest, info, abort))) return;
+      } else {
+        // Silent by default; a user who enabled "disable silent installer mode" gets the visible wizard
+        // (needed for repacks that skip a crack/patch step under silent — `skipifsilent`).
+        const silent = !(await this.deps.settings.read()).disableSilentInstall;
+        try {
+          proc = await this.launcher.launchInstaller(install, silent, (active) =>
+            this.setProvisioning(active, info),
+          );
+        } catch (cause) {
+          this.failSequence('install', info, this.t('errors.startInstaller', { cause: describe(cause) }));
+          return;
+        }
 
-      // Wait for the installer to exit, then grace-poll for the executable: some installers (often
-      // custom wrappers) fork a child and exit early, so <exe> may appear shortly AFTER waitForExit.
-      await waitForExit(proc, abort.signal);
-      const installed = await this.pollForExecutable(
-        manifest.executablePath,
-        manifest.raw.launchTimeoutSec,
-        abort.signal,
-      );
-      if (!installed) {
-        this.failSequence('install', info, this.t('errors.installIncomplete'));
-        return;
+        // Wait for the installer to exit, then grace-poll for the executable: some installers (often
+        // custom wrappers) fork a child and exit early, so <exe> may appear shortly AFTER waitForExit.
+        await waitForExit(proc, abort.signal);
+        const installed = await this.pollForExecutable(
+          manifest.executablePath,
+          manifest.raw.launchTimeoutSec,
+          abort.signal,
+        );
+        if (!installed) {
+          this.failSequence('install', info, this.t('errors.installIncomplete'));
+          return;
+        }
       }
 
       // Installed: rebuild GameInfo so requiresInstall recomputes to false (the executable now exists),
@@ -1106,6 +1324,68 @@ export class GameController {
       this.abort = null;
       this.resumePendingInsert();
     }
+  }
+
+  /**
+   * The `copy` install type ("move game to PC"): instead of running an installer, copy the game
+   * directory from the card into the app-controlled install dir. Called by runInstallSequence, which
+   * owns the state/abort infrastructure and the shared tail — this only covers copy's own steps.
+   *
+   * Returns true when the game is in place and the caller should finish the sequence; false when it must
+   * stop (a failure was already surfaced, or the sequence was aborted and must unwind silently).
+   */
+  private async runCopyInstall(
+    install: ResolvedCopyInstall,
+    manifest: ResolvedManifest,
+    info: GameInfo,
+    abort: AbortController,
+  ): Promise<boolean> {
+    // Prepare the destination's environment BEFORE the files land in it (linux: create + provision the
+    // Wine prefix; win32: no-op). This is what launchInstaller does implicitly on the installer path —
+    // without it a copied game would sit in a bare prefix with none of the baseline runtimes that the
+    // installer it originally came from would have pulled in. A failure here propagates to the caller's
+    // catch (it is an environment fault, like a failed installer launch).
+    await this.launcher.prepareInstallDir(install, (active) => this.setProvisioning(active, info));
+
+    try {
+      // `dereference: false` — copy symlinks as symlinks (a game's own internal links stay internal).
+      await fse.copy(install.installerPath, install.dir, { dereference: false });
+    } catch (cause) {
+      // fse.copy takes no AbortSignal, so a card swap mid-copy surfaces as a plain ENOENT (the source
+      // vanished) rather than a LaunchAbortedError. Check the flag before reporting: the new card is
+      // already on screen, and an error popup about the old one over it would be nonsense.
+      if (abort.signal.aborted) return false;
+      this.failSequence('install', info, this.t('errors.copyGameFailed', { cause: describe(cause) }));
+      return false;
+    }
+
+    // Same reason as in runUninstallSequence: the copy itself isn't interruptible, so check the abort
+    // flag manually before touching any state.
+    if (abort.signal.aborted) return false;
+
+    // A single existence check, not pollForExecutable: the grace-poll exists for installers that fork a
+    // child and exit early, whereas fse.copy is done when it resolves. Polling would only add
+    // launchTimeoutSec of waiting on an already-known-bad path.
+    if (!(await fse.pathExists(manifest.executablePath))) {
+      // The usual cause is a wrong source root: `executable` is card-relative in the form, but here it
+      // resolves inside the copied directory. Second most likely on linux: a Windows-authored card whose
+      // exe case doesn't match the files copied onto a case-sensitive FS — say so instead of "not found".
+      const shown = manifest.raw.executable ?? path.basename(manifest.executablePath);
+      const found = await findCaseInsensitiveName(manifest.executablePath);
+      this.failSequence(
+        'install',
+        info,
+        found !== null
+          ? this.t('errors.copyExeNotFoundCase', { path: shown, found })
+          : this.t('errors.copyExeNotFound', { path: shown }),
+      );
+      return false;
+    }
+
+    log.info(
+      `[install] copied id=${manifest.raw.id} from="${install.installerPath}" to="${install.dir}"`,
+    );
+    return true;
   }
 
   /**
@@ -1147,20 +1427,29 @@ export class GameController {
       // Run the game's own uninstaller if we can resolve one (FS search → registry fallback). Any
       // launch/wait failure is NON-fatal: we log it and fall through to the directory sweep. Only a
       // LaunchAbortedError (from waitForExit on a card swap) propagates to unwind cleanly.
-      const target = await resolveUninstaller(install);
-      if (target !== null) {
-        try {
-          proc = await launchUninstaller(target);
-          await waitForExit(proc, abort.signal);
-        } catch (cause) {
-          if (cause instanceof LaunchAbortedError) throw cause;
-          log.warn(`[uninstall] uninstaller failed, continuing to cleanup: ${describe(cause)}`);
+      //
+      // `copy` is skipped entirely: nothing was installed, so there is no uninstaller of OURS to run.
+      // A copied game directory is one that was installed on some OTHER machine, so any `unins*.exe`
+      // inside it belongs to that install — running it would clean a foreign registry and might pop a
+      // wizard. Straight to the sweep instead (which is the whole uninstall for copy).
+      if (install.type !== 'copy') {
+        const target = await resolveUninstaller(install);
+        if (target !== null) {
+          try {
+            proc = await this.launcher.launchUninstaller(target);
+            await waitForExit(proc, abort.signal);
+          } catch (cause) {
+            if (cause instanceof LaunchAbortedError) throw cause;
+            log.warn(`[uninstall] uninstaller failed, continuing to cleanup: ${describe(cause)}`);
+          }
         }
       }
 
-      // Always sweep the app-controlled install dir — after the uninstaller, and as the fallback when
-      // no target was resolved (custom / nothing found).
-      await removeWithRetry(install.dir, abort.signal);
+      // Sweep the platform's uninstall target — after the uninstaller, and as the fallback when no target
+      // was resolved (custom / nothing found). win32: the install dir. linux: the whole per-game Wine
+      // prefix (game files + provisioned runtimes), so the full disk footprint is reclaimed (Р7f).
+      const uninstallDir = this.launcher.uninstallDir(install);
+      await removeWithRetry(uninstallDir, abort.signal);
 
       // fse.remove is NOT interrupted by the signal (unlike waitForExit), so check the abort flag
       // manually — strictly BEFORE reading cardPresent / rebuilding info — so a mid-uninstall card swap
@@ -1172,7 +1461,7 @@ export class GameController {
       if (!this.cardPresent) {
         this.clearCard();
         state.set({ kind: 'idle' });
-        window.hide();
+        this.hideToTrayOrKeepEmpty();
         return;
       }
 
@@ -1180,7 +1469,7 @@ export class GameController {
       // is gone) → the button flips back to "Install" and "Uninstall" disappears.
       const currentStats = await stats.read(manifest.raw.id);
       const updatedInfo = await this.buildGameInfo(manifest, currentStats);
-      log.info(`[uninstall] completed id=${manifest.raw.id} dir="${install.dir}"`);
+      log.info(`[uninstall] completed id=${manifest.raw.id} removed="${uninstallDir}"`);
       this.enterReady(updatedInfo);
       window.showAndFocus();
     } catch (cause) {
@@ -1228,7 +1517,7 @@ export class GameController {
       this.steamWatch.stop();
       this.clearCard();
       this.deps.state.set({ kind: 'idle' });
-      this.deps.window.hide();
+      this.hideToTrayOrKeepEmpty();
       return;
     }
     this.enterReady(game);
@@ -1242,15 +1531,28 @@ export class GameController {
    * chosen by which side changed since the last sync. A conflict (both changed) and a fallback are logged.
    * Throws propagate to the caller (sync-in swallows them softly; sync-out defers to pending-flush).
    */
+  /**
+   * Runs one change-detected sync between the card and this game's PC save folder.
+   *
+   * `containerExists=false` (linux: the game's Wine prefix is gone — never created, or wiped by an
+   * uninstall) DISCARDS the baseline. That is a data-integrity rule, not an optimisation: change-detection
+   * reads an empty PC side against a baseline that lists files as "every save was deleted here" and would
+   * replicate that deletion onto the card — destroying the only surviving copy. The container being absent
+   * means the PC side has no authority at all, so the baseline describes a world that no longer exists;
+   * dropping it falls back to the phase direction (card→PC on sync-in), which restores the card's saves.
+   */
   private async runSaveSync(
     manifest: ResolvedManifest,
+    cardPath: string,
+    pcPath: string,
     fallback: 'card-to-pc' | 'pc-to-card',
+    containerExists: boolean,
   ): Promise<void> {
-    const cardPath = manifest.saveOnCardPath;
-    const pcPath = manifest.pcSavePath;
-    if (cardPath === undefined || pcPath === undefined) return;
     const id = manifest.raw.id;
-    const baseline = await this.deps.store.readSyncState(id);
+    const baseline = containerExists ? await this.deps.store.readSyncState(id) : null;
+    if (!containerExists) {
+      log.info(`[save-sync] id=${id} PC container absent → baseline discarded, card is authoritative`);
+    }
     const result = await syncByChange(cardPath, pcPath, baseline, fallback);
     if (result.conflict) {
       // The only branch that can lose data: both sides changed, LWW picked one. The losing side survives
@@ -1267,33 +1569,44 @@ export class GameController {
 
   private async performSyncOut(manifest: ResolvedManifest, stats: Stats): Promise<void> {
     const id = manifest.raw.id;
+    // Resolve the deferred pcSavePath once for this game (Р5/Э6). The game just ran, so its prefix exists
+    // and (on win32) the env expansion always succeeds — this matches the pre-port physical path exactly.
+    // A prefix that is somehow absent here means the game wrote nothing we could carry back: there is no
+    // source to copy from, so treat it as "no PC side" rather than syncing an emptiness onto the card.
+    const resolved = await this.resolvePcSavePath(manifest);
+    const pcPath = resolved !== null && resolved.containerExists ? resolved.path : null;
+    if (resolved !== null && !resolved.containerExists) {
+      log.warn(`[sync-out] the Wine prefix for id=${id} is gone — nothing to copy back to the card`);
+    }
     // The card is already removed (the expected scenario) → defer PC→SD into pending-flush.
     if (!this.cardPresent) {
-      if (manifest.pcSavePath !== undefined) {
-        await this.deps.store.enqueuePcToSd(id, manifest.pcSavePath);
+      if (pcPath !== null) {
+        await this.deps.store.enqueuePcToSd(id, pcPath);
       }
       return;
     }
-    if (manifest.pcSavePath !== undefined && manifest.saveOnCardPath !== undefined) {
+    if (pcPath !== null && manifest.saveOnCardPath !== undefined) {
       // Diagnostic (silent-failure guard): syncDir no-ops when the source is missing. If the PC save
       // folder doesn't exist after a play session, pcSavePath is almost certainly wrong in game.json
       // (e.g. %APPDATA% used for an AppData\LocalLow path) — warn instead of failing silently.
-      if (!(await fse.pathExists(manifest.pcSavePath))) {
+      if (!(await fse.pathExists(pcPath))) {
         log.warn(
-          `[sync-out] pcSavePath does not exist — nothing copied to the card. Check the manifest path: "${manifest.pcSavePath}"`,
+          `[sync-out] pcSavePath does not exist — nothing copied to the card. Check the manifest path: "${manifest.pcSavePath}" (resolved: "${pcPath}")`,
         );
       } else {
         try {
           // Change-based sync after the game (phase = sync-out). The old blind PC→card is only the
           // first-run fallback; normally the changed side wins (this PC just played → usually PC→card).
           log.info(
-            `[sync-out] change-based sync between PC "${manifest.pcSavePath}" and card "${manifest.saveOnCardPath}"`,
+            `[sync-out] change-based sync between PC "${pcPath}" and card "${manifest.saveOnCardPath}"`,
           );
-          await this.runSaveSync(manifest, 'pc-to-card');
+          // containerExists is true here by construction (pcPath is null otherwise), so the baseline is
+          // honoured exactly as before — sync-out semantics are unchanged.
+          await this.runSaveSync(manifest, manifest.saveOnCardPath, pcPath, 'pc-to-card', true);
         } catch (cause) {
           // The card may have been yanked during the sync → saves.bak is intact, we'll finish on insertion.
           log.warn('[sync-out] failed, deferring to pending-flush:', describe(cause));
-          await this.deps.store.enqueuePcToSd(id, manifest.pcSavePath);
+          await this.deps.store.enqueuePcToSd(id, pcPath);
           return;
         }
       }
@@ -1312,13 +1625,14 @@ export class GameController {
     // install/normal branches, where it is real (in steam mode it is '' and we never reach that read).
     let requiresInstall: boolean;
     let canUninstall: boolean;
-    let installVia: 'steam' | undefined;
+    let installVia: 'steam' | 'copy' | undefined;
+    let prefixCleanupOnly = false;
     let steamInstalling = false;
     let steamPaused = false;
     let steamPausedProgress: number | undefined;
     if (manifest.steam !== undefined) {
       // Steam mode: "installed" is Steam's own .acf state; uninstall is managed in Steam (never here).
-      const status = await steamInstallStatus(manifest.steam.appid);
+      const status = await steamInstallStatus(manifest.steam.appid, this.deps.platform.steamLocator);
       requiresInstall = status.state !== 'installed';
       // Steam uninstall is delegated to Steam (steam://uninstall) — available once installed.
       canUninstall = status.state === 'installed';
@@ -1333,11 +1647,18 @@ export class GameController {
       const installed = await fse.pathExists(manifest.executablePath);
       requiresInstall = !installed;
       canUninstall = installed;
-      installVia = undefined;
+      // `copy` shares this branch but not its install-confirm copy: no installer runs, so the silent-mode
+      // caveat and the destination path (which exists only for the user to paste into an installer's
+      // picker) are meaningless there. Tell the renderer which of the two notes to show.
+      installVia = manifest.install.type === 'copy' ? 'copy' : undefined;
     } else {
-      // Normal card game: always ready to play, nothing to uninstall.
+      // Normal card game: always ready to play. On Linux it still creates a per-game Wine prefix on first
+      // launch — offer to clear that prefix (the game stays on the card). win32 has no prefix → null → no
+      // Uninstall button (unchanged). "Uninstall" here means prefix cleanup, not removing an install.
       requiresInstall = false;
-      canUninstall = false;
+      const cleanupDir = await this.deps.platform.gameLauncher.prefixCleanupDir(manifest.raw.id);
+      canUninstall = cleanupDir !== null;
+      prefixCleanupOnly = canUninstall;
       installVia = undefined;
     }
     return {
@@ -1348,8 +1669,11 @@ export class GameController {
       launchCount: stats.launchCount,
       requiresInstall,
       canUninstall,
-      ...(manifest.install !== undefined ? { installDir: manifest.install.dir } : {}),
+      // Installer-view dir (Р7): on linux this is the `C:\playhook\games\<id>` the user would paste into a
+      // non-silent Wine picker; on win32 it equals the host dir.
+      ...(manifest.install !== undefined ? { installDir: manifest.install.installerDir } : {}),
       ...(installVia !== undefined ? { installVia } : {}),
+      ...(prefixCleanupOnly ? { prefixCleanupOnly: true } : {}),
       ...(steamInstalling ? { steamInstalling: true } : {}),
       ...(steamPaused ? { steamPaused: true } : {}),
       ...(steamPausedProgress !== undefined ? { steamPausedProgress } : {}),

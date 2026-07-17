@@ -10,8 +10,10 @@
 // translator and are re-applied on a language change via applyLabels().
 import {
   formModelToText,
+  slugifyId,
   textToFormModel,
   type InstallType,
+  type InstallerFamily,
   type LaunchMode,
   type ManifestFormModel,
   type ParseFormResult,
@@ -76,13 +78,22 @@ type FieldKey =
   | 'saveOnCard'
   | 'pcSavePath'
   | 'backgroundMusic'
+  | 'winetricks'
+  | 'umuGameId'
   | 'launchTimeoutSec'
   | 'killTimeoutSec'
   | 'steam.appid'
+  // The "move game to PC" switch and its source-directory field. They emit the same `install.installer`
+  // path as Installer mode does, but need slots of their OWN: sharing 'install.installer' would make the
+  // two modes' error slots overwrite each other in `errorEls`, and an error routed to the hidden
+  // Installer section would block Save with nothing on screen to explain why (see fieldKeyForPath).
+  | 'copyToPc'
+  | 'copySource'
   | 'install.installer'
   | 'install.type'
   | 'install.runAsAdmin'
   | 'install.args'
+  | 'install.winetricks'
   | 'sounds.play'
   | 'sounds.navigate'
   | 'sounds.button'
@@ -113,6 +124,8 @@ export class FormView {
   private readonly launchType: ValueEl;
   private readonly executableInput: ValueEl;
   private readonly runAsAdminSwitch: CheckedEl;
+  private readonly copyToPcSwitch: CheckedEl;
+  private readonly copySourceInput: ValueEl;
   private readonly installInstallerInput: ValueEl;
   private readonly installType: ValueEl;
   private readonly installRunAsAdminSwitch: CheckedEl;
@@ -131,11 +144,24 @@ export class FormView {
   private readonly watchList: DynamicList;
   private readonly heroList: DynamicList;
   private readonly installArgsList: DynamicList;
+  private readonly installWinetricksList: DynamicList;
+  private readonly gameWinetricksList: DynamicList;
+  private readonly umuGameIdInput: ValueEl;
 
   // Section wrappers toggled by the launch mode.
   private readonly execSection: HTMLElement;
   private readonly installSection: HTMLElement;
   private readonly steamSection: HTMLElement;
+  /** The "move game to PC" switch field — Executable mode only (installer mode shares execSection for the
+   *  executable/args/runAsAdmin fields, but "move to PC" is an Executable-only concept — `install.type:
+   *  copy`), so it is hidden outside Executable mode. */
+  private readonly copyToPcField: HTMLElement;
+  /** The copy-source field — inside execSection, shown only while the "move to PC" switch is on. */
+  private readonly copySourceField: HTMLElement;
+  /** Note under `executable`: says what the path is relative to (it changes with the copy switch). */
+  private readonly executableNote: HTMLElement;
+  /** Experimental-mode warning — sits under the launch-type dropdown, shown only in Installer mode. */
+  private readonly installerExperimental: HTMLElement;
 
   private readonly mixedBanner: HTMLElement;
   private readonly sectionPanels = new Map<SectionId, HTMLElement>();
@@ -149,12 +175,21 @@ export class FormView {
 
   // View state.
   private launchMode: LaunchMode = 'executable';
+  // Whether the user has taken manual control of the `id` field. While false, the title auto-fills the id
+  // (slugified). Set on a manual id edit, re-armed when the id is cleared, seeded on load from whether the
+  // card already carries an id.
+  private idTouched = false;
   private rest: Readonly<Record<string, unknown>> = {};
   // Unknown keys nested inside the sounds/install/steam blocks: the form has no field for them, so they
   // must be remembered from load() and put back in readModel() (else serialize() drops them — the blocks'
   // zod is strip-mode, so the loss would be silent). Mirrors the top-level `rest` round-trip.
   private soundsRest: Readonly<Record<string, unknown>> = {};
   private installRest: Readonly<Record<string, unknown>> = {};
+  /** The copy slot's own unknown keys — kept apart from installRest, like the two slots themselves. */
+  private copyInstallRest: Readonly<Record<string, unknown>> = {};
+  /** The copy slot's `winetricks`: valid for copy (the prefix IS provisioned) but with no control of its
+   * own — the form only offers the source directory. Remembered so a hand-written value survives Save. */
+  private copyInstallWinetricks: readonly string[] = [];
   private steamRest: Readonly<Record<string, unknown>> = {};
   private corrupt: Record<string, unknown> = {};
   private mixed = false;
@@ -167,14 +202,25 @@ export class FormView {
     this.mixedBanner.hidden = true;
 
     // ── Basics ──────────────────────────────────────────────────────────────
-    this.idInput = this.textInput('id');
-    this.titleInput = this.textInput('title');
+    // Editing the id by hand marks it "touched" so the title no longer overwrites it; clearing it re-arms
+    // the auto-fill. A programmatic set (syncIdFromTitle) does NOT fire 'input', so it never self-marks.
+    this.idInput = this.textInput('id', () => {
+      this.idTouched = getValue(this.idInput) !== '';
+    });
+    // The title drives the id (slugified) until the user takes over the id field — see syncIdFromTitle.
+    this.titleInput = this.textInput('title', () => this.syncIdFromTitle());
+    const idHint = document.createElement('div');
+    idHint.className = 'field-hint';
+    this.labelRefs.push({ el: idHint, key: 'configure.idHint' });
+    const idField = this.field('configure.fieldId', 'id', this.idInput);
+    idField.append(idHint);
     const schemaLine = document.createElement('div');
     schemaLine.className = 'field-static';
     this.labelRefs.push({ el: schemaLine, key: 'configure.schemaVersion' });
+    // Name first: it's what the author types, and the id auto-derives from it (slug), so it reads top-down.
     this.addSection('basics', [
-      this.field('configure.fieldId', 'id', this.idInput),
       this.field('configure.fieldTitle', 'title', this.titleInput),
+      idField,
       schemaLine,
     ]);
 
@@ -189,10 +235,38 @@ export class FormView {
     this.executableInput = this.textInput('executable');
     this.argsList = this.dynamicList('args', 'configure.fieldArgs', { reorder: true });
     this.runAsAdminSwitch = this.switchControl('runAsAdmin');
+    this.copyToPcSwitch = this.switchControl('copyToPc');
+    this.copyToPcSwitch.addEventListener('change', () => this.onCopyToPcChange());
+    this.copySourceInput = this.textInput('copySource');
+    this.copySourceField = this.fieldWithBrowse(
+      'configure.fieldCopySource',
+      'copySource',
+      this.copySourceInput,
+      'directory',
+    );
+    const copySourceHint = document.createElement('div');
+    copySourceHint.className = 'field-hint';
+    this.labelRefs.push({ el: copySourceHint, key: 'configure.copySourceHint' });
+    this.copySourceField.append(copySourceHint);
+    // The executable's meaning depends on the switch (card root vs the copied directory), so its note
+    // lives with the switch's field and is re-worded in updateCopyToPcState.
+    const execField = this.fieldWithBrowse(
+      'configure.fieldExecutable',
+      'executable',
+      this.executableInput,
+      'executable',
+      (picked) => this.executableFromPick(picked),
+    );
+    this.executableNote = document.createElement('div');
+    this.executableNote.className = 'field-hint';
+    execField.append(this.executableNote);
+    this.copyToPcField = this.switchField('configure.fieldCopyToPc', 'copyToPc', this.copyToPcSwitch);
     this.execSection = this.group([
-      this.fieldWithBrowse('configure.fieldExecutable', 'executable', this.executableInput, 'executable'),
+      execField,
       this.argsList.wrapper,
       this.switchField('configure.fieldRunAsAdmin', 'runAsAdmin', this.runAsAdminSwitch),
+      this.copyToPcField,
+      this.copySourceField,
     ]);
 
     this.installInstallerInput = this.textInput('install');
@@ -208,6 +282,20 @@ export class FormView {
     installArgsHint.className = 'field-hint';
     this.labelRefs.push({ el: installArgsHint, key: 'configure.installArgsDirHint' });
     this.installArgsList.wrapper.append(installArgsHint);
+    // Always shown, regardless of the CURRENT platform: Configure edits a CARD, and cards are typically
+    // authored on Windows and played on the Deck — hiding this on Windows would hide it from exactly the
+    // person who needs to read it.
+    const installerLinuxWarning = document.createElement('div');
+    installerLinuxWarning.className = 'field-hint';
+    this.labelRefs.push({ el: installerLinuxWarning, key: 'configure.installerLinuxWarning' });
+    // Experimental-mode banner: lives directly UNDER the launch-type dropdown (not inside a section — see
+    // addSection below), shown ONLY in Installer mode. execSection sits between the dropdown and
+    // installSection (it holds the shared executable/args fields), so putting the warning in installSection
+    // would push it below "Move game to PC" instead of under the dropdown. Amber `field-warning` sets it
+    // apart from the grey hints.
+    this.installerExperimental = document.createElement('div');
+    this.installerExperimental.className = 'field-hint field-warning';
+    this.labelRefs.push({ el: this.installerExperimental, key: 'configure.installerExperimental' });
     this.installSection = this.group([
       this.fieldWithBrowse(
         'configure.fieldInstaller',
@@ -218,6 +306,7 @@ export class FormView {
       this.field('configure.fieldInstallType', 'install.type', this.installType),
       this.switchField('configure.fieldRunAsAdmin', 'install.runAsAdmin', this.installRunAsAdminSwitch),
       this.installArgsList.wrapper,
+      installerLinuxWarning,
     ]);
 
     this.appidInput = this.numberInput('steam');
@@ -241,6 +330,7 @@ export class FormView {
 
     this.addSection('launch', [
       this.field('configure.launchType', null, this.launchType),
+      this.installerExperimental,
       this.execSection,
       this.installSection,
       this.steamSection,
@@ -286,9 +376,35 @@ export class FormView {
     // ── Advanced ──────────────────────────────────────────────────────────────
     this.launchTimeoutInput = this.numberInput('launchTimeoutSec');
     this.killTimeoutInput = this.numberInput('killTimeoutSec');
+    // Custom winetricks verbs (Linux/Proton, Р7b): added ON TOP of the app's baseline set, empty by
+    // default. `game` verbs are provisioned before the game launches; `installer` verbs before the
+    // installer runs. Share the install block's corrupt-clear (errorKey keeps a distinct error slot).
+    this.gameWinetricksList = this.dynamicList('winetricks', 'configure.fieldWinetricks', { reorder: true });
+    const gameWinetricksHint = document.createElement('div');
+    gameWinetricksHint.className = 'field-hint';
+    this.labelRefs.push({ el: gameWinetricksHint, key: 'configure.winetricksHint' });
+    this.gameWinetricksList.wrapper.append(gameWinetricksHint);
+    this.installWinetricksList = this.dynamicList('install', 'configure.fieldInstallWinetricks', {
+      reorder: true,
+      errorKey: 'install.winetricks',
+    });
+    const installWinetricksHint = document.createElement('div');
+    installWinetricksHint.className = 'field-hint';
+    this.labelRefs.push({ el: installWinetricksHint, key: 'configure.installWinetricksHint' });
+    this.installWinetricksList.wrapper.append(installWinetricksHint);
+    // umu GAMEID (Р7i): Steam appid or custom UMU_ID for the game's protonfix. A hint clarifies the value.
+    this.umuGameIdInput = this.textInput('umuGameId');
+    const umuGameIdField = this.field('configure.fieldUmuGameId', 'umuGameId', this.umuGameIdInput);
+    const umuGameIdHint = document.createElement('div');
+    umuGameIdHint.className = 'field-hint';
+    this.labelRefs.push({ el: umuGameIdHint, key: 'configure.umuGameIdHint' });
+    umuGameIdField.append(umuGameIdHint);
     this.addSection('advanced', [
       this.field('configure.fieldLaunchTimeout', 'launchTimeoutSec', this.launchTimeoutInput),
       this.field('configure.fieldKillTimeout', 'killTimeoutSec', this.killTimeoutInput),
+      this.gameWinetricksList.wrapper,
+      this.installWinetricksList.wrapper,
+      umuGameIdField,
     ]);
 
     this.applyLabels();
@@ -313,6 +429,7 @@ export class FormView {
     this.rest = rest;
     this.soundsRest = model.sounds.rest;
     this.installRest = model.install.rest;
+    this.copyInstallRest = model.copyInstall.rest;
     this.steamRest = model.steam.rest;
     this.corrupt = { ...corrupt };
     this.launchMode = model.launchMode;
@@ -320,6 +437,9 @@ export class FormView {
 
     this.setScalar('id', this.idInput, model.id);
     this.setScalar('title', this.titleInput, model.title);
+    // A card that already carries an id owns it — don't let a title edit clobber it. A blank card re-arms
+    // the title→id auto-fill.
+    this.idTouched = model.id !== '';
     this.setScalar('executable', this.executableInput, model.executable);
     this.setScalarChecked('runAsAdmin', this.runAsAdminSwitch, model.runAsAdmin);
     this.setScalar('saveOnCard', this.saveOnCardInput, model.saveOnCard);
@@ -330,6 +450,8 @@ export class FormView {
     this.setList('args', this.argsList, model.args);
     this.setList('watchProcesses', this.watchList, model.watchProcesses);
     this.setList('heroImage', this.heroList, model.heroImage);
+    this.setList('winetricks', this.gameWinetricksList, model.winetricks);
+    this.setScalar('umuGameId', this.umuGameIdInput, model.umuGameId);
 
     // install block (corrupt = whole block).
     const installCorrupt = 'install' in this.corrupt;
@@ -337,7 +459,14 @@ export class FormView {
     this.installType.value = model.install.type;
     this.installRunAsAdminSwitch.checked = installCorrupt ? false : model.install.runAsAdmin;
     this.installArgsList.setValues(installCorrupt ? [] : model.install.args);
+    this.installWinetricksList.setValues(installCorrupt ? [] : model.install.winetricks);
     this.updateInstallRunAsAdminState(model.install.type);
+
+    // copy slot (the "move game to PC" checkbox — its own independent install block). A corrupt install
+    // block belongs to Installer mode (the parse could not tell it was a copy one), hence the same guard.
+    this.copyToPcSwitch.checked = installCorrupt ? false : model.copyToPc;
+    this.copySourceInput.value = installCorrupt ? '' : model.copyInstall.installer;
+    this.copyInstallWinetricks = model.copyInstall.winetricks;
 
     // steam block (corrupt = whole block).
     this.setScalar('steam', this.appidInput, model.steam.appid);
@@ -367,7 +496,7 @@ export class FormView {
     if (issues === null) return [];
     const unmapped: ManifestValidationIssue[] = [];
     for (const issue of issues) {
-      const key = fieldKeyForPath(issue.path);
+      const key = fieldKeyForPath(issue.path, this.isCopyMode());
       const el = key !== null ? this.errorEls.get(key) : undefined;
       if (el === undefined) {
         unmapped.push(issue);
@@ -387,18 +516,28 @@ export class FormView {
       this.launchType,
       this.executableInput,
       this.runAsAdminSwitch,
+      this.copyToPcSwitch,
+      this.copySourceInput,
       this.installInstallerInput,
       this.installType,
       this.installRunAsAdminSwitch,
       this.appidInput,
       this.saveOnCardInput,
       this.pcSavePathInput,
+      this.umuGameIdInput,
       this.launchTimeoutInput,
       this.killTimeoutInput,
       ...[...this.deps.root.querySelectorAll('.field-row fluent-button')].map((e) => e as HTMLElement),
     ];
     for (const el of controls) setElDisabled(el, disabled);
-    for (const list of [this.argsList, this.watchList, this.heroList, this.installArgsList]) {
+    for (const list of [
+      this.argsList,
+      this.watchList,
+      this.heroList,
+      this.installArgsList,
+      this.installWinetricksList,
+      this.gameWinetricksList,
+    ]) {
       list.setDisabled(disabled);
     }
     for (const audio of [this.soundPlay, this.soundNavigate, this.soundButton, this.soundBack, this.music]) {
@@ -426,6 +565,8 @@ export class FormView {
       args: this.argsList.values(),
       runAsAdmin: getChecked(this.runAsAdminSwitch),
       watchProcesses: this.watchList.values(),
+      winetricks: this.gameWinetricksList.values(),
+      umuGameId: getValue(this.umuGameIdInput),
       heroImage: this.heroList.values(),
       saveOnCard: getValue(this.saveOnCardInput),
       pcSavePath: getValue(this.pcSavePathInput),
@@ -444,7 +585,19 @@ export class FormView {
         type: toInstallType(getValue(this.installType)),
         runAsAdmin: getChecked(this.installRunAsAdminSwitch),
         args: this.installArgsList.values(),
+        winetricks: this.installWinetricksList.values(),
         rest: this.installRest,
+      },
+      copyToPc: getChecked(this.copyToPcSwitch),
+      // The copy slot has only the one control; `type` is pinned and the rest of the block round-trips
+      // from what was loaded (its args/runAsAdmin are schema-forbidden, so they stay at the defaults).
+      copyInstall: {
+        installer: getValue(this.copySourceInput),
+        type: 'copy',
+        runAsAdmin: false,
+        args: [],
+        winetricks: this.copyInstallWinetricks,
+        rest: this.copyInstallRest,
       },
       steam: { appid: getValue(this.appidInput), rest: this.steamRest },
     };
@@ -524,6 +677,58 @@ export class FormView {
     this.deps.onChange();
   }
 
+  /** True while the form is in Executable mode with "move game to PC" on (manifest `install.type: copy`). */
+  private isCopyMode(): boolean {
+    return this.launchMode === 'executable' && getChecked(this.copyToPcSwitch);
+  }
+
+  private onCopyToPcChange(): void {
+    this.clearCorrupt('install');
+    this.updateCopyToPcState();
+    this.deps.onChange();
+  }
+
+  // Shows the source field and re-words the executable's note: with the switch on, `executable` is
+  // resolved inside the COPIED directory, not from the card root. The stored value is deliberately left
+  // untouched — silently rewriting a path the user typed would be worse than telling them it changed
+  // meaning (Browse does trim, where the intent is unambiguous — see executableFromPick).
+  // Fills the id from the current title (slugified), unless the user has taken over the id field. A
+  // programmatic `.value` set doesn't fire 'input', so this never marks the id as touched. Empty slug
+  // (e.g. an all-Cyrillic name) leaves the id empty — the schema forbids non-latin ids, so the user types
+  // one by hand.
+  private syncIdFromTitle(): void {
+    if (this.idTouched) return;
+    this.idInput.value = slugifyId(getValue(this.titleInput));
+    this.clearCorrupt('id');
+  }
+
+  private updateCopyToPcState(): void {
+    const copy = this.isCopyMode();
+    this.copySourceField.hidden = !copy;
+    this.executableNote.textContent = this.deps.translator()(
+      copy ? 'configure.copyExecutableNote' : 'configure.executableNote',
+    );
+  }
+
+  /**
+   * Р14: the picker always returns paths relative to the CARD ROOT, but in copy mode `executable` is
+   * relative to the copied directory — so a raw pick would silently produce a broken path
+   * (`Games/Witcher/bin/witcher.exe` where the game will only have `bin/witcher.exe`). Trim the source
+   * prefix; a pick from outside the source is a mistake we refuse rather than mangle.
+   * Outside copy mode the pick passes through unchanged.
+   */
+  private executableFromPick(picked: string): string | null {
+    if (!this.isCopyMode()) return picked;
+    const source = getValue(this.copySourceInput).replace(/\/+$/, '');
+    if (source === '') return picked; // no source yet → nothing to trim against
+    const prefix = `${source}/`;
+    if (!picked.startsWith(prefix)) {
+      this.deps.onPickError(this.deps.translator()('configure.copySourceOutside', { source }));
+      return null;
+    }
+    return picked.slice(prefix.length);
+  }
+
   // Custom installer hands argv control to the card → the validator forbids running it elevated, so the
   // switch is disabled (and forced off) for `custom` (mirrors the manifest refine).
   private updateInstallRunAsAdminState(type: InstallType): void {
@@ -533,9 +738,14 @@ export class FormView {
   }
 
   private updateSectionVisibility(): void {
+    // execSection carries the executable/args/runAsAdmin fields shared by Executable AND Installer modes,
+    // so it's hidden only in Steam mode. "Move game to PC" inside it is Executable-only, hidden otherwise.
     this.execSection.hidden = this.launchMode === 'steam';
+    this.copyToPcField.hidden = this.launchMode !== 'executable';
     this.installSection.hidden = this.launchMode !== 'installer';
+    this.installerExperimental.hidden = this.launchMode !== 'installer';
     this.steamSection.hidden = this.launchMode !== 'steam';
+    this.updateCopyToPcState();
   }
 
   // ── DOM builders ────────────────────────────────────────────────────────────
@@ -589,11 +799,14 @@ export class FormView {
   }
 
   // A labelled control with a trailing Browse… button that fills it from a picked path.
+  // `transform` post-processes the picked path before it lands in the control; returning null rejects the
+  // pick (the transform having reported why) and leaves the current value alone.
   private fieldWithBrowse(
     labelKey: MessageKey,
     errorKey: FieldKey,
     control: ValueEl,
     kind: ConfigPickKind,
+    transform?: (picked: string) => string | null,
   ): HTMLElement {
     const wrapper = document.createElement('div');
     wrapper.className = 'field';
@@ -602,7 +815,10 @@ export class FormView {
     const browse = this.textButton('configure.browse', async () => {
       const result = await this.deps.pickPath(kind);
       if (result.ok) {
-        control.value = result.paths[0] ?? getValue(control);
+        const picked = result.paths[0] ?? getValue(control);
+        const next = transform === undefined ? picked : transform(picked);
+        if (next === null) return;
+        control.value = next;
         this.clearCorrupt(topLevelOf(errorKey));
         this.deps.onChange();
       } else if (!('cancelled' in result)) {
@@ -712,6 +928,9 @@ export class FormView {
       readonly preview?: boolean;
       readonly reorder?: boolean;
       readonly noAdd?: boolean;
+      /** Error slot / container key, when it must differ from `corruptKey` (e.g. a second list sharing the
+       * `install` block's corrupt-clear but needing its own error slot). Defaults to the corruptKey rule. */
+      readonly errorKey?: FieldKey;
     } = {},
   ): DynamicList {
     const wrapper = document.createElement('div');
@@ -868,7 +1087,8 @@ export class FormView {
       buttonRow.append(browse);
     }
 
-    const errorKey: FieldKey = corruptKey === 'install' ? 'install.args' : (corruptKey as FieldKey);
+    const errorKey: FieldKey =
+      opts.errorKey ?? (corruptKey === 'install' ? 'install.args' : (corruptKey as FieldKey));
     wrapper.append(this.fieldLabel(labelKey), rows, buttonRow, this.errorSlot(errorKey));
     this.registerContainer(errorKey, wrapper);
 
@@ -893,11 +1113,14 @@ export class FormView {
     };
   }
 
-  private textInput(corruptKey: string): ValueEl {
+  private textInput(corruptKey: string, beforeChange?: () => void): ValueEl {
     const input = document.createElement('fluent-text-input') as ValueEl;
     input.setAttribute('type', 'text');
     input.addEventListener('input', () => {
       this.clearCorrupt(corruptKey);
+      // Runs BEFORE onChange so a derived field (e.g. id from the title) is already in the DOM when the
+      // form re-serializes — otherwise the serialized value would lag one keystroke behind.
+      beforeChange?.();
       this.deps.onChange();
     });
     return input;
@@ -1048,20 +1271,31 @@ function dragAfterElement(container: HTMLElement, y: number, dragging: HTMLEleme
 }
 
 /** Narrows the install-type dropdown value to the enum (defaults to nsis for any unexpected value). */
-function toInstallType(value: string): InstallType {
+// The dropdown only ever offers the three installer families — `copy` is driven by its own checkbox and
+// must never surface here, hence the narrowed return type (an unknown value falls back to nsis, as before).
+function toInstallType(value: string): InstallerFamily {
   return value === 'inno' || value === 'custom' ? value : 'nsis';
 }
 
 /** The top-level manifest key a field error belongs to (for corrupt-note grouping). */
 function topLevelOf(key: FieldKey): string {
+  // The copy fields live in the `install` block too — editing them must clear ITS corrupt state.
+  if (key === 'copySource' || key === 'copyToPc') return 'install';
   if (key.startsWith('install.')) return 'install';
   if (key.startsWith('sounds.')) return 'sounds';
   if (key === 'steam.appid') return 'steam';
   return key;
 }
 
-/** Maps a validation issue path onto a form field error slot (prefix match), or null when unmapped. */
-function fieldKeyForPath(path: string): FieldKey | null {
+/**
+ * Maps a validation issue path onto a form field error slot (prefix match), or null when unmapped.
+ *
+ * `copyToPc` is needed because the SAME manifest path means different things per mode: with the checkbox
+ * on, `install.installer` is the copy-source field in the Executable section, and its errors (an empty
+ * source, a path escaping the card root) must appear there — the Installer section is hidden, so an
+ * error routed to it would block Save with no visible cause.
+ */
+function fieldKeyForPath(path: string, copyToPc: boolean): FieldKey | null {
   switch (path) {
     case 'id':
     case 'title':
@@ -1072,6 +1306,7 @@ function fieldKeyForPath(path: string): FieldKey | null {
     case 'saveOnCard':
     case 'pcSavePath':
     case 'backgroundMusic':
+    case 'umuGameId':
     case 'launchTimeoutSec':
     case 'killTimeoutSec':
       return path;
@@ -1079,12 +1314,21 @@ function fieldKeyForPath(path: string): FieldKey | null {
       break;
   }
   if (path === 'heroImage' || path.startsWith('heroImage.')) return 'heroImage';
+  if (path === 'winetricks' || path.startsWith('winetricks.')) return 'winetricks';
   if (path === 'steam' || path.startsWith('steam.')) return 'steam.appid';
-  if (path === 'install') return 'install.installer';
-  if (path === 'install.installer') return 'install.installer';
-  if (path === 'install.type') return 'install.type';
-  if (path === 'install.runAsAdmin') return 'install.runAsAdmin';
-  if (path.startsWith('install.args')) return 'install.args';
+  if (path === 'install' || path === 'install.installer') {
+    return copyToPc ? 'copySource' : 'install.installer';
+  }
+  // In copy mode the remaining install.* fields have no control of their own (the type is implicit, and
+  // args/runAsAdmin are rejected by the schema) — leave them unmapped so they surface in the #issues
+  // panel rather than in a slot the user cannot see.
+  if (path.startsWith('install.')) {
+    if (copyToPc) return null;
+    if (path === 'install.type') return 'install.type';
+    if (path === 'install.runAsAdmin') return 'install.runAsAdmin';
+    if (path.startsWith('install.winetricks')) return 'install.winetricks';
+    if (path.startsWith('install.args')) return 'install.args';
+  }
   if (path === 'sounds' || path === 'sounds.play') return 'sounds.play';
   if (path === 'sounds.navigate') return 'sounds.navigate';
   if (path === 'sounds.button') return 'sounds.button';

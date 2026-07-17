@@ -6,7 +6,7 @@
 // info panel, title slide, music gating).
 // IMPORTANT: title/data come from the card (untrusted) — rendered via textContent, never innerHTML.
 import type { AppState, GameInfo } from '../shared/types';
-import { createTranslator, type Locale, type Translator } from '../shared/i18n/index.js';
+import { createTranslator, type Locale, type Translator, type MessageKey } from '../shared/i18n/index.js';
 import { localizeDocument } from './i18n-dom.js';
 import { createAudioController } from './audio.js';
 import { createHeroController } from './hero.js';
@@ -87,9 +87,97 @@ function syncMusic(): void {
   audio.setMusicPlaying(visible && !running);
 }
 
+// ── "Chatter": a rotating funny suffix for long busy phases (install / Proton config — Р7j) ──────────
+// The base status ("Установка..." / "Конфигурация Proton...") shows alone for the first MINUTE; after that
+// a random funny suffix is APPENDED and swapped every 20s, so a long silent install/provision doesn't feel
+// stuck. Renderer-owned (pure presentation) — main only sets the base state.
+const CHATTER_DELAY_MS = 60_000; // base-only for the first minute
+const CHATTER_ROTATE_MS = 20_000; // then swap the funny suffix every 20 seconds
+const INSTALL_SUFFIX_KEYS: readonly MessageKey[] = [
+  'launcher.installChatter1',
+  'launcher.installChatter2',
+  'launcher.installChatter3',
+  'launcher.installChatter4',
+  'launcher.installChatter5',
+  'launcher.installChatter6',
+  'launcher.installChatter7',
+  'launcher.installChatter8',
+  'launcher.installChatter9',
+  'launcher.installChatter10',
+];
+// Reuse the Proton funny lines as suffixes appended to "Configuring Proton..." (protonConfig1 is the base).
+const PROTON_SUFFIX_KEYS: readonly MessageKey[] = [
+  'launcher.protonConfig2',
+  'launcher.protonConfig3',
+  'launcher.protonConfig4',
+  'launcher.protonConfig5',
+  'launcher.protonConfig6',
+  'launcher.protonConfig7',
+  'launcher.protonConfig8',
+  'launcher.protonConfig9',
+  'launcher.protonConfig10',
+  'launcher.protonConfig11',
+  'launcher.protonConfig12',
+];
+
+type ChatterKind = 'installing' | 'configuringProton';
+let chatterKind: ChatterKind | null = null;
+let chatterSuffix: MessageKey | null = null;
+let chatterDelayTimer = 0;
+let chatterRotateTimer = 0;
+
+function chatterPool(kind: ChatterKind): readonly MessageKey[] {
+  return kind === 'installing' ? INSTALL_SUFFIX_KEYS : PROTON_SUFFIX_KEYS;
+}
+
+function stopChatterTimers(): void {
+  if (chatterDelayTimer !== 0) {
+    window.clearTimeout(chatterDelayTimer);
+    chatterDelayTimer = 0;
+  }
+  if (chatterRotateTimer !== 0) {
+    window.clearInterval(chatterRotateTimer);
+    chatterRotateTimer = 0;
+  }
+}
+
+function rotateChatter(kind: ChatterKind): void {
+  const pool = chatterPool(kind);
+  chatterSuffix = pool[Math.floor(Math.random() * pool.length)] ?? null;
+  applyStatus();
+}
+
+// Sets the status line: the base label for the current state, plus the current funny suffix when active.
+function applyStatus(): void {
+  const base = statusOf(currentState, translator);
+  statusEl.textContent =
+    chatterSuffix !== null && currentState.kind === chatterKind
+      ? `${base} ${translator(chatterSuffix)}`
+      : base;
+}
+
+// (Re)starts / stops the chatter timer as the state enters/leaves a long busy phase. First suffix appears
+// at the first tick (~1 min); base-only before that. A phase change resets it (each phase gets its minute).
+function syncChatter(state: AppState): void {
+  const kind: ChatterKind | null =
+    state.kind === 'installing' || state.kind === 'configuringProton' ? state.kind : null;
+  if (kind === chatterKind) return; // same phase (or same non-phase) — keep the running timers
+  stopChatterTimers();
+  chatterKind = kind;
+  chatterSuffix = null; // base only for the first minute
+  if (kind !== null) {
+    chatterDelayTimer = window.setTimeout(() => {
+      chatterDelayTimer = 0;
+      rotateChatter(kind); // first funny suffix at 1 minute
+      chatterRotateTimer = window.setInterval(() => rotateChatter(kind), CHATTER_ROTATE_MS); // then every 20s
+    }, CHATTER_DELAY_MS);
+  }
+}
+
 // ── Render ──────────────────────────────────────────────────────────────────
 
 function render(state: AppState): void {
+  const prev = currentState;
   currentState = state;
   const phase = phaseOf(state);
   const game = gameOf(state);
@@ -134,11 +222,20 @@ function render(state: AppState): void {
   if (noPlay) app.dataset['layout'] = 'no-play';
   else delete app.dataset['layout'];
 
-  statusEl.textContent = statusOf(state, translator);
+  syncChatter(state);
+  applyStatus();
 
   // Force-close popups off the ready screen, then re-apply the focus highlight (see controls.refresh).
   controls.refresh();
   syncMusic();
+
+  // Empty-screen error (Р8, point 1): a card that fails to load sets state=error with no game. In Game
+  // Mode the window is shown (no tray to hide into), so surface the reason over the empty screen via the
+  // error popup. Only on ENTERING the error (prev not already error) so a locale/wallpaper re-render
+  // doesn't re-pop a popup the user has closed. Desktop/Windows keep hiding, so this rarely fires there.
+  if (state.kind === 'error' && game === undefined && prev.kind !== 'error') {
+    controls.showError(state.message);
+  }
 }
 
 // ── Wiring ──────────────────────────────────────────────────────────────────
@@ -193,6 +290,11 @@ const applyVolumes = (volumes: { music: number; sfx: number }): void => {
 window.api.onVolumesUpdate(applyVolumes);
 void window.api.requestVolumes().then(applyVolumes);
 
+// Gate gamepad input on window focus: a backgrounded launcher (a game on top — most visibly under
+// gamescope, where Chromium keeps feeding the unfocused window input) must not act on presses meant for
+// the game. Resumes the instant the user switches back to the launcher (it regains focus).
+window.api.onWindowFocus((focused) => controls.setGamepadPaused(!focused));
+
 // Hero images are delivered on their own channel (not in AppState): the renderer rotates through them
 // locally, so we never re-send this large payload on every state transition. See hero.applyAssets.
 window.api.onHeroUpdate((assets) => hero.applyAssets(assets));
@@ -202,6 +304,10 @@ void window.api.requestHero().then((assets) => hero.applyAssets(assets));
 // "Select game" popup. Seed on startup (back-fill after a window reconnect), then live updates.
 window.api.onLibraryUpdate((library) => controls.setGames(library?.games ?? []));
 void window.api.requestLibrary().then((library) => controls.setGames(library?.games ?? []));
+
+// Game Mode (gamescope) is static for the process — seed it once so the power menu shows "Close Playhook"
+// (full quit) instead of the no-op "Minimize Playhook".
+void window.api.requestGameMode().then((value) => controls.setGameMode(value));
 
 // Pause/resume music AND the hero rotation when the window is hidden to tray or restored. The active
 // layer keeps showing the current hero, so no force-show is needed on return — just (re)start the timer.

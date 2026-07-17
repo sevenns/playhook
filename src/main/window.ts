@@ -6,9 +6,11 @@
 // switching back to the game/Steam. A focused fullscreen window already hides the taskbar.
 import path from 'node:path';
 import { BrowserWindow, Menu, clipboard } from 'electron';
+import { IPC } from '../shared/types';
 import { type Translator } from '../shared/i18n/index';
 import { installHideOnClose, type HideOnCloseGuard } from './window-hide-guard';
 import { forceForegroundWindow } from './foreground';
+import { log } from './logger';
 
 export class GameWindow {
   private window: BrowserWindow | null = null;
@@ -24,7 +26,10 @@ export class GameWindow {
    * (all visibility changes go through them → 'hide'/'show'); the minimize/restore listeners are a cheap
    * guard for the OS minimizing us (e.g. an exclusive-fullscreen game).
    */
-  create(onVisibilityChanged: (shown: boolean) => void = () => undefined): BrowserWindow {
+  create(
+    onVisibilityChanged: (shown: boolean) => void = () => undefined,
+    opts: { readonly hideToTrayOnClose?: boolean } = {},
+  ): BrowserWindow {
     const window = new BrowserWindow({
       // width/height act as the windowed fallback if fullscreen is ever toggled off.
       width: 960,
@@ -35,7 +40,8 @@ export class GameWindow {
       frame: false,
       // Fullscreen launcher: the window covers the whole screen (incl. taskbar) when shown.
       fullscreen: true,
-      icon: path.join(__dirname, '../icon.ico'),
+      // Windows takes a multi-res .ico; Linux/mac need a PNG (a .ico renders as an empty icon there).
+      icon: path.join(__dirname, process.platform === 'win32' ? '../icon.ico' : '../icon.png'),
       backgroundColor: '#101014',
       webPreferences: {
         preload: path.join(__dirname, '../preload/preload.js'),
@@ -47,6 +53,18 @@ export class GameWindow {
         autoplayPolicy: 'no-user-gesture-required',
       },
     });
+
+    // Forward OS focus changes to the renderer so it can gate gamepad input: a BACKGROUND launcher must
+    // not act on presses meant for the running game. Under gamescope the renderer's own Chromium focus is
+    // unreliable (it keeps feeding the unfocused window gamepad input), so we drive this from the NATIVE
+    // window focus events, which reflect the compositor's real foreground. Logged so we can confirm on the
+    // Deck that gamescope actually delivers them.
+    const sendFocus = (focused: boolean): void => {
+      log.info(`[window] focus=${focused}`);
+      if (!window.isDestroyed()) window.webContents.send(IPC.windowFocus, focused);
+    };
+    window.on('focus', () => sendFocus(true));
+    window.on('blur', () => sendFocus(false));
 
     // Right-click on selected text → a minimal "Copy" menu. The UI is non-selectable except the
     // install path in the confirmation popup, so this only ever appears there (selectionText empty
@@ -68,8 +86,12 @@ export class GameWindow {
       menu.popup({ window });
     });
 
-    // Closing the window with the X doesn't quit the app — we hide it to the tray.
-    this.closeGuard = installHideOnClose(window);
+    // Closing the window with the X doesn't quit the app — we hide it to the tray. In SteamOS Game Mode
+    // there is no tray and Steam ends a non-Steam game by closing its window, so the guard is skipped
+    // (`hideToTrayOnClose: false`): the close proceeds and main quits on window-all-closed (see Р8, point 5).
+    if (opts.hideToTrayOnClose ?? true) {
+      this.closeGuard = installHideOnClose(window);
+    }
 
     // Report on-screen state changes to the keep-awake driver. 'show'/'hide' cover every in-app
     // transition (hide() / showAndFocus()); 'minimize'/'restore' guard against the OS minimizing us.

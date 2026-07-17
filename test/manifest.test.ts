@@ -5,6 +5,7 @@ import {
   expandPcSavePath,
   manifestJsonSchema,
   resolveInside,
+  stripCopySourcePrefix,
   validateManifestText,
 } from '../src/main/manifest';
 import { createTranslator } from '../src/shared/i18n/index';
@@ -36,6 +37,50 @@ describe('resolveInside', () => {
 
   it('rejects absolute paths', () => {
     expect(resolveInside(root, '/etc/passwd')).toBeNull();
+  });
+
+  it('normalizes Windows backslash separators (Р12)', () => {
+    // A Windows-authored `"bin\\game.exe"` must resolve INSIDE the root on Linux too, where `\` is not a
+    // separator — the normalization turns it into `bin/game.exe` before resolving.
+    const resolved = resolveInside(root, 'bin\\game.exe');
+    expect(resolved).not.toBeNull();
+    expect(isInside(root, resolved as string)).toBe(true);
+    // Same target as the forward-slash form → identical resolution on every platform.
+    expect(resolved).toBe(resolveInside(root, 'bin/game.exe'));
+  });
+
+  it('still rejects traversal written with backslashes (Р12)', () => {
+    expect(resolveInside(root, '..\\outside.exe')).toBeNull();
+  });
+});
+
+describe('stripCopySourcePrefix (copy mode: executable relative to the copied dir)', () => {
+  it('trims a leading <source>/ from a card-root-relative executable', () => {
+    expect(stripCopySourcePrefix('game/game.exe', 'game')).toBe('game.exe');
+    expect(stripCopySourcePrefix('Games/MyGame/bin/game.exe', 'Games/MyGame')).toBe('bin/game.exe');
+  });
+
+  it('leaves an executable already relative to the copied dir untouched', () => {
+    expect(stripCopySourcePrefix('game.exe', 'game')).toBe('game.exe');
+    expect(stripCopySourcePrefix('bin/game.exe', 'Games/MyGame')).toBe('bin/game.exe');
+  });
+
+  it('normalizes Windows backslashes on both sides (Р12)', () => {
+    expect(stripCopySourcePrefix('game\\game.exe', 'game')).toBe('game.exe');
+    expect(stripCopySourcePrefix('Games\\MyGame\\bin\\game.exe', 'Games\\MyGame')).toBe('bin/game.exe');
+  });
+
+  it('tolerates a trailing slash on the source', () => {
+    expect(stripCopySourcePrefix('game/game.exe', 'game/')).toBe('game.exe');
+  });
+
+  it('does not trim a same-named prefix that is not a full path segment', () => {
+    // source `game`, executable `gameplay/x.exe` — `gameplay` is not the `game` segment.
+    expect(stripCopySourcePrefix('gameplay/x.exe', 'game')).toBe('gameplay/x.exe');
+  });
+
+  it('is a no-op with an empty source', () => {
+    expect(stripCopySourcePrefix('game/game.exe', '')).toBe('game/game.exe');
   });
 });
 
@@ -117,6 +162,56 @@ describe('validateManifestText', () => {
       install: { installer: 's/s.exe', type: 'custom', runAsAdmin: true, args: ['{dir}'] },
     });
     expect(validateManifestText(text, t).ok).toBe(false);
+  });
+
+  it('accepts install.type "copy" (move game to PC — the installer field is the game directory)', () => {
+    const text = JSON.stringify({
+      schemaVersion: 1,
+      id: 'x',
+      title: 'X',
+      executable: 'bin/game.exe',
+      heroImage: 'hero.jpg',
+      install: { installer: 'Games/Witcher', type: 'copy' },
+    });
+    expect(validateManifestText(text, t).ok).toBe(true);
+  });
+
+  it('rejects install.args with type "copy" (nothing is launched — schema refine)', () => {
+    const text = JSON.stringify({
+      schemaVersion: 1,
+      id: 'x',
+      title: 'X',
+      executable: 'bin/game.exe',
+      install: { installer: 'Games/Witcher', type: 'copy', args: ['/S'] },
+    });
+    const result = validateManifestText(text, t);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.issues.some((i) => i.path === 'install.args')).toBe(true);
+  });
+
+  it('rejects install.runAsAdmin with type "copy" (no process to elevate — schema refine)', () => {
+    const text = JSON.stringify({
+      schemaVersion: 1,
+      id: 'x',
+      title: 'X',
+      executable: 'bin/game.exe',
+      install: { installer: 'Games/Witcher', type: 'copy', runAsAdmin: true },
+    });
+    const result = validateManifestText(text, t);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.issues.some((i) => i.path === 'install.runAsAdmin')).toBe(true);
+  });
+
+  it('ACCEPTS install.winetricks with type "copy" (the prefix is provisioned before the copy)', () => {
+    const text = JSON.stringify({
+      schemaVersion: 1,
+      id: 'x',
+      title: 'X',
+      executable: 'bin/game.exe',
+      heroImage: 'hero.jpg',
+      install: { installer: 'Games/Witcher', type: 'copy', winetricks: ['dotnet48'] },
+    });
+    expect(validateManifestText(text, t).ok).toBe(true);
   });
 
   it('rejects executable path traversal (semantic, fs-free)', () => {
@@ -281,5 +376,15 @@ describe('manifestJsonSchema', () => {
     // Second branch: an array of the same object schema.
     expect(arraySchema?.type).toBe('array');
     expect(arraySchema?.items?.type).toBe('object');
+  });
+
+  // The schema is GENERATED from the zod schema, so `copy` needs no hand-editing here — this guards that
+  // generation (a hand-maintained enum drifting from zod would leave the editor red on a valid manifest).
+  it('carries the install.type enum incl. "copy", straight from the zod schema', () => {
+    const schema = manifestJsonSchema() as { oneOf?: ObjectSchema[] };
+    const json = JSON.stringify(schema.oneOf?.[0]?.properties?.['install'] ?? {});
+    for (const type of ['nsis', 'inno', 'custom', 'copy']) {
+      expect(json).toContain(`"${type}"`);
+    }
   });
 });

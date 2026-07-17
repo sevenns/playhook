@@ -46,8 +46,13 @@ export interface Controls {
   showError(message: string): void;
   /** Sets the card's game list ({id,title}) — drives the "Select game" popup (rebuilds it if open). */
   setGames(list: readonly LibraryEntry[]): void;
+  /** Seeds whether this is a Game Mode (gamescope) session — flips the power menu's primary item from
+   *  "Minimize Playhook" (hide to tray) to "Close Playhook" (full quit). Called once at startup. */
+  setGameMode(gameMode: boolean): void;
   /** Starts the gamepad polling loop. */
   start(): void;
+  /** Pause/resume acting on gamepad input (paused while the launcher is backgrounded — a game on top). */
+  setGamepadPaused(paused: boolean): void;
 }
 
 export function createControls(deps: ControlsDeps): Controls {
@@ -57,6 +62,9 @@ export function createControls(deps: ControlsDeps): Controls {
   // The card's games ({id,title}), delivered by main; drives the "Select game" popup. ≥2 → the button
   // shows and the list has entries (the current game is filtered out).
   let games: readonly LibraryEntry[] = [];
+  // SteamOS Game Mode (gamescope): no tray, so the power menu's primary item quits instead of minimizing.
+  // Seeded once at startup (setGameMode); false until then — the power menu isn't reachable that early.
+  let gameMode = false;
 
   // Bar buttons.
   const playButton = req<HTMLButtonElement>('play-button');
@@ -144,21 +152,37 @@ export function createControls(deps: ControlsDeps): Controls {
       if (mode === 'uninstall' && !game.canUninstall) return; // nothing to uninstall
       confirmReturnTo = 'details';
       const isSteam = game.installVia === 'steam';
+      const isCopy = game.installVia === 'copy';
       const isSteamInstall = mode === 'install' && isSteam;
-      popup.dataset['mode'] = mode; // 'install' shows the path note (card install only, see styles.css)
+      popup.dataset['mode'] = mode; // 'install' shows the note (card install only, see styles.css)
+      // Picks WHICH note the confirm shows: steam → none, copy → "it will be copied here and run from
+      // here", absent → the card-installer one with the destination path.
       if (isSteamInstall) popup.dataset['installVia'] = 'steam';
+      else if (mode === 'install' && isCopy) popup.dataset['installVia'] = 'copy';
       else delete popup.dataset['installVia'];
+      // Prefix-cleanup uninstall shows its own note in the detail (CSS) — the heading stays a short question.
+      if (mode === 'uninstall' && game.prefixCleanupOnly === true) popup.dataset['uninstallVia'] = 'prefix';
+      else delete popup.dataset['uninstallVia'];
       if (isSteam) {
         confirmMessage.textContent = t()(
           mode === 'install' ? 'launcher.confirm.steamInstall' : 'launcher.confirm.steamUninstall',
         );
+      } else if (mode === 'install') {
+        confirmMessage.textContent = t()('launcher.confirm.install');
       } else {
+        // Uninstall: a normal exe game's "uninstall" only clears its Proton prefix (the game stays on the
+        // card) — a different message from removing an installed game. prefixCleanupOnly flags that case.
         confirmMessage.textContent = t()(
-          mode === 'install' ? 'launcher.confirm.install' : 'launcher.confirm.uninstall',
+          game.prefixCleanupOnly === true
+            ? 'launcher.confirm.uninstallPrefix'
+            : 'launcher.confirm.uninstall',
         );
       }
-      // Card path only for a card-installer install (empty for steam — there is no install dir).
-      if (mode === 'install') confirmPath.textContent = isSteamInstall ? '' : (game.installDir ?? '');
+      // Card path only for a card-INSTALLER install: steam has no install dir, and for copy the path is
+      // ours to manage — the user has nothing to type it into.
+      if (mode === 'install') {
+        confirmPath.textContent = isSteamInstall || isCopy ? '' : (game.installDir ?? '');
+      }
     } else if (mode === 'kill') {
       // Force-close confirm (from Details): no path note; returns to Details. The message warns about
       // unsaved progress. data-mode ≠ 'install' hides the path note (styles.css).
@@ -253,6 +277,14 @@ export function createControls(deps: ControlsDeps): Controls {
     const running = s.kind === 'running' && s.killing !== true;
     menuKill.classList.toggle('is-hidden', !running);
     if (running) menuKill.textContent = t()('launcher.menu.forceClose');
+  }
+
+  // The power menu's primary item. Desktop/Windows: "Minimize Playhook" (hide to tray). Game Mode: "Close
+  // Playhook" — a full quit, since there is no tray to minimize into (mirrors how closing the window quits
+  // in Game Mode). Label from JS (no data-i18n) so a language change relabels it at render time and it
+  // stays out of the i18n HTML test.
+  function applyPowerPrimary(): void {
+    powerMinimize.textContent = t()(gameMode ? 'launcher.menu.quit' : 'launcher.menu.minimize');
   }
 
   // ── Menu item: Select game (opens the multi-game picker) ─────────────────────
@@ -710,11 +742,14 @@ export function createControls(deps: ControlsDeps): Controls {
       audio.play('button');
       openConfirm('sleep');
     } else if (btn === powerMinimize) {
-      // Hide the launcher to the tray (same effect as the empty-screen Hide button). No confirm — it's
-      // non-destructive. Close the popup first so a re-summoned launcher shows a clean bar, not this menu.
+      // Desktop/Windows: hide to the tray (same as the empty-screen Hide button). Game Mode: quit the app
+      // ("Close Playhook") — there is no tray, so hide is a no-op there. No confirm either way — hide is
+      // non-destructive, and a quit is as recoverable as relaunching from the Steam library. Close the
+      // popup first so a re-summoned launcher shows a clean bar, not this menu.
       audio.play('back');
       closePopup();
-      window.api.requestHide();
+      if (gameMode) window.api.requestQuit();
+      else window.api.requestHide();
     } else if (btn === confirmYes) {
       acceptConfirm();
     } else if (btn === confirmNo) {
@@ -811,44 +846,74 @@ export function createControls(deps: ControlsDeps): Controls {
     });
   });
 
+  // The six navigation primitives, shared by the gamepad AND the keyboard (below) so both drive the exact
+  // same custom-highlight model and can never diverge. Each notes activity first (hides the cursor,
+  // restarts the idle countdown), then does its job: left/right move the bar (no-op with a popup open — the
+  // stacks are vertical); up/down move the vertical popup stack (no-op on the bar); activate fires the
+  // focused control (Play/More) or stack button; back steps out of the popup. Minimizing/closing lives in
+  // the System menu, not a nav key.
+  function navLeft(): void {
+    noteGamepadActivity();
+    if (popupView === 'none') moveFocus(-1);
+  }
+  function navRight(): void {
+    noteGamepadActivity();
+    if (popupView === 'none') moveFocus(1);
+  }
+  function navUp(): void {
+    noteGamepadActivity();
+    if (popupView !== 'none') moveStackFocus(-1);
+  }
+  function navDown(): void {
+    noteGamepadActivity();
+    if (popupView !== 'none') moveStackFocus(1);
+  }
+  function navActivate(): void {
+    noteGamepadActivity();
+    if (popupView !== 'none') activateStack();
+    else activateFocused();
+  }
+  function navBack(): void {
+    noteGamepadActivity();
+    if (popupView !== 'none') back();
+  }
+
   const gamepad = createGamepadController({
-    // Every gamepad edge hides the cursor and restarts the idle countdown (noteGamepadActivity), then
-    // does its normal job. With a popup open, left/right are a no-op (the stacks are vertical).
-    onLeft: () => {
-      noteGamepadActivity();
-      if (popupView === 'none') moveFocus(-1);
-    },
-    onRight: () => {
-      noteGamepadActivity();
-      if (popupView === 'none') moveFocus(1);
-    },
-    // Up/down drive the vertical popup stack; ignored on the bar (no vertical axis there).
-    onUp: () => {
-      noteGamepadActivity();
-      if (popupView !== 'none') moveStackFocus(-1);
-    },
-    onDown: () => {
-      noteGamepadActivity();
-      if (popupView !== 'none') moveStackFocus(1);
-    },
-    // A activates the focused control (Play/More) or the focused stack button; B steps back through the
-    // popup. Minimizing is the System menu's "Minimize Playhook".
-    onA: () => {
-      noteGamepadActivity();
-      if (popupView !== 'none') activateStack();
-      else activateFocused();
-    },
-    onB: () => {
-      noteGamepadActivity();
-      if (popupView !== 'none') back();
-    },
+    onLeft: navLeft,
+    onRight: navRight,
+    onUp: navUp,
+    onDown: navDown,
+    onA: navActivate,
+    onB: navBack,
   });
 
-  // Keyboard Esc: step back through the popup. It no longer hides the launcher — minimizing moved to the
-  // System menu's "Minimize Playhook" — so with no popup open Esc is a no-op.
+  // Keyboard navigation (Desktop Mode / no gamepad): WASD + arrows move, Space/Enter activate, Tab/Backspace
+  // (and Esc) step back — the SAME six primitives as the gamepad, so the two input models stay in lockstep.
+  // Edge-only (event.repeat ignored) to match the gamepad's one-move-per-press feel. preventDefault stops
+  // the browser default (Tab focus traversal, Space scroll / native button press, arrow scroll) from firing
+  // alongside our custom navigation. A backgrounded launcher doesn't receive keydown (the OS routes keys to
+  // the focused window), so — unlike the Gamepad API — no explicit pause is needed here.
+  const KEY_NAV: Readonly<Record<string, () => void>> = {
+    a: navLeft,
+    arrowleft: navLeft,
+    d: navRight,
+    arrowright: navRight,
+    w: navUp,
+    arrowup: navUp,
+    s: navDown,
+    arrowdown: navDown,
+    ' ': navActivate,
+    enter: navActivate,
+    tab: navBack,
+    backspace: navBack,
+    escape: navBack,
+  };
   window.addEventListener('keydown', (event) => {
-    if (event.key !== 'Escape') return;
-    if (popupView !== 'none') back();
+    const handler = KEY_NAV[event.key.toLowerCase()];
+    if (handler === undefined) return;
+    event.preventDefault(); // suppress the native default even on auto-repeat (e.g. Tab traversal)
+    if (event.repeat) return; // one action per press, like the gamepad edge model
+    handler();
   });
 
   function applyGameButtons(): void {
@@ -890,6 +955,7 @@ export function createControls(deps: ControlsDeps): Controls {
     const active = phaseOf(state()) === 'busy' || steamBusy(state());
     if (active && !wasActive) focusRevealed = false;
     wasActive = active;
+    applyPowerPrimary(); // re-label on a language change (refresh runs after applyLocale → render)
     applyFocus();
     applyStackFocus();
     applyPlayAria();
@@ -914,9 +980,15 @@ export function createControls(deps: ControlsDeps): Controls {
     refresh,
     showError: openError,
     setGames,
+    setGameMode: (value: boolean) => {
+      gameMode = value;
+      applyPowerPrimary();
+    },
     start: () => {
       gamepad.start();
       armIdleTimer(); // begin the countdown so an untouched launcher hides its cursor (IDLE_MS)
     },
+    /** Pause/resume acting on gamepad input (paused while the launcher is backgrounded — a game on top). */
+    setGamepadPaused: (paused: boolean) => gamepad.setPaused(paused),
   };
 }

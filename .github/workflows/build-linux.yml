@@ -1,0 +1,91 @@
+name: Build Linux
+
+# Build the Linux (SteamOS / Steam Deck) distributable in the cloud: the ubuntu runner has the
+# toolchain to compile the native `drivelist` for the right ABI (impossible on macOS), and
+# electron-builder produces a self-contained AppImage.
+#
+# Two ways to run it:
+#  - workflow_dispatch (manual): builds the AppImage and uploads it as a downloadable run ARTIFACT
+#    (does NOT publish a release) — use this to grab a build for on-device testing.
+#  - pushing a v* tag: also PUBLISHES the AppImage + latest-linux.yml into the draft GitHub Release
+#    for that version (auto-update channel), matching build-windows.yml.
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    # ubuntu-22.04 (glibc 2.35) for broad AppImage portability — a build on a newer glibc may refuse to
+    # start on older systems. SteamOS 3.x ships a recent-enough glibc, so 22.04 runs fine on the Deck.
+    runs-on: ubuntu-22.04
+    # Needed so electron-builder can upload assets to the GitHub Release (tag pushes only).
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      # Node 22.12+ is required by electron@43 and @electron/rebuild@4 (their `engines`).
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      # npm ci runs postinstall (electron-builder install-app-deps) — the runner has gcc/make/python,
+      # so the native drivelist builds for the right ABI.
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Compile TypeScript + assets
+        run: npm run build
+
+      # Fetch the umu-launcher zipapp into resources/umu (extraResources) for the Proton launcher (Р1).
+      - name: Fetch umu-launcher
+        run: npm run build:umu
+
+      # Only when releasing (a v* tag): draft the release up front so electron-builder uploads into it.
+      # Same rationale/fail-fast as build-windows.yml (avoid split drafts / a silently-empty publish).
+      - name: Ensure draft release exists
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          tag="v$(node -p "require('./package.json').version")"
+          isDraft=$(gh release view "$tag" --json isDraft --jq .isDraft 2>/dev/null || echo missing)
+          case "$isDraft" in
+            missing) gh release create "$tag" --draft --target "$GITHUB_SHA" --title "$tag" --notes "$tag" ;;
+            true)    echo "Draft release $tag already exists — reusing it." ;;
+            false)   echo "::error::Release $tag is already published. electron-builder refuses to upload assets into it. Delete the release (and its tag) and re-run." ; exit 1 ;;
+          esac
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Publish (upload AppImage + latest-linux.yml to the draft release) ONLY on a v* tag; a manual
+      # run just builds locally (--publish never) and relies on the artifact upload below.
+      - name: Package (AppImage)
+        run: npx electron-builder --linux --publish ${{ startsWith(github.ref, 'refs/tags/v') && 'always' || 'never' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Always expose the AppImage as a run artifact so a manual build can be downloaded for device testing.
+      - name: Upload AppImage
+        uses: actions/upload-artifact@v7
+        with:
+          name: playhook-linux
+          path: |
+            release/*.AppImage
+          if-no-files-found: error
+          retention-days: 14

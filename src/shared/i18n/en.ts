@@ -55,6 +55,7 @@ export const en = {
   'launcher.menu.reboot': 'Reboot',
   'launcher.menu.sleep': 'Sleep',
   'launcher.menu.minimize': 'Minimize Playhook',
+  'launcher.menu.quit': 'Close Playhook',
   // Force-close the running game (Details menu item, visible only while a game is running).
   'launcher.menu.forceClose': 'Force close',
   // Opens the "Select game" list (Details menu item, visible only for a multi-game card on the ready screen).
@@ -62,6 +63,9 @@ export const en = {
   // Confirmation popup copy (controls.ts). The Yes/No buttons use the shared common.* keys.
   'launcher.confirm.install': 'Do you want to install game?',
   'launcher.confirm.uninstall': 'Do you want to uninstall game from your PC?',
+  'launcher.confirm.uninstallPrefix': 'Clear the Proton prefix?',
+  'launcher.confirm.uninstallPrefixNote':
+    'The game stays on the card - only the prefix is removed (saves inside it too).',
   'launcher.confirm.steamInstall': 'Open Steam to install this game?',
   'launcher.confirm.steamUninstall': 'Open Steam to uninstall this game?',
   // Force-close confirmation — warns that unsaved in-game progress may be lost (the game is killed, so it
@@ -73,11 +77,39 @@ export const en = {
   'launcher.confirm.sleep': 'Put the PC to sleep?',
   'launcher.installPathNote':
     'Since not all installers support silent mode, during installation you need to specify the following path:',
+  // The copy variant of the note: no installer runs, so neither the silent-mode caveat nor the
+  // destination path applies — say what actually happens instead.
+  'launcher.copyNote':
+    'The game will be copied to this PC and will run from there. It is not deleted from the card.',
   // Status labels (state-view.ts). Plain "..." (not the "…" glyph) on purpose — see state-view.ts.
   'launcher.state.installing': 'Installing...',
   'launcher.state.uninstalling': 'Uninstalling...',
   'launcher.state.syncingIn': 'Syncing saves...',
   'launcher.state.launching': 'Launching...',
+  // Rotating "Configuring Proton" status (Linux prefix provisioning). #1 is always shown first.
+  'launcher.protonConfig1': 'Configuring Proton...',
+  'launcher.protonConfig2': 'Applying Linux gaming tricks...',
+  'launcher.protonConfig3': "Searching for hope that it'll launch...",
+  'launcher.protonConfig4': 'Convincing Wine this is Windows...',
+  'launcher.protonConfig5': 'Downloading half of Windows into the prefix...',
+  'launcher.protonConfig6': 'It worked on my prefix, I swear...',
+  'launcher.protonConfig7': 'Negotiating with DXVK...',
+  'launcher.protonConfig8': "Convincing the game it's on Windows...",
+  'launcher.protonConfig9': 'Installing half of Microsoft, just in case...',
+  'launcher.protonConfig10': 'Praying to the compatibility gods...',
+  'launcher.protonConfig11': 'Hunting for the one verb that fixes it all...',
+  'launcher.protonConfig12': 'Sacrificing a prefix to Proton...',
+  // Funny suffixes appended to "Installing..." after a minute of a long silent install.
+  'launcher.installChatter1': 'Any second now, hacking the Pentagon...',
+  'launcher.installChatter2': 'Just finishing my tea, then I start...',
+  'launcher.installChatter3': 'Counting the bytes by hand...',
+  'launcher.installChatter4': 'Negotiating with the antivirus...',
+  'launcher.installChatter5': 'Scrounging the couch for gigabytes...',
+  'launcher.installChatter6': 'Digging the disc out of the attic...',
+  'launcher.installChatter7': 'Defragging your patience...',
+  'launcher.installChatter8': "Almost done, pirate's honour...",
+  'launcher.installChatter9': 'Begging the progress bar to stop lying...',
+  'launcher.installChatter10': 'Warming up the SSD for the big moment...',
   'launcher.state.running': 'Running...',
   'launcher.state.killing': 'Force closing...',
   'launcher.state.syncingOut': 'Saving progress...',
@@ -114,6 +146,7 @@ export const en = {
   'settings.summonHintPost': 'on your gamepad at any time to bring the launcher to the front.',
   'settings.preventScreensaver': 'Keep the screen awake while the launcher is open',
   'settings.alwaysShowEmpty': 'Always show the no-card screen',
+  'settings.disableSilentInstall': 'Disable silent installer mode (show the installer wizard)',
   'settings.wallpaperLabel': 'Empty screen background',
   'settings.wallpaperChoose': 'Choose image…',
   'settings.wallpaperReset': 'Reset',
@@ -185,19 +218,42 @@ export const en = {
   'configure.sectionAdvanced': 'Advanced',
   // Field labels.
   'configure.fieldId': 'Game id',
+  'configure.idHint': 'Auto-filled from the name. Edit it to set your own; clear it to auto-fill again.',
   'configure.fieldTitle': 'Title',
   'configure.schemaVersion': 'Schema version: 1',
   'configure.launchType': 'Launch type',
   'configure.launchExecutable': 'Executable',
   'configure.launchInstaller': 'Installer',
   'configure.fieldExecutable': 'Executable path',
+  'configure.executableNote': 'Relative to the card root.',
   'configure.fieldArgs': 'Arguments',
   'configure.fieldRunAsAdmin': 'Run as administrator',
+  'configure.fieldCopyToPc': 'Move game to PC',
+  'configure.copyExecutableNote':
+    'Relative to the game directory below — the game is copied to the PC, and the executable is looked up inside the copy.',
+  'configure.fieldCopySource': 'Game directory on the card',
+  'configure.copySourceHint':
+    'The root of the game’s own folder on the card. It is copied to the PC on “Install”; the copy on the card is kept.',
+  'configure.copySourceOutside':
+    'That file is outside the game directory ({source}) — pick one inside it, or fix the directory first.',
   'configure.fieldInstaller': 'Installer path',
   'configure.fieldInstallType': 'Installer type',
   'configure.fieldInstallArgs': 'Installer arguments',
   'configure.installArgsDirHint':
     'For a custom installer exactly one argument must contain the {dir} placeholder.',
+  'configure.installerExperimental':
+    '⚠ Experimental: the Installer type may behave unpredictably (especially on Linux).',
+  'configure.installerLinuxWarning':
+    'Installers are unpredictable on Linux/Steam Deck: they come in many flavours, and under Proton some fail or hang. Prefer “Move game to PC”, or a plain Executable.',
+  'configure.fieldWinetricks': 'Game winetricks (Linux)',
+  'configure.winetricksHint':
+    'Extra winetricks verbs/settings (e.g. d3dx9, or vd=1920x1080 for a virtual desktop) applied to the Wine prefix before the game launches, on top of the built-in set. Linux/Proton only; ignored on Windows.',
+  'configure.fieldInstallWinetricks': 'Installer winetricks (Linux)',
+  'configure.installWinetricksHint':
+    'Extra winetricks verbs provisioned before the installer runs, on top of the built-in set. Linux/Proton only; ignored on Windows.',
+  'configure.fieldUmuGameId': 'umu GAMEID (Linux)',
+  'configure.umuGameIdHint':
+    'A Steam appid or a custom UMU_ID — umu applies that game’s protonfix instead of the generic default. Leave empty for umu-default. Linux/Proton only.',
   'configure.fieldAppid': 'Steam appid',
   'configure.fieldWatchProcesses': 'Watched processes',
   'configure.watchProcessesHint': '1–16 process image names ending in .exe.',
@@ -250,6 +306,11 @@ export const en = {
   'errors.gameDidNotStart': 'the game did not start (process wait timed out)',
   'errors.startInstaller': 'failed to start the installer: {cause}',
   'errors.installIncomplete': 'installation did not complete (the game executable did not appear)',
+  'errors.copyGameFailed': 'failed to copy the game to the PC: {cause}',
+  'errors.copyExeNotFound':
+    'the game was copied, but the executable is not there: {path} — check that the game directory points at the game’s own root',
+  'errors.copyExeNotFoundCase':
+    'the game was copied, but the executable is not there: {path} — found "{found}" instead (fix the case on this filesystem)',
   'errors.killFailed': 'could not force-close the game (some processes are still running)',
   'errors.finishBeforeInstall': 'Finish what’s running before installing the update.',
   'errors.driveUnavailable': 'the selected drive is no longer available',
@@ -269,7 +330,11 @@ export const en = {
   'manifest.idPattern': 'id must match [A-Za-z0-9._-]',
   'manifest.idDots': 'id must not be . or ..',
   'manifest.watchProcessesName': 'watchProcesses entries must be a bare *.exe name',
+  'manifest.winetricksName': 'winetricks entries must be verb names or key=value settings (letters, digits, _.=-)',
+  'manifest.umuGameIdName': 'umuGameId must be a Steam appid or a UMU_ID (letters, digits, _-)',
   'manifest.installRunAsAdminCustom': 'install.runAsAdmin is not allowed with type "custom"',
+  'manifest.copyArgs': 'install.args is not allowed with type "copy" (no installer is run)',
+  'manifest.copyRunAsAdmin': 'install.runAsAdmin is not allowed with type "copy" (no installer is run)',
   'manifest.installArgsDir':
     'install.args (type "custom") must contain exactly one token with a {dir} placeholder',
   'manifest.installWithSteam': 'install is not allowed together with steam',
@@ -291,6 +356,7 @@ export const en = {
   'manifest.executableEscapesInstall': 'executable path escapes install dir: {path}',
   'manifest.executableEscapes': 'executable path escapes card root: {path}',
   'manifest.executableNotFound': 'executable not found: {path}',
+  'manifest.executableNotFoundCase': 'executable not found: {path} — found "{found}" instead (fix the case on this filesystem)',
   'manifest.heroEscapes': 'heroImage path escapes card root: {path}',
   'manifest.saveOnCardEscapes': 'saveOnCard path escapes card root: {path}',
   'manifest.soundEscapes': 'sound "{name}" path escapes card root: {path}',
