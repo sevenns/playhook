@@ -151,10 +151,16 @@ export class FormView {
   private readonly execSection: HTMLElement;
   private readonly installSection: HTMLElement;
   private readonly steamSection: HTMLElement;
+  /** The "move game to PC" switch field — Executable mode only (installer mode shares execSection for the
+   *  executable/args/runAsAdmin fields, but "move to PC" is an Executable-only concept — `install.type:
+   *  copy`), so it is hidden outside Executable mode. */
+  private readonly copyToPcField: HTMLElement;
   /** The copy-source field — inside execSection, shown only while the "move to PC" switch is on. */
   private readonly copySourceField: HTMLElement;
   /** Note under `executable`: says what the path is relative to (it changes with the copy switch). */
   private readonly executableNote: HTMLElement;
+  /** Experimental-mode warning — sits under the launch-type dropdown, shown only in Installer mode. */
+  private readonly installerExperimental: HTMLElement;
 
   private readonly mixedBanner: HTMLElement;
   private readonly sectionPanels = new Map<SectionId, HTMLElement>();
@@ -238,11 +244,12 @@ export class FormView {
     this.executableNote = document.createElement('div');
     this.executableNote.className = 'field-hint';
     execField.append(this.executableNote);
+    this.copyToPcField = this.switchField('configure.fieldCopyToPc', 'copyToPc', this.copyToPcSwitch);
     this.execSection = this.group([
       execField,
       this.argsList.wrapper,
       this.switchField('configure.fieldRunAsAdmin', 'runAsAdmin', this.runAsAdminSwitch),
-      this.switchField('configure.fieldCopyToPc', 'copyToPc', this.copyToPcSwitch),
+      this.copyToPcField,
       this.copySourceField,
     ]);
 
@@ -265,14 +272,15 @@ export class FormView {
     const installerLinuxWarning = document.createElement('div');
     installerLinuxWarning.className = 'field-hint';
     this.labelRefs.push({ el: installerLinuxWarning, key: 'configure.installerLinuxWarning' });
-    // Experimental-mode banner: sits at the TOP of the section (right under the launch-type dropdown), so
-    // choosing "Installer" immediately flags that the whole mode is rough. Amber `field-warning` sets it
-    // apart from the grey hints below.
-    const installerExperimental = document.createElement('div');
-    installerExperimental.className = 'field-hint field-warning';
-    this.labelRefs.push({ el: installerExperimental, key: 'configure.installerExperimental' });
+    // Experimental-mode banner: lives directly UNDER the launch-type dropdown (not inside a section — see
+    // addSection below), shown ONLY in Installer mode. execSection sits between the dropdown and
+    // installSection (it holds the shared executable/args fields), so putting the warning in installSection
+    // would push it below "Move game to PC" instead of under the dropdown. Amber `field-warning` sets it
+    // apart from the grey hints.
+    this.installerExperimental = document.createElement('div');
+    this.installerExperimental.className = 'field-hint field-warning';
+    this.labelRefs.push({ el: this.installerExperimental, key: 'configure.installerExperimental' });
     this.installSection = this.group([
-      installerExperimental,
       this.fieldWithBrowse(
         'configure.fieldInstaller',
         'install.installer',
@@ -306,6 +314,7 @@ export class FormView {
 
     this.addSection('launch', [
       this.field('configure.launchType', null, this.launchType),
+      this.installerExperimental,
       this.execSection,
       this.installSection,
       this.steamSection,
@@ -700,8 +709,12 @@ export class FormView {
   }
 
   private updateSectionVisibility(): void {
+    // execSection carries the executable/args/runAsAdmin fields shared by Executable AND Installer modes,
+    // so it's hidden only in Steam mode. "Move game to PC" inside it is Executable-only, hidden otherwise.
     this.execSection.hidden = this.launchMode === 'steam';
+    this.copyToPcField.hidden = this.launchMode !== 'executable';
     this.installSection.hidden = this.launchMode !== 'installer';
+    this.installerExperimental.hidden = this.launchMode !== 'installer';
     this.steamSection.hidden = this.launchMode !== 'steam';
     this.updateCopyToPcState();
   }
