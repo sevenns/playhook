@@ -837,44 +837,74 @@ export function createControls(deps: ControlsDeps): Controls {
     });
   });
 
+  // The six navigation primitives, shared by the gamepad AND the keyboard (below) so both drive the exact
+  // same custom-highlight model and can never diverge. Each notes activity first (hides the cursor,
+  // restarts the idle countdown), then does its job: left/right move the bar (no-op with a popup open — the
+  // stacks are vertical); up/down move the vertical popup stack (no-op on the bar); activate fires the
+  // focused control (Play/More) or stack button; back steps out of the popup. Minimizing/closing lives in
+  // the System menu, not a nav key.
+  function navLeft(): void {
+    noteGamepadActivity();
+    if (popupView === 'none') moveFocus(-1);
+  }
+  function navRight(): void {
+    noteGamepadActivity();
+    if (popupView === 'none') moveFocus(1);
+  }
+  function navUp(): void {
+    noteGamepadActivity();
+    if (popupView !== 'none') moveStackFocus(-1);
+  }
+  function navDown(): void {
+    noteGamepadActivity();
+    if (popupView !== 'none') moveStackFocus(1);
+  }
+  function navActivate(): void {
+    noteGamepadActivity();
+    if (popupView !== 'none') activateStack();
+    else activateFocused();
+  }
+  function navBack(): void {
+    noteGamepadActivity();
+    if (popupView !== 'none') back();
+  }
+
   const gamepad = createGamepadController({
-    // Every gamepad edge hides the cursor and restarts the idle countdown (noteGamepadActivity), then
-    // does its normal job. With a popup open, left/right are a no-op (the stacks are vertical).
-    onLeft: () => {
-      noteGamepadActivity();
-      if (popupView === 'none') moveFocus(-1);
-    },
-    onRight: () => {
-      noteGamepadActivity();
-      if (popupView === 'none') moveFocus(1);
-    },
-    // Up/down drive the vertical popup stack; ignored on the bar (no vertical axis there).
-    onUp: () => {
-      noteGamepadActivity();
-      if (popupView !== 'none') moveStackFocus(-1);
-    },
-    onDown: () => {
-      noteGamepadActivity();
-      if (popupView !== 'none') moveStackFocus(1);
-    },
-    // A activates the focused control (Play/More) or the focused stack button; B steps back through the
-    // popup. Minimizing is the System menu's "Minimize Playhook".
-    onA: () => {
-      noteGamepadActivity();
-      if (popupView !== 'none') activateStack();
-      else activateFocused();
-    },
-    onB: () => {
-      noteGamepadActivity();
-      if (popupView !== 'none') back();
-    },
+    onLeft: navLeft,
+    onRight: navRight,
+    onUp: navUp,
+    onDown: navDown,
+    onA: navActivate,
+    onB: navBack,
   });
 
-  // Keyboard Esc: step back through the popup. It no longer hides the launcher — minimizing moved to the
-  // System menu's "Minimize Playhook" — so with no popup open Esc is a no-op.
+  // Keyboard navigation (Desktop Mode / no gamepad): WASD + arrows move, Space/Enter activate, Tab/Backspace
+  // (and Esc) step back — the SAME six primitives as the gamepad, so the two input models stay in lockstep.
+  // Edge-only (event.repeat ignored) to match the gamepad's one-move-per-press feel. preventDefault stops
+  // the browser default (Tab focus traversal, Space scroll / native button press, arrow scroll) from firing
+  // alongside our custom navigation. A backgrounded launcher doesn't receive keydown (the OS routes keys to
+  // the focused window), so — unlike the Gamepad API — no explicit pause is needed here.
+  const KEY_NAV: Readonly<Record<string, () => void>> = {
+    a: navLeft,
+    arrowleft: navLeft,
+    d: navRight,
+    arrowright: navRight,
+    w: navUp,
+    arrowup: navUp,
+    s: navDown,
+    arrowdown: navDown,
+    ' ': navActivate,
+    enter: navActivate,
+    tab: navBack,
+    backspace: navBack,
+    escape: navBack,
+  };
   window.addEventListener('keydown', (event) => {
-    if (event.key !== 'Escape') return;
-    if (popupView !== 'none') back();
+    const handler = KEY_NAV[event.key.toLowerCase()];
+    if (handler === undefined) return;
+    event.preventDefault(); // suppress the native default even on auto-repeat (e.g. Tab traversal)
+    if (event.repeat) return; // one action per press, like the gamepad edge model
+    handler();
   });
 
   function applyGameButtons(): void {
