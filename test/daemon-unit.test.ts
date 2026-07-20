@@ -58,6 +58,29 @@ describe('buildDaemonUnit', () => {
     expect(unit).toContain('StartLimitBurst=3');
   });
 
+  it('puts the StartLimit keys in [Unit], where systemd actually reads them', () => {
+    // They moved from [Service] to [Unit] in systemd 229. In the wrong section systemd does not fail —
+    // it logs "Unknown key … in section [Service], ignoring" and applies NO rate limit, which on a Deck
+    // let a crash-looping daemon reach restart #24 instead of stopping at 3. Only a section-aware
+    // assertion catches that, hence this test rather than a plain `toContain`.
+    const sectionOf = (key: string): string | null => {
+      let current: string | null = null;
+      for (const line of unit.split('\n')) {
+        const header = /^\[(\w+)\]$/.exec(line.trim());
+        if (header !== null) current = header[1] ?? null;
+        else if (line.startsWith(`${key}=`)) return current;
+      }
+      return null;
+    };
+    expect(sectionOf('StartLimitIntervalSec')).toBe('Unit');
+    expect(sectionOf('StartLimitBurst')).toBe('Unit');
+    // The keys that genuinely belong to [Service] must stay there.
+    expect(sectionOf('Restart')).toBe('Service');
+    expect(sectionOf('RestartSec')).toBe('Service');
+    expect(sectionOf('ExecStart')).toBe('Service');
+    expect(sectionOf('Environment')).toBe('Service');
+  });
+
   it('is a valid unit shape and ends with a newline', () => {
     expect(unit).toContain('[Unit]');
     expect(unit).toContain('[Service]');

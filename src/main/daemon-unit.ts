@@ -47,6 +47,12 @@ export function daemonExecStart(appImagePath: string): string {
 /**
  * The unit file contents. `Restart=on-failure` (not `always`) plus the StartLimit pair so a daemon that
  * crashes on startup gives up instead of spinning forever.
+ *
+ * **StartLimitIntervalSec / StartLimitBurst belong to `[Unit]`, not `[Service]`.** They moved there in
+ * systemd 229, and a version that does not know them in `[Service]` does not fail — it logs
+ * `Unknown key 'StartLimitIntervalSec' in section [Service], ignoring` and runs with NO rate limit at
+ * all. Observed on the Deck: a crash-looping daemon reached "restart counter is at 24" instead of
+ * stopping at 3.
  */
 export function buildDaemonUnit(appImagePath: string): string {
   return [
@@ -54,6 +60,8 @@ export function buildDaemonUnit(appImagePath: string): string {
     '[Unit]',
     'Description=Playhook card watcher (Game Mode)',
     'PartOf=gamescope-session.target',
+    'StartLimitIntervalSec=60',
+    'StartLimitBurst=3',
     '',
     '[Service]',
     'Type=simple',
@@ -61,8 +69,6 @@ export function buildDaemonUnit(appImagePath: string): string {
     `ExecStart=${daemonExecStart(appImagePath)}`,
     'Restart=on-failure',
     'RestartSec=5',
-    'StartLimitIntervalSec=60',
-    'StartLimitBurst=3',
     '',
     '[Install]',
     'WantedBy=gamescope-session.target',
