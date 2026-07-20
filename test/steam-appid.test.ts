@@ -4,7 +4,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   computeAppIdU32,
-  gridFileNames,
+  gridFileName,
   quoteExePath,
   toRunGameId,
   toSignedAppId,
@@ -75,13 +75,18 @@ describe('toRunGameId', () => {
   });
 });
 
-describe('gridFileNames', () => {
-  it("uses the unsigned id, with Steam's suffixes", () => {
-    expect(gridFileNames(2789208654)).toEqual({
-      wide: '2789208654.png',
-      portrait: '2789208654p.png',
-      hero: '2789208654_hero.png',
-      logo: '2789208654_logo.png',
-    });
+describe('gridFileName', () => {
+  it("uses the unsigned id with Steam's per-slot suffixes", () => {
+    expect(gridFileName(2789208654, 'wide', '.jpg')).toBe('2789208654.jpg');
+    expect(gridFileName(2789208654, 'portrait', '.jpg')).toBe('2789208654p.jpg');
+    expect(gridFileName(2789208654, 'hero', '.jpg')).toBe('2789208654_hero.jpg');
+    expect(gridFileName(2789208654, 'logo', '.png')).toBe('2789208654_logo.png');
+  });
+
+  it('keeps the extension it is given — Steam matches on it', () => {
+    // Our artwork is JPG but the logo is PNG (it needs transparency), so they must not be forced to one
+    // extension: a JPG written as .png is simply not picked up.
+    expect(gridFileName(1, 'wide', '.png')).toBe('1.png');
+    expect(gridFileName(1, 'wide', '.jpg')).toBe('1.jpg');
   });
 });

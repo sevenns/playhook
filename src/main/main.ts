@@ -88,7 +88,10 @@ function configureLinuxAutoLaunch(): void {
     ].join('\n');
     fs.writeFileSync(path.join(autostartDir, 'playhook.desktop'), desktopEntry, 'utf8');
   } catch (cause) {
-    log.warn('[main] failed to write Linux autostart entry:', cause instanceof Error ? cause.message : String(cause));
+    log.warn(
+      '[main] failed to write Linux autostart entry:',
+      cause instanceof Error ? cause.message : String(cause),
+    );
   }
 }
 
@@ -102,7 +105,8 @@ function openLogs(): void {
 // back to appData so the action opens something rather than erroring.
 function openGamesFolder(): void {
   const localAppData = process.env['LOCALAPPDATA'];
-  const base = localAppData !== undefined && localAppData !== '' ? localAppData : app.getPath('appData');
+  const base =
+    localAppData !== undefined && localAppData !== '' ? localAppData : app.getPath('appData');
   const dir = path.join(base, 'playhook', 'games');
   try {
     fs.mkdirSync(dir, { recursive: true });
@@ -173,7 +177,17 @@ async function bootstrap(): Promise<void> {
   );
 
   windowRef = window;
-  const controller = new GameController({ state, window, store, stats, watcher, settings, platform, isGamescope: gameModeSession, getTranslator });
+  const controller = new GameController({
+    state,
+    window,
+    store,
+    stats,
+    watcher,
+    settings,
+    platform,
+    isGamescope: gameModeSession,
+    getTranslator,
+  });
   controllerRef = controller;
   controller.init();
 
@@ -281,6 +295,15 @@ async function bootstrap(): Promise<void> {
     getTranslator,
     home: app.getPath('home'),
     sourceIconPath: path.join(__dirname, '../icon.png'),
+    // Library artwork, bundled by copy-assets into dist/steam. The logo drawn over the hero is the app
+    // icon itself (it is the only asset with transparency). Read from inside the asar and copied out to
+    // Steam's grid dir — plain fs reads work there through Electron's asar shim.
+    artwork: {
+      portrait: path.join(__dirname, '../steam/600x900.jpg'),
+      wide: path.join(__dirname, '../steam/920x430.jpg'),
+      hero: path.join(__dirname, '../steam/hero.jpg'),
+      logo: path.join(__dirname, '../icon.png'),
+    },
     appImagePath: process.env['APPIMAGE'] ?? null,
     notify: (title, message) => {
       void dialog.showMessageBox({ type: 'info', title, message });
@@ -333,7 +356,9 @@ async function bootstrap(): Promise<void> {
   // appid whose record no longer exists. Only meaningful in Desktop Mode, which is the only place the tray
   // — the feature's single entry point — exists.
   if (!gameModeSession) {
-    steamShortcut.reconcile().catch((cause: unknown) => log.warn('[steam-shortcut] reconcile failed:', cause));
+    steamShortcut
+      .reconcile()
+      .catch((cause: unknown) => log.warn('[steam-shortcut] reconcile failed:', cause));
   }
 
   // UI-locale wiring. Each window seeds via an invoke (effective Locale) and receives live pushes; the
@@ -373,7 +398,8 @@ async function bootstrap(): Promise<void> {
     settingsWindow.refreshTitle();
     configureWindow.refreshTitle();
     const gameBw = window.browserWindow;
-    if (gameBw !== null && !gameBw.isDestroyed()) gameBw.webContents.send(IPC.languageUpdate, locale);
+    if (gameBw !== null && !gameBw.isDestroyed())
+      gameBw.webContents.send(IPC.languageUpdate, locale);
     const settingsBw = settingsWindow.browserWindow;
     if (settingsBw !== null && !settingsBw.isDestroyed()) {
       settingsBw.webContents.send(IPC.settingsLanguageUpdate, locale);
@@ -429,8 +455,11 @@ if (!gotSingleInstanceLock) {
     configureWindowRef?.allowClose();
   });
 
-  app.whenReady().then(bootstrap).catch((cause: unknown) => {
-    log.error('[main] bootstrap failed:', cause);
-    app.quit();
-  });
+  app
+    .whenReady()
+    .then(bootstrap)
+    .catch((cause: unknown) => {
+      log.error('[main] bootstrap failed:', cause);
+      app.quit();
+    });
 }

@@ -25,7 +25,7 @@ asarUnpack:
   - "**/node_modules/koffi/**"
 
 win:
-  icon: icon.ico
+  icon: assets/icon.ico
   target:
     - nsis
     - portable
@@ -41,7 +41,7 @@ nsis:
 # category. The native drivelist/koffi unpack above applies to Linux too (koffi is unused there but stays
 # a dependency of the win32 build). The umu-launcher zipapp is bundled via extraResources (added in Э4).
 linux:
-  icon: icon.png
+  icon: assets/icon.png
   category: Game
   # Drop the version from the file name (the default is ${productName}-${version}.${ext}). The Steam
   # shortcut's appid is a hash of the launcher PATH, so a version in it changes the appid — resetting the

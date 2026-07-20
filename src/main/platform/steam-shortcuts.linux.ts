@@ -27,8 +27,16 @@ import type {
   SteamShortcutTarget,
   SteamShortcutVoidResult,
 } from './types';
-import { computeAppIdU32, quoteExePath, toSignedAppId, toUnsignedAppId } from './steam-appid';
 import {
+  computeAppIdU32,
+  gridFileName,
+  quoteExePath,
+  toSignedAppId,
+  toUnsignedAppId,
+  type GridSlot,
+} from './steam-appid';
+import {
+  gridDir,
   loginUsersPath,
   parseLoginUsers,
   pickSteamUser,
@@ -134,6 +142,10 @@ async function backup(deps: LinuxSteamShortcutsDeps, filePath: string): Promise<
   }
 }
 
+function describeCause(cause: unknown): string {
+  return cause instanceof Error ? cause.message : String(cause);
+}
+
 /** The appid field of a record, normalised to the unsigned form we compare and store everywhere else. */
 function recordAppId(record: ShortcutRecord): number | null {
   const raw = record['appid'];
@@ -193,6 +205,14 @@ async function persist(
 }
 
 export function createLinuxSteamShortcuts(deps: LinuxSteamShortcutsDeps): SteamShortcuts {
+  /** `userdata/<id>/config/grid` for the active account, or null when it can't be determined. */
+  async function resolveGridDir(): Promise<string | null> {
+    const steamRoot = await deps.steamLocator.locateSteam();
+    if (steamRoot === null) return null;
+    const user = await resolveSteamUser(steamRoot);
+    return user.ok ? gridDir(steamRoot, user.steamId3) : null;
+  }
+
   return {
     supported: true,
 
@@ -228,6 +248,54 @@ export function createLinuxSteamShortcuts(deps: LinuxSteamShortcutsDeps): SteamS
       const loaded = await loadShortcuts(deps);
       if (!loaded.ok) return false;
       return loaded.records.some((entry) => recordAppId(entry) === appIdU32);
+    },
+
+    async writeArtwork(appIdU32, sources): Promise<void> {
+      const dir = await resolveGridDir();
+      if (dir === null) return;
+      try {
+        await fse.ensureDir(dir);
+      } catch (cause) {
+        log.warn('[steam-shortcut] could not create the grid dir:', describeCause(cause));
+        return;
+      }
+      for (const [slot, source] of Object.entries(sources)) {
+        if (typeof source !== 'string' || source === '') continue;
+        const target = path.posix.join(
+          dir,
+          gridFileName(appIdU32, slot as GridSlot, path.posix.extname(source)),
+        );
+        try {
+          await fs.copyFile(source, target);
+        } catch (cause) {
+          // Best-effort per slot: a missing asset leaves that one capsule plain, nothing more.
+          log.warn(`[steam-shortcut] could not write ${slot} artwork:`, describeCause(cause));
+        }
+      }
+    },
+
+    async removeArtwork(appIdU32): Promise<void> {
+      const dir = await resolveGridDir();
+      if (dir === null) return;
+      let entries: readonly string[];
+      try {
+        entries = await fs.readdir(dir);
+      } catch {
+        return; // no grid dir → nothing of ours to clean up
+      }
+      // Match by our appid prefix so a file the user replaced by hand (different extension) also goes,
+      // while every OTHER shortcut's artwork in the shared directory is left alone.
+      const prefix = String(appIdU32);
+      for (const entry of entries) {
+        if (!entry.startsWith(prefix)) continue;
+        const rest = entry.slice(prefix.length);
+        if (!/^(p|_hero|_logo)?\.[a-z]+$/i.test(rest)) continue;
+        try {
+          await fs.rm(path.posix.join(dir, entry), { force: true });
+        } catch (cause) {
+          log.warn(`[steam-shortcut] could not delete "${entry}":`, describeCause(cause));
+        }
+      }
     },
 
     async findForeignShortcuts(exeHints): Promise<readonly string[]> {

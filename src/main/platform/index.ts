@@ -16,6 +16,7 @@ export type {
   SteamLocator,
   SteamShortcuts,
   SteamShortcutTarget,
+  SteamArtworkSources,
   SteamShortcutResult,
   GameProcessLauncher,
   SavePathResolver,

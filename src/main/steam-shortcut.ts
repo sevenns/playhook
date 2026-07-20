@@ -11,7 +11,7 @@
 //    their own artwork and playtime; we ask them to remove it rather than deleting it for them.
 import path from 'node:path';
 import fs from 'node:fs/promises';
-import type { Platform, SteamShortcutTarget } from './platform';
+import type { Platform, SteamArtworkSources, SteamShortcutTarget } from './platform';
 import type { AppSettingsStore } from './app-settings';
 import type { Translator } from '../shared/i18n/index';
 import { log } from './logger';
@@ -45,6 +45,8 @@ export interface SteamShortcutDeps {
   readonly home: string;
   /** Path to the packaged `icon.png`, copied out of the asar so Steam can actually read it. */
   readonly sourceIconPath: string;
+  /** Bundled library artwork for the tile (absolute paths into dist/steam + the app icon as the logo). */
+  readonly artwork: SteamArtworkSources;
   /** `$APPIMAGE`, or null on a dev / non-AppImage run — then the whole feature is unavailable. */
   readonly appImagePath: string | null;
   /** Shows a message box (real: dialog.showMessageBox). */
@@ -182,6 +184,9 @@ export function createSteamShortcutService(deps: SteamShortcutDeps): SteamShortc
         }
         await persistAppId(result.appIdU32);
         log.info(`[steam-shortcut] registered appid ${result.appIdU32}`);
+        // Artwork is cosmetic and best-effort: the tile works without it, so a failure here is logged
+        // inside the platform layer and never turns a successful add into a failed one.
+        await deps.platform.steamShortcuts.writeArtwork(result.appIdU32, deps.artwork);
         // The tile is already written and persisted at this point, so a systemd failure must NOT read as
         // "adding failed" — installDaemon logs its own trouble and the user still gets a working tile,
         // just without auto-launch on card insertion.
@@ -207,6 +212,7 @@ export function createSteamShortcutService(deps: SteamShortcutDeps): SteamShortc
           fail(result.message);
           return;
         }
+        await deps.platform.steamShortcuts.removeArtwork(current);
         await persistAppId(null);
         log.info(`[steam-shortcut] removed appid ${current}`);
         // Nothing left for the daemon to launch — tear it down with the tile it served.

@@ -223,7 +223,9 @@ export interface SteamShortcuts {
   /** Whether the platform supports the operation at all (win32 → false; the tray item is hidden there). */
   readonly supported: boolean;
   /** Adds (or updates in place) Playhook's shortcut. Returns the appid to persist. */
-  addShortcut(target: SteamShortcutTarget): Promise<SteamShortcutResult<{ readonly appIdU32: number }>>;
+  addShortcut(
+    target: SteamShortcutTarget,
+  ): Promise<SteamShortcutResult<{ readonly appIdU32: number }>>;
   /** Removes the record with exactly this appid — never a foreign one that merely shares the Exe. */
   removeShortcut(appIdU32: number): Promise<SteamShortcutVoidResult>;
   /** Whether a record with this appid is present (startup self-healing: a missing one means it was lost). */
@@ -234,6 +236,25 @@ export interface SteamShortcuts {
    * instead of deleting it for them — it may carry their own artwork and playtime.
    */
   findForeignShortcuts(exeHints: readonly string[]): Promise<readonly string[]>;
+  /**
+   * Copies the tile artwork into `userdata/<id>/config/grid/`. Best-effort by design: a tile with no
+   * artwork is merely plain, so a failure here must never fail the whole "Add to Steam".
+   */
+  writeArtwork(appIdU32: number, sources: SteamArtworkSources): Promise<void>;
+  /** Deletes the artwork we wrote (only our own appid's files). Best-effort. */
+  removeArtwork(appIdU32: number): Promise<void>;
+}
+
+/** Absolute paths to the bundled artwork, per Steam grid slot. A slot may be omitted. */
+export interface SteamArtworkSources {
+  /** 920×430 — the wide capsule in the library. */
+  readonly wide?: string;
+  /** 600×900 — the portrait/grid capsule. */
+  readonly portrait?: string;
+  /** 1920×620 — the hero banner on the game's page. */
+  readonly hero?: string;
+  /** Logo drawn over the hero; needs transparency, hence a PNG. */
+  readonly logo?: string;
 }
 
 /** The full set of platform services, selected as a unit by createPlatform(process.platform). */

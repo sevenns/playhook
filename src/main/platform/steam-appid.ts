@@ -53,17 +53,22 @@ export function toRunGameId(appIdU32: number): bigint {
   return (BigInt(appIdU32) << 32n) | 0x02000000n;
 }
 
-/** Names Steam expects for a shortcut's artwork in `userdata/<id>/config/grid/` (unsigned id). */
-export function gridFileNames(appIdU32: number): {
-  readonly wide: string;
-  readonly portrait: string;
-  readonly hero: string;
-  readonly logo: string;
-} {
-  return {
-    wide: `${appIdU32}.png`,
-    portrait: `${appIdU32}p.png`,
-    hero: `${appIdU32}_hero.png`,
-    logo: `${appIdU32}_logo.png`,
-  };
+/** The four artwork slots Steam recognises in `userdata/<id>/config/grid/`. */
+export type GridSlot = 'wide' | 'portrait' | 'hero' | 'logo';
+
+/** The suffix Steam matches per slot; the file name is `<appIdU32><suffix><ext>`. */
+const GRID_SUFFIX: Readonly<Record<GridSlot, string>> = {
+  wide: '',
+  portrait: 'p',
+  hero: '_hero',
+  logo: '_logo',
+};
+
+/**
+ * The file name Steam expects for one artwork slot (unsigned id — confirmed by decky-steamgriddb, which
+ * runs inside Steam itself). `ext` must include the dot and match the file's real format: Steam accepts
+ * both .png and .jpg, but it keys on the extension, so a JPG named .png is not found.
+ */
+export function gridFileName(appIdU32: number, slot: GridSlot, ext: string): string {
+  return `${appIdU32}${GRID_SUFFIX[slot]}${ext}`;
 }

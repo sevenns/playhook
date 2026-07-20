@@ -117,6 +117,8 @@ function createSteamShortcuts(): SteamShortcuts {
     removeShortcut: () => Promise.resolve(unsupported),
     hasShortcut: () => Promise.resolve(false),
     findForeignShortcuts: () => Promise.resolve([]),
+    writeArtwork: () => Promise.resolve(),
+    removeArtwork: () => Promise.resolve(),
   };
 }
 
