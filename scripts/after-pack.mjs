@@ -28,6 +28,13 @@ set -e
 HERE="$(dirname "$(readlink -f "\${0}")")"
 BIN="\${HERE}/${realBinary}"
 
+# ELECTRON_RUN_AS_NODE turns the binary into plain Node, which does not know --no-sandbox and exits with
+# "bad option". That mode is how the Game Mode daemon runs (systemd has no display), so the flag must be
+# withheld there. GUI launches are unaffected.
+if [ -n "\${ELECTRON_RUN_AS_NODE:-}" ] ; then
+  exec "\${BIN}" "$@"
+fi
+
 # Already passed by AppRun's own probe, by Steam launch options or by the user → never duplicate it.
 for arg in "$@" ; do
   if [ "\${arg}" = "--no-sandbox" ] ; then

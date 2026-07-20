@@ -46,6 +46,26 @@ The channel literal lives in **one** source of truth and is bridged with compile
 The `test/ipc-channels.test.ts` suite guards **completeness**: every `IPC` channel must be exposed by
 exactly one preload. `satisfies Partial<>` cannot catch a *forgotten* channel — that test can.
 
+## Two entry points: GUI and daemon
+
+`src/main/main.ts` is the Electron app. `src/main/daemon.ts` is the Game Mode card watcher, started by
+systemd **under `ELECTRON_RUN_AS_NODE=1`** — the same binary running as plain Node, with no Chromium
+(Electron cannot start under systemd in Game Mode: there is no display in a unit's environment).
+
+The consequence that bites: **in that mode the `electron` module does not exist.** It is a devDependency
+and the runtime only injects it for a normal Electron start, so any `import … from 'electron'` anywhere on
+the daemon's import graph throws `MODULE_NOT_FOUND` before our first line runs — a crash loop that is
+invisible locally (tsc and ESLint pass, the GUI works, vitest aliases `electron` to a stub). It has
+happened once already, via `logger.ts` and `steam.ts`.
+
+- Modules the daemon reaches must be electron-free. When one needs electron, split that part into a
+  GUI-only module — `steam-uri.ts` was carved out of `steam.ts` for exactly this.
+- Anything needing a path the GUI gets from `app.getPath()` takes it as a parameter instead
+  (`setLogBaseDir()`, `AppSettingsStore(baseDir)`).
+- `test/daemon-imports.test.ts` walks the graph and fails on a forbidden import (it also excludes
+  koffi-bound win32 modules, which is why the daemon calls `createLinuxPlatform()` directly rather than
+  `createPlatform()`). Type-only imports are fine — they are erased.
+
 ## Platform layer (OS-specific code)
 
 Playhook runs on Windows and on the Steam Deck / Linux (Windows games via Proton/umu-launcher). **All
@@ -65,6 +85,15 @@ OS-specific behaviour lives behind the `Platform` bundle in `src/main/platform/`
   Linux-only manifest fields (`winetricks`, `umuGameId`) are ignored on Windows, never rejected.
 - Extract the pure bits (path/env/argv construction, `/proc` parsing, prefix mapping) into electron-free
   helpers and unit-test them (see `umu.ts`, `proc.ts`, `save-path.linux.ts`).
+- **Build Linux paths with `path.posix`, never bare `path.join`.** `path.join` follows the OS the code
+  RUNS on, and CI runs the test suite on Windows too — so a Linux path built with `path.join` comes out as
+  `\home\deck\...` there and fails a test that (correctly) expects `/home/deck/...`. This has broken the
+  Windows job repeatedly. In any `*.linux.ts` module — and in any Linux-only feature elsewhere — use
+  `path.posix.join` / `path.posix.dirname` / `path.posix.basename`. Reference: `umu.ts` `prefixDir`,
+  `steam-userdata.linux.ts`. The win32 side keeps plain `path.join` (there it is right).
+  Beware the silent variant: when a value is *derived* from a path (the Steam shortcut appid is a CRC32 of
+  it), a wrong separator does not fail loudly — it produces a wrong value.
+  Quick check before pushing: `grep -rn "path\.\(join\|dirname\|basename\|resolve\)(" src/main/platform/*.linux.ts`
 
 ## Tests
 
@@ -75,6 +104,11 @@ OS-specific behaviour lives behind the `Platform` bundle in `src/main/platform/`
   was) and test that.
 - Prefer covering the risky, data-touching functions: manifest validation/anti-traversal, stats merge,
   save-sync retry, argument quoting.
+- **The suite runs on Windows AND Linux in CI, so a green local run proves nothing about path handling.**
+  A test that asserts a Linux path against a literal (`expect(...).toBe('/home/deck/...')`) is correct and
+  should stay — it is the *source* that must use `path.posix` (see the platform-layer rule above). Never
+  "fix" such a failure by rewriting the expectation with `path.join`: that makes the test assert whatever
+  the code does and stops testing anything at all.
 
 ## Tooling (all run in CI before build)
 

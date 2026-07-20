@@ -42,6 +42,14 @@ const settingsSchema = z.object({
   // Disable trying silent mode for install-mode installers (they show their wizard instead). `.default(false)`
   // keeps the original silent behaviour for an older settings.json without the field.
   disableSilentInstall: z.boolean().default(false),
+  // The appid of Playhook's own non-Steam shortcut (Steam Deck), UNSIGNED 32-bit, or null when no shortcut
+  // is registered. This is the ONE persisted representation — the signed on-disk form and the 64-bit
+  // rungameid are derived from it (see platform/steam-appid.ts). `.default(null)` migrates an older
+  // settings.json without the field, exactly as customWallpaper did (no schemaVersion bump).
+  steamAppIdU32: z.number().int().nullable().default(null),
+  // Game Mode auto-launch on card insertion (Steam Deck). `.default(true)` keeps the behaviour that
+  // shipped before the toggle existed for an older settings.json.
+  steamAutoLaunch: z.boolean().default(true),
 });
 
 // Default preserves the pre-settings behaviour (silent download + install on next quit), so the
@@ -59,6 +67,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   customWallpaper: null,
   alwaysShowEmptyScreen: false,
   disableSilentInstall: false,
+  steamAppIdU32: null,
+  steamAutoLaunch: true,
 };
 
 export class AppSettingsStore {

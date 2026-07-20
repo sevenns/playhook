@@ -3,8 +3,8 @@
 // no game it stays hidden in the tray. Closing the window hides it to the tray, not quits.
 import path from 'node:path';
 import fs from 'node:fs';
-import { app, ipcMain, Menu, powerSaveBlocker, shell, type Tray } from 'electron';
-import { log, logFilePath } from './logger';
+import { app, dialog, ipcMain, Menu, powerSaveBlocker, shell, type Tray } from 'electron';
+import { log, logFilePath, setLogBaseDir } from './logger';
 import { StateManager } from './state';
 import { GameWindow } from './window';
 import { PcStore } from './pc-store';
@@ -13,7 +13,9 @@ import { StatsService } from './stats';
 import { DriveWatcher } from './drive-watcher';
 import { GameController } from './ipc';
 import { GlobalGamepad } from './gamepad-global';
-import { createTray, buildTrayMenu, type TrayCallbacks } from './tray';
+import { createTray, buildTrayMenu, type TrayCallbacks, type TraySteamState } from './tray';
+import { createSteamShortcutService } from './steam-shortcut';
+import { installDaemonUnit, removeDaemonUnit } from './daemon-unit';
 import { UpdaterService } from './updater';
 import { SettingsWindow } from './settings-window';
 import { GameConfigService } from './game-config';
@@ -86,7 +88,10 @@ function configureLinuxAutoLaunch(): void {
     ].join('\n');
     fs.writeFileSync(path.join(autostartDir, 'playhook.desktop'), desktopEntry, 'utf8');
   } catch (cause) {
-    log.warn('[main] failed to write Linux autostart entry:', cause instanceof Error ? cause.message : String(cause));
+    log.warn(
+      '[main] failed to write Linux autostart entry:',
+      cause instanceof Error ? cause.message : String(cause),
+    );
   }
 }
 
@@ -100,7 +105,8 @@ function openLogs(): void {
 // back to appData so the action opens something rather than erroring.
 function openGamesFolder(): void {
   const localAppData = process.env['LOCALAPPDATA'];
-  const base = localAppData !== undefined && localAppData !== '' ? localAppData : app.getPath('appData');
+  const base =
+    localAppData !== undefined && localAppData !== '' ? localAppData : app.getPath('appData');
   const dir = path.join(base, 'playhook', 'games');
   try {
     fs.mkdirSync(dir, { recursive: true });
@@ -122,6 +128,10 @@ function quit(): void {
 }
 
 async function bootstrap(): Promise<void> {
+  // FIRST, before any log line: logger.ts is deliberately electron-free (the Game Mode daemon loads it
+  // under ELECTRON_RUN_AS_NODE, where importing electron fails), so it cannot ask app.getPath() itself.
+  setLogBaseDir(app.getPath('userData'));
+
   // No application menu (removes the File/Edit/View… bar entirely).
   Menu.setApplicationMenu(null);
 
@@ -167,7 +177,17 @@ async function bootstrap(): Promise<void> {
   );
 
   windowRef = window;
-  const controller = new GameController({ state, window, store, stats, watcher, settings, platform, isGamescope: gameModeSession, getTranslator });
+  const controller = new GameController({
+    state,
+    window,
+    store,
+    stats,
+    watcher,
+    settings,
+    platform,
+    isGamescope: gameModeSession,
+    getTranslator,
+  });
   controllerRef = controller;
   controller.init();
 
@@ -217,6 +237,10 @@ async function bootstrap(): Promise<void> {
       recomputeKeepAwake();
     },
     onAlwaysShowEmptyScreenChanged: (enabled) => controller.setAlwaysShowEmptyScreen(enabled),
+    // Game Mode auto-launch toggle (Steam Deck): installs or tears down the watcher unit. Turning it off
+    // stops a separate process, so the memory is actually returned — that is the point of the option.
+    onSteamAutoLaunchChanged: (enabled) => steamShortcut.applyAutoLaunch(enabled),
+    isSteamAvailable: () => steamShortcut.isAvailable(),
     onVolumesChanged: (volumes) => {
       const bw = window.browserWindow;
       if (bw !== null && !bw.isDestroyed()) bw.webContents.send(IPC.volumeUpdate, volumes);
@@ -265,19 +289,80 @@ async function bootstrap(): Promise<void> {
   // seed the controller with it now so it shows the empty screen at startup (reconciles: idle + no card).
   controller.setAlwaysShowEmptyScreen(initialSettings.alwaysShowEmptyScreen);
 
+  // Steam Deck Game Mode tile: writes Playhook into Steam's shortcuts.vdf as a non-Steam game. Available
+  // only for a packaged AppImage on linux (the appid is derived from the launcher path, which a dev run
+  // doesn't have) — elsewhere `isAvailable()` is false and the tray item never appears. The icon is copied
+  // out of the asar because Steam, an outside process, cannot read a path inside it.
+  const steamShortcut = createSteamShortcutService({
+    platform,
+    settings,
+    getTranslator,
+    home: app.getPath('home'),
+    sourceIconPath: path.join(__dirname, '../icon.png'),
+    // Library artwork, bundled by copy-assets into dist/steam. The logo drawn over the hero is the app
+    // icon itself (it is the only asset with transparency). Read from inside the asar and copied out to
+    // Steam's grid dir — plain fs reads work there through Electron's asar shim.
+    artwork: {
+      portrait: path.join(__dirname, '../steam/600x900.jpg'),
+      wide: path.join(__dirname, '../steam/920x430.jpg'),
+      hero: path.join(__dirname, '../steam/hero.jpg'),
+      logo: path.join(__dirname, '../icon.png'),
+    },
+    appImagePath: process.env['APPIMAGE'] ?? null,
+    notify: (title, message) => {
+      void dialog.showMessageBox({ type: 'info', title, message });
+    },
+    onStateChanged: () => refreshTrayMenu(),
+    // Game Mode auto-launch (phase 2): the systemd user unit that watches for a card while in Game Mode
+    // and launches our tile through Steam. Installed with the shortcut, removed with it.
+    installDaemon: async (appImagePath) => {
+      await installDaemonUnit(app.getPath('home'), appImagePath);
+    },
+    removeDaemon: () => removeDaemonUnit(app.getPath('home')),
+  });
+
+  /** The tray item's state, derived from the service (no separate flag to drift out of sync). */
+  function steamMenuState(): TraySteamState {
+    return {
+      visible: steamShortcut.isAvailable(),
+      registered: steamShortcut.isRegistered(),
+      busy: steamShortcut.isBusy(),
+    };
+  }
+
+  /**
+   * The single place the tray menu is rebuilt. Both triggers go through it — a language change and a
+   * Steam-shortcut state change — because rebuilding from only one of them would drop the other's state
+   * (switching language used to reset the Steam item back to its startup label).
+   */
+  function refreshTrayMenu(): void {
+    trayRef?.setContextMenu(buildTrayMenu(localeService.t, trayCallbacks, steamMenuState()));
+  }
+
   const trayCallbacks: TrayCallbacks = {
     onShow: () => window.showAndFocus(),
     onOpenConfigureGame: () => configureWindow.openOrFocus(),
     onOpenSettings: () => settingsWindow.openOrFocus(),
+    onToggleSteamShortcut: () => {
+      void (steamShortcut.isRegistered() ? steamShortcut.remove() : steamShortcut.add());
+    },
     onQuit: () => quit(),
   };
   // SteamOS Game Mode has no system tray (gamescope). Skip it there — the window is always shown and Steam
-  // manages the app as a non-Steam game. Desktop Mode (KDE) and Windows keep the tray (applyLanguage's
-  // `trayRef?.setContextMenu` no-ops when it's null).
+  // manages the app as a non-Steam game. Desktop Mode (KDE) and Windows keep the tray (refreshTrayMenu
+  // no-ops when trayRef is null).
   if (!gameModeSession) {
-    trayRef = createTray(localeService.t, trayCallbacks);
+    trayRef = createTray(localeService.t, trayCallbacks, steamMenuState());
   } else {
     log.info('[main] SteamOS Game Mode detected — running without a tray');
+  }
+  // Re-point the stable launcher symlink (the appid depends on it surviving updates) and drop a stored
+  // appid whose record no longer exists. Only meaningful in Desktop Mode, which is the only place the tray
+  // — the feature's single entry point — exists.
+  if (!gameModeSession) {
+    steamShortcut
+      .reconcile()
+      .catch((cause: unknown) => log.warn('[steam-shortcut] reconcile failed:', cause));
   }
 
   // UI-locale wiring. Each window seeds via an invoke (effective Locale) and receives live pushes; the
@@ -313,11 +398,12 @@ async function bootstrap(): Promise<void> {
   function applyLanguage(mode: typeof initialSettings.language): void {
     localeService.setMode(mode);
     const locale = localeService.current();
-    trayRef?.setContextMenu(buildTrayMenu(localeService.t, trayCallbacks));
+    refreshTrayMenu();
     settingsWindow.refreshTitle();
     configureWindow.refreshTitle();
     const gameBw = window.browserWindow;
-    if (gameBw !== null && !gameBw.isDestroyed()) gameBw.webContents.send(IPC.languageUpdate, locale);
+    if (gameBw !== null && !gameBw.isDestroyed())
+      gameBw.webContents.send(IPC.languageUpdate, locale);
     const settingsBw = settingsWindow.browserWindow;
     if (settingsBw !== null && !settingsBw.isDestroyed()) {
       settingsBw.webContents.send(IPC.settingsLanguageUpdate, locale);
@@ -373,8 +459,11 @@ if (!gotSingleInstanceLock) {
     configureWindowRef?.allowClose();
   });
 
-  app.whenReady().then(bootstrap).catch((cause: unknown) => {
-    log.error('[main] bootstrap failed:', cause);
-    app.quit();
-  });
+  app
+    .whenReady()
+    .then(bootstrap)
+    .catch((cause: unknown) => {
+      log.error('[main] bootstrap failed:', cause);
+      app.quit();
+    });
 }

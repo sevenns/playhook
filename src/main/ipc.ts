@@ -40,7 +40,8 @@ import {
   type GameProcess,
 } from './game-launcher';
 import { findUninstallEntry } from './registry';
-import { steamInstallStatus, openSteamUri } from './steam';
+import { steamInstallStatus } from './steam';
+import { openSteamUri } from './steam-uri';
 import { type PcSaveLocation, type Platform, type ProcessMonitor } from './platform';
 import { AssetReader } from './asset-reader';
 import { type AppSettingsStore } from './app-settings';

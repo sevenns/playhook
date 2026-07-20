@@ -58,6 +58,13 @@ export interface UpdaterDeps {
   readonly onSummonHotkeyChanged: (enabled: boolean) => void;
   /** Applies the keep-display-awake toggle (recomputes the powerSaveBlocker in main). */
   readonly onPreventScreensaverChanged: (enabled: boolean) => void;
+  /**
+   * Applies the Game Mode auto-launch toggle: installs or tears down the watcher service. Steam Deck
+   * only; a no-op elsewhere.
+   */
+  readonly onSteamAutoLaunchChanged: (enabled: boolean) => Promise<void>;
+  /** Whether the Steam-shortcut feature exists on this machine (linux + packaged AppImage). */
+  readonly isSteamAvailable: () => boolean;
   /** Applies the "always show the no-card screen" toggle (reconciles the launcher's visibility). */
   readonly onAlwaysShowEmptyScreenChanged: (enabled: boolean) => void;
   /** Pushes new audio volumes to the game renderer so they apply live. */
@@ -94,7 +101,9 @@ export class UpdaterService {
 
     if (!app.isPackaged) {
       this.status = { kind: 'unsupported' };
-      log.info('[updater] disabled (not packaged) — settings window still works (version/mode only)');
+      log.info(
+        '[updater] disabled (not packaged) — settings window still works (version/mode only)',
+      );
       return;
     }
 
@@ -137,6 +146,8 @@ export class UpdaterService {
     ipcMain.on(IPC.updateDownload, () => this.download());
     ipcMain.on(IPC.updateInstall, () => void this.install());
     ipcMain.handle(IPC.settingsRequest, () => this.deps.settings.read());
+    // Drives whether the Steam settings are rendered at all — the renderer has no way to know the OS.
+    ipcMain.handle(IPC.settingsSteamAvailable, () => this.deps.isSteamAvailable());
     ipcMain.on(IPC.settingsSetAutoUpdate, (_event, mode: AutoUpdateMode) => {
       void this.deps.settings
         .setAutoUpdate(mode)
@@ -144,7 +155,9 @@ export class UpdaterService {
           // Persist always, but only touch autoUpdater in a packaged build.
           if (app.isPackaged) this.applyMode(mode);
         })
-        .catch((cause: unknown) => log.error('[updater] failed to persist auto-update mode:', cause));
+        .catch((cause: unknown) =>
+          log.error('[updater] failed to persist auto-update mode:', cause),
+        );
     });
     // The settings renderer applies the theme live in its own window; main persists it so the choice
     // survives a restart AND pushes it to the Configure window (onThemeChanged) so an open Configure
@@ -161,7 +174,9 @@ export class UpdaterService {
         .then(() => {
           if (app.isPackaged) autoUpdater.allowPrerelease = on;
         })
-        .catch((cause: unknown) => log.error('[updater] failed to persist prerelease flag:', cause));
+        .catch((cause: unknown) =>
+          log.error('[updater] failed to persist prerelease flag:', cause),
+        );
     });
     ipcMain.on(IPC.settingsSetSummonHotkey, (_event, on: boolean) => {
       void this.deps.settings
@@ -173,19 +188,32 @@ export class UpdaterService {
       void this.deps.settings
         .patch({ preventScreensaver: on })
         .then(() => this.deps.onPreventScreensaverChanged(on))
-        .catch((cause: unknown) => log.error('[updater] failed to persist prevent-screensaver:', cause));
+        .catch((cause: unknown) =>
+          log.error('[updater] failed to persist prevent-screensaver:', cause),
+        );
     });
     ipcMain.on(IPC.settingsSetAlwaysShowEmptyScreen, (_event, on: boolean) => {
       void this.deps.settings
         .patch({ alwaysShowEmptyScreen: on })
         .then(() => this.deps.onAlwaysShowEmptyScreenChanged(on))
-        .catch((cause: unknown) => log.error('[updater] failed to persist always-show-empty-screen:', cause));
+        .catch((cause: unknown) =>
+          log.error('[updater] failed to persist always-show-empty-screen:', cause),
+        );
     });
     // No side-effect on toggle: the install flow reads disableSilentInstall from settings at install time.
+    ipcMain.on(IPC.settingsSetSteamAutoLaunch, (_event, on: boolean) => {
+      this.deps.settings
+        .patch({ steamAutoLaunch: on })
+        .then(() => this.deps.onSteamAutoLaunchChanged(on))
+        .catch((cause: unknown) => log.error('[updater] failed to set steam auto-launch:', cause));
+    });
+
     ipcMain.on(IPC.settingsSetDisableSilentInstall, (_event, on: boolean) => {
       void this.deps.settings
         .patch({ disableSilentInstall: on })
-        .catch((cause: unknown) => log.error('[updater] failed to persist disable-silent-install:', cause));
+        .catch((cause: unknown) =>
+          log.error('[updater] failed to persist disable-silent-install:', cause),
+        );
     });
     ipcMain.on(IPC.settingsSetMusicVolume, (_event, volume: number) => {
       void this.setVolume({ musicVolume: volume });
@@ -229,6 +257,9 @@ export class UpdaterService {
     this.deps.onSummonHotkeyChanged(next.summonHotkeyEnabled);
     this.deps.onPreventScreensaverChanged(next.preventScreensaver);
     this.deps.onAlwaysShowEmptyScreenChanged(next.alwaysShowEmptyScreen);
+    // A reset turns auto-launch back on — the watcher unit has to come back with it, or the setting
+    // would say "on" while nothing is actually watching.
+    await this.deps.onSteamAutoLaunchChanged(next.steamAutoLaunch);
     this.deps.onVolumesChanged({ music: next.musicVolume, sfx: next.sfxVolume });
     // reset() already wrote customWallpaper=null; this deletes the copied file and pushes the default.
     await this.deps.onWallpaperReset();
@@ -238,7 +269,9 @@ export class UpdaterService {
   }
 
   // Persists a volume change and pushes the full volume pair to the game renderer so it applies live.
-  private async setVolume(partial: { musicVolume?: number } | { sfxVolume?: number }): Promise<void> {
+  private async setVolume(
+    partial: { musicVolume?: number } | { sfxVolume?: number },
+  ): Promise<void> {
     try {
       const next = await this.deps.settings.patch(partial);
       this.deps.onVolumesChanged({ music: next.musicVolume, sfx: next.sfxVolume });

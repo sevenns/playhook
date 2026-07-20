@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="icon-tray.png" width="128" height="128" alt="Playhook icon">
+  <img src="assets/icon.png" width="128" height="128" alt="Playhook icon">
   <h1>Playhook</h1>
   <p><strong>Bring console vibes to your PC.</strong></p>
   <p>
@@ -371,11 +371,16 @@ Linux/ELF games are not a target.
 ### Install
 
 1. Download the **`.AppImage`** from the [Releases](https://github.com/sevenns/playhook/releases/latest)
-   page, mark it executable (`chmod +x Playhook-*.AppImage`) and run it once in **Desktop Mode**.
-2. In Steam, **Add a Non-Steam Game** and pick the AppImage, so it appears in your library and can be
-   launched from **Game Mode** like any other title.
+   page, mark it executable (`chmod +x Playhook.AppImage`) and run it once in **Desktop Mode**.
+2. In the tray menu, click **Add to Steam**. Playhook registers itself as a non-Steam game — tile,
+   artwork and all — so it appears in your library and launches from **Game Mode** like any other
+   title. The tile shows up the next time you enter Game Mode.
+   *(Adding it by hand via Steam's own "Add a Non-Steam Game" also works, but then Playhook cannot
+   manage the entry: it will ask you to remove yours first.)*
 3. **First launch needs the internet:** umu downloads GE-Proton and the Steam Runtime on the first run
    (cached afterwards). The status just shows "Running" while this happens — give it a minute.
+
+**Remove from Steam** in the same menu takes the tile, its artwork and the auto-launch service back out.
 
 `python3` must be present (preinstalled on SteamOS; on desktop Linux install it if the app reports it's
 missing — the bundled umu launcher is a Python zipapp).
@@ -443,8 +448,14 @@ These are ignored on Windows, so a dual-platform card can carry them safely:
 - **Power menu** (Shutdown/Reboot/Sleep) works from Game Mode via `systemctl` (logind).
 - **The System menu's primary item is "Close Playhook"** (a full quit) instead of "Minimize Playhook" —
   there is no tray to minimize into; quitting returns you to the Steam library.
-- **No autostart in Game Mode** — the app lives as a non-Steam game. In Desktop Mode it writes a
-  `~/.config/autostart/playhook.desktop` entry.
+- **Insert a card and Playhook opens itself.** Once you have used **Add to Steam**, a small background
+  service runs while you are in Game Mode and launches Playhook through Steam the moment you insert a
+  card carrying a `game.json` — no need to find the tile. A card that was *already* in the slot when you
+  entered Game Mode is deliberately ignored: you may well have come to play something else, and being
+  yanked into Playhook on every entry would be obnoxious. Launch it from the library in that case.
+  An ordinary USB stick or a card without `game.json` never triggers it.
+- **No autostart in Game Mode** — the app lives as a non-Steam game, started by Steam (or by the service
+  above). In Desktop Mode it writes a `~/.config/autostart/playhook.desktop` entry instead.
 
 ### Limitations on Linux
 
@@ -564,7 +575,10 @@ On **Windows** the app registers itself via `app.setLoginItemSettings({ openAtLo
 
 On **Linux** `setLoginItemSettings` doesn't exist. In **Desktop Mode** the app writes a
 `~/.config/autostart/playhook.desktop` entry (`Exec=` = the AppImage path, best-effort). In **Game Mode**
-there is no autostart — Playhook lives as a non-Steam game you launch from the library.
+Playhook lives as a non-Steam game you launch from the library — or that launches itself when you insert
+a card, if you used **Add to Steam** (see [Game Mode notes](#game-mode-notes)). That is a
+`systemctl --user` service, `playhook-daemon.service`, bound to `gamescope-session.target`, so it only
+exists while you are in Game Mode; **Remove from Steam** deletes it.
 
 ---
 

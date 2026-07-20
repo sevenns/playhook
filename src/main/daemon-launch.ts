@@ -1,0 +1,94 @@
+// Asking Steam to launch our tile, reliably. Pure orchestration with injected effects, so the retry
+// policy is unit-tested (test/daemon-launch.test.ts) instead of being discovered on a Deck.
+//
+// Why this exists: a request sent to a Steam client that cannot yet act on it does NOT fail loudly —
+// Steam accepts it, the tile goes to "Launching…", and it stays there forever, ignoring every later
+// request (the user's own included) until cancelled by hand. Measured on a Deck, firing one second after
+// the client opened its pipe produced exactly that.
+//
+// The daemon avoids that window entirely now: it never launches at session start (see daemon.ts,
+// COLD_START_WINDOW_MS), only on a real card insertion into a session that has been running. This module
+// is therefore the belt to that braces — check Steam is up, ask once, and report honestly whether the app
+// actually appeared.
+
+/** How long to wait for the Steam client to appear before giving up entirely. */
+const STEAM_READY_TIMEOUT_MS = 3 * 60 * 1000;
+/** Poll interval while waiting for Steam. */
+const STEAM_READY_POLL_MS = 2000;
+/** How long to give Steam to actually start the app before declaring the attempt failed. */
+const LAUNCH_CONFIRM_MS = 20_000;
+/**
+ * How many times to ask. ONE, deliberately: retrying was tried and measured useless — once the tile is
+ * wedged on "Launching…", Steam ignores every further request (the user's own included) until it is
+ * cancelled by hand. A second request cannot help and only hides the failure.
+ */
+const MAX_ATTEMPTS = 1;
+
+export interface DaemonLaunchDeps {
+  /** Whether OUR app is already running (full /proc sweep by SteamAppId). */
+  readonly isAppRunning: () => Promise<boolean>;
+  /** Whether the Steam client is up and able to accept a launch request. */
+  readonly isSteamReady: () => Promise<boolean>;
+  /** Fires `steam steam://rungameid/…` (fire-and-forget — Steam gives us no completion signal). */
+  readonly launch: () => void;
+  readonly sleep: (ms: number) => Promise<void>;
+  readonly log: (message: string) => void;
+}
+
+export interface DaemonLaunchOptions {
+  readonly steamReadyTimeoutMs?: number;
+  readonly steamReadyPollMs?: number;
+  readonly launchConfirmMs?: number;
+  readonly maxAttempts?: number;
+}
+
+export type DaemonLaunchOutcome =
+  /** The app came up (or was already up) — nothing more to do. */
+  | 'launched'
+  | 'already-running'
+  /** Steam never appeared within the timeout. */
+  | 'steam-unavailable'
+  /** Steam was up, we asked the agreed number of times, the app never appeared. */
+  | 'gave-up';
+
+/**
+ * Waits for Steam, then asks it to launch our tile, confirming the result and retrying.
+ *
+ * The confirmation step doubles as the guard against launching twice: if the user got there first (or an
+ * earlier request finally went through), `isAppRunning` reports it and we stop — so a retry can never
+ * produce a second instance.
+ */
+export async function launchWhenSteamReady(
+  deps: DaemonLaunchDeps,
+  options: DaemonLaunchOptions = {},
+): Promise<DaemonLaunchOutcome> {
+  const readyTimeout = options.steamReadyTimeoutMs ?? STEAM_READY_TIMEOUT_MS;
+  const readyPoll = options.steamReadyPollMs ?? STEAM_READY_POLL_MS;
+  const confirmDelay = options.launchConfirmMs ?? LAUNCH_CONFIRM_MS;
+  const attempts = options.maxAttempts ?? MAX_ATTEMPTS;
+
+  // 1. Wait for the Steam client. Bail out early if the app turns up on its own meanwhile — the user may
+  // simply have launched it from the tile while we waited.
+  let waited = 0;
+  while (!(await deps.isSteamReady())) {
+    if (await deps.isAppRunning()) return 'already-running';
+    if (waited >= readyTimeout) {
+      deps.log(`Steam did not come up within ${Math.round(readyTimeout / 1000)}s — giving up`);
+      return 'steam-unavailable';
+    }
+    await deps.sleep(readyPoll);
+    waited += readyPoll;
+  }
+  if (waited > 0) deps.log(`waited ${Math.round(waited / 1000)}s for the Steam client`);
+
+  // 2. Ask, confirm, repeat. Steam reports nothing back, so the only honest signal is the app appearing.
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    if (await deps.isAppRunning()) return attempt === 1 ? 'already-running' : 'launched';
+    deps.log(`launch request ${attempt}/${attempts}`);
+    deps.launch();
+    await deps.sleep(confirmDelay);
+    if (await deps.isAppRunning()) return 'launched';
+    deps.log(`no app after ${Math.round(confirmDelay / 1000)}s`);
+  }
+  return 'gave-up';
+}

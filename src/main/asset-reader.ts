@@ -68,8 +68,10 @@ function defaultSfxPath(name: SfxName): string {
   return path.join(__dirname, '../audio', DEFAULT_SFX_FILES[name]);
 }
 
-// Fallback hero background (bundled by copy-assets into dist/wallpaper.png). __dirname is dist/main.
-const WALLPAPER_PATH = path.join(__dirname, '../wallpaper.png');
+// Fallback hero background (bundled by copy-assets into dist/wallpaper.jpg). __dirname is dist/main.
+// The extension is load-bearing: this file goes to the renderer as a data URI whose MIME is derived from
+// it, so it must match what copy-assets.mjs actually copies (assets/playhook-wallpaper.jpg).
+const WALLPAPER_PATH = path.join(__dirname, '../wallpaper.jpg');
 
 // Custom Empty-screen wallpaper: hard file-size cap (a bigger file is refused rather than downscaled —
 // see plan F2.2). 8 MB as base64 is ~11 MB of string in the renderer, which is tolerable for a one-off.

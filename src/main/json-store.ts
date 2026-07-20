@@ -54,7 +54,20 @@ export async function readJsonValidated<S extends z.ZodTypeAny>(
  * directory exists (a drive-root parent already does; nested dirs need an ensureDir first).
  */
 export async function writeJsonAtomic(filePath: string, value: unknown): Promise<void> {
+  await writeFileAtomic(filePath, `${JSON.stringify(value, null, 2)}\n`);
+}
+
+/**
+ * The same temp-file → rename guarantee for arbitrary content (added for the binary `shortcuts.vdf`
+ * write, where a torn file costs the user every non-Steam shortcut they have). `writeJsonAtomic` is now a
+ * thin wrapper over this — see its doc comment for why the final step is a bare `fs.rename`.
+ */
+export async function writeFileAtomic(filePath: string, data: string | Buffer): Promise<void> {
   const tmp = `${filePath}.tmp`;
-  await fs.writeFile(tmp, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
+  if (typeof data === 'string') {
+    await fs.writeFile(tmp, data, 'utf8');
+  } else {
+    await fs.writeFile(tmp, data);
+  }
   await withRetry(() => fs.rename(tmp, filePath));
 }

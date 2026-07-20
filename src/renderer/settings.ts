@@ -16,7 +16,13 @@ import '@fluentui/web-components/slider/define.js';
 import '@fluentui/web-components/progress-bar/define.js';
 import { setTheme } from '@fluentui/web-components';
 import { webDarkTheme, webLightTheme } from '@fluentui/tokens';
-import type { AppSettings, AutoUpdateMode, LanguageMode, ThemeMode, UpdateStatus } from '../shared/types';
+import type {
+  AppSettings,
+  AutoUpdateMode,
+  LanguageMode,
+  ThemeMode,
+  UpdateStatus,
+} from '../shared/types';
 import { createTranslator, type Locale, type Translator } from '../shared/i18n/index.js';
 import { localizeDocument } from './i18n-dom.js';
 
@@ -76,6 +82,9 @@ const summonSwitch = req('summon-hotkey');
 const preventScreensaverSwitch = req('prevent-screensaver');
 const alwaysShowEmptySwitch = req('always-show-empty');
 const disableSilentInstallSwitch = req('disable-silent-install');
+const steamAutoLaunchSwitch = req('steam-auto-launch');
+const steamAutoLaunchField = req('steam-auto-launch-field');
+const steamAutoLaunchHint = req('steam-auto-launch-hint');
 const musicSlider = req('music-volume');
 const musicValue = req('music-volume-value');
 const sfxSlider = req('sfx-volume');
@@ -288,6 +297,10 @@ preventScreensaverSwitch.addEventListener('change', () => {
   window.settingsApi.setPreventScreensaver(readChecked(preventScreensaverSwitch));
 });
 
+steamAutoLaunchSwitch.addEventListener('change', () => {
+  window.settingsApi.setSteamAutoLaunch(readChecked(steamAutoLaunchSwitch));
+});
+
 alwaysShowEmptySwitch.addEventListener('change', () => {
   window.settingsApi.setAlwaysShowEmptyScreen(readChecked(alwaysShowEmptySwitch));
 });
@@ -361,6 +374,7 @@ function applySettings(settings: AppSettings): void {
   setChecked(preventScreensaverSwitch, settings.preventScreensaver);
   setChecked(alwaysShowEmptySwitch, settings.alwaysShowEmptyScreen);
   setChecked(disableSilentInstallSwitch, settings.disableSilentInstall);
+  setChecked(steamAutoLaunchSwitch, settings.steamAutoLaunch);
   const musicPercent = Math.round(settings.musicVolume * 100);
   const sfxPercent = Math.round(settings.sfxVolume * 100);
   setSliderPercent(musicSlider, musicPercent);
@@ -402,17 +416,22 @@ async function init(): Promise<void> {
   // Subscribe BEFORE requesting the initial snapshot, so a push arriving in between isn't lost.
   window.settingsApi.onUpdateStatus(render);
   window.settingsApi.onLanguageUpdate(applyLocale);
-  const [version, icon, settings, status, locale] = await Promise.all([
+  const [version, icon, settings, status, locale, steamAvailable] = await Promise.all([
     window.settingsApi.getAppVersion(),
     window.settingsApi.getAppIcon(),
     window.settingsApi.getSettings(),
     window.settingsApi.requestUpdateStatus(),
     window.settingsApi.getLanguage(),
+    window.settingsApi.isSteamAvailable(),
   ]);
   appVersion = version;
   // Title bar: [icon] Playhook (version). Hide the <img> if the icon couldn't be read (empty string).
   if (icon !== '') titlebarIcon.src = icon;
   else titlebarIcon.hidden = true;
+  // The Steam Deck row exists only where the feature does — main decides (linux + packaged AppImage);
+  // the renderer cannot know the OS on its own.
+  steamAutoLaunchField.hidden = !steamAvailable;
+  steamAutoLaunchHint.hidden = !steamAvailable;
   applySettings(settings);
   render(status);
   // Seed the locale last so it localizes the freshly-populated DOM and title-bar suffix in one pass.

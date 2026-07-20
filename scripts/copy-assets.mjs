@@ -22,15 +22,16 @@ for (const name of dirs) {
   await cp(resolve(srcRenderer, name), resolve(outRenderer, name), { recursive: true });
 }
 
-// App icons: copied into dist so they ship inside the asar and are usable at runtime.
-// icon.ico — main app icon (BrowserWindow; also referenced by electron-builder for exe/installer).
-// icon-tray.ico — smaller/simpler icon for the tray on Windows, so it doesn't turn to mush at tray size.
-// icon-tray.png — the tray icon for Linux (Desktop Mode/KDE): a .ico yields an empty nativeImage there.
-// icon.png — 256×256 app icon, read by main and handed to the settings window's custom title bar as a
-// data URL (its CSP allows img-src data: only); also the Linux BrowserWindow/AppImage icon.
-const icons = ['icon.ico', 'icon-tray.ico', 'icon-tray.png', 'icon.png'];
+// App icons: copied from assets/ into dist so they ship inside the asar and are usable at runtime.
+// icon.ico — main app icon (BrowserWindow, tray on Windows; also referenced by electron-builder for
+//   exe/installer).
+// icon.png — app icon read by main and handed to the settings window's custom title bar as a data URL
+//   (its CSP allows img-src data: only); the Linux BrowserWindow/AppImage icon; the tray icon on Linux
+//   (a .ico yields an empty nativeImage there); and the Steam shortcut's tile icon + grid logo.
+// There are no separate icon-tray.* files any more — the tray uses these same two.
+const icons = ['icon.ico', 'icon.png'];
 for (const name of icons) {
-  await cp(resolve(root, name), resolve(outDist, name));
+  await cp(resolve(root, 'assets', name), resolve(outDist, name));
 }
 
 // Bundled default UI sounds: used by main when a game.json omits a sound slot. Shipped inside the
@@ -38,9 +39,14 @@ for (const name of icons) {
 await cp(resolve(root, 'audio'), resolve(outDist, 'audio'), { recursive: true });
 
 // Fallback hero wallpaper: used as the background when a game has no heroImage and on the idle
-// "Insert a game card" screen. Main reads it and hands it to the renderer as a data URL.
-await cp(resolve(root, 'assets/playhook-wallpaper.png'), resolve(outDist, 'wallpaper.png'));
+// "Insert a game card" screen. Main reads it and hands it to the renderer as a data URL. JPG, so the
+// data-URI MIME in asset-reader.ts must match — keep the extension in sync with that constant.
+await cp(resolve(root, 'assets/playhook-wallpaper.jpg'), resolve(outDist, 'wallpaper.jpg'));
+
+// Steam library artwork for the non-Steam shortcut (Game Mode tile). Copied out to the user's
+// `userdata/<id>/config/grid/` when the shortcut is added — see steam-artwork.ts for the naming.
+await cp(resolve(root, 'assets/steam'), resolve(outDist, 'steam'), { recursive: true });
 
 console.log(
-  `Copied ${files.length} file(s), ${dirs.length} dir(s), ${icons.length} icon(s), default audio and wallpaper to dist`,
+  `Copied ${files.length} file(s), ${dirs.length} dir(s), ${icons.length} icon(s), default audio, wallpaper and Steam artwork to dist`,
 );
