@@ -17,6 +17,17 @@ export const app = {
   },
 };
 
+/**
+ * `Menu.buildFromTemplate` hands the template straight back, so tray.ts's `buildTrayMenu` — a pure
+ * function whose whole value is being assertable — can be inspected item by item (test/tray.test.ts).
+ * Electron's real Menu exposes no such view.
+ */
+export const Menu = {
+  buildFromTemplate(template: readonly unknown[]): readonly unknown[] {
+    return template;
+  },
+};
+
 export const contextBridge = {
   exposeInMainWorld(): void {},
 };
@@ -29,4 +40,4 @@ export const ipcRenderer = {
   },
 };
 
-export default { app, contextBridge, ipcRenderer };
+export default { app, Menu, contextBridge, ipcRenderer };

@@ -19,6 +19,21 @@ export const en = {
   'tray.configureGame': 'Configure game',
   'tray.settings': 'Settings',
   'tray.quit': 'Quit',
+  // Steam Deck only: registering Playhook as a non-Steam game so it gets a Game Mode tile. The item is
+  // hidden entirely on Windows and on any run that isn't a packaged AppImage.
+  'tray.steamAdd': 'Add to Steam',
+  'tray.steamRemove': 'Remove from Steam',
+  'tray.steamBusy': 'Working…',
+
+  // ── Steam shortcut (steam-shortcut.ts, shown as message boxes) ──────────────
+  'steam.addedTitle': 'Added to Steam',
+  'steam.added': 'Playhook has been added to Steam. The tile appears the next time you enter Game Mode.',
+  'steam.removedTitle': 'Removed from Steam',
+  'steam.removed': 'Playhook has been removed from Steam.',
+  'steam.failedTitle': 'Steam shortcut',
+  'steam.failed': 'Could not update the Steam shortcut: {cause}',
+  'steam.foreign':
+    'Steam already has a shortcut pointing at Playhook ({names}). Remove it in Steam first, then try again — it was added by hand, so Playhook will not delete it for you.',
 
   // ── Native context menus (window.ts / configure-window.ts) ──────────────────
   'menu.cut': 'Cut',

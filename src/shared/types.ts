@@ -469,6 +469,14 @@ export interface AppSettings {
    * install directory via the dir-key; the user must keep it for the completion check to find the exe.
    */
   readonly disableSilentInstall: boolean;
+  /**
+   * The appid of Playhook's own non-Steam shortcut (Steam Deck Game Mode tile), as an UNSIGNED 32-bit
+   * number, or null when no shortcut is registered — that null is also what drives the tray item's
+   * Add/Remove state, so no separate flag exists. The signed form written into `shortcuts.vdf` and the
+   * 64-bit `rungameid` are DERIVED from it on the spot (platform/steam-appid.ts), never stored: three
+   * copies of one number are three chances for them to disagree. Default null.
+   */
+  readonly steamAppIdU32: number | null;
 }
 
 /**

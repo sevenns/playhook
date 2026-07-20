@@ -13,6 +13,7 @@ import type {
 } from './types';
 import { createLinuxProcessMonitor } from './proc';
 import { createLinuxSteamLocator } from './steam-locator.linux';
+import { createLinuxSteamShortcuts } from './steam-shortcuts.linux';
 import { createLinuxGameLauncher } from './game-launcher.linux';
 import { createLinuxSavePathResolver } from './save-path.linux';
 import { createLinuxRemovableMounter } from './mount.linux';
@@ -45,6 +46,8 @@ export function createLinuxPlatform(deps: PlatformDeps): Platform {
   return {
     processMonitor,
     steamLocator,
+    // Game Mode tile (non-Steam shortcut). Backups land in userData, never in Steam's own config dir.
+    steamShortcuts: createLinuxSteamShortcuts({ steamLocator, userData: deps.userData }),
     gameLauncher: createLinuxGameLauncher({
       userData: deps.userData,
       umuRunPath: deps.umuRunPath,

@@ -43,6 +43,12 @@ nsis:
 linux:
   icon: icon.png
   category: Game
+  # Drop the version from the file name (the default is ${productName}-${version}.${ext}). The Steam
+  # shortcut's appid is a hash of the launcher PATH, so a version in it changes the appid — resetting the
+  # tile's artwork and playtime — whenever the user re-downloads by hand. The stable symlink in
+  # ~/.local/share/playhook is what actually guarantees the appid survives (steam-shortcut.ts); this just
+  # spares the user a versioned file to begin with.
+  artifactName: ${productName}.${ext}
   target:
     - AppImage
   # Bundle the umu-launcher zipapp OUTSIDE asar (it is run as `python3 umu-run …` — Р1). Fetched into

@@ -14,6 +14,19 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'tray.configureGame': 'Настроить игру',
   'tray.settings': 'Настройки',
   'tray.quit': 'Выход',
+  'tray.steamAdd': 'Добавить в Steam',
+  'tray.steamRemove': 'Убрать из Steam',
+  'tray.steamBusy': 'Выполняется…',
+
+  // ── Ярлык Steam ──────────────────────────────────────────────────────────────
+  'steam.addedTitle': 'Добавлено в Steam',
+  'steam.added': 'Playhook добавлен в Steam. Плитка появится при следующем входе в Game Mode.',
+  'steam.removedTitle': 'Убрано из Steam',
+  'steam.removed': 'Playhook убран из Steam.',
+  'steam.failedTitle': 'Ярлык Steam',
+  'steam.failed': 'Не удалось изменить ярлык Steam: {cause}',
+  'steam.foreign':
+    'В Steam уже есть ярлык, указывающий на Playhook ({names}). Сначала уберите его в Steam, потом повторите — он добавлен вручную, поэтому Playhook не удаляет его сам.',
 
   // ── Native context menus ─────────────────────────────────────────────────────
   'menu.cut': 'Вырезать',

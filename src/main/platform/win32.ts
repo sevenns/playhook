@@ -15,6 +15,7 @@ import type {
   RemovableMounter,
   SavePathResolver,
   SteamLocator,
+  SteamShortcuts,
 } from './types';
 import {
   launchGame,
@@ -103,6 +104,22 @@ function createSteamLocator(): SteamLocator {
   return { locateSteam: () => getSteamPath() };
 }
 
+// ── SteamShortcuts (unsupported) ─────────────────────────────────────────────
+// Registering Playhook as a non-Steam game exists for the Steam Deck's Game Mode; Windows has no such
+// mode and no reason for a tile. `supported: false` hides the tray item entirely, so these refusals are
+// never actually surfaced — they exist so the interface stays total.
+
+function createSteamShortcuts(): SteamShortcuts {
+  const unsupported = { ok: false, message: 'Steam shortcuts are not supported on Windows' } as const;
+  return {
+    supported: false,
+    addShortcut: () => Promise.resolve(unsupported),
+    removeShortcut: () => Promise.resolve(unsupported),
+    hasShortcut: () => Promise.resolve(false),
+    findForeignShortcuts: () => Promise.resolve([]),
+  };
+}
+
 // ── GameProcessLauncher (spawn / ShellExecuteEx) ─────────────────────────────
 
 function createGameLauncher(monitor: ProcessMonitor): GameProcessLauncher {
@@ -187,6 +204,7 @@ export function createWin32Platform(deps: PlatformDeps): Platform {
   return {
     processMonitor,
     steamLocator: createSteamLocator(),
+    steamShortcuts: createSteamShortcuts(),
     gameLauncher: createGameLauncher(processMonitor),
     savePathResolver: createSavePathResolver(deps),
     powerBackend: createPowerBackend(),

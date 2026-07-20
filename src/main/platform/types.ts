@@ -189,10 +189,58 @@ export interface RemovableMounter {
   mountAll(): Promise<void>;
 }
 
+/** Where a non-Steam shortcut should point. `appName` is fixed (`Playhook`) — it feeds the appid hash. */
+export interface SteamShortcutTarget {
+  /** The executable path, UNQUOTED. The quoting that Steam stores (and that the hash covers) is applied
+   * by the implementation via `quoteExePath`, so the `Exe` field and the appid can never disagree. */
+  readonly exePath: string;
+  readonly appName: string;
+  readonly startDir: string;
+  /**
+   * Absolute path to the tile icon. Must be a REAL file on disk: the app's own `icon.png` ships inside the
+   * asar, which Steam (an outside process) cannot read — so the caller extracts it next to the stable
+   * launcher symlink and passes that path.
+   */
+  readonly iconPath: string;
+}
+
+/** Result of an operation on Steam's own files — untrusted data in a foreign format, so a Result-union
+ * (CLAUDE.md error-handling convention), not a throw. */
+export type SteamShortcutFailure = { readonly ok: false; readonly message: string };
+export type SteamShortcutResult<T> = ({ readonly ok: true } & T) | SteamShortcutFailure;
+/** The same union for an operation that returns nothing but success. */
+export type SteamShortcutVoidResult = { readonly ok: true } | SteamShortcutFailure;
+
+/**
+ * Registering Playhook with Steam as a non-Steam game, so it gets a Game Mode tile (with the overlay and
+ * QAM that a tile brings). Linux-only: `supported` is false on win32, where every method refuses.
+ *
+ * Playhook WRITES `shortcuts.vdf` itself rather than asking Steam to add the entry, because only then does
+ * it own both the name and the appid — an entry Steam adds gets a random appid it would have to read back
+ * (steam-for-linux#9463) and a name taken from the file's basename (verified on a Deck).
+ */
+export interface SteamShortcuts {
+  /** Whether the platform supports the operation at all (win32 → false; the tray item is hidden there). */
+  readonly supported: boolean;
+  /** Adds (or updates in place) Playhook's shortcut. Returns the appid to persist. */
+  addShortcut(target: SteamShortcutTarget): Promise<SteamShortcutResult<{ readonly appIdU32: number }>>;
+  /** Removes the record with exactly this appid — never a foreign one that merely shares the Exe. */
+  removeShortcut(appIdU32: number): Promise<SteamShortcutVoidResult>;
+  /** Whether a record with this appid is present (startup self-healing: a missing one means it was lost). */
+  hasShortcut(appIdU32: number): Promise<boolean>;
+  /**
+   * Names of FOREIGN records whose `Exe` points at Playhook (e.g. a tile the user added by hand through
+   * Steam's UI). Adding on top of one would leave two tiles, so the caller asks the user to remove theirs
+   * instead of deleting it for them — it may carry their own artwork and playtime.
+   */
+  findForeignShortcuts(exeHints: readonly string[]): Promise<readonly string[]>;
+}
+
 /** The full set of platform services, selected as a unit by createPlatform(process.platform). */
 export interface Platform {
   readonly processMonitor: ProcessMonitor;
   readonly steamLocator: SteamLocator;
+  readonly steamShortcuts: SteamShortcuts;
   readonly gameLauncher: GameProcessLauncher;
   readonly savePathResolver: SavePathResolver;
   readonly powerBackend: PowerBackend;
