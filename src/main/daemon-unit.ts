@@ -76,6 +76,26 @@ export function buildDaemonUnit(appImagePath: string): string {
   ].join('\n');
 }
 
+/**
+ * The systemctl steps that install the unit, in order. A plain data list so the rules below are visible
+ * and testable rather than buried in call order.
+ *
+ * **`enable`, NOT `enable --now`.** `--now` starts the unit immediately and unconditionally — but the
+ * only place that installs it is Desktop Mode (the tray is the feature's single entry point, and Game
+ * Mode has no tray), where the daemon must NOT run: Playhook already autostarts there via XDG. The unit
+ * being `WantedBy=gamescope-session.target` does not save us, since that only governs what happens when
+ * the target starts. Observed on a Deck: with `--now` the daemon launched Playhook in Desktop Mode.
+ *
+ * `stop` follows for the same reason — it clears a daemon left running by an earlier install (or by the
+ * previous `--now` behaviour), and doubles as the "pick up the new binary path" step that `try-restart`
+ * used to serve: the next entry into Game Mode starts a fresh process from the rewritten unit.
+ */
+export const DAEMON_INSTALL_STEPS: readonly (readonly string[])[] = [
+  ['daemon-reload'],
+  ['enable', DAEMON_UNIT_NAME],
+  ['stop', DAEMON_UNIT_NAME],
+];
+
 /** Runs `systemctl --user …`, resolving to false (with a breadcrumb) instead of throwing. */
 async function systemctl(...args: readonly string[]): Promise<boolean> {
   try {
@@ -91,13 +111,9 @@ async function systemctl(...args: readonly string[]): Promise<boolean> {
 }
 
 /**
- * Writes the unit and enables it. Idempotent and cheap, so it runs on every Desktop Mode start: an
- * electron-updater in-place update can change `$APPIMAGE`, and a unit pointing at the old path would
- * simply stop working, silently.
- *
- * `enable --now` (not bare `enable`) matters: `enable` only creates the symlink, so "press the tray item,
- * then go straight to Game Mode" would not work until the next login. `try-restart` picks up a new binary
- * path when the unit was regenerated after an update — without it the OLD process keeps running.
+ * Writes the unit and enables it (without starting it — see DAEMON_INSTALL_STEPS). Idempotent and cheap,
+ * so it runs on every Desktop Mode start: an electron-updater in-place update can change `$APPIMAGE`, and
+ * a unit pointing at the old path would simply stop working, silently.
  */
 export async function installDaemonUnit(home: string, appImagePath: string): Promise<boolean> {
   const unitPath = daemonUnitPath(home);
@@ -105,13 +121,10 @@ export async function installDaemonUnit(home: string, appImagePath: string): Pro
   try {
     await fs.mkdir(path.posix.dirname(unitPath), { recursive: true });
     const existing = await fs.readFile(unitPath, 'utf8').catch(() => null);
-    if (existing === contents) {
-      // Unchanged: still make sure it is enabled and running the current binary, but skip the write.
-      await systemctl('enable', '--now', DAEMON_UNIT_NAME);
-      return true;
+    if (existing !== contents) {
+      await fs.writeFile(unitPath, contents, 'utf8');
+      log.info(`[daemon-unit] wrote "${unitPath}"`);
     }
-    await fs.writeFile(unitPath, contents, 'utf8');
-    log.info(`[daemon-unit] wrote "${unitPath}"`);
   } catch (cause) {
     log.error(
       '[daemon-unit] could not write the unit:',
@@ -119,10 +132,13 @@ export async function installDaemonUnit(home: string, appImagePath: string): Pro
     );
     return false;
   }
-  await systemctl('daemon-reload');
-  const enabled = await systemctl('enable', '--now', DAEMON_UNIT_NAME);
-  await systemctl('try-restart', DAEMON_UNIT_NAME);
-  return enabled;
+  // Run every step even if one fails: `stop` matters most, and skipping it because `enable` errored
+  // would leave a daemon running in Desktop Mode — the exact bug this sequence exists to prevent.
+  let ok = true;
+  for (const step of DAEMON_INSTALL_STEPS) {
+    if (!(await systemctl(...step))) ok = false;
+  }
+  return ok;
 }
 
 /** Stops, disables and deletes the unit. Best-effort: a missing unit is success, not an error. */

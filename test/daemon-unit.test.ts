@@ -6,6 +6,7 @@ import {
   buildDaemonUnit,
   daemonExecStart,
   daemonUnitPath,
+  DAEMON_INSTALL_STEPS,
   DAEMON_UNIT_NAME,
 } from '../src/main/daemon-unit';
 
@@ -96,6 +97,31 @@ describe('buildDaemonUnit', () => {
     const moved = buildDaemonUnit('/opt/other/Playhook.AppImage');
     expect(moved).toContain('ExecStart=/opt/other/Playhook.AppImage');
     expect(moved).not.toBe(unit);
+  });
+});
+
+describe('install steps', () => {
+  it('never starts the unit — only Game Mode may do that', () => {
+    // The install runs in DESKTOP Mode (the tray is the only entry point), where the daemon must not be
+    // running: Playhook is already there via XDG autostart. `enable --now` did exactly that and launched
+    // Playhook on the desktop — observed on a Deck. `enable` alone is enough, because entering Game Mode
+    // starts gamescope-session.target, which pulls the unit in via WantedBy.
+    const flat = DAEMON_INSTALL_STEPS.map((step) => step.join(' '));
+    expect(flat).not.toContain(`enable --now ${DAEMON_UNIT_NAME}`);
+    expect(flat.some((step) => step.includes('--now'))).toBe(false);
+    expect(flat).toContain(`enable ${DAEMON_UNIT_NAME}`);
+  });
+
+  it('stops any daemon left running, after enabling', () => {
+    const flat = DAEMON_INSTALL_STEPS.map((step) => step.join(' '));
+    expect(flat).toContain(`stop ${DAEMON_UNIT_NAME}`);
+    expect(flat.indexOf(`stop ${DAEMON_UNIT_NAME}`)).toBeGreaterThan(
+      flat.indexOf(`enable ${DAEMON_UNIT_NAME}`),
+    );
+  });
+
+  it('reloads systemd before touching the unit', () => {
+    expect(DAEMON_INSTALL_STEPS[0]).toEqual(['daemon-reload']);
   });
 });
 

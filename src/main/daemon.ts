@@ -72,6 +72,21 @@ export function startDaemon(): void {
         // Re-read on every insert instead of caching at startup: a daemon started BEFORE the user pressed
         // "Add to Steam" would otherwise stay stuck on `null` until the next login. One cheap read per
         // card insertion is nothing.
+        // Belt-and-braces mode check. The unit is bound to gamescope-session.target, so systemd should
+        // never have us running outside Game Mode — but an install left over from an older version (or a
+        // manual `systemctl --user start`) could, and then we would drag the user out of their desktop
+        // into Playhook. Checked HERE rather than at startup on purpose: at startup the daemon may race
+        // gamescope coming up and wrongly conclude "not Game Mode", whereas by the time a card is
+        // inserted the session is long since up.
+        // The env pair isGamescopeSession() uses is not available to a systemd unit (its environment has
+        // neither SteamOS nor SteamGamepadUI, nor even DISPLAY), so this goes by the running process —
+        // gamescope's argv[0] is `gamescope`, verified on a Deck.
+        const processes = await platform.processMonitor.snapshot();
+        if (!processes.hasImageName('gamescope')) {
+          log.info(`[daemon] card at "${root}" ignored — not a Game Mode session`);
+          return;
+        }
+
         const { steamAppIdU32 } = await settings.read();
         if (steamAppIdU32 === null) {
           log.info(`[daemon] card at "${root}" ignored — no Steam shortcut registered`);
