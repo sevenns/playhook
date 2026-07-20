@@ -21,6 +21,7 @@ import { DriveWatcher } from './drive-watcher';
 // reason. The daemon only ever runs on a Steam Deck.
 import { createLinuxPlatform } from './platform/linux';
 import { toRunGameId } from './platform/steam-appid';
+import { launchWhenSteamReady } from './daemon-launch';
 
 /** Electron's `app.getPath('userData')` on Linux, reproduced without Electron: `$XDG_CONFIG_HOME/playhook`. */
 function userDataDir(home: string): string {
@@ -29,10 +30,9 @@ function userDataDir(home: string): string {
   return path.posix.join(base, 'playhook');
 }
 
-/** Launches our shortcut through Steam. Detached: the daemon must not own the app's lifetime. */
-function launchViaSteam(appIdU32: number): void {
+/** Fires the launch request. Detached: the daemon must not own the app's lifetime. */
+function spawnSteamUri(appIdU32: number): void {
   const uri = `steam://rungameid/${toRunGameId(appIdU32).toString()}`;
-  log.info(`[daemon] card detected — launching ${uri}`);
   try {
     const child = spawn('steam', [uri], { detached: true, stdio: 'ignore' });
     child.on('error', (cause) => log.error('[daemon] failed to spawn steam:', cause.message));
@@ -44,6 +44,11 @@ function launchViaSteam(appIdU32: number): void {
     );
   }
 }
+
+const sleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 
 export function startDaemon(): void {
   const home = os.homedir();
@@ -60,6 +65,9 @@ export function startDaemon(): void {
     umuRunPath: path.join(process.resourcesPath, 'umu', 'umu-run'),
   });
   const settings = new AppSettingsStore(userData);
+  // Guards against overlapping launch attempts while one is being confirmed (the confirm window is
+  // tens of seconds, and DriveWatcher keeps scanning throughout).
+  let launching = false;
 
   // The automount sweep is wired unconditionally: this daemon only ever runs inside Game Mode (systemd
   // starts it with gamescope-session.target), and that is exactly the session where gamescope automounts
@@ -100,7 +108,31 @@ export function startDaemon(): void {
           log.info('[daemon] card detected but Playhook is already running — nothing to do');
           return;
         }
-        launchViaSteam(steamAppIdU32);
+
+        // Serialized: a second card event while a launch is being confirmed must not fire its own
+        // request. The retry loop itself re-checks "already running", so nothing is lost by waiting.
+        if (launching) {
+          log.info('[daemon] card detected while a launch is already in progress — ignoring');
+          return;
+        }
+        launching = true;
+        try {
+          log.info(`[daemon] card at "${root}" — requesting launch`);
+          const outcome = await launchWhenSteamReady({
+            isAppRunning: () => platform.processMonitor.isSteamGameRunning(steamAppIdU32, []),
+            // "Steam is up" = its UI helper is running. The bare `steam` script exists as a launcher
+            // wrapper long before the client can accept a rungameid, which is exactly the trap that made
+            // the tile sit on "Launching…" — so key on steamwebhelper instead.
+            isSteamReady: async () =>
+              (await platform.processMonitor.snapshot()).hasImageName('steamwebhelper'),
+            launch: () => spawnSteamUri(steamAppIdU32),
+            sleep,
+            log: (message) => log.info(`[daemon] ${message}`),
+          });
+          log.info(`[daemon] launch outcome: ${outcome}`);
+        } finally {
+          launching = false;
+        }
       } catch (cause) {
         log.error(
           '[daemon] insert handling failed:',
