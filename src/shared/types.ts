@@ -477,6 +477,13 @@ export interface AppSettings {
    * copies of one number are three chances for them to disagree. Default null.
    */
   readonly steamAppIdU32: number | null;
+  /**
+   * Steam Deck only: launch Playhook through its Steam tile when a game card is inserted in Game Mode.
+   * Default true. Turning it off removes the background service entirely (it is a `systemctl --user`
+   * unit, not an in-process timer), which is the point — it frees the ~120 MB the watcher occupies for
+   * users who want the tile but not the auto-launch.
+   */
+  readonly steamAutoLaunch: boolean;
 }
 
 /**
@@ -579,6 +586,10 @@ export const IPC = {
   settingsSetAlwaysShowEmptyScreen: 'settings:set-always-show-empty-screen',
   /** settings-renderer → main: toggle disabling silent installer mode (payload boolean). */
   settingsSetDisableSilentInstall: 'settings:set-disable-silent-install',
+  /** settings-renderer → main: toggle Game Mode auto-launch on card insertion (payload boolean). */
+  settingsSetSteamAutoLaunch: 'settings:set-steam-auto-launch',
+  /** settings-renderer → main (invoke): whether the Steam-shortcut feature exists here (linux AppImage). */
+  settingsSteamAvailable: 'settings:steam-available',
   /** settings-renderer → main: change the UI theme (payload ThemeMode). */
   settingsSetTheme: 'settings:set-theme',
   /** settings-renderer → main: toggle pre-release (beta) updates (payload boolean). */
@@ -724,12 +735,7 @@ export type ConfigSaveResult =
  * (card-relative), and `pc-save` (a PC folder OUTSIDE the card, converted to a %PREFIX%\… save path).
  */
 export type ConfigPickKind =
-  | 'executable'
-  | 'installer'
-  | 'image'
-  | 'audio'
-  | 'directory'
-  | 'pc-save';
+  'executable' | 'installer' | 'image' | 'audio' | 'directory' | 'pc-save';
 
 /** Request payload for config:pick-path: the card root (re-checked in main) and the pick kind. */
 export interface ConfigPickRequest {
@@ -807,6 +813,10 @@ export interface SettingsApi {
   setAlwaysShowEmptyScreen(on: boolean): void;
   /** Toggle disabling silent installer mode (installers show their wizard when on). */
   setDisableSilentInstall(on: boolean): void;
+  /** Toggle the Game Mode card-insert auto-launch (Steam Deck only; see AppSettings.steamAutoLaunch). */
+  setSteamAutoLaunch(on: boolean): void;
+  /** Whether to show the Steam-related settings at all — false on Windows and on a non-AppImage run. */
+  isSteamAvailable(): Promise<boolean>;
   setTheme(mode: ThemeMode): void;
   setPrerelease(on: boolean): void;
   setSummonHotkey(on: boolean): void;

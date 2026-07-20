@@ -237,6 +237,10 @@ async function bootstrap(): Promise<void> {
       recomputeKeepAwake();
     },
     onAlwaysShowEmptyScreenChanged: (enabled) => controller.setAlwaysShowEmptyScreen(enabled),
+    // Game Mode auto-launch toggle (Steam Deck): installs or tears down the watcher unit. Turning it off
+    // stops a separate process, so the memory is actually returned — that is the point of the option.
+    onSteamAutoLaunchChanged: (enabled) => steamShortcut.applyAutoLaunch(enabled),
+    isSteamAvailable: () => steamShortcut.isAvailable(),
     onVolumesChanged: (volumes) => {
       const bw = window.browserWindow;
       if (bw !== null && !bw.isDestroyed()) bw.webContents.send(IPC.volumeUpdate, volumes);

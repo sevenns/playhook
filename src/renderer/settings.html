@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
@@ -28,7 +28,9 @@
     <main id="settings">
       <!-- Updates -->
       <section class="section">
-        <fluent-text weight="semibold" size="500" block data-i18n="settings.sectionUpdates">Updates</fluent-text>
+        <fluent-text weight="semibold" size="500" block data-i18n="settings.sectionUpdates"
+          >Updates</fluent-text
+        >
         <fluent-text id="update-status" block data-i18n="settings.loading">Loading…</fluent-text>
         <fluent-progress-bar id="update-progress" hidden></fluent-progress-bar>
         <fluent-button id="update-action" appearance="accent" hidden></fluent-button>
@@ -37,26 +39,40 @@
       <!-- Auto-update mode. fluent-dropdown holds a fluent-listbox of fluent-options; the option's value
            is the persisted mode and its text is the (localizable) label. -->
       <section class="section">
-        <fluent-text weight="semibold" size="500" block data-i18n="settings.sectionAutoUpdate">Automatic updates</fluent-text>
+        <fluent-text weight="semibold" size="500" block data-i18n="settings.sectionAutoUpdate"
+          >Automatic updates</fluent-text
+        >
         <fluent-dropdown id="auto-update" name="auto-update">
           <fluent-listbox>
-            <fluent-option value="download-install" data-i18n="settings.autoDownloadInstall">Download and install automatically</fluent-option>
-            <fluent-option value="download" data-i18n="settings.autoDownloadManual">Download automatically, install manually</fluent-option>
-            <fluent-option value="off" data-i18n="settings.autoOff">Off (check manually)</fluent-option>
+            <fluent-option value="download-install" data-i18n="settings.autoDownloadInstall"
+              >Download and install automatically</fluent-option
+            >
+            <fluent-option value="download" data-i18n="settings.autoDownloadManual"
+              >Download automatically, install manually</fluent-option
+            >
+            <fluent-option value="off" data-i18n="settings.autoOff"
+              >Off (check manually)</fluent-option
+            >
           </fluent-listbox>
         </fluent-dropdown>
         <fluent-field label-position="after">
           <fluent-switch slot="input" id="prerelease"></fluent-switch>
-          <label slot="label" for="prerelease" data-i18n="settings.prerelease">Receive pre-release (beta) updates</label>
+          <label slot="label" for="prerelease" data-i18n="settings.prerelease"
+            >Receive pre-release (beta) updates</label
+          >
         </fluent-field>
       </section>
 
       <!-- Appearance / theme -->
       <section class="section">
-        <fluent-text weight="semibold" size="500" block data-i18n="settings.sectionAppearance">Appearance</fluent-text>
+        <fluent-text weight="semibold" size="500" block data-i18n="settings.sectionAppearance"
+          >Appearance</fluent-text
+        >
         <fluent-dropdown id="theme" name="theme">
           <fluent-listbox>
-            <fluent-option value="system" data-i18n="settings.themeSystem">Match system</fluent-option>
+            <fluent-option value="system" data-i18n="settings.themeSystem"
+              >Match system</fluent-option
+            >
             <fluent-option value="light" data-i18n="settings.themeLight">Light</fluent-option>
             <fluent-option value="dark" data-i18n="settings.themeDark">Dark</fluent-option>
           </fluent-listbox>
@@ -66,10 +82,14 @@
       <!-- Language. System is translated; English / Русский are ENDONYMS — always shown in their own
            language, so no data-i18n on those two options. -->
       <section class="section">
-        <fluent-text weight="semibold" size="500" block data-i18n="settings.sectionLanguage">Language</fluent-text>
+        <fluent-text weight="semibold" size="500" block data-i18n="settings.sectionLanguage"
+          >Language</fluent-text
+        >
         <fluent-dropdown id="language" name="language">
           <fluent-listbox>
-            <fluent-option value="system" data-i18n="settings.languageSystem">Match system</fluent-option>
+            <fluent-option value="system" data-i18n="settings.languageSystem"
+              >Match system</fluent-option
+            >
             <fluent-option value="en">English</fluent-option>
             <fluent-option value="ru">Русский</fluent-option>
           </fluent-listbox>
@@ -78,43 +98,84 @@
 
       <!-- General -->
       <section class="section">
-        <fluent-text weight="semibold" size="500" block data-i18n="settings.sectionGeneral">General</fluent-text>
+        <fluent-text weight="semibold" size="500" block data-i18n="settings.sectionGeneral"
+          >General</fluent-text
+        >
         <fluent-field label-position="after">
           <fluent-switch slot="input" id="summon-hotkey"></fluent-switch>
-          <label slot="label" for="summon-hotkey" data-i18n="settings.summonHotkey">Show the launcher with a gamepad shortcut</label>
+          <label slot="label" for="summon-hotkey" data-i18n="settings.summonHotkey"
+            >Show the launcher with a gamepad shortcut</label
+          >
         </fluent-field>
         <!-- Mixed markup: the text before/after <b> is localized via its own spans; the <b> content
              (gamepad button names) stays literal. The surrounding spaces are plain text nodes. -->
         <fluent-text appearance="secondary" size="200" block>
           <span data-i18n="settings.summonHintPre">Hold</span> <b>Menu + View</b>
-          <span data-i18n="settings.summonHintPost">on your gamepad at any time to bring the launcher to the front.</span>
+          <span data-i18n="settings.summonHintPost"
+            >on your gamepad at any time to bring the launcher to the front.</span
+          >
         </fluent-text>
         <fluent-field label-position="after">
           <fluent-switch slot="input" id="prevent-screensaver"></fluent-switch>
-          <label slot="label" for="prevent-screensaver" data-i18n="settings.preventScreensaver">Keep the screen awake while the launcher is open</label>
+          <label slot="label" for="prevent-screensaver" data-i18n="settings.preventScreensaver"
+            >Keep the screen awake while the launcher is open</label
+          >
         </fluent-field>
         <fluent-field label-position="after">
           <fluent-switch slot="input" id="always-show-empty"></fluent-switch>
-          <label slot="label" for="always-show-empty" data-i18n="settings.alwaysShowEmpty">Always show the no-card screen</label>
+          <label slot="label" for="always-show-empty" data-i18n="settings.alwaysShowEmpty"
+            >Always show the no-card screen</label
+          >
         </fluent-field>
         <fluent-field label-position="after">
           <fluent-switch slot="input" id="disable-silent-install"></fluent-switch>
-          <label slot="label" for="disable-silent-install" data-i18n="settings.disableSilentInstall">Disable silent installer mode (show the installer wizard)</label>
+          <label slot="label" for="disable-silent-install" data-i18n="settings.disableSilentInstall"
+            >Disable silent installer mode (show the installer wizard)</label
+          >
         </fluent-field>
+        <!-- Steam Deck only: hidden entirely elsewhere (settings.ts asks main via isSteamAvailable). -->
+        <fluent-field label-position="after" id="steam-auto-launch-field" hidden>
+          <fluent-switch slot="input" id="steam-auto-launch"></fluent-switch>
+          <label slot="label" for="steam-auto-launch" data-i18n="settings.steamAutoLaunch"
+            >Open Playhook in Steam when a card is inserted (Game Mode only)</label
+          >
+        </fluent-field>
+        <fluent-text
+          appearance="secondary"
+          size="200"
+          block
+          id="steam-auto-launch-hint"
+          hidden
+          data-i18n="settings.steamAutoLaunchHint"
+          >Off frees about 120 MB of RAM: the background watcher stops running. The Steam tile stays
+          — launch it from the library.</fluent-text
+        >
         <!-- Empty-screen background: a preview of the current wallpaper + Choose / Reset. The preview is a
              data-URI (CSP img-src data:). -->
         <label data-i18n="settings.wallpaperLabel">Empty screen background</label>
         <img id="wallpaper-preview" class="wallpaper-preview" alt="" hidden />
         <div class="button-row">
-          <fluent-button id="wallpaper-choose" data-i18n="settings.wallpaperChoose">Choose image…</fluent-button>
-          <fluent-button id="wallpaper-reset" data-i18n="settings.wallpaperReset">Reset</fluent-button>
+          <fluent-button id="wallpaper-choose" data-i18n="settings.wallpaperChoose"
+            >Choose image…</fluent-button
+          >
+          <fluent-button id="wallpaper-reset" data-i18n="settings.wallpaperReset"
+            >Reset</fluent-button
+          >
         </div>
-        <fluent-text id="wallpaper-error" appearance="secondary" size="200" block hidden></fluent-text>
+        <fluent-text
+          id="wallpaper-error"
+          appearance="secondary"
+          size="200"
+          block
+          hidden
+        ></fluent-text>
       </section>
 
       <!-- Audio -->
       <section class="section">
-        <fluent-text weight="semibold" size="500" block data-i18n="settings.sectionAudio">Audio</fluent-text>
+        <fluent-text weight="semibold" size="500" block data-i18n="settings.sectionAudio"
+          >Audio</fluent-text
+        >
         <div class="slider-row">
           <label for="music-volume" data-i18n="settings.musicVolume">Music volume</label>
           <fluent-slider id="music-volume" min="0" max="100" step="1"></fluent-slider>
@@ -129,11 +190,17 @@
 
       <!-- Advanced: rarely-needed maintenance actions (moved out of the tray). -->
       <section class="section">
-        <fluent-text weight="semibold" size="500" block data-i18n="settings.sectionAdvanced">Advanced</fluent-text>
+        <fluent-text weight="semibold" size="500" block data-i18n="settings.sectionAdvanced"
+          >Advanced</fluent-text
+        >
         <div class="button-row">
           <fluent-button id="open-logs" data-i18n="settings.openLogs">Open logs</fluent-button>
-          <fluent-button id="open-games" data-i18n="settings.openGames">Open games folder</fluent-button>
-          <fluent-button id="reset-defaults" data-i18n="settings.reset">Reset to defaults</fluent-button>
+          <fluent-button id="open-games" data-i18n="settings.openGames"
+            >Open games folder</fluent-button
+          >
+          <fluent-button id="reset-defaults" data-i18n="settings.reset"
+            >Reset to defaults</fluent-button
+          >
         </div>
       </section>
     </main>

@@ -27,7 +27,8 @@ export const en = {
 
   // ── Steam shortcut (steam-shortcut.ts, shown as message boxes) ──────────────
   'steam.addedTitle': 'Added to Steam',
-  'steam.added': 'Playhook has been added to Steam. The tile appears the next time you enter Game Mode.',
+  'steam.added':
+    'Playhook has been added to Steam. The tile appears the next time you enter Game Mode.',
   'steam.removedTitle': 'Removed from Steam',
   'steam.removed': 'Playhook has been removed from Steam.',
   'steam.failedTitle': 'Steam shortcut',
@@ -162,6 +163,10 @@ export const en = {
   'settings.preventScreensaver': 'Keep the screen awake while the launcher is open',
   'settings.alwaysShowEmpty': 'Always show the no-card screen',
   'settings.disableSilentInstall': 'Disable silent installer mode (show the installer wizard)',
+  // Steam Deck only — the row is hidden entirely elsewhere (see settings.ts / isSteamAvailable).
+  'settings.steamAutoLaunch': 'Open Playhook in Steam when a card is inserted (Game Mode only)',
+  'settings.steamAutoLaunchHint':
+    'Off frees about 120 MB of RAM: the background watcher stops running. The Steam tile stays — launch it from the library.',
   'settings.wallpaperLabel': 'Empty screen background',
   'settings.wallpaperChoose': 'Choose image…',
   'settings.wallpaperReset': 'Reset',
@@ -233,7 +238,8 @@ export const en = {
   'configure.sectionAdvanced': 'Advanced',
   // Field labels.
   'configure.fieldId': 'Game id',
-  'configure.idHint': 'Auto-filled from the name. Edit it to set your own; clear it to auto-fill again.',
+  'configure.idHint':
+    'Auto-filled from the name. Edit it to set your own; clear it to auto-fill again.',
   'configure.fieldTitle': 'Title',
   'configure.schemaVersion': 'Schema version: 1',
   'configure.launchType': 'Launch type',
@@ -345,11 +351,13 @@ export const en = {
   'manifest.idPattern': 'id must match [A-Za-z0-9._-]',
   'manifest.idDots': 'id must not be . or ..',
   'manifest.watchProcessesName': 'watchProcesses entries must be a bare *.exe name',
-  'manifest.winetricksName': 'winetricks entries must be verb names or key=value settings (letters, digits, _.=-)',
+  'manifest.winetricksName':
+    'winetricks entries must be verb names or key=value settings (letters, digits, _.=-)',
   'manifest.umuGameIdName': 'umuGameId must be a Steam appid or a UMU_ID (letters, digits, _-)',
   'manifest.installRunAsAdminCustom': 'install.runAsAdmin is not allowed with type "custom"',
   'manifest.copyArgs': 'install.args is not allowed with type "copy" (no installer is run)',
-  'manifest.copyRunAsAdmin': 'install.runAsAdmin is not allowed with type "copy" (no installer is run)',
+  'manifest.copyRunAsAdmin':
+    'install.runAsAdmin is not allowed with type "copy" (no installer is run)',
   'manifest.installArgsDir':
     'install.args (type "custom") must contain exactly one token with a {dir} placeholder',
   'manifest.installWithSteam': 'install is not allowed together with steam',
@@ -371,7 +379,8 @@ export const en = {
   'manifest.executableEscapesInstall': 'executable path escapes install dir: {path}',
   'manifest.executableEscapes': 'executable path escapes card root: {path}',
   'manifest.executableNotFound': 'executable not found: {path}',
-  'manifest.executableNotFoundCase': 'executable not found: {path} — found "{found}" instead (fix the case on this filesystem)',
+  'manifest.executableNotFoundCase':
+    'executable not found: {path} — found "{found}" instead (fix the case on this filesystem)',
   'manifest.heroEscapes': 'heroImage path escapes card root: {path}',
   'manifest.saveOnCardEscapes': 'saveOnCard path escapes card root: {path}',
   'manifest.soundEscapes': 'sound "{name}" path escapes card root: {path}',

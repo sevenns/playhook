@@ -139,6 +139,9 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'settings.preventScreensaver': 'Не гасить экран, пока открыт лаунчер',
   'settings.alwaysShowEmpty': 'Всегда показывать экран без карты',
   'settings.disableSilentInstall': 'Отключить тихую установку (показывать мастер установщика)',
+  'settings.steamAutoLaunch': 'Открывать Playhook в Steam при вставке карты (только Game Mode)',
+  'settings.steamAutoLaunchHint':
+    'Выключение освобождает около 120 МБ ОЗУ: фоновая служба перестаёт работать. Плитка в Steam останется — запускайте из библиотеки.',
   'settings.wallpaperLabel': 'Фон пустого экрана',
   'settings.wallpaperChoose': 'Выбрать изображение…',
   'settings.wallpaperReset': 'Сбросить',
@@ -188,7 +191,8 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'configure.saving': 'Сохранение…',
   'configure.notSaved': 'Не сохранено: {message}',
   'configure.applied': 'Применено. Лаунчер обновлён.',
-  'configure.deferred': 'Сохранено. Загрузится в ближайшее время или после извлечения активной карты.',
+  'configure.deferred':
+    'Сохранено. Загрузится в ближайшее время или после извлечения активной карты.',
   'configure.savedRejected': 'Сохранено, но манифест отклонён: {message}',
   'configure.unknownReason': 'неизвестная причина',
 
@@ -202,7 +206,8 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'configure.sectionAudio': 'Звук',
   'configure.sectionAdvanced': 'Дополнительно',
   'configure.fieldId': 'Идентификатор игры',
-  'configure.idHint': 'Заполняется из названия. Отредактируйте, чтобы задать свой; очистите - снова подставится.',
+  'configure.idHint':
+    'Заполняется из названия. Отредактируйте, чтобы задать свой; очистите - снова подставится.',
   'configure.fieldTitle': 'Название',
   'configure.schemaVersion': 'Версия схемы: 1',
   'configure.launchType': 'Тип запуска',
@@ -256,7 +261,8 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'configure.replace': 'Заменить…',
   'configure.remove': 'Удалить',
   'configure.dragReorder': 'Перетащите для изменения порядка',
-  'configure.corruptField': 'Поле содержит недопустимое значение; при редактировании оно будет заменено.',
+  'configure.corruptField':
+    'Поле содержит недопустимое значение; при редактировании оно будет заменено.',
   'configure.fixSyntaxSwitch': 'Исправьте синтаксические ошибки JSON перед переключением на форму.',
   'configure.mixedLaunchModes':
     'В манифесте указано несколько типов запуска. Активным останется только «{mode}»; при сохранении остальные блоки будут удалены.',
@@ -303,11 +309,13 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'manifest.idPattern': 'id должен соответствовать [A-Za-z0-9._-]',
   'manifest.idDots': 'id не может быть . или ..',
   'manifest.watchProcessesName': 'элементы watchProcesses должны быть простым именем *.exe',
-  'manifest.winetricksName': 'элементы winetricks должны быть именами вербов или настройками key=value (буквы, цифры, _.=-)',
+  'manifest.winetricksName':
+    'элементы winetricks должны быть именами вербов или настройками key=value (буквы, цифры, _.=-)',
   'manifest.umuGameIdName': 'umuGameId должен быть Steam appid или UMU_ID (буквы, цифры, _-)',
   'manifest.installRunAsAdminCustom': 'install.runAsAdmin недопустим с типом "custom"',
   'manifest.copyArgs': 'install.args недопустим с типом "copy" (установщик не запускается)',
-  'manifest.copyRunAsAdmin': 'install.runAsAdmin недопустим с типом "copy" (установщик не запускается)',
+  'manifest.copyRunAsAdmin':
+    'install.runAsAdmin недопустим с типом "copy" (установщик не запускается)',
   'manifest.installArgsDir':
     'install.args (тип "custom") должен содержать ровно один токен с плейсхолдером {dir}',
   'manifest.installWithSteam': 'install недопустим вместе со steam',
@@ -316,7 +324,8 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'manifest.watchProcessesRequired': 'watchProcesses обязателен в режиме steam',
   'manifest.executableRequired': 'executable обязателен',
   'manifest.pcSavePathPrefix': 'pcSavePath должен начинаться с {prefixes}',
-  'manifest.pcSavePathNotAllowed': 'префикс pcSavePath %{prefix}% недопустим (используйте {prefixes})',
+  'manifest.pcSavePathNotAllowed':
+    'префикс pcSavePath %{prefix}% недопустим (используйте {prefixes})',
   'manifest.pcSavePathUnavailable': 'префикс pcSavePath %{prefix}% недоступен в этой системе',
   'manifest.pcSavePathNoTraversal': 'pcSavePath не может содержать ".."',
   'manifest.pcSavePathEscapes': 'pcSavePath выходит за пределы базовой директории',
@@ -327,7 +336,8 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'manifest.executableEscapesInstall': 'путь executable выходит за пределы папки установки: {path}',
   'manifest.executableEscapes': 'путь executable выходит за пределы корня карты: {path}',
   'manifest.executableNotFound': 'executable не найден: {path}',
-  'manifest.executableNotFoundCase': 'executable не найден: {path} - на диске есть "{found}" (исправьте регистр, файловая система чувствительна к нему)',
+  'manifest.executableNotFoundCase':
+    'executable не найден: {path} - на диске есть "{found}" (исправьте регистр, файловая система чувствительна к нему)',
   'manifest.heroEscapes': 'путь heroImage выходит за пределы корня карты: {path}',
   'manifest.saveOnCardEscapes': 'путь saveOnCard выходит за пределы корня карты: {path}',
   'manifest.soundEscapes': 'путь звука "{name}" выходит за пределы корня карты: {path}',

@@ -47,6 +47,9 @@ const settingsSchema = z.object({
   // rungameid are derived from it (see platform/steam-appid.ts). `.default(null)` migrates an older
   // settings.json without the field, exactly as customWallpaper did (no schemaVersion bump).
   steamAppIdU32: z.number().int().nullable().default(null),
+  // Game Mode auto-launch on card insertion (Steam Deck). `.default(true)` keeps the behaviour that
+  // shipped before the toggle existed for an older settings.json.
+  steamAutoLaunch: z.boolean().default(true),
 });
 
 // Default preserves the pre-settings behaviour (silent download + install on next quit), so the
@@ -65,6 +68,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   alwaysShowEmptyScreen: false,
   disableSilentInstall: false,
   steamAppIdU32: null,
+  steamAutoLaunch: true,
 };
 
 export class AppSettingsStore {

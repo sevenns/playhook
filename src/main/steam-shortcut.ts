@@ -64,6 +64,12 @@ export interface SteamShortcutDeps {
 }
 
 export interface SteamShortcutService {
+  /**
+   * Applies the auto-launch setting: installs the watcher unit when enabled (and a shortcut exists), or
+   * removes it when disabled. Removing is the point of the toggle — the watcher is a separate process,
+   * so switching it off actually frees its memory rather than just idling it.
+   */
+  applyAutoLaunch(enabled: boolean): Promise<void>;
   /** Whether the tray item should be shown at all (linux + a packaged AppImage). */
   isAvailable(): boolean;
   /** Whether a shortcut is currently registered (drives Add vs Remove). */
@@ -145,8 +151,10 @@ export function createSteamShortcutService(deps: SteamShortcutDeps): SteamShortc
         return;
       }
       // Rewrite the daemon unit on every start while a shortcut exists: an in-place update can move
-      // $APPIMAGE, and a unit pointing at the old path would just stop working without a word.
-      await deps.installDaemon(deps.appImagePath);
+      // $APPIMAGE, and a unit pointing at the old path would just stop working without a word. When the
+      // user turned auto-launch off, make sure no leftover unit survives from before.
+      if ((await deps.settings.read()).steamAutoLaunch) await deps.installDaemon(deps.appImagePath);
+      else await deps.removeDaemon();
       deps.onStateChanged();
     },
 
@@ -190,7 +198,8 @@ export function createSteamShortcutService(deps: SteamShortcutDeps): SteamShortc
         // The tile is already written and persisted at this point, so a systemd failure must NOT read as
         // "adding failed" — installDaemon logs its own trouble and the user still gets a working tile,
         // just without auto-launch on card insertion.
-        await deps.installDaemon(deps.appImagePath);
+        if ((await deps.settings.read()).steamAutoLaunch)
+          await deps.installDaemon(deps.appImagePath);
         deps.notify(t()('steam.addedTitle'), t()('steam.added'));
       } catch (cause) {
         fail(cause);
@@ -198,6 +207,15 @@ export function createSteamShortcutService(deps: SteamShortcutDeps): SteamShortc
         busy = false;
         deps.onStateChanged();
       }
+    },
+
+    async applyAutoLaunch(enabled: boolean): Promise<void> {
+      if (!available || deps.appImagePath === null) return;
+      // Nothing to watch for without a tile to launch — the unit goes in with the shortcut instead.
+      if (appIdU32 === null) return;
+      if (enabled) await deps.installDaemon(deps.appImagePath);
+      else await deps.removeDaemon();
+      log.info(`[steam-shortcut] Game Mode auto-launch ${enabled ? 'enabled' : 'disabled'}`);
     },
 
     async remove(): Promise<void> {

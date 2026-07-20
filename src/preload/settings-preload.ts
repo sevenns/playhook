@@ -29,6 +29,8 @@ const CHANNELS = {
   settingsSetAutoUpdate: 'settings:set-auto-update',
   settingsSetAlwaysShowEmptyScreen: 'settings:set-always-show-empty-screen',
   settingsSetDisableSilentInstall: 'settings:set-disable-silent-install',
+  settingsSetSteamAutoLaunch: 'settings:set-steam-auto-launch',
+  settingsSteamAvailable: 'settings:steam-available',
   settingsSetTheme: 'settings:set-theme',
   settingsSetPrerelease: 'settings:set-prerelease',
   settingsSetSummonHotkey: 'settings:set-summon-hotkey',
@@ -71,6 +73,12 @@ const api: SettingsApi = {
   },
   setDisableSilentInstall(on: boolean): void {
     ipcRenderer.send(CHANNELS.settingsSetDisableSilentInstall, on);
+  },
+  setSteamAutoLaunch(on: boolean): void {
+    ipcRenderer.send(CHANNELS.settingsSetSteamAutoLaunch, on);
+  },
+  isSteamAvailable(): Promise<boolean> {
+    return ipcRenderer.invoke(CHANNELS.settingsSteamAvailable) as Promise<boolean>;
   },
   setTheme(mode: ThemeMode): void {
     ipcRenderer.send(CHANNELS.settingsSetTheme, mode);
@@ -123,9 +131,12 @@ const api: SettingsApi = {
     return ipcRenderer.invoke(CHANNELS.wallpaperPreviewRequest) as Promise<{ dataUrl: string }>;
   },
   onUpdateStatus(callback: (status: UpdateStatus) => void): void {
-    ipcRenderer.on(CHANNELS.updateStatusUpdate, (_event: IpcRendererEvent, status: UpdateStatus) => {
-      callback(status);
-    });
+    ipcRenderer.on(
+      CHANNELS.updateStatusUpdate,
+      (_event: IpcRendererEvent, status: UpdateStatus) => {
+        callback(status);
+      },
+    );
   },
   requestUpdateStatus(): Promise<UpdateStatus> {
     return ipcRenderer.invoke(CHANNELS.updateStatusRequest) as Promise<UpdateStatus>;
