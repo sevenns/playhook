@@ -16,7 +16,10 @@ import { spawn } from 'node:child_process';
 import { log, setLogBaseDir } from './logger';
 import { AppSettingsStore } from './app-settings';
 import { DriveWatcher } from './drive-watcher';
-import { createPlatform } from './platform';
+// The LINUX bundle directly, not createPlatform(): the factory imports the win32 bundle too, which pulls
+// the koffi FFI bindings (registry, power-native, foreground) into the daemon's import graph for no
+// reason. The daemon only ever runs on a Steam Deck.
+import { createLinuxPlatform } from './platform/linux';
 import { toRunGameId } from './platform/steam-appid';
 
 /** Electron's `app.getPath('userData')` on Linux, reproduced without Electron: `$XDG_CONFIG_HOME/playhook`. */
@@ -49,7 +52,7 @@ export function startDaemon(): void {
   setLogBaseDir(userData);
   log.info('[daemon] starting');
 
-  const platform = createPlatform('linux', {
+  const platform = createLinuxPlatform({
     getDocuments: () => path.posix.join(home, 'Documents'),
     userData,
     // Unused by the daemon (it launches nothing through Proton), but PlatformDeps requires it. Resolved

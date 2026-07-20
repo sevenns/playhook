@@ -7,9 +7,13 @@
 // carries `StateFlags`, the source of truth Steam itself uses. Bit 4 (StateFullyInstalled) is set only
 // once the game is fully installed — correctly excluding "currently downloading/updating", which a
 // stale `HKCU\...\Apps\<appid>\Installed` DWORD cannot distinguish.
+//
+// NOTE — this module must stay electron-free: `save-path.linux.ts` pulls `steamLibraryDirs` from here, and
+// that path is loaded by the Game Mode daemon, which runs under ELECTRON_RUN_AS_NODE where the `electron`
+// module does not exist. The one electron-dependent function that used to live here (`openSteamUri`) now
+// sits in `steam-uri.ts`; keep it that way.
 import path from 'node:path';
 import fse from 'fs-extra';
-import { shell } from 'electron';
 import { type SteamLocator } from './platform';
 import { log } from './logger';
 
@@ -136,21 +140,18 @@ export async function steamInstallStatus(
       if (acf.fullyInstalled) return { state: 'installed' };
       // .acf exists but not fully installed → downloading/updating in this library. The percent is only
       // trustworthy when paused (byte counters are stale while actively downloading).
-      downloading = { state: 'downloading', paused: acf.paused, progress: acf.paused ? acf.progress : null };
+      downloading = {
+        state: 'downloading',
+        paused: acf.paused,
+        progress: acf.paused ? acf.progress : null,
+      };
     }
     return downloading ?? { state: 'absent' };
   } catch (cause) {
-    log.warn('[steam] install check failed:', cause instanceof Error ? cause.message : String(cause));
+    log.warn(
+      '[steam] install check failed:',
+      cause instanceof Error ? cause.message : String(cause),
+    );
     return { state: 'absent' };
   }
-}
-
-/**
- * Opens a `steam://` URI (rungameid/install) via Electron's shell.openExternal. NOTE: openExternal does
- * NOT reliably reject when `steam://` is unregistered (Steam not installed) — callers must gate on
- * getSteamPath() !== null BEFORE calling this. Here we only guarantee that any sync/async failure
- * propagates as a rejected promise so the caller can surface it.
- */
-export async function openSteamUri(uri: string): Promise<void> {
-  await shell.openExternal(uri);
 }

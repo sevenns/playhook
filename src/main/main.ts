@@ -4,7 +4,7 @@
 import path from 'node:path';
 import fs from 'node:fs';
 import { app, dialog, ipcMain, Menu, powerSaveBlocker, shell, type Tray } from 'electron';
-import { log, logFilePath } from './logger';
+import { log, logFilePath, setLogBaseDir } from './logger';
 import { StateManager } from './state';
 import { GameWindow } from './window';
 import { PcStore } from './pc-store';
@@ -124,6 +124,10 @@ function quit(): void {
 }
 
 async function bootstrap(): Promise<void> {
+  // FIRST, before any log line: logger.ts is deliberately electron-free (the Game Mode daemon loads it
+  // under ELECTRON_RUN_AS_NODE, where importing electron fails), so it cannot ask app.getPath() itself.
+  setLogBaseDir(app.getPath('userData'));
+
   // No application menu (removes the File/Edit/View… bar entirely).
   Menu.setApplicationMenu(null);
 

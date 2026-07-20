@@ -46,6 +46,26 @@ The channel literal lives in **one** source of truth and is bridged with compile
 The `test/ipc-channels.test.ts` suite guards **completeness**: every `IPC` channel must be exposed by
 exactly one preload. `satisfies Partial<>` cannot catch a *forgotten* channel — that test can.
 
+## Two entry points: GUI and daemon
+
+`src/main/main.ts` is the Electron app. `src/main/daemon.ts` is the Game Mode card watcher, started by
+systemd **under `ELECTRON_RUN_AS_NODE=1`** — the same binary running as plain Node, with no Chromium
+(Electron cannot start under systemd in Game Mode: there is no display in a unit's environment).
+
+The consequence that bites: **in that mode the `electron` module does not exist.** It is a devDependency
+and the runtime only injects it for a normal Electron start, so any `import … from 'electron'` anywhere on
+the daemon's import graph throws `MODULE_NOT_FOUND` before our first line runs — a crash loop that is
+invisible locally (tsc and ESLint pass, the GUI works, vitest aliases `electron` to a stub). It has
+happened once already, via `logger.ts` and `steam.ts`.
+
+- Modules the daemon reaches must be electron-free. When one needs electron, split that part into a
+  GUI-only module — `steam-uri.ts` was carved out of `steam.ts` for exactly this.
+- Anything needing a path the GUI gets from `app.getPath()` takes it as a parameter instead
+  (`setLogBaseDir()`, `AppSettingsStore(baseDir)`).
+- `test/daemon-imports.test.ts` walks the graph and fails on a forbidden import (it also excludes
+  koffi-bound win32 modules, which is why the daemon calls `createLinuxPlatform()` directly rather than
+  `createPlatform()`). Type-only imports are fine — they are erased.
+
 ## Platform layer (OS-specific code)
 
 Playhook runs on Windows and on the Steam Deck / Linux (Windows games via Proton/umu-launcher). **All

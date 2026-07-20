@@ -4,9 +4,14 @@
 // and a long-running instance rolls over to a fresh file at midnight; old day-files are pruned after
 // RETENTION_DAYS to keep the folder from growing unbounded (replacing the old single-file size cap).
 // Writes are synchronous and best-effort: logging must never throw into a flow.
+//
+// NOTE — this module must NOT import `electron`. It is loaded by the Game Mode daemon, which runs under
+// ELECTRON_RUN_AS_NODE where the `electron` module does not exist at all (it is a devDependency, and the
+// runtime only injects it for a normal Electron start) — importing it there fails with MODULE_NOT_FOUND
+// before a single line of ours runs. The GUI passes its real userData through setLogBaseDir().
 import path from 'node:path';
 import fs from 'node:fs';
-import { app } from 'electron';
+import os from 'node:os';
 
 type Level = 'INFO' | 'WARN' | 'ERROR';
 
@@ -20,19 +25,34 @@ let logDir: string | null = null;
 let explicitBaseDir: string | null = null;
 
 /**
- * Points the logger at `baseDir` (logs land in `<baseDir>/logs`). Must be called BEFORE the first log
- * line — the directory is resolved once and cached. No-op for the GUI process.
+ * Points the logger at `baseDir` (logs land in `<baseDir>/logs`). Both entry points call it as their very
+ * first action — main.ts with `app.getPath('userData')`, the daemon with the same path derived by hand —
+ * so the fallback below is only ever a safety net, never the normal path.
  */
 export function setLogBaseDir(baseDir: string): void {
   explicitBaseDir = baseDir;
   logDir = null; // drop a cached dir so a later call actually takes effect
 }
 
+/**
+ * Electron's userData location, reproduced without Electron, for the case where a log line somehow beats
+ * setLogBaseDir. Matches app.getPath('userData') on both platforms so logs never split across two folders.
+ */
+function fallbackBaseDir(): string {
+  if (process.platform === 'win32') {
+    const appData = process.env['APPDATA'];
+    const base = appData !== undefined && appData !== '' ? appData : os.homedir();
+    return path.join(base, 'playhook');
+  }
+  const xdg = process.env['XDG_CONFIG_HOME'];
+  const base = xdg !== undefined && xdg !== '' ? xdg : path.join(os.homedir(), '.config');
+  return path.join(base, 'playhook');
+}
+
 // Resolves (and lazily creates) the log directory, pruning stale day-files the first time.
 function resolveDir(): string {
   if (logDir !== null) return logDir;
-  const base = explicitBaseDir ?? app.getPath('userData');
-  const dir = path.join(base, 'logs');
+  const dir = path.join(explicitBaseDir ?? fallbackBaseDir(), 'logs');
   try {
     fs.mkdirSync(dir, { recursive: true });
   } catch {
