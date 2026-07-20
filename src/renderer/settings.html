@@ -176,15 +176,61 @@
         <fluent-text weight="semibold" size="500" block data-i18n="settings.sectionAudio"
           >Audio</fluent-text
         >
-        <div class="slider-row">
-          <label for="music-volume" data-i18n="settings.musicVolume">Music volume</label>
-          <fluent-slider id="music-volume" min="0" max="100" step="1"></fluent-slider>
-          <span id="music-volume-value" class="slider-value"></span>
+        <!-- Navigation sounds: the set dropdown, the "only global" toggle + its hint, and the volume —
+             all one group so the label/dropdown/slider stay consistent about the SAME channel. -->
+        <!-- Navigation sound set: options are filled in from the bundle at runtime (settings.ts init). -->
+        <div class="field-row">
+          <label for="sound-set" data-i18n="settings.soundSet">Navigation sounds</label>
+          <fluent-dropdown id="sound-set" name="sound-set">
+            <fluent-listbox></fluent-listbox>
+          </fluent-dropdown>
         </div>
+        <fluent-field label-position="after">
+          <fluent-switch slot="input" id="only-global-sounds"></fluent-switch>
+          <label slot="label" for="only-global-sounds" data-i18n="settings.onlyGlobalSounds"
+            >Only global navigation sounds</label
+          >
+        </fluent-field>
+        <fluent-text
+          appearance="secondary"
+          size="200"
+          block
+          data-i18n="settings.onlyGlobalSoundsHint"
+          >When on, every game uses the global navigation sounds — a game's own sounds are ignored.</fluent-text
+        >
         <div class="slider-row">
-          <label for="sfx-volume" data-i18n="settings.sfxVolume">UI sounds volume</label>
+          <label for="sfx-volume" data-i18n="settings.soundSetVolume">Navigation sounds volume</label>
           <fluent-slider id="sfx-volume" min="0" max="100" step="1"></fluent-slider>
           <span id="sfx-volume-value" class="slider-value"></span>
+        </div>
+
+        <!-- Background ambience: the track dropdown, the "only global" toggle + its hint, and the volume. -->
+        <!-- Default background ambience. "No ambience" (value="") is static; tracks are added at runtime. -->
+        <div class="field-row">
+          <label for="ambient-track" data-i18n="settings.ambientTrack">Background ambience</label>
+          <fluent-dropdown id="ambient-track" name="ambient-track">
+            <fluent-listbox>
+              <fluent-option value="" data-i18n="settings.ambientNone">No ambience</fluent-option>
+            </fluent-listbox>
+          </fluent-dropdown>
+        </div>
+        <fluent-field label-position="after">
+          <fluent-switch slot="input" id="only-global-ambient"></fluent-switch>
+          <label slot="label" for="only-global-ambient" data-i18n="settings.onlyGlobalAmbient"
+            >Only global ambience</label
+          >
+        </fluent-field>
+        <fluent-text
+          appearance="secondary"
+          size="200"
+          block
+          data-i18n="settings.onlyGlobalAmbientHint"
+          >When on, only the global ambience plays — a game's own background music is ignored.</fluent-text
+        >
+        <div class="slider-row">
+          <label for="music-volume" data-i18n="settings.ambientVolume">Ambience volume</label>
+          <fluent-slider id="music-volume" min="0" max="100" step="1"></fluent-slider>
+          <span id="music-volume-value" class="slider-value"></span>
         </div>
       </section>
 

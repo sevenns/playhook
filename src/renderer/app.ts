@@ -282,6 +282,23 @@ void window.api.requestAudio().then((assets) => {
   syncMusic();
 });
 
+// The default ambience is app-wide (set in the settings window) and delivered on its own channel; the
+// audio engine plays it only while the card has no music of its own (a game's music always wins) and
+// crossfades between the two. Seed on startup and update live. syncMusic re-asserts the gate so a seed
+// arriving before the first visibility sync still starts (or stays paused) correctly.
+window.api.onAmbientUpdate((url) => {
+  audio.setAmbient(url);
+  syncMusic();
+});
+void window.api.requestAmbient().then((url) => {
+  audio.setAmbient(url);
+  syncMusic();
+});
+
+// One-shot UI sounds pushed from main (main has no <audio> — the renderer owns playback). Used for the
+// "play" sound when an install/copy/Steam download completes, where the trigger lives in main.
+window.api.onSfxPlay((name) => audio.play(name));
+
 // Audio volumes are app-wide (set in the settings window): seed them on startup and update live.
 const applyVolumes = (volumes: { music: number; sfx: number }): void => {
   audio.setMusicVolume(volumes.music);

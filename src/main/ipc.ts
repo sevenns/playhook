@@ -17,6 +17,7 @@ import {
   type ResolvedCopyInstall,
   type LaunchTarget,
   type ResolvedManifest,
+  type SfxName,
   type Stats,
   type WallpaperResult,
 } from '../shared/types';
@@ -311,6 +312,9 @@ export class GameController {
   // The bundled default UI sounds, delivered on the empty "insert a card" screen so navigation there is
   // audible even without a game's own sounds. Read once at init (warmDefaultAudio); null until then.
   private defaultAudio: AudioAssets | null = null;
+  // The default ambience data URL, delivered on its own channel (independent of the card's music). The
+  // renderer prioritizes a card's own music over this and crossfades between them. Null = no ambience.
+  private currentAmbient: string | null = null;
   // Hero images for the current card, sent on their own channel (not on every AppState) — see HeroAssets.
   private currentHero: HeroAssets | null = null;
   // The light list of games ({id,title}) on the current card, delivered once per card on its own channel
@@ -325,6 +329,10 @@ export class GameController {
   private readonly assets = new AssetReader({
     userData: app.getPath('userData'),
     getCustomWallpaperName: async () => (await this.deps.settings.read()).customWallpaper,
+    getSoundSet: async () => (await this.deps.settings.read()).soundSet,
+    getOnlyGlobalSounds: async () => (await this.deps.settings.read()).onlyGlobalSounds,
+    getAmbientTrack: async () => (await this.deps.settings.read()).ambientTrack,
+    getOnlyGlobalAmbient: async () => (await this.deps.settings.read()).onlyGlobalAmbient,
   });
   // Steam-mode background re-detect poller (timer + tick + optimistic uninstall request), extracted from
   // this controller. Reaches back only through the narrow accessor seam below.
@@ -334,6 +342,7 @@ export class GameController {
     getState: () => this.deps.state.get(),
     isCardPresent: () => this.cardPresent,
     enterReady: (info) => this.enterReady(info),
+    onInstallCompleted: () => this.playSfx('play'),
     steamLocator: () => this.deps.platform.steamLocator,
   });
 
@@ -429,6 +438,7 @@ export class GameController {
     // Static for the process lifetime — seeds the renderer's Game Mode UI (e.g. "Close Playhook").
     ipcMain.handle(IPC.gameModeRequest, (): boolean => this.deps.isGamescope);
     ipcMain.handle(IPC.audioRequest, (): AudioAssets | null => this.currentAudio);
+    ipcMain.handle(IPC.ambientRequest, (): string | null => this.currentAmbient);
     ipcMain.handle(IPC.heroRequest, (): HeroAssets | null => this.currentHero);
     ipcMain.handle(IPC.libraryRequest, (): GameLibrary | null => this.currentLibrary);
     ipcMain.handle(IPC.wallpaperRequest, (): Promise<string | null> => this.assets.readWallpaperDataUrl());
@@ -451,6 +461,7 @@ export class GameController {
     ipcMain.on(IPC.actionSelect, (_event, id: unknown) => void this.onSelectRequested(id));
 
     void this.warmDefaultAudio();
+    void this.warmAmbient();
   }
 
   /** Reads the bundled default UI sounds once and delivers them to the empty screen (the initial state,
@@ -459,6 +470,14 @@ export class GameController {
     this.defaultAudio = await this.assets.readDefaultAudioAssets();
     // Only the startup empty screen still has null audio here; a card loaded meanwhile owns the channel.
     if (this.currentAudio === null) this.setAudio(this.defaultAudio);
+  }
+
+  /** Reads the default ambience from settings once at startup and pushes it to the game window (the
+   *  renderer plays it only while no card music is present — it decides the priority + crossfade). */
+  private async warmAmbient(): Promise<void> {
+    const track = await this.deps.settings.read().then((s) => s.ambientTrack);
+    this.currentAmbient = await this.assets.readAmbientDataUrl(track);
+    this.pushAmbient(this.currentAmbient);
   }
 
   /** Sends a transient error to the renderer to surface in the error popup. */
@@ -1315,6 +1334,9 @@ export class GameController {
       const installedInfo = await this.buildGameInfo(manifest, currentStats);
       log.info(`[install] completed id=${manifest.raw.id} dir="${install.dir}"`);
       this.enterReady(installedInfo);
+      // Audible "install finished" cue — covers both an installer run and the `copy` type (both reach
+      // here only on a real completion, never on a plain card insert of an already-installed game).
+      this.playSfx('play');
       window.showAndFocus();
     } catch (cause) {
       if (cause instanceof LaunchAbortedError) return; // aborted by shutdown or a card swap
@@ -1762,6 +1784,44 @@ export class GameController {
     const browserWindow = this.deps.window.browserWindow;
     if (browserWindow !== null && !browserWindow.isDestroyed()) {
       browserWindow.webContents.send(IPC.audioUpdate, assets);
+    }
+  }
+
+  /**
+   * Recomputes and re-pushes the current audio after an audio-settings change (sound set, "only global
+   * sounds", "only global ambience"). Re-reads the default set (the AssetReader cache re-keys on the set)
+   * and re-pushes either the loaded card's audio (rebuilt with the current set + only-global flags) or the
+   * default set on the empty screen. A card's `music` is unaffected by a set switch, and the renderer
+   * treats an identical music URL as a no-op, so switching sets never restarts the music; toggling "only
+   * global ambience" DOES change whether `music` is present, so the renderer crossfades to/from ambience.
+   */
+  async refreshAudio(): Promise<void> {
+    this.defaultAudio = await this.assets.readDefaultAudioAssets();
+    const manifest = this.current();
+    if (manifest !== null) this.setAudio(await this.assets.readAudioAssets(manifest));
+    else this.setAudio(this.defaultAudio);
+  }
+
+  /** Applies a default-ambience change live: re-reads the track as a data URL and pushes it to the game
+   *  window (the renderer crossfades; a card's own music still wins). */
+  async setAmbientTrack(track: string | null): Promise<void> {
+    this.currentAmbient = await this.assets.readAmbientDataUrl(track);
+    this.pushAmbient(this.currentAmbient);
+  }
+
+  /** Pushes the default-ambience data URL (or null) to the game window. */
+  private pushAmbient(url: string | null): void {
+    const browserWindow = this.deps.window.browserWindow;
+    if (browserWindow !== null && !browserWindow.isDestroyed()) {
+      browserWindow.webContents.send(IPC.ambientUpdate, url);
+    }
+  }
+
+  /** Asks the game renderer to play a one-shot UI sound (main owns no <audio> — the renderer does). */
+  private playSfx(name: SfxName): void {
+    const browserWindow = this.deps.window.browserWindow;
+    if (browserWindow !== null && !browserWindow.isDestroyed()) {
+      browserWindow.webContents.send(IPC.sfxPlay, name);
     }
   }
 

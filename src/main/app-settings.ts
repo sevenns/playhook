@@ -50,6 +50,19 @@ const settingsSchema = z.object({
   // Game Mode auto-launch on card insertion (Steam Deck). `.default(true)` keeps the behaviour that
   // shipped before the toggle existed for an older settings.json.
   steamAutoLaunch: z.boolean().default(true),
+  // Navigation sound set (folder under audio/ui/). A plain string, not an enum: sets are enumerated
+  // dynamically from the bundle and validity (folder exists) is checked at read time in AssetReader.
+  // `.default('winhanced')` migrates an older settings.json without the field (no schemaVersion bump).
+  soundSet: z.string().default('winhanced'),
+  // Use only the global navigation sounds, ignoring a card's own sounds. `.default(false)` keeps the
+  // pre-existing "a card's sound overrides the set" behaviour for an older settings.json without the field.
+  onlyGlobalSounds: z.boolean().default(false),
+  // Default background ambience (file name under audio/ambience/, extension included), or null for none.
+  // `.default(null)` migrates an older settings.json without the field (no schemaVersion bump).
+  ambientTrack: z.string().nullable().default(null),
+  // Use only the global ambience, ignoring a card's own background music. `.default(false)` keeps the
+  // "a card's music wins" behaviour for an older settings.json without the field.
+  onlyGlobalAmbient: z.boolean().default(false),
 });
 
 // Default preserves the pre-settings behaviour (silent download + install on next quit), so the
@@ -69,6 +82,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
   disableSilentInstall: false,
   steamAppIdU32: null,
   steamAutoLaunch: true,
+  soundSet: 'winhanced',
+  onlyGlobalSounds: false,
+  ambientTrack: null,
+  onlyGlobalAmbient: false,
 };
 
 export class AppSettingsStore {

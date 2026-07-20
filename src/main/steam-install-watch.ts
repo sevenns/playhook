@@ -33,6 +33,9 @@ export interface SteamWatchDeps {
   isCardPresent(): boolean;
   /** Transition to `ready` with the given info (also re-arms/stops the poller, exactly as before). */
   enterReady(info: GameInfo): void;
+  /** Fired once when a Steam download completes (requiresInstall flips true→false) — plays the "install
+   *  finished" cue. Not fired for an already-installed card (that never enters this poller). */
+  onInstallCompleted(): void;
   /** Platform Steam locator (win32 registry / linux known paths), used for the .acf state read. */
   steamLocator(): SteamLocator;
 }
@@ -158,6 +161,9 @@ export class SteamInstallWatch {
           steamPausedProgress,
           steamUninstalling,
         });
+        // Download just finished (Install→Play): play the "install finished" cue, like the installer/copy
+        // path. Guarded by the prev→now transition so it fires once, not on every post-install poll.
+        if (prev.requiresInstall && !requiresInstall) this.deps.onInstallCompleted();
       }
     } finally {
       this.tickInFlight = false;

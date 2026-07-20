@@ -91,6 +91,13 @@ fluent-dropdown {
   border: 1px solid var(--colorNeutralStroke2, #3d3d3d);
 }
 
+/* Labeled dropdown row (navigation sound set / background ambience): label stacked above its control. */
+.field-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
 /* Slider row: label + live value on the first line, the slider spanning full width below it. */
 .slider-row {
   display: grid;

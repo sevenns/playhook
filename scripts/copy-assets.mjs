@@ -1,8 +1,10 @@
 // Copy static renderer assets (html/css/fonts) into dist next to the compiled JS.
 // Runs as part of `npm run build` after tsc.
-import { cp, mkdir } from 'node:fs/promises';
+import { cp, mkdir, readdir, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { listSoundSets, listAmbientTracks } from './audio-index.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const srcRenderer = resolve(root, 'src/renderer');
@@ -34,9 +36,24 @@ for (const name of icons) {
   await cp(resolve(root, 'assets', name), resolve(outDist, name));
 }
 
-// Bundled default UI sounds: used by main when a game.json omits a sound slot. Shipped inside the
-// asar (plain fs reads work through Electron's asar shim) and read at runtime from dist/audio.
+// Bundled UI sound sets (audio/ui/<set>/) + ambience tracks (audio/ambience/): used by main when a
+// game.json omits a sound slot / for the default background ambience. Shipped inside the asar (plain fs
+// reads work through Electron's asar shim) and read at runtime from dist/audio.
 await cp(resolve(root, 'audio'), resolve(outDist, 'audio'), { recursive: true });
+
+// Enumerate the sound sets + ambience tracks HERE (real FS, where readdir/withFileTypes always works) and
+// write dist/audio/index.json, so the settings window reads one file instead of a readdir over the asar —
+// which has no precedent in this codebase. .DS_Store and incomplete/non-audio entries are filtered out.
+const uiDir = resolve(root, 'audio/ui');
+const ambienceDir = resolve(root, 'audio/ambience');
+const soundSets = listSoundSets(await readdir(uiDir, { withFileTypes: true }), (name) =>
+  existsSync(resolve(uiDir, name, 'move.wav')),
+);
+const ambientTracks = listAmbientTracks(await readdir(ambienceDir, { withFileTypes: true }));
+await writeFile(
+  resolve(outDist, 'audio/index.json'),
+  JSON.stringify({ soundSets, ambientTracks }, null, 2),
+);
 
 // Fallback hero wallpaper: used as the background when a game has no heroImage and on the idle
 // "Insert a game card" screen. Main reads it and hands it to the renderer as a data URL. JPG, so the
@@ -48,5 +65,6 @@ await cp(resolve(root, 'assets/playhook-wallpaper.jpg'), resolve(outDist, 'wallp
 await cp(resolve(root, 'assets/steam'), resolve(outDist, 'steam'), { recursive: true });
 
 console.log(
-  `Copied ${files.length} file(s), ${dirs.length} dir(s), ${icons.length} icon(s), default audio, wallpaper and Steam artwork to dist`,
+  `Copied ${files.length} file(s), ${dirs.length} dir(s), ${icons.length} icon(s), audio ` +
+    `(${soundSets.length} set(s), ${ambientTracks.length} ambience track(s)), wallpaper and Steam artwork to dist`,
 );
