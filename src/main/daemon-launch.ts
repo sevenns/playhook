@@ -8,7 +8,13 @@
 // at 16:09:39, after the user cancelled and pressed Play by hand. The daemon's pid was LOWER than the
 // Steam client's — we were talking to a process that did not exist yet.
 //
-// So: wait until Steam is actually up, then launch, then VERIFY the app appeared and retry if it did not.
+// How long Steam needs before it can accept a request is NOT known — the logs only show that it could not
+// at t+3s. That is precisely why there is no fixed delay here: any number would be a guess.
+//
+// So: wait until Steam looks up, then launch, then VERIFY the app appeared and retry if it did not. Note
+// which of those two carries the weight — the readiness probe is a heuristic (is `steamwebhelper` running?
+// nobody documents what "ready" means), while the verify-and-retry loop is what actually makes this
+// correct: even if the probe lies and we fire too early, the next attempt catches it.
 
 /** How long to wait for the Steam client to appear before giving up entirely. */
 const STEAM_READY_TIMEOUT_MS = 3 * 60 * 1000;
