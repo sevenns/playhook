@@ -47,7 +47,9 @@ const CHANNELS = {
   appIconRequest: 'app:icon',
   moveSoundRequest: 'app:move-sound',
   settingsSetSoundSet: 'settings:set-sound-set',
+  settingsSetOnlyGlobalSounds: 'settings:set-only-global-sounds',
   settingsSetAmbientTrack: 'settings:set-ambient-track',
+  settingsSetOnlyGlobalAmbient: 'settings:set-only-global-ambient',
   audioOptionsRequest: 'app:audio-options',
   openLogs: 'app:open-logs',
   openGamesFolder: 'app:open-games-folder',
@@ -72,8 +74,14 @@ const api: SettingsApi = {
   setSoundSet(set: string): void {
     ipcRenderer.send(CHANNELS.settingsSetSoundSet, set);
   },
+  setOnlyGlobalSounds(on: boolean): void {
+    ipcRenderer.send(CHANNELS.settingsSetOnlyGlobalSounds, on);
+  },
   setAmbientTrack(track: string | null): void {
     ipcRenderer.send(CHANNELS.settingsSetAmbientTrack, track);
+  },
+  setOnlyGlobalAmbient(on: boolean): void {
+    ipcRenderer.send(CHANNELS.settingsSetOnlyGlobalAmbient, on);
   },
   getSettings(): Promise<AppSettings> {
     return ipcRenderer.invoke(CHANNELS.settingsRequest) as Promise<AppSettings>;

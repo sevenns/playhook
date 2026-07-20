@@ -492,11 +492,21 @@ export interface AppSettings {
    */
   readonly soundSet: string;
   /**
+   * When true, every game uses the global navigation sound set — a card's own `sounds` are ignored. When
+   * false (default), a card's own sound overrides the set per slot. Default false.
+   */
+  readonly onlyGlobalSounds: boolean;
+  /**
    * Default background ambience track (a file name under `audio/ambience/`, extension included), played
    * only when the current card has no music of its own — the game's music always wins. `null` = no
    * ambience. Default null. `.default(null)` migrates an older settings.json without the field.
    */
   readonly ambientTrack: string | null;
+  /**
+   * When true, only the global ambience plays — a card's own background music is ignored (suppressed in
+   * main, so the renderer just sees no game music). When false (default), a card's music wins. Default false.
+   */
+  readonly onlyGlobalAmbient: boolean;
 }
 
 /** The bundled UI sound sets + ambience tracks available to pick in the settings window. */
@@ -645,8 +655,12 @@ export const IPC = {
   moveSoundRequest: 'app:move-sound',
   /** settings-renderer → main: change the navigation sound set (payload set name string). */
   settingsSetSoundSet: 'settings:set-sound-set',
+  /** settings-renderer → main: toggle using only the global navigation sounds (payload boolean). */
+  settingsSetOnlyGlobalSounds: 'settings:set-only-global-sounds',
   /** settings-renderer → main: change the default ambience track (payload file name string or null). */
   settingsSetAmbientTrack: 'settings:set-ambient-track',
+  /** settings-renderer → main: toggle using only the global ambience (payload boolean). */
+  settingsSetOnlyGlobalAmbient: 'settings:set-only-global-ambient',
   /** settings-renderer → main (invoke): the bundled sound sets + ambience tracks to populate the dropdowns. */
   audioOptionsRequest: 'app:audio-options',
   /** settings-renderer → main: recolor the native title-bar overlay (caption buttons) for the theme. */
@@ -854,8 +868,12 @@ export interface SettingsApi {
   getAudioOptions(): Promise<AudioOptions>;
   /** Change the navigation sound set (applied live to the game window by main). */
   setSoundSet(set: string): void;
+  /** Toggle using only the global navigation sounds (a card's own sounds ignored when on). */
+  setOnlyGlobalSounds(on: boolean): void;
   /** Change the default ambience track (null = no ambience; applied live to the game window by main). */
   setAmbientTrack(track: string | null): void;
+  /** Toggle using only the global ambience (a card's own music ignored when on). */
+  setOnlyGlobalAmbient(on: boolean): void;
   getSettings(): Promise<AppSettings>;
   setAutoUpdate(mode: AutoUpdateMode): void;
   /** Toggle keeping the empty "no card" screen visible instead of hiding to the tray. */

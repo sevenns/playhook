@@ -86,7 +86,9 @@ const steamAutoLaunchSwitch = req('steam-auto-launch');
 const steamAutoLaunchField = req('steam-auto-launch-field');
 const steamAutoLaunchHint = req('steam-auto-launch-hint');
 const soundSetDropdown = req('sound-set');
+const onlyGlobalSoundsSwitch = req('only-global-sounds');
 const ambientDropdown = req('ambient-track');
+const onlyGlobalAmbientSwitch = req('only-global-ambient');
 const musicSlider = req('music-volume');
 const musicValue = req('music-volume-value');
 const sfxSlider = req('sfx-volume');
@@ -371,10 +373,16 @@ soundSetDropdown.addEventListener('change', () => {
   window.settingsApi.setSoundSet(value);
   loadMoveSound(value); // preview the newly-chosen set on the next slider release
 });
+onlyGlobalSoundsSwitch.addEventListener('change', () => {
+  window.settingsApi.setOnlyGlobalSounds(readChecked(onlyGlobalSoundsSwitch));
+});
 ambientDropdown.addEventListener('change', () => {
   const value = readDropdownRaw(ambientDropdown);
   if (value === null) return;
   window.settingsApi.setAmbientTrack(value === '' ? null : value);
+});
+onlyGlobalAmbientSwitch.addEventListener('change', () => {
+  window.settingsApi.setOnlyGlobalAmbient(readChecked(onlyGlobalAmbientSwitch));
 });
 
 openLogsBtn.addEventListener('click', () => window.settingsApi.openLogs());
@@ -443,6 +451,8 @@ function applySettings(settings: AppSettings): void {
   setChecked(steamAutoLaunchSwitch, settings.steamAutoLaunch);
   setDropdownValue(soundSetDropdown, settings.soundSet);
   setDropdownValue(ambientDropdown, settings.ambientTrack ?? '');
+  setChecked(onlyGlobalSoundsSwitch, settings.onlyGlobalSounds);
+  setChecked(onlyGlobalAmbientSwitch, settings.onlyGlobalAmbient);
   loadMoveSound(settings.soundSet); // preview uses the current set (and after a Reset, the default)
   const musicPercent = Math.round(settings.musicVolume * 100);
   const sfxPercent = Math.round(settings.sfxVolume * 100);

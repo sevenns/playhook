@@ -147,10 +147,16 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'settings.wallpaperReset': 'Сбросить',
   'settings.sectionAudio': 'Звук',
   'settings.soundSet': 'Звуки навигации',
+  'settings.onlyGlobalSounds': 'Только общие звуки навигации',
+  'settings.onlyGlobalSoundsHint':
+    'Если включено, все игры используют общие звуки навигации — собственные звуки игры не воспроизводятся.',
+  'settings.soundSetVolume': 'Громкость звуков навигации',
   'settings.ambientTrack': 'Фоновый эмбиент',
   'settings.ambientNone': 'Без эмбиента',
-  'settings.musicVolume': 'Громкость музыки',
-  'settings.sfxVolume': 'Громкость звуков интерфейса',
+  'settings.onlyGlobalAmbient': 'Только общий эмбиент',
+  'settings.onlyGlobalAmbientHint':
+    'Если включено, играет только общий эмбиент — собственная фоновая музыка игры не воспроизводится.',
+  'settings.ambientVolume': 'Громкость эмбиента',
   'settings.sectionAdvanced': 'Дополнительно',
   'settings.openLogs': 'Открыть логи',
   'settings.openGames': 'Открыть папку игр',

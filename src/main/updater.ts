@@ -73,6 +73,8 @@ export interface UpdaterDeps {
   readonly onVolumesChanged: (volumes: AudioVolumes) => void;
   /** Applies a navigation-sound-set change (re-reads + re-pushes the current sfx to the game window). */
   readonly onSoundSetChanged: (set: string) => void;
+  /** Applies an "only global sounds"/"only global ambience" toggle (recomputes + re-pushes card audio). */
+  readonly onAudioScopeChanged: () => void;
   /** Applies a default-ambience change (re-reads the track + pushes it to the game window). */
   readonly onAmbientChanged: (track: string | null) => void;
   /** Deletes the custom Empty-screen wallpaper file and pushes the default (general Reset only). */
@@ -233,11 +235,23 @@ export class UpdaterService {
         .then(() => this.deps.onSoundSetChanged(set))
         .catch((cause: unknown) => log.error('[updater] failed to persist sound set:', cause));
     });
+    ipcMain.on(IPC.settingsSetOnlyGlobalSounds, (_event, on: boolean) => {
+      void this.deps.settings
+        .patch({ onlyGlobalSounds: on })
+        .then(() => this.deps.onAudioScopeChanged())
+        .catch((cause: unknown) => log.error('[updater] failed to persist only-global-sounds:', cause));
+    });
     ipcMain.on(IPC.settingsSetAmbientTrack, (_event, track: string | null) => {
       void this.deps.settings
         .patch({ ambientTrack: track })
         .then(() => this.deps.onAmbientChanged(track))
         .catch((cause: unknown) => log.error('[updater] failed to persist ambient track:', cause));
+    });
+    ipcMain.on(IPC.settingsSetOnlyGlobalAmbient, (_event, on: boolean) => {
+      void this.deps.settings
+        .patch({ onlyGlobalAmbient: on })
+        .then(() => this.deps.onAudioScopeChanged())
+        .catch((cause: unknown) => log.error('[updater] failed to persist only-global-ambient:', cause));
     });
     // Language mirrors the summon-hotkey path: persist, then hand the mode to the deps callback (main
     // re-resolves the locale, rebuilds tray/titles and pushes the effective locale to every live window).

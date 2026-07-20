@@ -330,7 +330,9 @@ export class GameController {
     userData: app.getPath('userData'),
     getCustomWallpaperName: async () => (await this.deps.settings.read()).customWallpaper,
     getSoundSet: async () => (await this.deps.settings.read()).soundSet,
+    getOnlyGlobalSounds: async () => (await this.deps.settings.read()).onlyGlobalSounds,
     getAmbientTrack: async () => (await this.deps.settings.read()).ambientTrack,
+    getOnlyGlobalAmbient: async () => (await this.deps.settings.read()).onlyGlobalAmbient,
   });
   // Steam-mode background re-detect poller (timer + tick + optimistic uninstall request), extracted from
   // this controller. Reaches back only through the narrow accessor seam below.
@@ -1786,13 +1788,14 @@ export class GameController {
   }
 
   /**
-   * Applies a navigation-sound-set change live (from the settings window via UpdaterService). Re-reads the
-   * default set (the AssetReader cache re-keys on the new set) and re-pushes the current sfx: the loaded
-   * card's audio rebuilt with the new per-slot defaults, or the default set on the empty screen. The
-   * card's `music` is unchanged by a set switch, and the renderer treats an identical music URL as a no-op,
-   * so the music never restarts.
+   * Recomputes and re-pushes the current audio after an audio-settings change (sound set, "only global
+   * sounds", "only global ambience"). Re-reads the default set (the AssetReader cache re-keys on the set)
+   * and re-pushes either the loaded card's audio (rebuilt with the current set + only-global flags) or the
+   * default set on the empty screen. A card's `music` is unaffected by a set switch, and the renderer
+   * treats an identical music URL as a no-op, so switching sets never restarts the music; toggling "only
+   * global ambience" DOES change whether `music` is present, so the renderer crossfades to/from ambience.
    */
-  async setSoundSet(): Promise<void> {
+  async refreshAudio(): Promise<void> {
     this.defaultAudio = await this.assets.readDefaultAudioAssets();
     const manifest = this.current();
     if (manifest !== null) this.setAudio(await this.assets.readAudioAssets(manifest));

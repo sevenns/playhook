@@ -114,8 +114,12 @@ export interface AssetReaderDeps {
   readonly getCustomWallpaperName: () => Promise<string | null>;
   /** The current navigation sound set from settings (folder under audio/ui/). Read live. */
   readonly getSoundSet: () => Promise<string>;
+  /** Whether to use ONLY the global set's sounds, ignoring a card's own sounds. Read live. */
+  readonly getOnlyGlobalSounds: () => Promise<boolean>;
   /** The current default ambience track from settings (file name, or null for none). Read live. */
   readonly getAmbientTrack: () => Promise<string | null>;
+  /** Whether to use ONLY the global ambience, ignoring a card's own background music. Read live. */
+  readonly getOnlyGlobalAmbient: () => Promise<boolean>;
 }
 
 /**
@@ -252,15 +256,21 @@ export class AssetReader {
   /** Reads the manifest's sounds + music into data URLs. Returns null when nothing is configured. */
   async readAudioAssets(manifest: ResolvedManifest): Promise<AudioAssets | null> {
     const set = await this.effectiveSoundSet();
+    const onlyGlobalSounds = await this.deps.getOnlyGlobalSounds();
+    const onlyGlobalAmbient = await this.deps.getOnlyGlobalAmbient();
     const sounds: Record<string, string> = {};
     for (const name of SFX_NAMES) {
-      // Per slot: the game's own sound if set, otherwise the chosen set's default.
-      const filePath = manifest.soundPaths?.[name] ?? defaultSfxPath(set, name);
+      // Per slot: the game's own sound if set, otherwise the chosen set's default. When "only global
+      // sounds" is on, the card's own sound is ignored — every slot comes from the set.
+      const gameSound = onlyGlobalSounds ? undefined : manifest.soundPaths?.[name];
+      const filePath = gameSound ?? defaultSfxPath(set, name);
       const url = await this.readAudioDataUrl(filePath);
       if (url !== undefined) sounds[name] = url;
     }
+    // When "only global ambience" is on, the card's own music is SUPPRESSED here — the renderer then sees
+    // no game music and falls back to the global ambience (delivered on its own channel), no engine change.
     const music =
-      manifest.backgroundMusicPath !== undefined
+      !onlyGlobalAmbient && manifest.backgroundMusicPath !== undefined
         ? await this.readAudioDataUrl(manifest.backgroundMusicPath)
         : undefined;
 
