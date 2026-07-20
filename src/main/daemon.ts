@@ -13,6 +13,7 @@
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import type { Readable } from 'node:stream';
 import { log, setLogBaseDir } from './logger';
 import { AppSettingsStore } from './app-settings';
 import { DriveWatcher } from './drive-watcher';
@@ -22,6 +23,7 @@ import { DriveWatcher } from './drive-watcher';
 import { createLinuxPlatform } from './platform/linux';
 import { toRunGameId } from './platform/steam-appid';
 import { launchWhenSteamReady } from './daemon-launch';
+import { systemEnv } from './appimage-env';
 
 /** Electron's `app.getPath('userData')` on Linux, reproduced without Electron: `$XDG_CONFIG_HOME/playhook`. */
 function userDataDir(home: string): string {
@@ -30,11 +32,35 @@ function userDataDir(home: string): string {
   return path.posix.join(base, 'playhook');
 }
 
-/** Fires the launch request. Detached: the daemon must not own the app's lifetime. */
+/**
+ * Fires the launch request. Detached: the daemon must not own the app's lifetime.
+ *
+ * `systemEnv()` is essential, not hygiene: with the AppImage's own LD_LIBRARY_PATH inherited, the `steam`
+ * script reported "Steam is not running" while Steam was running, and the tile hung on "Launching…".
+ *
+ * The output is piped into the log rather than discarded. It was `stdio: 'ignore'` at first, and that made
+ * the failure invisible for three rounds of testing — Steam prints the real reason, we just weren't
+ * listening.
+ */
 function spawnSteamUri(appIdU32: number): void {
   const uri = `steam://rungameid/${toRunGameId(appIdU32).toString()}`;
   try {
-    const child = spawn('steam', [uri], { detached: true, stdio: 'ignore' });
+    const child = spawn('steam', [uri], {
+      detached: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: systemEnv(),
+    });
+    const relay = (stream: Readable | null, level: 'info' | 'error'): void => {
+      stream?.on('data', (chunk: Buffer) => {
+        const text = chunk.toString('utf8').trim();
+        if (text !== '') log[level](`[daemon] steam: ${text}`);
+      });
+    };
+    relay(child.stdout, 'info');
+    relay(child.stderr, 'error');
+    child.on('exit', (code) => {
+      if (code !== 0) log.warn(`[daemon] steam exited with code ${String(code)}`);
+    });
     child.on('error', (cause) => log.error('[daemon] failed to spawn steam:', cause.message));
     child.unref();
   } catch (cause) {
