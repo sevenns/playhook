@@ -12,6 +12,9 @@
 //    Cloud territory and gets tidied by Steam. The last few are kept, because one rolling backup would be
 //    overwritten by the second failed attempt — destroying the only good copy.
 //  - The write is atomic (temp + rename), like every other store in the app.
+//
+// Every path here is built with `path.posix` — these are Linux paths, and a win32 `path.join` would emit
+// backslashes on the Windows CI job (same rule as umu.ts / steam-userdata.linux.ts).
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import fse from 'fs-extra';
@@ -111,17 +114,17 @@ async function loadShortcuts(
 
 /** Copies the current file into Playhook's userData before we touch it, keeping the last few. */
 async function backup(deps: LinuxSteamShortcutsDeps, filePath: string): Promise<void> {
-  const dir = path.join(deps.userData, 'steam-backup');
+  const dir = path.posix.join(deps.userData, 'steam-backup');
   try {
     await fse.ensureDir(dir);
     const stamp = new Date().toISOString().replaceAll(/[:.]/g, '-');
-    await fs.copyFile(filePath, path.join(dir, `shortcuts-${stamp}.vdf`));
+    await fs.copyFile(filePath, path.posix.join(dir, `shortcuts-${stamp}.vdf`));
     const kept = (await fs.readdir(dir))
       .filter((name) => name.startsWith('shortcuts-') && name.endsWith('.vdf'))
       .sort()
       .reverse()
       .slice(BACKUPS_KEPT);
-    for (const stale of kept) await fs.rm(path.join(dir, stale), { force: true });
+    for (const stale of kept) await fs.rm(path.posix.join(dir, stale), { force: true });
   } catch (cause) {
     // Best-effort, but never silent: losing the backup is not a reason to abort, losing it QUIETLY is.
     log.warn(
@@ -179,7 +182,7 @@ async function persist(
 ): Promise<SteamShortcutVoidResult> {
   try {
     if (loaded.existed) await backup(deps, loaded.filePath);
-    await fse.ensureDir(path.dirname(loaded.filePath));
+    await fse.ensureDir(path.posix.dirname(loaded.filePath));
     await writeFileAtomic(loaded.filePath, serializeShortcuts(records, loaded.rootKey));
     return { ok: true };
   } catch (cause) {
@@ -234,7 +237,9 @@ export function createLinuxSteamShortcuts(deps: LinuxSteamShortcutsDeps): SteamS
         .filter((entry) => {
           const exe = unquote(recordString(entry, 'Exe'));
           if (exe === '') return false;
-          const matches = exeHints.some((hint) => exe === hint || path.basename(exe) === hint);
+          const matches = exeHints.some(
+            (hint) => exe === hint || path.posix.basename(exe) === hint,
+          );
           if (!matches) return false;
           // Ours is the one whose appid matches the CRC32 of its own (exe, name) — an entry Steam added
           // through its UI got a random appid instead, which is exactly how we tell them apart.

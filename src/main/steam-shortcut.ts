@@ -20,17 +20,21 @@ import { describe } from './util';
 /** The shortcut's name in Steam. Fixed: it feeds the appid hash, so it must never carry a version. */
 export const STEAM_SHORTCUT_NAME = 'Playhook';
 
+// POSIX-join throughout: this feature is Linux-only, so the paths must use `/` no matter which OS the
+// code is compiled or tested on (see umu.ts / steam-userdata.linux.ts — a win32 `path.join` here would
+// silently produce backslashes and, worse, a DIFFERENT appid, since the appid is a hash of the path).
+
 /** The stable launcher directory — the appid depends on this path, so it must not move between releases. */
 function stableDir(home: string): string {
-  return path.join(home, '.local', 'share', 'playhook');
+  return path.posix.join(home, '.local', 'share', 'playhook');
 }
 
 export function stableLauncherPath(home: string): string {
-  return path.join(stableDir(home), 'Playhook.AppImage');
+  return path.posix.join(stableDir(home), 'Playhook.AppImage');
 }
 
 export function stableIconPath(home: string): string {
-  return path.join(stableDir(home), 'icon.png');
+  return path.posix.join(stableDir(home), 'icon.png');
 }
 
 export interface SteamShortcutDeps {
@@ -142,7 +146,7 @@ export function createSteamShortcutService(deps: SteamShortcutDeps): SteamShortc
         const foreign = await deps.platform.steamShortcuts.findForeignShortcuts([
           exePath,
           deps.appImagePath,
-          path.basename(deps.appImagePath),
+          path.posix.basename(deps.appImagePath),
         ]);
         if (foreign.length > 0) {
           deps.notify(
@@ -155,7 +159,7 @@ export function createSteamShortcutService(deps: SteamShortcutDeps): SteamShortc
         const target: SteamShortcutTarget = {
           exePath,
           appName: STEAM_SHORTCUT_NAME,
-          startDir: path.dirname(exePath),
+          startDir: path.posix.dirname(exePath),
           iconPath: stableIconPath(deps.home),
         };
         const result = await deps.platform.steamShortcuts.addShortcut(target);

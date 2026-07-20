@@ -27,20 +27,22 @@ export type SteamUserResult =
   | { readonly ok: true; readonly steamId3: number }
   | { readonly ok: false; readonly message: string };
 
+// Always POSIX-join: these are Linux paths, so they must use `/` regardless of the OS the TESTS run on
+// (a win32 `path.join` emits backslashes and fails the Windows CI job — same rule as umu.ts).
 export function userdataDir(steamRoot: string): string {
-  return path.join(steamRoot, 'userdata');
+  return path.posix.join(steamRoot, 'userdata');
 }
 
 export function shortcutsVdfPath(steamRoot: string, steamId3: number): string {
-  return path.join(userdataDir(steamRoot), String(steamId3), 'config', 'shortcuts.vdf');
+  return path.posix.join(userdataDir(steamRoot), String(steamId3), 'config', 'shortcuts.vdf');
 }
 
 export function gridDir(steamRoot: string, steamId3: number): string {
-  return path.join(userdataDir(steamRoot), String(steamId3), 'config', 'grid');
+  return path.posix.join(userdataDir(steamRoot), String(steamId3), 'config', 'grid');
 }
 
 export function loginUsersPath(steamRoot: string): string {
-  return path.join(steamRoot, 'config', 'loginusers.vdf');
+  return path.posix.join(steamRoot, 'config', 'loginusers.vdf');
 }
 
 /** The account-scoped part of a SteamID64 — the `userdata/` directory name. */
