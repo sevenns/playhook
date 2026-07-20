@@ -245,6 +245,10 @@ async function bootstrap(): Promise<void> {
       const bw = window.browserWindow;
       if (bw !== null && !bw.isDestroyed()) bw.webContents.send(IPC.volumeUpdate, volumes);
     },
+    // The sound-set / ambience changes are re-read + re-pushed by the controller (it owns the AssetReader
+    // and the game window) — the settings window only persisted the new value.
+    onSoundSetChanged: () => void controller.setSoundSet(),
+    onAmbientChanged: (track) => void controller.setAmbientTrack(track),
     // A general "Reset to defaults" writes customWallpaper=null, but the copied file must be deleted
     // separately — delegate to the controller (it owns the AssetReader + the game window push).
     onWallpaperReset: () => controller.resetCustomWallpaper(),

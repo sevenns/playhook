@@ -54,18 +54,44 @@ export async function readImageDataUrl(filePath: string): Promise<string | undef
 
 const SFX_NAMES: readonly SfxName[] = ['play', 'navigate', 'button', 'back'];
 
-// Bundled default UI sounds (in dist/audio, copied by copy-assets). Used per slot when a game.json
-// doesn't provide its own sound, so every game has interface sounds out of the box.
-const DEFAULT_SFX_FILES: Readonly<Record<SfxName, string>> = {
-  play: 'default-play.wav',
-  navigate: 'default-move.wav',
-  button: 'default-button.wav',
-  back: 'default-back.wav',
+// The sound set shipped as the default, and the fallback whenever the chosen set's folder is missing.
+export const DEFAULT_SOUND_SET = 'winhanced';
+
+// Maps a UI sound slot to its file basename inside a set folder (audio/ui/<set>/). `navigate` is the odd
+// one out — its file is `move.wav` (the sets predate the SfxName vocabulary); the rest are 1:1.
+const SFX_SLOT_FILE: Readonly<Record<SfxName, string>> = {
+  play: 'play',
+  navigate: 'move',
+  button: 'button',
+  back: 'back',
 };
 
-function defaultSfxPath(name: SfxName): string {
-  // __dirname at runtime is dist/main; the bundled sounds live in dist/audio.
-  return path.join(__dirname, '../audio', DEFAULT_SFX_FILES[name]);
+/** The file basename (no extension) for a UI sound slot inside a set folder. Pure — unit-tested. */
+export function sfxFileName(name: SfxName): string {
+  return SFX_SLOT_FILE[name];
+}
+
+// Absolute path to a set's folder. __dirname at runtime is dist/main; the sets live in dist/audio/ui.
+function soundSetDir(set: string): string {
+  return path.join(__dirname, '../audio/ui', set);
+}
+
+function defaultSfxPath(set: string, name: SfxName): string {
+  return path.join(soundSetDir(set), `${SFX_SLOT_FILE[name]}.wav`);
+}
+
+// Bundled ambience folder (dist/audio/ambience). A track is a bare file name (extension included).
+function ambientDir(): string {
+  return path.join(__dirname, '../audio/ambience');
+}
+
+/**
+ * Whether `track` is a safe ambience file name to read from the bundled folder: a bare basename (no path
+ * separators / traversal) with a supported audio extension. Pure — unit-tested (anti-traversal guard).
+ */
+export function isValidAmbientTrack(track: string): boolean {
+  if (path.basename(track) !== track) return false;
+  return AUDIO_MIME[path.extname(track).toLowerCase()] !== undefined;
 }
 
 // Fallback hero background (bundled by copy-assets into dist/wallpaper.jpg). __dirname is dist/main.
@@ -86,6 +112,10 @@ export interface AssetReaderDeps {
   readonly userData: string;
   /** The current custom wallpaper file name from settings (null = bundled default). Read live. */
   readonly getCustomWallpaperName: () => Promise<string | null>;
+  /** The current navigation sound set from settings (folder under audio/ui/). Read live. */
+  readonly getSoundSet: () => Promise<string>;
+  /** The current default ambience track from settings (file name, or null for none). Read live. */
+  readonly getAmbientTrack: () => Promise<string | null>;
 }
 
 /**
@@ -221,10 +251,11 @@ export class AssetReader {
 
   /** Reads the manifest's sounds + music into data URLs. Returns null when nothing is configured. */
   async readAudioAssets(manifest: ResolvedManifest): Promise<AudioAssets | null> {
+    const set = await this.effectiveSoundSet();
     const sounds: Record<string, string> = {};
     for (const name of SFX_NAMES) {
-      // Per slot: the game's own sound if set, otherwise the bundled default.
-      const filePath = manifest.soundPaths?.[name] ?? defaultSfxPath(name);
+      // Per slot: the game's own sound if set, otherwise the chosen set's default.
+      const filePath = manifest.soundPaths?.[name] ?? defaultSfxPath(set, name);
       const url = await this.readAudioDataUrl(filePath);
       if (url !== undefined) sounds[name] = url;
     }
@@ -238,21 +269,63 @@ export class AssetReader {
   }
 
   /**
-   * The bundled default UI sounds alone (no music), for the empty "insert a card" screen — so navigating
-   * the System menu there is audible even without a game's own sounds. Same per-slot defaults readAudio-
-   * Assets falls back to, minus any game/music. The files never change, so the result is memoized.
+   * The chosen set's default UI sounds alone (no music), for the empty "insert a card" screen — so
+   * navigating the System menu there is audible even without a game's own sounds. Same per-slot defaults
+   * readAudioAssets falls back to, minus any game/music.
    */
   async readDefaultAudioAssets(): Promise<AudioAssets> {
-    if (this.defaultAudioAssets !== undefined) return this.defaultAudioAssets;
+    const set = await this.effectiveSoundSet();
+    // Cache keyed by the effective set: a live getSoundSet() differing from the cached key re-reads, so a
+    // set change invalidates without an explicit call. Files within a set never change → same-key hits are safe.
+    if (this.defaultAudioCache?.set === set) return this.defaultAudioCache.assets;
     const sounds: Record<string, string> = {};
     for (const name of SFX_NAMES) {
-      const url = await this.readAudioDataUrl(defaultSfxPath(name));
+      const url = await this.readAudioDataUrl(defaultSfxPath(set, name));
       if (url !== undefined) sounds[name] = url;
     }
-    this.defaultAudioAssets = { sounds };
-    return this.defaultAudioAssets;
+    const assets: AudioAssets = { sounds };
+    this.defaultAudioCache = { set, assets };
+    return assets;
   }
-  private defaultAudioAssets: AudioAssets | undefined;
+  private defaultAudioCache: { set: string; assets: AudioAssets } | undefined;
+
+  /**
+   * The chosen navigation sound set if its folder exists, else the bundled default (winhanced). A missing
+   * folder is a user-facing misconfiguration, so it is logged; an individual slot missing WITHIN a set is
+   * not (that slot just stays silent — sets are expected complete).
+   */
+  private async effectiveSoundSet(): Promise<string> {
+    const set = await this.deps.getSoundSet();
+    if (set !== DEFAULT_SOUND_SET && !(await fse.pathExists(soundSetDir(set)))) {
+      log.warn(`[audio] sound set "${set}" not found — falling back to "${DEFAULT_SOUND_SET}"`);
+      return DEFAULT_SOUND_SET;
+    }
+    return set;
+  }
+
+  /**
+   * The current default ambience as a data URL (or null when none / the track is invalid or unreadable).
+   * The game's own music always wins over this — the renderer decides that; here we only decode the track.
+   * Anti-traversal: only a bare, supported-extension file name from the bundled folder is read. Cached by
+   * track name so repeated reads (and the game-window seed) don't re-encode a multi-MB file.
+   */
+  async readAmbientDataUrl(track: string | null): Promise<string | null> {
+    if (track === null) return null;
+    if (this.ambientCache?.track === track) return this.ambientCache.url;
+    if (!isValidAmbientTrack(track)) {
+      log.warn(`[audio] ignoring invalid ambience track "${track}"`);
+      return null;
+    }
+    const filePath = path.join(ambientDir(), track);
+    if (!(await fse.pathExists(filePath))) {
+      log.warn(`[audio] ambience track "${track}" missing — no ambience`);
+      return null;
+    }
+    const url = (await this.readAudioDataUrl(filePath)) ?? null;
+    this.ambientCache = { track, url };
+    return url;
+  }
+  private ambientCache: { track: string; url: string | null } | undefined;
 
   private async readAudioDataUrl(filePath: string): Promise<string | undefined> {
     try {

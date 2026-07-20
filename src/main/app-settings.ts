@@ -50,6 +50,13 @@ const settingsSchema = z.object({
   // Game Mode auto-launch on card insertion (Steam Deck). `.default(true)` keeps the behaviour that
   // shipped before the toggle existed for an older settings.json.
   steamAutoLaunch: z.boolean().default(true),
+  // Navigation sound set (folder under audio/ui/). A plain string, not an enum: sets are enumerated
+  // dynamically from the bundle and validity (folder exists) is checked at read time in AssetReader.
+  // `.default('winhanced')` migrates an older settings.json without the field (no schemaVersion bump).
+  soundSet: z.string().default('winhanced'),
+  // Default background ambience (file name under audio/ambience/, extension included), or null for none.
+  // `.default(null)` migrates an older settings.json without the field (no schemaVersion bump).
+  ambientTrack: z.string().nullable().default(null),
 });
 
 // Default preserves the pre-settings behaviour (silent download + install on next quit), so the
@@ -69,6 +76,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   disableSilentInstall: false,
   steamAppIdU32: null,
   steamAutoLaunch: true,
+  soundSet: 'winhanced',
+  ambientTrack: null,
 };
 
 export class AppSettingsStore {

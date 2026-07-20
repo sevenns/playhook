@@ -32,6 +32,7 @@ import { log } from './logger';
 import {
   IPC,
   type AppSettings,
+  type AudioOptions,
   type AudioVolumes,
   type AutoUpdateMode,
   type LanguageMode,
@@ -40,6 +41,7 @@ import {
 } from '../shared/types';
 import { type Translator } from '../shared/i18n/index';
 import { type AppSettingsStore } from './app-settings';
+import { DEFAULT_SOUND_SET } from './asset-reader';
 import { ipcMain } from 'electron';
 
 const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000; // re-check every 6h for long-running instances
@@ -69,6 +71,10 @@ export interface UpdaterDeps {
   readonly onAlwaysShowEmptyScreenChanged: (enabled: boolean) => void;
   /** Pushes new audio volumes to the game renderer so they apply live. */
   readonly onVolumesChanged: (volumes: AudioVolumes) => void;
+  /** Applies a navigation-sound-set change (re-reads + re-pushes the current sfx to the game window). */
+  readonly onSoundSetChanged: (set: string) => void;
+  /** Applies a default-ambience change (re-reads the track + pushes it to the game window). */
+  readonly onAmbientChanged: (track: string | null) => void;
   /** Deletes the custom Empty-screen wallpaper file and pushes the default (general Reset only). */
   readonly onWallpaperReset: () => Promise<void>;
   /** Applies a UI-language change (re-resolve locale, rebuild tray/titles, push to live windows). */
@@ -221,6 +227,18 @@ export class UpdaterService {
     ipcMain.on(IPC.settingsSetSfxVolume, (_event, volume: number) => {
       void this.setVolume({ sfxVolume: volume });
     });
+    ipcMain.on(IPC.settingsSetSoundSet, (_event, set: string) => {
+      void this.deps.settings
+        .patch({ soundSet: set })
+        .then(() => this.deps.onSoundSetChanged(set))
+        .catch((cause: unknown) => log.error('[updater] failed to persist sound set:', cause));
+    });
+    ipcMain.on(IPC.settingsSetAmbientTrack, (_event, track: string | null) => {
+      void this.deps.settings
+        .patch({ ambientTrack: track })
+        .then(() => this.deps.onAmbientChanged(track))
+        .catch((cause: unknown) => log.error('[updater] failed to persist ambient track:', cause));
+    });
     // Language mirrors the summon-hotkey path: persist, then hand the mode to the deps callback (main
     // re-resolves the locale, rebuilds tray/titles and pushes the effective locale to every live window).
     ipcMain.on(IPC.settingsSetLanguage, (_event, mode: LanguageMode) => {
@@ -237,7 +255,10 @@ export class UpdaterService {
     });
     ipcMain.handle(IPC.appVersionRequest, (): string => app.getVersion());
     ipcMain.handle(IPC.appIconRequest, (): Promise<string> => this.readIconDataUrl());
-    ipcMain.handle(IPC.moveSoundRequest, (): Promise<string> => this.readMoveSoundDataUrl());
+    ipcMain.handle(IPC.moveSoundRequest, (_event, set: unknown): Promise<string> =>
+      this.readMoveSoundDataUrl(typeof set === 'string' ? set : DEFAULT_SOUND_SET),
+    );
+    ipcMain.handle(IPC.audioOptionsRequest, (): Promise<AudioOptions> => this.readAudioOptions());
     // Imperative maintenance actions — the logic (paths, shell) lives in main.ts callbacks; registered
     // here only to keep every settings-window channel in one place (avoids a duplicate handler).
     ipcMain.on(IPC.openLogs, () => this.deps.openLogs());
@@ -261,6 +282,8 @@ export class UpdaterService {
     // would say "on" while nothing is actually watching.
     await this.deps.onSteamAutoLaunchChanged(next.steamAutoLaunch);
     this.deps.onVolumesChanged({ music: next.musicVolume, sfx: next.sfxVolume });
+    this.deps.onSoundSetChanged(next.soundSet);
+    this.deps.onAmbientChanged(next.ambientTrack);
     // reset() already wrote customWallpaper=null; this deletes the copied file and pushes the default.
     await this.deps.onWallpaperReset();
     this.deps.onLanguageChanged(next.language);
@@ -295,19 +318,55 @@ export class UpdaterService {
     return this.iconDataUrl;
   }
 
-  // Default "move" UI sound, handed to the settings window as a data URL (its CSP allows `media-src
-  // data:` only) so a volume slider can play a preview at the released level. Read once and cache.
-  private moveSoundDataUrl: string | null = null;
-  private async readMoveSoundDataUrl(): Promise<string> {
-    if (this.moveSoundDataUrl !== null) return this.moveSoundDataUrl;
+  // A set's "move" UI sound, handed to the settings window as a data URL (its CSP allows `media-src data:`
+  // only) so a volume slider can play a preview at the released level, in the currently-selected set. The
+  // set is passed in by the renderer (never read from settings here) so a just-changed dropdown previews
+  // the new set without racing the on-disk settings write. Cached per set; a missing set falls back to
+  // winhanced. Read once per set.
+  private readonly moveSoundBySet = new Map<string, string>();
+  private async readMoveSoundDataUrl(set: string): Promise<string> {
+    const cached = this.moveSoundBySet.get(set);
+    if (cached !== undefined) return cached;
+    const read = async (name: string): Promise<Buffer> =>
+      fs.readFile(path.join(__dirname, '../audio/ui', name, 'move.wav'));
+    let dataUrl = '';
     try {
-      const buffer = await fs.readFile(path.join(__dirname, '../audio/default-move.wav'));
-      this.moveSoundDataUrl = `data:audio/wav;base64,${buffer.toString('base64')}`;
+      let buffer: Buffer;
+      try {
+        buffer = await read(set);
+      } catch {
+        buffer = await read(DEFAULT_SOUND_SET); // the chosen set's move.wav is missing → preview the default
+      }
+      dataUrl = `data:audio/wav;base64,${buffer.toString('base64')}`;
     } catch (cause) {
       log.error('[updater] failed to read move sound:', cause);
-      this.moveSoundDataUrl = ''; // empty → the renderer just skips the preview
+      dataUrl = ''; // empty → the renderer just skips the preview
     }
-    return this.moveSoundDataUrl;
+    this.moveSoundBySet.set(set, dataUrl);
+    return dataUrl;
+  }
+
+  // The bundled sound sets + ambience tracks, read once from dist/audio/index.json (generated at build
+  // time by copy-assets — the runtime never does a readdir over the asar). A read/parse failure falls back
+  // to a minimal, always-valid set so the settings dropdowns still populate.
+  private audioOptions: AudioOptions | null = null;
+  private async readAudioOptions(): Promise<AudioOptions> {
+    if (this.audioOptions !== null) return this.audioOptions;
+    try {
+      const text = await fs.readFile(path.join(__dirname, '../audio/index.json'), 'utf8');
+      const parsed = JSON.parse(text) as { soundSets?: unknown; ambientTracks?: unknown };
+      const asStringArray = (value: unknown): string[] =>
+        Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : [];
+      const soundSets = asStringArray(parsed.soundSets);
+      this.audioOptions = {
+        soundSets: soundSets.length > 0 ? soundSets : [DEFAULT_SOUND_SET],
+        ambientTracks: asStringArray(parsed.ambientTracks),
+      };
+    } catch (cause) {
+      log.warn('[updater] failed to read audio index — using defaults:', cause);
+      this.audioOptions = { soundSets: [DEFAULT_SOUND_SET], ambientTracks: [] };
+    }
+    return this.audioOptions;
   }
 
   // ── autoUpdater event mapping ─────────────────────────────────────────

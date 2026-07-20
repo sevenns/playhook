@@ -9,6 +9,7 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
 import type {
   AppSettings,
+  AudioOptions,
   AutoUpdateMode,
   LanguageMode,
   SettingsApi,
@@ -45,6 +46,9 @@ const CHANNELS = {
   appVersionRequest: 'app:version',
   appIconRequest: 'app:icon',
   moveSoundRequest: 'app:move-sound',
+  settingsSetSoundSet: 'settings:set-sound-set',
+  settingsSetAmbientTrack: 'settings:set-ambient-track',
+  audioOptionsRequest: 'app:audio-options',
   openLogs: 'app:open-logs',
   openGamesFolder: 'app:open-games-folder',
   wallpaperPick: 'wallpaper:pick',
@@ -59,8 +63,17 @@ const api: SettingsApi = {
   getAppIcon(): Promise<string> {
     return ipcRenderer.invoke(CHANNELS.appIconRequest) as Promise<string>;
   },
-  getMoveSound(): Promise<string> {
-    return ipcRenderer.invoke(CHANNELS.moveSoundRequest) as Promise<string>;
+  getMoveSound(set: string): Promise<string> {
+    return ipcRenderer.invoke(CHANNELS.moveSoundRequest, set) as Promise<string>;
+  },
+  getAudioOptions(): Promise<AudioOptions> {
+    return ipcRenderer.invoke(CHANNELS.audioOptionsRequest) as Promise<AudioOptions>;
+  },
+  setSoundSet(set: string): void {
+    ipcRenderer.send(CHANNELS.settingsSetSoundSet, set);
+  },
+  setAmbientTrack(track: string | null): void {
+    ipcRenderer.send(CHANNELS.settingsSetAmbientTrack, track);
   },
   getSettings(): Promise<AppSettings> {
     return ipcRenderer.invoke(CHANNELS.settingsRequest) as Promise<AppSettings>;

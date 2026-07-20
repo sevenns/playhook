@@ -85,6 +85,8 @@ const disableSilentInstallSwitch = req('disable-silent-install');
 const steamAutoLaunchSwitch = req('steam-auto-launch');
 const steamAutoLaunchField = req('steam-auto-launch-field');
 const steamAutoLaunchHint = req('steam-auto-launch-hint');
+const soundSetDropdown = req('sound-set');
+const ambientDropdown = req('ambient-track');
 const musicSlider = req('music-volume');
 const musicValue = req('music-volume-value');
 const sfxSlider = req('sfx-volume');
@@ -154,12 +156,64 @@ function setSliderPercent(el: HTMLElement, percent: number): void {
   (el as HTMLElement & { value?: string }).value = String(percent);
 }
 
-// The default "move" UI sound, loaded as a data URL (settings CSP allows media-src data:). Played as a
-// volume preview when a slider is released. Null until it loads (or if it failed to load).
+// The selected set's "move" UI sound, loaded as a data URL (settings CSP allows media-src data:). Played
+// as a volume preview when a slider is released. Null until it loads (or if it failed). Reloaded whenever
+// the sound-set dropdown changes, so the preview reflects the CHOSEN set — the set is passed to main so a
+// just-changed dropdown previews the new set without racing the on-disk settings write.
 let moveSound: HTMLAudioElement | null = null;
-void window.settingsApi.getMoveSound().then((url) => {
-  if (url !== '') moveSound = new Audio(url);
-});
+function loadMoveSound(set: string): void {
+  void window.settingsApi.getMoveSound(set).then((url) => {
+    moveSound = url !== '' ? new Audio(url) : null;
+  });
+}
+
+// Cosmetic label for a raw set/track name: split on '-', capitalize each word, join with spaces
+// (e.g. `dark-souls` → `Dark Souls`). These are proper names of bundled sets/tracks — not translated.
+function prettifyName(raw: string): string {
+  return raw
+    .split('-')
+    .filter((word) => word.length > 0)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
+}
+
+// Reads a fluent-dropdown's current value as a string (or null if unset).
+function readDropdownRaw(el: HTMLElement): string | null {
+  const raw = (el as HTMLElement & { value?: unknown }).value;
+  return typeof raw === 'string' ? raw : null;
+}
+
+// Fills the navigation-sound-set dropdown from the bundled set names (raw values, prettified labels).
+function buildSoundSetOptions(sets: readonly string[]): void {
+  const listbox = soundSetDropdown.querySelector('fluent-listbox');
+  if (listbox === null) return;
+  listbox.replaceChildren(
+    ...sets.map((name) => {
+      const option = document.createElement('fluent-option');
+      option.setAttribute('value', name);
+      option.textContent = prettifyName(name);
+      return option;
+    }),
+  );
+}
+
+// Fills the ambience dropdown: a "No ambience" entry (value '' → null) plus a prettified option per track
+// (value = the raw file name main reads back, label = the extension-stripped, prettified name).
+function buildAmbientOptions(tracks: readonly string[]): void {
+  const listbox = ambientDropdown.querySelector('fluent-listbox');
+  if (listbox === null) return;
+  const none = document.createElement('fluent-option');
+  none.setAttribute('value', '');
+  none.setAttribute('data-i18n', 'settings.ambientNone');
+  none.textContent = translator('settings.ambientNone');
+  const options = tracks.map((track) => {
+    const option = document.createElement('fluent-option');
+    option.setAttribute('value', track);
+    option.textContent = prettifyName(track.replace(/\.[^.]+$/, ''));
+    return option;
+  });
+  listbox.replaceChildren(none, ...options);
+}
 
 // Plays the move sound at the slider's current level — the "how loud is this" preview.
 function previewVolume(slider: HTMLElement): void {
@@ -311,6 +365,18 @@ disableSilentInstallSwitch.addEventListener('change', () => {
 wireVolumeSlider(musicSlider, musicValue, (v) => window.settingsApi.setMusicVolume(v));
 wireVolumeSlider(sfxSlider, sfxValue, (v) => window.settingsApi.setSfxVolume(v));
 
+soundSetDropdown.addEventListener('change', () => {
+  const value = readDropdownRaw(soundSetDropdown);
+  if (value === null) return;
+  window.settingsApi.setSoundSet(value);
+  loadMoveSound(value); // preview the newly-chosen set on the next slider release
+});
+ambientDropdown.addEventListener('change', () => {
+  const value = readDropdownRaw(ambientDropdown);
+  if (value === null) return;
+  window.settingsApi.setAmbientTrack(value === '' ? null : value);
+});
+
 openLogsBtn.addEventListener('click', () => window.settingsApi.openLogs());
 openGamesBtn.addEventListener('click', () => window.settingsApi.openGamesFolder());
 resetBtn.addEventListener('click', () => {
@@ -375,6 +441,9 @@ function applySettings(settings: AppSettings): void {
   setChecked(alwaysShowEmptySwitch, settings.alwaysShowEmptyScreen);
   setChecked(disableSilentInstallSwitch, settings.disableSilentInstall);
   setChecked(steamAutoLaunchSwitch, settings.steamAutoLaunch);
+  setDropdownValue(soundSetDropdown, settings.soundSet);
+  setDropdownValue(ambientDropdown, settings.ambientTrack ?? '');
+  loadMoveSound(settings.soundSet); // preview uses the current set (and after a Reset, the default)
   const musicPercent = Math.round(settings.musicVolume * 100);
   const sfxPercent = Math.round(settings.sfxVolume * 100);
   setSliderPercent(musicSlider, musicPercent);
@@ -408,6 +477,10 @@ function applyLocale(locale: Locale): void {
   refreshDropdownDisplay(autoUpdateGroup);
   refreshDropdownDisplay(themeGroup);
   refreshDropdownDisplay(languageGroup);
+  // The ambience dropdown's "No ambience" option is localized; re-assert so the closed control re-renders
+  // in the new language (set/track names are proper nouns — unchanged, but re-asserting is harmless).
+  refreshDropdownDisplay(soundSetDropdown);
+  refreshDropdownDisplay(ambientDropdown);
   renderTitlebarVersion();
   if (lastStatus !== null) render(lastStatus);
 }
@@ -416,14 +489,19 @@ async function init(): Promise<void> {
   // Subscribe BEFORE requesting the initial snapshot, so a push arriving in between isn't lost.
   window.settingsApi.onUpdateStatus(render);
   window.settingsApi.onLanguageUpdate(applyLocale);
-  const [version, icon, settings, status, locale, steamAvailable] = await Promise.all([
+  const [version, icon, settings, status, locale, steamAvailable, audioOptions] = await Promise.all([
     window.settingsApi.getAppVersion(),
     window.settingsApi.getAppIcon(),
     window.settingsApi.getSettings(),
     window.settingsApi.requestUpdateStatus(),
     window.settingsApi.getLanguage(),
     window.settingsApi.isSteamAvailable(),
+    window.settingsApi.getAudioOptions(),
   ]);
+  // Populate the Audio dropdowns from the bundle BEFORE applySettings sets their values (a value with no
+  // matching option wouldn't display).
+  buildSoundSetOptions(audioOptions.soundSets);
+  buildAmbientOptions(audioOptions.ambientTracks);
   appVersion = version;
   // Title bar: [icon] Playhook (version). Hide the <img> if the icon couldn't be read (empty string).
   if (icon !== '') titlebarIcon.src = icon;

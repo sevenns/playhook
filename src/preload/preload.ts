@@ -27,6 +27,8 @@ const CHANNELS = {
   errorShow: 'error:show',
   audioUpdate: 'audio:update',
   audioRequest: 'audio:request',
+  ambientUpdate: 'ambient:update',
+  ambientRequest: 'ambient:request',
   windowFocus: 'window:focus',
   heroUpdate: 'hero:update',
   heroRequest: 'hero:request',
@@ -97,6 +99,14 @@ const api: RendererApi = {
   },
   requestAudio(): Promise<AudioAssets | null> {
     return ipcRenderer.invoke(CHANNELS.audioRequest) as Promise<AudioAssets | null>;
+  },
+  onAmbientUpdate(callback: (url: string | null) => void): void {
+    ipcRenderer.on(CHANNELS.ambientUpdate, (_event: IpcRendererEvent, url: string | null) => {
+      callback(url);
+    });
+  },
+  requestAmbient(): Promise<string | null> {
+    return ipcRenderer.invoke(CHANNELS.ambientRequest) as Promise<string | null>;
   },
   onHeroUpdate(callback: (assets: HeroAssets | null) => void): void {
     ipcRenderer.on(CHANNELS.heroUpdate, (_event: IpcRendererEvent, assets: HeroAssets | null) => {

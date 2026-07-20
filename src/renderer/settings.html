@@ -176,6 +176,22 @@
         <fluent-text weight="semibold" size="500" block data-i18n="settings.sectionAudio"
           >Audio</fluent-text
         >
+        <!-- Navigation sound set: options are filled in from the bundle at runtime (settings.ts init). -->
+        <div class="field-row">
+          <label for="sound-set" data-i18n="settings.soundSet">Navigation sounds</label>
+          <fluent-dropdown id="sound-set" name="sound-set">
+            <fluent-listbox></fluent-listbox>
+          </fluent-dropdown>
+        </div>
+        <!-- Default background ambience. "No ambience" (value="") is static; tracks are added at runtime. -->
+        <div class="field-row">
+          <label for="ambient-track" data-i18n="settings.ambientTrack">Background ambience</label>
+          <fluent-dropdown id="ambient-track" name="ambient-track">
+            <fluent-listbox>
+              <fluent-option value="" data-i18n="settings.ambientNone">No ambience</fluent-option>
+            </fluent-listbox>
+          </fluent-dropdown>
+        </div>
         <div class="slider-row">
           <label for="music-volume" data-i18n="settings.musicVolume">Music volume</label>
           <fluent-slider id="music-volume" min="0" max="100" step="1"></fluent-slider>
