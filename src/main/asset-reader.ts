@@ -290,17 +290,20 @@ export class AssetReader {
   private defaultAudioCache: { set: string; assets: AudioAssets } | undefined;
 
   /**
-   * The chosen navigation sound set if its folder exists, else the bundled default (winhanced). A missing
-   * folder is a user-facing misconfiguration, so it is logged; an individual slot missing WITHIN a set is
-   * not (that slot just stays silent — sets are expected complete).
+   * The chosen navigation sound set if it is present, else the bundled default (winhanced). A missing set
+   * is a user-facing misconfiguration, so it is logged; an individual slot missing WITHIN a set is not
+   * (that slot just stays silent — sets are expected complete).
+   *
+   * Presence is probed by statting the set's move.wav — a FILE — not the set DIRECTORY: inside the packaged
+   * asar a directory stat is unreliable (it made every non-default set silently fall back to winhanced),
+   * whereas a file stat works through Electron's shim. Mirrors readAmbientDataUrl's file existence check.
    */
   private async effectiveSoundSet(): Promise<string> {
     const set = await this.deps.getSoundSet();
-    if (set !== DEFAULT_SOUND_SET && !(await fse.pathExists(soundSetDir(set)))) {
-      log.warn(`[audio] sound set "${set}" not found — falling back to "${DEFAULT_SOUND_SET}"`);
-      return DEFAULT_SOUND_SET;
-    }
-    return set;
+    if (set === DEFAULT_SOUND_SET) return set;
+    if (await fse.pathExists(defaultSfxPath(set, 'navigate'))) return set;
+    log.warn(`[audio] sound set "${set}" not found — falling back to "${DEFAULT_SOUND_SET}"`);
+    return DEFAULT_SOUND_SET;
   }
 
   /**

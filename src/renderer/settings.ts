@@ -514,6 +514,13 @@ async function init(): Promise<void> {
   render(status);
   // Seed the locale last so it localizes the freshly-populated DOM and title-bar suffix in one pass.
   applyLocale(locale);
+  // The Audio dropdowns' options were built THIS tick; fluent registers slotted <fluent-option>s on a
+  // microtask, so applySettings' synchronous value set above found no options yet and was dropped (both
+  // dropdowns showed blank). Re-assert on the next frame, once the options are registered.
+  requestAnimationFrame(() => {
+    setDropdownValue(soundSetDropdown, settings.soundSet);
+    setDropdownValue(ambientDropdown, settings.ambientTrack ?? '');
+  });
 }
 
 void init();
