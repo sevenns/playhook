@@ -24,6 +24,7 @@ import { createLinuxPlatform } from './platform/linux';
 import { toRunGameId } from './platform/steam-appid';
 import { launchWhenSteamReady } from './daemon-launch';
 import { systemEnv } from './appimage-env';
+import { isSteamPipeReady } from './platform/steam-pipe.linux';
 
 /** Electron's `app.getPath('userData')` on Linux, reproduced without Electron: `$XDG_CONFIG_HOME/playhook`. */
 function userDataDir(home: string): string {
@@ -94,6 +95,18 @@ export function startDaemon(): void {
   // Guards against overlapping launch attempts while one is being confirmed (the confirm window is
   // tens of seconds, and DriveWatcher keeps scanning throughout).
   let launching = false;
+  /**
+   * Whether the next insert is the card that was ALREADY in the slot when the session started, as opposed
+   * to one the user pushed in. Only the former races the Steam client coming up, and only it needs the
+   * settle window.
+   */
+  let coldStart = true;
+  /**
+   * Set when a cold-start attempt failed. Steam is then wedged on "Launching…" and ignores everything
+   * until the user cancels, so asking again is pointless noise — we stand down until the card is actually
+   * removed and re-inserted, which is both a fresh signal and (by then) a settled session.
+   */
+  let standDown = false;
 
   // The automount sweep is wired unconditionally: this daemon only ever runs inside Game Mode (systemd
   // starts it with gamescope-session.target), and that is exactly the session where gamescope automounts
@@ -136,26 +149,44 @@ export function startDaemon(): void {
         }
 
         // Serialized: a second card event while a launch is being confirmed must not fire its own
-        // request. The retry loop itself re-checks "already running", so nothing is lost by waiting.
+        // request. The confirm step re-checks "already running", so nothing is lost by waiting.
         if (launching) {
           log.info('[daemon] card detected while a launch is already in progress — ignoring');
           return;
         }
+        if (standDown) {
+          log.info('[daemon] standing down after a failed launch — re-insert the card to retry');
+          return;
+        }
+
+        const isColdStart = coldStart;
+        coldStart = false;
         launching = true;
         try {
-          log.info(`[daemon] card at "${root}" — requesting launch`);
-          const outcome = await launchWhenSteamReady({
-            isAppRunning: () => platform.processMonitor.isSteamGameRunning(steamAppIdU32, []),
-            // "Steam is up" = its UI helper is running. The bare `steam` script exists as a launcher
-            // wrapper long before the client can accept a rungameid, which is exactly the trap that made
-            // the tile sit on "Launching…" — so key on steamwebhelper instead.
-            isSteamReady: async () =>
-              (await platform.processMonitor.snapshot()).hasImageName('steamwebhelper'),
-            launch: () => spawnSteamUri(steamAppIdU32),
-            sleep,
-            log: (message) => log.info(`[daemon] ${message}`),
-          });
+          log.info(
+            `[daemon] card at "${root}" — requesting launch${isColdStart ? ' (session start)' : ''}`,
+          );
+          const outcome = await launchWhenSteamReady(
+            {
+              isAppRunning: () => platform.processMonitor.isSteamGameRunning(steamAppIdU32, []),
+              // The client's own FIFO, not a process name: see steam-pipe.linux.ts for why every
+              // process-based signal is even earlier and therefore worse.
+              isSteamReady: () => isSteamPipeReady(home),
+              launch: () => spawnSteamUri(steamAppIdU32),
+              sleep,
+              log: (message) => log.info(`[daemon] ${message}`),
+            },
+            // A card inserted into a session that has been running for a while needs no settle window —
+            // Steam has long been able to launch. Only the session-start case races it.
+            isColdStart ? {} : { settleMs: 0 },
+          );
           log.info(`[daemon] launch outcome: ${outcome}`);
+          if (outcome === 'gave-up' || outcome === 'steam-unavailable') {
+            standDown = true;
+            log.warn(
+              '[daemon] launch did not take effect — not asking again until the card returns',
+            );
+          }
         } finally {
           launching = false;
         }
@@ -166,6 +197,13 @@ export function startDaemon(): void {
         );
       }
     })();
+  });
+
+  // A removal is the reset: the next insert is a deliberate user action, in a session that is by then
+  // fully up — the one case we know works.
+  watcher.onRemove(() => {
+    if (standDown) log.info('[daemon] card removed — ready to try again on re-insert');
+    standDown = false;
   });
 
   watcher.onError((error) => log.warn('[daemon] watcher error:', error.message));

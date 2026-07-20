@@ -20,10 +20,21 @@
 const STEAM_READY_TIMEOUT_MS = 3 * 60 * 1000;
 /** Poll interval while waiting for Steam. */
 const STEAM_READY_POLL_MS = 2000;
-/** How long to give Steam to actually start the app after a request, before retrying. */
+/**
+ * How long to wait AFTER the client turns up before sending anything — the client accepts commands
+ * seconds before it can act on them, and a request sent in that window wedges the tile permanently.
+ * 30s is a judgement call, not a measurement: the honest signal does not exist (see steam-pipe.linux.ts),
+ * and the cost of overshooting is a few seconds of waiting, while undershooting costs the whole feature.
+ */
+const STEAM_SETTLE_MS = 30_000;
+/** How long to give Steam to actually start the app before declaring the attempt failed. */
 const LAUNCH_CONFIRM_MS = 20_000;
-/** How many times to ask. */
-const MAX_ATTEMPTS = 3;
+/**
+ * How many times to ask. ONE, deliberately: retrying was tried and measured useless — once the tile is
+ * wedged on "Launching…", Steam ignores every further request (the user's own included) until it is
+ * cancelled by hand. A second request cannot help and only hides the failure.
+ */
+const MAX_ATTEMPTS = 1;
 
 export interface DaemonLaunchDeps {
   /** Whether OUR app is already running (full /proc sweep by SteamAppId). */
@@ -39,6 +50,8 @@ export interface DaemonLaunchDeps {
 export interface DaemonLaunchOptions {
   readonly steamReadyTimeoutMs?: number;
   readonly steamReadyPollMs?: number;
+  /** Pause between "the client is up" and the request. 0 when the session has long been running. */
+  readonly settleMs?: number;
   readonly launchConfirmMs?: number;
   readonly maxAttempts?: number;
 }
@@ -81,6 +94,15 @@ export async function launchWhenSteamReady(
     waited += readyPoll;
   }
   if (waited > 0) deps.log(`waited ${Math.round(waited / 1000)}s for the Steam client`);
+
+  // The client is up but not necessarily able to act yet. Sit out the settle window, bailing out if the
+  // app appears meanwhile (the user pressing the tile themselves).
+  const settle = options.settleMs ?? STEAM_SETTLE_MS;
+  if (settle > 0) {
+    deps.log(`letting Steam settle for ${Math.round(settle / 1000)}s before asking`);
+    await deps.sleep(settle);
+    if (await deps.isAppRunning()) return 'already-running';
+  }
 
   // 2. Ask, confirm, repeat. Steam reports nothing back, so the only honest signal is the app appearing.
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
