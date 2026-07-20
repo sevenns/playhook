@@ -15,6 +15,7 @@ import { GameController } from './ipc';
 import { GlobalGamepad } from './gamepad-global';
 import { createTray, buildTrayMenu, type TrayCallbacks, type TraySteamState } from './tray';
 import { createSteamShortcutService } from './steam-shortcut';
+import { installDaemonUnit, removeDaemonUnit } from './daemon-unit';
 import { UpdaterService } from './updater';
 import { SettingsWindow } from './settings-window';
 import { GameConfigService } from './game-config';
@@ -281,6 +282,12 @@ async function bootstrap(): Promise<void> {
       void dialog.showMessageBox({ type: 'info', title, message });
     },
     onStateChanged: () => refreshTrayMenu(),
+    // Game Mode auto-launch (phase 2): the systemd user unit that watches for a card while in Game Mode
+    // and launches our tile through Steam. Installed with the shortcut, removed with it.
+    installDaemon: async (appImagePath) => {
+      await installDaemonUnit(app.getPath('home'), appImagePath);
+    },
+    removeDaemon: () => removeDaemonUnit(app.getPath('home')),
   });
 
   /** The tray item's state, derived from the service (no separate flag to drift out of sync). */

@@ -51,6 +51,14 @@ export interface SteamShortcutDeps {
   readonly notify: (title: string, message: string) => void;
   /** Rebuilds the tray menu so the item reflects the new state. */
   readonly onStateChanged: () => void;
+  /**
+   * Installs / removes the Game Mode daemon's systemd unit alongside the shortcut (phase 2). The two are
+   * deliberately one action: the daemon's only job is to launch the shortcut, so a daemon without a tile
+   * has nothing to do, and a state where only one of them exists is not worth being able to reach.
+   * Best-effort — a systemd failure must not undo a shortcut that was written successfully.
+   */
+  readonly installDaemon: (appImagePath: string) => Promise<void>;
+  readonly removeDaemon: () => Promise<void>;
 }
 
 export interface SteamShortcutService {
@@ -131,7 +139,12 @@ export function createSteamShortcutService(deps: SteamShortcutDeps): SteamShortc
       if (!(await deps.platform.steamShortcuts.hasShortcut(stored))) {
         log.info('[steam-shortcut] stored shortcut is gone from shortcuts.vdf — forgetting it');
         await persistAppId(null);
+        deps.onStateChanged();
+        return;
       }
+      // Rewrite the daemon unit on every start while a shortcut exists: an in-place update can move
+      // $APPIMAGE, and a unit pointing at the old path would just stop working without a word.
+      await deps.installDaemon(deps.appImagePath);
       deps.onStateChanged();
     },
 
@@ -169,6 +182,10 @@ export function createSteamShortcutService(deps: SteamShortcutDeps): SteamShortc
         }
         await persistAppId(result.appIdU32);
         log.info(`[steam-shortcut] registered appid ${result.appIdU32}`);
+        // The tile is already written and persisted at this point, so a systemd failure must NOT read as
+        // "adding failed" — installDaemon logs its own trouble and the user still gets a working tile,
+        // just without auto-launch on card insertion.
+        await deps.installDaemon(deps.appImagePath);
         deps.notify(t()('steam.addedTitle'), t()('steam.added'));
       } catch (cause) {
         fail(cause);
@@ -192,6 +209,8 @@ export function createSteamShortcutService(deps: SteamShortcutDeps): SteamShortc
         }
         await persistAppId(null);
         log.info(`[steam-shortcut] removed appid ${current}`);
+        // Nothing left for the daemon to launch — tear it down with the tile it served.
+        await deps.removeDaemon();
         deps.notify(t()('steam.removedTitle'), t()('steam.removed'));
       } catch (cause) {
         fail(cause);

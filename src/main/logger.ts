@@ -14,11 +14,25 @@ const RETENTION_DAYS = 14; // keep the last two weeks of day-files; drop older o
 const LOG_FILE_RE = /^main-\d{4}-\d{2}-\d{2}\.log$/;
 
 let logDir: string | null = null;
+// Explicit base directory, set by a process that has no Electron `app` to ask — the Game Mode daemon runs
+// under ELECTRON_RUN_AS_NODE, where `require('electron')` yields a path string and `app` is undefined.
+// The GUI never calls this and keeps resolving through app.getPath() exactly as before.
+let explicitBaseDir: string | null = null;
+
+/**
+ * Points the logger at `baseDir` (logs land in `<baseDir>/logs`). Must be called BEFORE the first log
+ * line — the directory is resolved once and cached. No-op for the GUI process.
+ */
+export function setLogBaseDir(baseDir: string): void {
+  explicitBaseDir = baseDir;
+  logDir = null; // drop a cached dir so a later call actually takes effect
+}
 
 // Resolves (and lazily creates) the log directory, pruning stale day-files the first time.
 function resolveDir(): string {
   if (logDir !== null) return logDir;
-  const dir = path.join(app.getPath('userData'), 'logs');
+  const base = explicitBaseDir ?? app.getPath('userData');
+  const dir = path.join(base, 'logs');
   try {
     fs.mkdirSync(dir, { recursive: true });
   } catch {
