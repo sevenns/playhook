@@ -77,6 +77,20 @@ const sleep = (ms: number): Promise<void> =>
     setTimeout(resolve, ms);
   });
 
+/**
+ * A card reported within this long of the daemon starting was ALREADY in the slot when the Game Mode
+ * session began — nobody can physically insert one in the first seconds of a session.
+ *
+ * Such a card is deliberately ignored. Auto-launching there would drag the user into Playhook every single
+ * time they enter Game Mode with a card left in the slot, even when they came to play something else —
+ * and "take the card out then" is not an answer. The feature exists for the deliberate act of INSERTING a
+ * card, which is an unambiguous "I want to play this".
+ *
+ * It also removes the only situation that could race the Steam client coming up: a card inserted into a
+ * live session meets a Steam that has long been able to launch.
+ */
+const COLD_START_WINDOW_MS = 10_000;
+
 export function startDaemon(): void {
   const home = os.homedir();
   const userData = userDataDir(home);
@@ -95,18 +109,9 @@ export function startDaemon(): void {
   // Guards against overlapping launch attempts while one is being confirmed (the confirm window is
   // tens of seconds, and DriveWatcher keeps scanning throughout).
   let launching = false;
-  /**
-   * Whether the next insert is the card that was ALREADY in the slot when the session started, as opposed
-   * to one the user pushed in. Only the former races the Steam client coming up, and only it needs the
-   * settle window.
-   */
-  let coldStart = true;
-  /**
-   * Set when a cold-start attempt failed. Steam is then wedged on "Launching…" and ignores everything
-   * until the user cancels, so asking again is pointless noise — we stand down until the card is actually
-   * removed and re-inserted, which is both a fresh signal and (by then) a settled session.
-   */
-  let standDown = false;
+  // When this daemon started. See COLD_START_WINDOW_MS — a card found in the first moments was already
+  // in the slot, not inserted by anyone.
+  const startedAt = Date.now();
 
   // The automount sweep is wired unconditionally: this daemon only ever runs inside Game Mode (systemd
   // starts it with gamescope-session.target), and that is exactly the session where gamescope automounts
@@ -148,45 +153,35 @@ export function startDaemon(): void {
           return;
         }
 
+        // The card was already in the slot when the session started → not an insertion, no intent, no
+        // launch. See COLD_START_WINDOW_MS.
+        if (Date.now() - startedAt < COLD_START_WINDOW_MS) {
+          log.info(
+            `[daemon] card at "${root}" was already inserted at session start — not launching`,
+          );
+          return;
+        }
+
         // Serialized: a second card event while a launch is being confirmed must not fire its own
         // request. The confirm step re-checks "already running", so nothing is lost by waiting.
         if (launching) {
           log.info('[daemon] card detected while a launch is already in progress — ignoring');
           return;
         }
-        if (standDown) {
-          log.info('[daemon] standing down after a failed launch — re-insert the card to retry');
-          return;
-        }
 
-        const isColdStart = coldStart;
-        coldStart = false;
         launching = true;
         try {
-          log.info(
-            `[daemon] card at "${root}" — requesting launch${isColdStart ? ' (session start)' : ''}`,
-          );
-          const outcome = await launchWhenSteamReady(
-            {
-              isAppRunning: () => platform.processMonitor.isSteamGameRunning(steamAppIdU32, []),
-              // The client's own FIFO, not a process name: see steam-pipe.linux.ts for why every
-              // process-based signal is even earlier and therefore worse.
-              isSteamReady: () => isSteamPipeReady(home),
-              launch: () => spawnSteamUri(steamAppIdU32),
-              sleep,
-              log: (message) => log.info(`[daemon] ${message}`),
-            },
-            // A card inserted into a session that has been running for a while needs no settle window —
-            // Steam has long been able to launch. Only the session-start case races it.
-            isColdStart ? {} : { settleMs: 0 },
-          );
+          log.info(`[daemon] card at "${root}" — requesting launch`);
+          const outcome = await launchWhenSteamReady({
+            isAppRunning: () => platform.processMonitor.isSteamGameRunning(steamAppIdU32, []),
+            // The client's own FIFO, not a process name: see steam-pipe.linux.ts. By this point Steam has
+            // been up for a while anyway — this only guards against the absurd cases.
+            isSteamReady: () => isSteamPipeReady(home),
+            launch: () => spawnSteamUri(steamAppIdU32),
+            sleep,
+            log: (message) => log.info(`[daemon] ${message}`),
+          });
           log.info(`[daemon] launch outcome: ${outcome}`);
-          if (outcome === 'gave-up' || outcome === 'steam-unavailable') {
-            standDown = true;
-            log.warn(
-              '[daemon] launch did not take effect — not asking again until the card returns',
-            );
-          }
         } finally {
           launching = false;
         }
@@ -197,13 +192,6 @@ export function startDaemon(): void {
         );
       }
     })();
-  });
-
-  // A removal is the reset: the next insert is a deliberate user action, in a session that is by then
-  // fully up — the one case we know works.
-  watcher.onRemove(() => {
-    if (standDown) log.info('[daemon] card removed — ready to try again on re-insert');
-    standDown = false;
   });
 
   watcher.onError((error) => log.warn('[daemon] watcher error:', error.message));

@@ -41,12 +41,7 @@ function makeDeps(script: {
   };
 }
 
-const FAST = {
-  steamReadyPollMs: 1000,
-  launchConfirmMs: 5000,
-  steamReadyTimeoutMs: 60_000,
-  settleMs: 0,
-};
+const FAST = { steamReadyPollMs: 1000, launchConfirmMs: 5000, steamReadyTimeoutMs: 60_000 };
 
 describe('launchWhenSteamReady — waiting for Steam', () => {
   it('does not fire until the Steam client is up', async () => {
@@ -81,41 +76,6 @@ describe('launchWhenSteamReady — waiting for Steam', () => {
     const deps = makeDeps({ steamReadyAfter: Number.MAX_SAFE_INTEGER, appAfterLaunches: null });
     expect(await launchWhenSteamReady(deps, FAST)).toBe('steam-unavailable');
     expect(deps.launches()).toBe(0);
-  });
-});
-
-describe('launchWhenSteamReady — settle window', () => {
-  it('waits after the client turns up before asking', async () => {
-    // The client accepts commands seconds before it can act on them; a request in that window wedges the
-    // tile on "Launching…" permanently. Measured on a Deck: pipe READY at 20:01:15, fired 20:01:16, stuck.
-    const deps = makeDeps({ steamReadyAfter: 0, appAfterLaunches: 1 });
-    expect(await launchWhenSteamReady(deps, { ...FAST, settleMs: 30_000 })).toBe('launched');
-    expect(deps.slept()).toBe(30_000 + FAST.launchConfirmMs);
-  });
-
-  it('skips the settle window when told to (card inserted into a live session)', async () => {
-    const deps = makeDeps({ steamReadyAfter: 0, appAfterLaunches: 1 });
-    await launchWhenSteamReady(deps, { ...FAST, settleMs: 0 });
-    expect(deps.slept()).toBe(FAST.launchConfirmMs);
-  });
-
-  it('does not fire if the user launched it during the settle window', async () => {
-    let appRunning = false;
-    let launches = 0;
-    const deps: DaemonLaunchDeps = {
-      isSteamReady: () => Promise.resolve(true),
-      isAppRunning: () => Promise.resolve(appRunning),
-      launch: () => {
-        launches += 1;
-      },
-      sleep: () => {
-        appRunning = true; // the user pressed the tile while we waited
-        return Promise.resolve();
-      },
-      log: () => {},
-    };
-    expect(await launchWhenSteamReady(deps, { ...FAST, settleMs: 30_000 })).toBe('already-running');
-    expect(launches).toBe(0);
   });
 });
 

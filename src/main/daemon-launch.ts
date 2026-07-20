@@ -1,32 +1,20 @@
 // Asking Steam to launch our tile, reliably. Pure orchestration with injected effects, so the retry
 // policy is unit-tested (test/daemon-launch.test.ts) instead of being discovered on a Deck.
 //
-// Why this exists: the daemon is started by systemd together with gamescope-session.target, i.e. at the
-// very beginning of a Game Mode session — while the Steam client itself is still coming up. Firing
-// `steam://rungameid/…` at that moment does not fail loudly; Steam accepts the request and the tile sits
-// on "Launching…" indefinitely. Measured on a Deck: the daemon fired at 16:05:56 and the app only started
-// at 16:09:39, after the user cancelled and pressed Play by hand. The daemon's pid was LOWER than the
-// Steam client's — we were talking to a process that did not exist yet.
+// Why this exists: a request sent to a Steam client that cannot yet act on it does NOT fail loudly —
+// Steam accepts it, the tile goes to "Launching…", and it stays there forever, ignoring every later
+// request (the user's own included) until cancelled by hand. Measured on a Deck, firing one second after
+// the client opened its pipe produced exactly that.
 //
-// How long Steam needs before it can accept a request is NOT known — the logs only show that it could not
-// at t+3s. That is precisely why there is no fixed delay here: any number would be a guess.
-//
-// So: wait until Steam looks up, then launch, then VERIFY the app appeared and retry if it did not. Note
-// which of those two carries the weight — the readiness probe is a heuristic (is `steamwebhelper` running?
-// nobody documents what "ready" means), while the verify-and-retry loop is what actually makes this
-// correct: even if the probe lies and we fire too early, the next attempt catches it.
+// The daemon avoids that window entirely now: it never launches at session start (see daemon.ts,
+// COLD_START_WINDOW_MS), only on a real card insertion into a session that has been running. This module
+// is therefore the belt to that braces — check Steam is up, ask once, and report honestly whether the app
+// actually appeared.
 
 /** How long to wait for the Steam client to appear before giving up entirely. */
 const STEAM_READY_TIMEOUT_MS = 3 * 60 * 1000;
 /** Poll interval while waiting for Steam. */
 const STEAM_READY_POLL_MS = 2000;
-/**
- * How long to wait AFTER the client turns up before sending anything — the client accepts commands
- * seconds before it can act on them, and a request sent in that window wedges the tile permanently.
- * 30s is a judgement call, not a measurement: the honest signal does not exist (see steam-pipe.linux.ts),
- * and the cost of overshooting is a few seconds of waiting, while undershooting costs the whole feature.
- */
-const STEAM_SETTLE_MS = 30_000;
 /** How long to give Steam to actually start the app before declaring the attempt failed. */
 const LAUNCH_CONFIRM_MS = 20_000;
 /**
@@ -50,8 +38,6 @@ export interface DaemonLaunchDeps {
 export interface DaemonLaunchOptions {
   readonly steamReadyTimeoutMs?: number;
   readonly steamReadyPollMs?: number;
-  /** Pause between "the client is up" and the request. 0 when the session has long been running. */
-  readonly settleMs?: number;
   readonly launchConfirmMs?: number;
   readonly maxAttempts?: number;
 }
@@ -94,15 +80,6 @@ export async function launchWhenSteamReady(
     waited += readyPoll;
   }
   if (waited > 0) deps.log(`waited ${Math.round(waited / 1000)}s for the Steam client`);
-
-  // The client is up but not necessarily able to act yet. Sit out the settle window, bailing out if the
-  // app appears meanwhile (the user pressing the tile themselves).
-  const settle = options.settleMs ?? STEAM_SETTLE_MS;
-  if (settle > 0) {
-    deps.log(`letting Steam settle for ${Math.round(settle / 1000)}s before asking`);
-    await deps.sleep(settle);
-    if (await deps.isAppRunning()) return 'already-running';
-  }
 
   // 2. Ask, confirm, repeat. Steam reports nothing back, so the only honest signal is the app appearing.
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
