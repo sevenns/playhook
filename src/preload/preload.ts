@@ -7,7 +7,15 @@
 // catch a *missing* channel though — that completeness is guarded by the ipc-channels
 // unit test (shared/types.ts is the single source of truth).
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
-import type { AppState, AudioAssets, AudioVolumes, GameLibrary, HeroAssets, RendererApi } from '../shared/types';
+import type {
+  AppState,
+  AudioAssets,
+  AudioVolumes,
+  GameLibrary,
+  HeroAssets,
+  RendererApi,
+  SfxName,
+} from '../shared/types';
 import type { IPC } from '../shared/types';
 import type { Locale } from '../shared/i18n/index';
 
@@ -29,6 +37,7 @@ const CHANNELS = {
   audioRequest: 'audio:request',
   ambientUpdate: 'ambient:update',
   ambientRequest: 'ambient:request',
+  sfxPlay: 'sfx:play',
   windowFocus: 'window:focus',
   heroUpdate: 'hero:update',
   heroRequest: 'hero:request',
@@ -107,6 +116,11 @@ const api: RendererApi = {
   },
   requestAmbient(): Promise<string | null> {
     return ipcRenderer.invoke(CHANNELS.ambientRequest) as Promise<string | null>;
+  },
+  onSfxPlay(callback: (name: SfxName) => void): void {
+    ipcRenderer.on(CHANNELS.sfxPlay, (_event: IpcRendererEvent, name: SfxName) => {
+      callback(name);
+    });
   },
   onHeroUpdate(callback: (assets: HeroAssets | null) => void): void {
     ipcRenderer.on(CHANNELS.heroUpdate, (_event: IpcRendererEvent, assets: HeroAssets | null) => {

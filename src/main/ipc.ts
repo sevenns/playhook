@@ -17,6 +17,7 @@ import {
   type ResolvedCopyInstall,
   type LaunchTarget,
   type ResolvedManifest,
+  type SfxName,
   type Stats,
   type WallpaperResult,
 } from '../shared/types';
@@ -339,6 +340,7 @@ export class GameController {
     getState: () => this.deps.state.get(),
     isCardPresent: () => this.cardPresent,
     enterReady: (info) => this.enterReady(info),
+    onInstallCompleted: () => this.playSfx('play'),
     steamLocator: () => this.deps.platform.steamLocator,
   });
 
@@ -1330,6 +1332,9 @@ export class GameController {
       const installedInfo = await this.buildGameInfo(manifest, currentStats);
       log.info(`[install] completed id=${manifest.raw.id} dir="${install.dir}"`);
       this.enterReady(installedInfo);
+      // Audible "install finished" cue — covers both an installer run and the `copy` type (both reach
+      // here only on a real completion, never on a plain card insert of an already-installed game).
+      this.playSfx('play');
       window.showAndFocus();
     } catch (cause) {
       if (cause instanceof LaunchAbortedError) return; // aborted by shutdown or a card swap
@@ -1806,6 +1811,14 @@ export class GameController {
     const browserWindow = this.deps.window.browserWindow;
     if (browserWindow !== null && !browserWindow.isDestroyed()) {
       browserWindow.webContents.send(IPC.ambientUpdate, url);
+    }
+  }
+
+  /** Asks the game renderer to play a one-shot UI sound (main owns no <audio> — the renderer does). */
+  private playSfx(name: SfxName): void {
+    const browserWindow = this.deps.window.browserWindow;
+    if (browserWindow !== null && !browserWindow.isDestroyed()) {
+      browserWindow.webContents.send(IPC.sfxPlay, name);
     }
   }
 

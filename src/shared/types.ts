@@ -568,6 +568,8 @@ export const IPC = {
   ambientUpdate: 'ambient:update',
   /** game-renderer → main (invoke): request the current ambience data URL (on window startup). */
   ambientRequest: 'ambient:request',
+  /** main → game-renderer: play a one-shot UI sound (payload SfxName), e.g. "play" when an install ends. */
+  sfxPlay: 'sfx:play',
   /** main → renderer: hero background images for the current game (or null when no card). */
   heroUpdate: 'hero:update',
   /** renderer → main: request the current hero images (on window startup). */
@@ -815,6 +817,8 @@ export interface RendererApi {
   onAmbientUpdate(callback: (url: string | null) => void): void;
   /** The current default-ambience data URL (on window startup); null when no ambience is set. */
   requestAmbient(): Promise<string | null>;
+  /** Play a one-shot UI sound pushed from main (e.g. the "play" sound when an install completes). */
+  onSfxPlay(callback: (name: SfxName) => void): void;
   onHeroUpdate(callback: (assets: HeroAssets | null) => void): void;
   requestHero(): Promise<HeroAssets | null>;
   /** Live game-list updates (the card's games as {id,title}), pushed once per card (null when no card). */
