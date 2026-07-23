@@ -34,7 +34,7 @@ The card can carry the game itself, an **installer** for heavy games
 
 <div align="center">
   <img src="assets/github/playhook-bloodborne-example.jpg" width="760" alt="Playhook game card — Bloodborne">
-  <p><em>The game card, previewed in the <a href="https://sevenns.github.io/playhook-collection/">Playhook Collection</a> showcase — a static reproduction of this UI you can try in the browser (the atmosphere lives in the background music and UI sounds, which a screenshot can't carry).</em></p>
+  <p><em>The Playhook game card, running Bloodborne. Ready-made cards like this — <code>game.json</code>, hero art and sounds — live in the <a href="https://sevenns.github.io/playhook-collection/">Playhook Collection</a>, whose UI you can also try right in the browser.</em></p>
 </div>
 
 ---
