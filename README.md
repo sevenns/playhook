@@ -32,7 +32,10 @@ The card can carry the game itself, an **installer** for heavy games
 > against directory traversal and an allowlist before anything is read or written. See
 > [Preparing a card](#preparing-a-card-gamejson) for the exact rules.
 
-<!-- TODO: add a screenshot / GIF of the game card window here once UI assets exist. -->
+<div align="center">
+  <img src="assets/github/playhook-bloodborne-example.jpg" width="760" alt="Playhook game card — Bloodborne">
+  <p><em>The game card, previewed in the <a href="https://sevenns.github.io/playhook-collection/">Playhook Collection</a> showcase — a static reproduction of this UI you can try in the browser (the atmosphere lives in the background music and UI sounds, which a screenshot can't carry).</em></p>
+</div>
 
 ---
 
@@ -91,6 +94,11 @@ Tray menu: **Show** (bring back the window), **Open logs** (open the log folder)
 ---
 
 ## Preparing a card: `game.json`
+
+> **Don't want to write one by hand?** The [**Playhook Collection**](https://sevenns.github.io/playhook-collection/)
+> is a growing set of ready-made, verified manifests — sounds, hero art, save paths and all. Browse it,
+> preview a game, and grab its `game.json` + assets for your card. Source and contribution guide:
+> [github.com/sevenns/playhook-collection](https://github.com/sevenns/playhook-collection).
 
 Place a `game.json` in the **root** of the card. One game per card. The paths
 `executable` / `heroImage` / `saveOnCard` are **relative to the card root**; `pcSavePath` is
@@ -657,6 +665,9 @@ functional style). Please run `npm run typecheck` before opening a PR.
 
 ## FAQ
 
+- **Do I have to write `game.json` myself?** No — the [**Playhook Collection**](https://sevenns.github.io/playhook-collection/)
+  hosts ready-made, verified manifests you can browse and drop straight onto a card. Write your own only
+  for a game it doesn't cover yet (and consider [contributing it back](https://github.com/sevenns/playhook-collection)).
 - **Is the SmartScreen warning normal?** Yes. The builds aren't code-signed, so Windows warns on
   first run. Choose *More info → Run anyway*. Auto-update still works without signing.
 - **Does it run on the Steam Deck / Linux?** **Yes.** The same Windows game cards launch through Proton
