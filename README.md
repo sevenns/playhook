@@ -41,14 +41,16 @@ The card can carry the game itself, an **installer** for heavy games
 
 ## Download (for users)
 
-Grab the latest installer from the [**Releases**](https://github.com/sevenns/playhook/releases/latest)
-page. Two builds are published:
+Grab the latest build from the [**Releases**](https://github.com/sevenns/playhook/releases/latest)
+page. Three are published:
 
-- **NSIS installer** (`.exe`, recommended) — installs the app, configures autostart reliably,
+- **NSIS installer** (`.exe`, recommended on Windows) — installs the app, configures autostart reliably,
   and **updates itself** automatically.
 - **portable** (`.exe`) — runs without installation; no auto-update, autostart is best-effort.
+- **AppImage** — the Steam Deck / Linux build; it self-updates too. See
+  [Steam Deck](#steam-deck-linux--steamos) for the setup.
 
-A couple of things to expect on first run:
+A couple of things to expect on first run **on Windows**:
 
 - **SmartScreen warning.** The builds are not code-signed, so Windows SmartScreen will warn you
   the first time. This is expected — choose *More info → Run anyway*.
@@ -60,36 +62,94 @@ A couple of things to expect on first run:
 
 1. **Install** (or unzip the portable build) and run it — it sits quietly in the tray.
 2. **Insert a card** that has a `game.json` in its root (see below).
-3. A **game card window** appears with the title, last-played date, and hours played.
+3. A **game card window** appears with the hero art and the game title (playtime stats live in the
+   **More** ⋯ menu).
 4. Press **A** on the gamepad (or click **Play**) — saves sync and the game launches.
 5. **Close the game** — Playhook counts the time, updates stats, and syncs saves back to the card.
+
+Don't want to hand-write a `game.json`? The tray has a **Configure game** editor that writes one onto
+the inserted card for you — see [Settings and the card editor](#settings-and-the-card-editor).
 
 ---
 
 ## How it works
 
-1. Playhook starts hidden in the tray. With no game card inserted, there is no window.
-2. Insert a card with a valid `game.json` and a window appears showing the background art, the
-   title, the last launch date, and the hours played (state `ready`). If the manifest has no
-   `heroImage`, a bundled wallpaper is used as the background.
+1. Playhook starts hidden in the tray. With no game card inserted, there is no window (unless you
+   enable *Always show the no-card screen* in Settings).
+2. Insert a card with a valid `game.json` and a window appears: the hero art as the background and a
+   bottom bar with the **Play** button on the left, the game title in the middle and the **More** (⋯)
+   button on the right (state `ready`). If the manifest has no `heroImage`, a bundled wallpaper — or
+   your own, set in Settings — is used.
 3. Press **A** on the gamepad (the window is force-focused) **or** click **Play**.
 4. Saves are synced card → PC and the game launches; it takes the foreground over the launcher.
 5. When the game closes, Playhook counts the play time, updates the statistics, and syncs the
    saves PC → card. The game card window returns.
 
-If a launch fails, the window stays on the normal game screen and the reason is shown in a small
-**error popup** on the right (close it with **B** / a click, then retry). Press the **Info** (ⓘ)
-button to see playtime stats in the same kind of popup.
+**The More (⋯) button** opens the **Details** menu — one right-side popup that carries everything
+besides Play. It always shows the game's stats (last played, playtime, launches) and, depending on the
+state, offers:
 
-The empty screen (summoned with no card) reuses the same layout over the wallpaper: "Insert a game
-card" and a **Hide** (✕) button on the right to send the window back to the tray.
+- **Install** / **Uninstall** — for [install-mode](#install-mode-heavy-games-on-slow-media) and
+  [Steam-mode](#steam-mode-launch-and-install-steam-games) cards (an uninstalled game has no Play
+  button at all — you start from here);
+- **Force close** — while a game is running, kills it and still records the session and syncs saves;
+- **Select game** — on a card that carries several games (see [`game.json`](#preparing-a-card-gamejson));
+- **System** — a submenu with Shutdown / Reboot / Sleep (each behind a confirmation) and
+  **Minimize Playhook**, which sends the window back to the tray. In Game Mode that last item is
+  **Close Playhook** (a full quit) instead, since there is no tray to minimize into.
 
-When the launcher is hidden you can **hold Start + Back** on the gamepad to re-summon it. This
-hotkey is intentionally ignored **while a game is running** — pulling the launcher over a running
-game only causes focus trouble.
+Every confirmation and every error uses that same popup; close it with **B** or a click on **Close**.
+If a launch fails, the reason appears there and you can simply retry.
 
-Tray menu: **Show** (bring back the window), **Open logs** (open the log folder), **Quit**
-(close the app completely).
+The empty screen (no card inserted) reuses the same layout over the wallpaper: "Insert a game card",
+no Play button, and **More** offering just the *System* submenu (where *Minimize Playhook* lives).
+
+When the launcher is hidden you can **hold Start + Back** on the gamepad to re-summon it (the hotkey
+can be turned off in Settings). It is intentionally ignored **while a game is running** — pulling the
+launcher over a running game only causes focus trouble.
+
+Tray menu: **Show launcher**, **Configure game** (the built-in card editor), **Settings**, **Quit** —
+plus **Add to Steam** / **Remove from Steam** on the Steam Deck. The log folder opens from
+*Settings → Advanced → Open logs*.
+
+---
+
+## Settings and the card editor
+
+Both windows open from the tray, so they are **Desktop-Mode only** on the Steam Deck.
+
+### Settings
+
+- **Updates** — automatic mode (*download and install* / *download, install manually* / *off*), the
+  **pre-release (beta)** channel, and a manual *Check for updates* with the current version.
+- **Appearance** — theme (system / light / dark), **language** (system / English / Russian), and a
+  custom **background for the empty screen** (any image; *Reset* restores the bundled wallpaper).
+- **General** — the gamepad summon hotkey, *keep the screen awake while the launcher is open*,
+  *always show the no-card screen* (instead of hiding to the tray), *disable silent installer mode*
+  (see [Install mode](#install-mode-heavy-games-on-slow-media)), and, on the Steam Deck, the Game Mode
+  auto-launch on card insertion.
+- **Audio** — the **navigation sound set** and the **background ambience** shipped with the app, a
+  volume slider for each, and an *only global* switch per category that makes the app's sound/ambience
+  win over whatever the card carries in `sounds` / `backgroundMusic`.
+- **Advanced** — *Open logs*, *Open games folder* (the install-mode directory), *Reset to defaults*.
+
+Settings live in `settings.json` next to the rest of the app state (`%APPDATA%\playhook\` on Windows,
+`~/.config/playhook/` on Linux); a missing or corrupted file falls back to the defaults.
+
+### Configure game (card editor)
+
+**Configure game** writes the `game.json` onto the inserted card, so you never have to edit JSON by
+hand:
+
+- pick the card (any removable drive — a **blank** one can be initialized from scratch);
+- a **form** with sections *Basics / Launch / Hero images / Saves / Audio / Advanced*, with Browse
+  pickers for the executable, hero images, sounds and save folders (a picked PC save folder is
+  converted back into a `%APPDATA%`-style prefix automatically, and a file outside the card is rejected);
+- a **JSON** tab with the raw manifest, live schema validation, error messages and a formatter — the
+  form and the JSON tab are two views of the same document;
+- **Add game** / **Remove current** for a multi-game card;
+- **Save & Apply** writes the file and reloads the launcher immediately (or on the card's next
+  insertion, if a game is running right now); **Reset** re-reads the card and drops your edits.
 
 ---
 
@@ -100,9 +160,15 @@ Tray menu: **Show** (bring back the window), **Open logs** (open the log folder)
 > preview a game, and grab its `game.json` + assets for your card. Source and contribution guide:
 > [github.com/sevenns/playhook-collection](https://github.com/sevenns/playhook-collection).
 
-Place a `game.json` in the **root** of the card. One game per card. The paths
+Place a `game.json` in the **root** of the card. The paths
 `executable` / `heroImage` / `saveOnCard` are **relative to the card root**; `pcSavePath` is
 absolute and must start with one of the allowed prefixes (see below).
+
+The file holds **either one game object** (below) **or an array of them** — a card can carry several
+games. The launcher opens on the first one and you switch with **More (⋯) → Select game**; each game
+keeps its own stats, saves and install state (they are keyed by `id`). One bad entry doesn't sink the
+whole card — it is skipped (with a line in the log) and the rest still load; **duplicate `id`s are
+rejected**, since the id keys the PC-side storage. The Configure editor shows the issue per game.
 
 ```jsonc
 {
@@ -116,14 +182,15 @@ absolute and must start with one of the allowed prefixes (see below).
   "saveOnCard": "saves",                    // copy folder for saves on the card (relative to the root)
   "pcSavePath": "%APPDATA%/Team Cherry/Hollow Knight", // where the game actually writes saves on the PC
   "launchTimeoutSec": 30,                   // how long to wait for the process to appear (optional, default 30)
+  "killTimeoutSec": 60,                     // how long "Force close" waits for the game to die (optional, default 60)
   "watchProcesses": ["Game-Win64-Shipping.exe"], // for launcher/wrapper games: track THESE process names, not the spawned launcher (optional)
-  "sounds": {                               // per-game UI sounds (all optional; omitted slots use a bundled default)
+  "sounds": {                               // per-game UI sounds (all optional; omitted slots use the sound set from Settings)
     "play": "audio/play.ogg",               // pressing "Play"
     "navigate": "audio/move.ogg",           // moving focus between controls
-    "button": "audio/button.ogg",           // pressing an ordinary button (e.g. "Info")
+    "button": "audio/button.ogg",           // pressing an ordinary button (e.g. an item in the More menu)
     "back": "audio/back.ogg"                // gamepad B closing the info popup
   },
-  "backgroundMusic": "audio/theme.ogg"      // looping music while the window is visible (0.5 volume, optional)
+  "backgroundMusic": "audio/theme.ogg"      // looping music while the window is visible (volume from Settings, optional)
 }
 ```
 
@@ -183,16 +250,21 @@ E:\
 - `saveOnCard` and `pcSavePath` are set **together** or **both omitted**. If both are omitted,
   the game writes its saves next to its exe on the card and syncing is fully disabled.
 - `sounds.*` and `backgroundMusic` — card-relative like `heroImage`, **must lie inside the card
-  root**. Any omitted sound slot falls back to a **bundled default** sound, so every game has UI
-  sounds out of the box; `backgroundMusic` is off unless set, loops at 0.5 volume and pauses
-  while a game is running or the window is hidden. Use a common web-playable audio format
+  root**. Any omitted sound slot falls back to the **navigation sound set chosen in Settings**, so every
+  game has UI sounds out of the box; `backgroundMusic` is off unless set (unless a global ambience is
+  chosen in Settings), loops and pauses while a game is running or the window is hidden. Both can be
+  overridden globally — *only global navigation sounds* / *only global ambience* in Settings make the
+  app's choice win over the card's. Use a common web-playable audio format
   (mp3, ogg/oga, opus, wav, m4a, aac, flac, webm).
+- `killTimeoutSec` — how long **Force close** (More ⋯ menu) waits for the game's processes to vanish
+  before reporting a failure; the wait ends as soon as they're gone (optional, default 60).
 
 ### Install mode (heavy games on slow media)
 
 Some games are too heavy to run from a micro SD / external drive (performance tanks), but the
-**installer** fits there fine. Add an optional `install` block and the card carries a `setup.exe`
-instead of the game itself:
+**installer** — or the game's own folder, ready to be copied over — fits there fine. Add an optional
+`install` block and the card carries a `setup.exe` (or the game directory) instead of running the game
+from the card:
 
 ```jsonc
 {
@@ -201,10 +273,10 @@ instead of the game itself:
   "title": "Heavy Game",
   "executable": "HeavyGame/HeavyGame.exe", // RELATIVE TO THE INSTALL DIR (not the card) in install mode
   "install": {
-    "installer": "setup/HeavyGameSetup.exe", // path to the installer, relative to the card root
-    "type": "nsis",                          // nsis | inno | custom
-    "runAsAdmin": false,                     // run the installer elevated (optional, default false)
-    "args": []                               // type "custom": full argv with exactly one {dir} token
+    "installer": "setup/HeavyGameSetup.exe", // installer path (for "copy": the game DIRECTORY), relative to the card root
+    "type": "nsis",                          // nsis | inno | custom | copy
+    "runAsAdmin": false,                     // run the installer elevated (optional, default false; forbidden for "copy")
+    "args": []                               // type "custom": full argv with exactly one {dir} token (forbidden for "copy")
   },
   "launchTimeoutSec": 30
 }
@@ -212,17 +284,25 @@ instead of the game itself:
 
 How it works:
 
-- While the game isn't installed, the **"Play" button becomes "Install"**. Pressing it asks for
-  confirmation (the popup also shows the destination path, handy if the installer isn't fully silent),
-  then runs the installer **silently** and shows an **"Installing..."** indicator. When the executable
-  appears the button turns back into **"Play"**, and from then on the game launches **from the install
-  location on the PC**.
+- While the game isn't installed there is **no Play button**: **Install** lives in the **More (⋯)**
+  menu. Pressing it asks for confirmation (the popup also shows the destination path, handy if the
+  installer isn't fully silent), then runs the installer **silently** and shows an **"Installing..."**
+  indicator. When the executable appears **Play** comes back, and from then on the game launches
+  **from the install location on the PC**.
+- **`type: "copy"` — "move game to PC" without an installer.** `installer` points at the game's own
+  directory on the card and Playhook simply **copies its contents** into the install dir (`executable`
+  is relative to that copy; a leading `<source>/` is stripped, so both spellings work). Nothing is
+  deleted from the card — it stays the traveling original. This is the sane option when a game needs a
+  fast local disk but has no installer worth driving, and the recommended one on the Steam Deck, where
+  real installers under Proton are a lottery. `args` / `runAsAdmin` are rejected here — no process runs.
 - The **install location is controlled by the app**, not the card: `%LOCALAPPDATA%\playhook\games\<id>`
   (per-user, non-roaming, no admin needed). In install mode `executable` is resolved **relative to
   that directory**.
 - The installer runs **silently** because that's the only way the app keeps control of the install
-  path — a visible wizard would let the user change the destination. The path is fed through each
-  family's silent dir-key:
+  path — a visible wizard would let the user change the destination. (If an installer refuses to behave
+  silently, tick *Disable silent installer mode* in **Settings → General**: the wizard is shown and you
+  point it at the destination path yourself — the confirmation popup spells it out for exactly this.)
+  The path is fed through each family's silent dir-key:
   - **`nsis`** → `/S /D=<dir>` (the `/D=` is unquoted and last, per NSIS rules);
   - **`inno`** → `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR="<dir>"` — **GOG offline installers
     are Inno Setup**, so GOG games use `"type": "inno"`;
@@ -235,12 +315,12 @@ How it works:
   the args itself, so elevated is allowed there.
 - **MSI is out of scope** for now (its install-directory property name isn't standardized, so the
   path can't be controlled reliably).
-- Once installed, an **"Uninstall"** button appears next to **"Info"** (only for an installed
-  install-mode game). Pressing it asks for confirmation, then removes the game: Playhook finds the
-  game's **own uninstaller** inside the install folder (Inno's `unins000.exe`, NSIS's `Uninstall.exe`)
-  and runs it **silently** — so it cleans up the registry (Add/Remove Programs) and Start-Menu
-  shortcuts — and then deletes `%LOCALAPPDATA%\playhook\games\<id>`. The button turns back into
-  **"Install"**.
+- Once installed, the **More (⋯)** menu offers **Uninstall** instead of Install. It asks for
+  confirmation, then removes the game: Playhook finds the game's **own uninstaller** inside the install
+  folder (Inno's `unins000.exe`, NSIS's `Uninstall.exe`) and runs it **silently** — so it cleans up the
+  registry (Add/Remove Programs) and Start-Menu shortcuts — and then deletes
+  `%LOCALAPPDATA%\playhook\games\<id>`. A `copy`-mode game has no uninstaller: the folder is simply
+  deleted. The menu item turns back into **Install**.
 
 #### How to tell your installer's type
 
@@ -273,7 +353,7 @@ in the target folder with no wizard window:
 Installed silently into the folder → that's your type. A wizard appeared, or it installed elsewhere →
 it's the other type (or neither — use `custom`).
 
-To reinstall or update, use the **Uninstall** button (or, as a fallback, delete
+To reinstall or update, use **Uninstall** in the More (⋯) menu (or, as a fallback, delete
 `%LOCALAPPDATA%\playhook\games\<id>` manually) and press Install again. Saves still sync to/from the
 card exactly as for a normal game (the `install` block is orthogonal to `saveOnCard`/`pcSavePath`).
 
@@ -326,20 +406,20 @@ for a normal game.
   every Steam library (`libraryfolders.vdf`); the Steam path comes from the registry. The game counts
   as installed only when Steam marks it *fully installed* (a game that's still downloading reads as
   "not installed").
-- **Not installed → the "Play" button is "Install".** Pressing it confirms ("Open Steam to install this
-  game?") and opens `steam://install/<appid>` — Steam shows its own install dialog. Playhook does **not**
-  block on a wizard: it stays on the screen, shows a non-blocking **"Installing…"** indicator, and a
-  background poll (~5s) flips the button to **"Play"** once Steam reports the game fully installed. The
-  window stays usable meanwhile — a Steam download can run for hours.
+- **Not installed → no Play button; "Install" sits in the More (⋯) menu.** Pressing it confirms ("Open
+  Steam to install this game?") and opens `steam://install/<appid>` — Steam shows its own install dialog.
+  Playhook does **not** block on a wizard: it stays on the screen, shows a non-blocking
+  **"Installing…"** indicator, and a background poll (~5s) brings **Play** back once Steam reports the
+  game fully installed. The window stays usable meanwhile — a Steam download can run for hours.
 - **Pause:** if you pause the download in Steam, the indicator becomes **"Installing paused on N%…"**
   (the percent is only available while paused — see limitations). While a download is in progress the
-  **Play button (showing the loader) opens Steam's Downloads page** so you can pause/resume there —
+  **activity button (the spinning gear) opens Steam's Downloads page** so you can pause/resume there —
   Steam exposes no way to pause/resume a download programmatically.
 - **Launch:** when installed, pressing Play opens `steam://rungameid/<appid>`; the session is tracked by
   `watchProcesses` (start → running → exit), with saves synced and stats recorded like a normal game.
-- **Uninstall:** an installed Steam game shows an **"Uninstall"** button → confirm → `steam://uninstall/<appid>`
-  (Steam's own removal UI). The background poll flips the button back to **"Install"** once the game is
-  gone (an uninstall you trigger directly in Steam is picked up too).
+- **Uninstall:** an installed Steam game offers **Uninstall** in the More (⋯) menu → confirm →
+  `steam://uninstall/<appid>` (Steam's own removal UI). The background poll flips the item back to
+  **Install** once the game is gone (an uninstall you trigger directly in Steam is picked up too).
 - **Saves** sync to/from the card exactly as for a normal game. Steam / Unity games often store saves
   under `AppData\LocalLow` — use the `%LOCALLOW%` prefix (e.g. Valheim → `%LOCALLOW%/IronGate/Valheim`).
 
@@ -365,13 +445,16 @@ Other PC state under `%APPDATA%\playhook\`:
 
 - `pending-flush\<id>\` — a deferred PC → SD sync with a snapshot of the saves, if the card was
   removed during play; it is applied on the next insertion of this card (matched by `id`).
+- `settings.json` — the app's own settings, and `logs\` — the log files.
+
+On Linux the same state lives under `~/.config/playhook/`.
 
 ---
 
 ## Steam Deck (Linux / SteamOS)
 
 Playhook runs on the Steam Deck (and desktop Linux/SteamOS). The **same `game.json` cards** work as on
-Windows — the Windows dictionary (`%APPDATA%`, `executable: *.exe`, `install.type: nsis|inno`) is kept,
+Windows — the Windows dictionary (`%APPDATA%`, `executable: *.exe`, `install.type: nsis|inno|copy`) is kept,
 and on Linux it is interpreted **relative to each game's Proton (Wine) prefix**. Windows games run
 through [umu-launcher](https://github.com/Open-Wine-Components/umu-launcher) + GE-Proton; native
 Linux/ELF games are not a target.
@@ -395,31 +478,22 @@ missing — the bundled umu launcher is a Python zipapp).
 
 ### Preparing a card for the Deck
 
-The card format is identical, with two filesystem caveats that come from Linux being **case-sensitive**
-and not sharing Windows' separator:
+**Format the card exFAT.** SteamOS mounts it (in Desktop Mode and in Game Mode alike), Windows reads
+and writes it, and it is case-insensitive — so **one physical card serves both machines**: prepare it on
+Windows and it works on the Deck with the same `game.json`. Playhook adds a safety net of its own: in
+Game Mode it sweeps for an inserted-but-**unmounted** removable card and mounts it via udisks2 (into the
+same `/run/media/deck/<label>` the system uses), so a card the session skipped still hot-swaps. Only
+removable volumes carrying a real filesystem are ever touched — the internal drive can't match.
 
-- **Path case must match exactly.** `"executable": "Game.EXE"` won't find `game.exe` on ext4. Playhook
-  detects this specific case and the error suggests the right name ("found `game.exe`, fix the case"),
-  but the card should carry the exact on-disk case. `exFAT` is case-insensitive, so a card prepared on
-  Windows works as-is there.
+The card format itself is identical to Windows, with two caveats that come from Linux not sharing
+Windows' separator and (on Linux-native filesystems) being case-sensitive:
+
+- **Path case must match exactly** on a case-sensitive filesystem: `"executable": "Game.EXE"` won't find
+  `game.exe`. Playhook detects this specific case and the error suggests the right name ("found
+  `game.exe`, fix the case"), but the card should carry the exact on-disk case anyway. On exFAT this
+  never bites — it is case-insensitive.
 - **Backslashes are fine.** `"bin\\game.exe"` is normalized to `bin/game.exe`, so a Windows-authored
   card loads unchanged.
-
-**Which filesystem for the card:**
-
-| Filesystem | Hot-swap in Game Mode | Writable from Windows | Notes |
-|---|---|---|---|
-| **exFAT** | ✅ (Playhook mounts it) | ✅ | **The one to use for a card shared with a Windows PC.** Case-insensitive, so path case doesn't bite. |
-| **ext4** | ✅ (SteamOS automounts) | ❌ | Prepare the card on the Deck/Linux. Fine if the card never leaves the Deck. |
-
-SteamOS Game Mode itself only automounts **ext4** — an exFAT/NTFS card is left unmounted and invisible to
-everything. Playhook closes that gap: in Game Mode it mounts an inserted-but-unmounted removable card
-itself (via udisks2, the same `/run/media/deck/<label>` the system would use), so exFAT cards hot-swap
-like ext4 ones and no Desktop-Mode detour is needed. Only removable volumes with a real filesystem are
-ever touched — the internal drive can't match.
-
-That makes **one physical card for both Windows and the Deck** the normal setup: format it exFAT, prepare
-it on Windows, and it works on both with the same `game.json`.
 
 ### Where installs and saves live
 
@@ -451,17 +525,19 @@ These are ignored on Windows, so a dual-platform card can carry them safely:
 - **No tray in Game Mode.** Playhook is a single window that always shows an empty "Insert a game card"
   screen when no card is present, and surfaces manifest errors on screen. **Settings and the card editor
   (Configure) open from the tray, so they are Desktop-Mode only.**
-- **Cards are mounted automatically**, including exFAT/NTFS ones that Game Mode itself ignores (see
-  [Which filesystem for the card](#preparing-a-card-for-the-deck)) — insert and eject just work.
+- **Cards are mounted automatically** — on top of what the session mounts itself, Playhook sweeps for an
+  inserted-but-unmounted removable card (see [Preparing a card for the Deck](#preparing-a-card-for-the-deck)),
+  so insert and eject just work.
 - **Power menu** (Shutdown/Reboot/Sleep) works from Game Mode via `systemctl` (logind).
-- **The System menu's primary item is "Close Playhook"** (a full quit) instead of "Minimize Playhook" —
+- **The System submenu offers "Close Playhook"** (a full quit) instead of "Minimize Playhook" —
   there is no tray to minimize into; quitting returns you to the Steam library.
 - **Insert a card and Playhook opens itself.** Once you have used **Add to Steam**, a small background
   service runs while you are in Game Mode and launches Playhook through Steam the moment you insert a
   card carrying a `game.json` — no need to find the tile. A card that was *already* in the slot when you
   entered Game Mode is deliberately ignored: you may well have come to play something else, and being
   yanked into Playhook on every entry would be obnoxious. Launch it from the library in that case.
-  An ordinary USB stick or a card without `game.json` never triggers it.
+  An ordinary USB stick or a card without `game.json` never triggers it. The whole behaviour can be
+  turned off in **Settings → General**.
 - **No autostart in Game Mode** — the app lives as a non-Steam game, started by Steam (or by the service
   above). In Desktop Mode it writes a `~/.config/autostart/playhook.desktop` entry instead.
 
@@ -470,8 +546,10 @@ These are ignored on Windows, so a dual-platform card can carry them safely:
 - **Repacks with internal compression won't install.** FitGirl/DODI/RG-style repacks whose installer
   unpacks with its own 32-bit decompressor (ISDone/freearc) exhaust Wine's 32-bit address space and
   crash mid-install — this is a Wine/32-bit ceiling, not a Playhook bug, and retrying is a lottery. Use a
-  **clean distributive**, or pre-extract the game on Windows and copy the ready folder as a normal
-  (non-install) card.
+  **clean distributive**, or pre-extract the game on Windows and carry the ready folder — as a plain
+  Executable card, or with `install.type: "copy"` if it should run from the Deck's internal drive.
+- **Installers in general are unpredictable under Proton** (the Configure editor says so out loud when
+  you pick the Installer type). Prefer a plain Executable card or `install.type: "copy"` on the Deck.
 - **First run needs network** (GE-Proton / Steam Runtime download).
 - **Save-sync for Windows dictionary paths** only happens once the game's prefix exists (first launch);
   before that there is simply nothing to sync.
@@ -483,7 +561,7 @@ These are ignored on Windows, so a dual-platform card can carry them safely:
 ### Requirements
 
 - **Windows 10/11 x64**, or **Linux / SteamOS** (for the Steam Deck build — see below).
-- **Node.js 18+** and npm.
+- **Node.js 20+** and npm (CI builds on **Node 22** — match it if in doubt).
 - **Native module build tools** — required to rebuild `drivelist` for Electron:
   - Visual Studio Build Tools with the "Desktop development with C++" component,
   - Python 3.x in `PATH`.
@@ -514,6 +592,8 @@ Compile the TypeScript (main + preload + renderer) and copy assets, then run in 
 npm run build          # output goes to dist/ (main, preload, renderer, shared)
 npm start              # builds and launches Electron (always starts hidden in the tray)
 npm run typecheck      # tsc --noEmit (strict)
+npm run lint           # ESLint with type-aware rules
+npm test               # vitest
 ```
 
 ### Building the distributable
@@ -563,6 +643,10 @@ Release flow:
    it on the **next quit** (it never interrupts a running game). See `[updater]` lines in the log.
    The **NSIS** build and the **AppImage** both self-update; the portable `.exe` does not.
 
+That is the default; **Settings → Updates** lets the user pick *download and install automatically*,
+*download automatically, install manually*, or *off (check manually)*, opt into the **pre-release
+(beta)** channel, and run a check by hand.
+
 Notes:
 
 - The tag must be `v{version}` and the version must be higher than the installed one.
@@ -576,7 +660,7 @@ Notes:
 On **Windows** the app registers itself via `app.setLoginItemSettings({ openAtLogin: true })`.
 
 - It always starts hidden in the tray (no flag needed): the window appears only when a valid game
-  card is detected.
+  card is detected — unless *Always show the no-card screen* is enabled in Settings.
 - Guaranteed for the **NSIS installation**; for **portable** it is best-effort (the path to the
   exe may change).
 - To disable: *Settings → Apps → Startup* in Windows.
@@ -592,18 +676,22 @@ exists while you are in Game Mode; **Remove from Steam** deletes it.
 
 ## Logs
 
-The main process writes a timestamped log to `%APPDATA%\playhook\logs\main.log` (open it via the
-tray **Open logs** item). It records card insertions, manifest validation, the stats
-reconcile / card-copy result, and launch/exit — useful when a save or stats copy to the card
-silently fails.
+The main process writes a timestamped log, split **per calendar day** into
+`%APPDATA%\playhook\logs\main-YYYY-MM-DD.log` (`~/.config/playhook/logs/` on Linux); files older than
+**14 days** are pruned on startup. Open the folder from **Settings → Advanced → Open logs**.
+
+It records card insertions, manifest validation, the stats reconcile / card-copy result, and
+launch/exit — useful when a save or stats copy to the card silently fails.
 
 ---
 
 ## Known limitations
 
-- **UAC / elevation:** from a non-elevated app, `tasklist` cannot see an elevated process — a
-  game that requires administrator rights will produce a false "didn't launch" timeout. Designed
-  for a direct, self-contained `.exe` without UAC.
+- **UAC / elevation:** from a non-elevated app, `tasklist` cannot see an elevated process. For an `.exe`
+  that genuinely requires administrator, set [`runAsAdmin: true`](#rules-and-security-the-card-is-untrusted-input) —
+  Playhook launches it through a UAC prompt and then monitors it **by process handle** instead of
+  `tasklist`. What stays unsolved is elevation Playhook doesn't perform itself: a launcher/anticheat that
+  spawns the game elevated or as a service is invisible → a false "didn't launch" timeout.
 - **Launchers / wrappers:** by default exit detection relies on the pid from `spawn`, so a wrapper
   game (Steam / launcher) that immediately terminates its own process would produce a false "exit".
   This is now **supported** via [`watchProcesses`](#rules-and-security-the-card-is-untrusted-input):
@@ -616,7 +704,9 @@ silently fails.
 - **FAT/exFAT:** syncing goes "by direction"; `mtime` is not used for decisions.
 - **Install mode** (the `install` block, see [Install mode](#install-mode-heavy-games-on-slow-media)):
   - The installer **must support silent install + a target-directory flag**. If it doesn't, use
-    `type: "custom"` with the right flags, or it can't be driven (R-SILENT).
+    `type: "custom"` with the right flags — or give up on driving it and either tick *Disable silent
+    installer mode* in Settings (you drive the wizard yourself) or carry the game with
+    `type: "copy"` (R-SILENT).
   - If the installer **ignores the supplied directory** and installs elsewhere, the executable won't
     appear at the expected path → reported as "not installed". Inherent to running a real `setup.exe`;
     doesn't happen with well-behaved NSIS/Inno installers (R-IGNOREDIR).
@@ -624,9 +714,11 @@ silently fails.
     apart from success. Mitigated by pre-cleaning the install dir and a post-exit grace poll, but a
     residual risk remains for arbitrary installers (R-PARTIAL).
   - **MSI installers are not supported** (the install-directory property name isn't standardized).
-  - **Reinstall/update is manual:** delete `%LOCALAPPDATA%\playhook\games\<id>` and press Install again.
+  - **Reinstall/update means uninstall + install again** — there is no in-place update: use
+    **Uninstall** in the More (⋯) menu, then **Install** (or delete
+    `%LOCALAPPDATA%\playhook\games\<id>` by hand as a fallback).
   - Progress is a plain "Installing..." indicator (no percentages — unavailable for an arbitrary
-    silent `setup.exe`).
+    silent `setup.exe`, and not reported for a `copy` either).
 - **Steam mode** (the `steam` block, see [Steam mode](#steam-mode-launch-and-install-steam-games)):
   - **Steam must be installed** on the PC, otherwise Install/Play report "Steam is not installed".
   - **Install/uninstall aren't silent** — Steam always shows its own dialog (one confirmation); there is
@@ -634,8 +726,8 @@ silently fails.
   - **No live download percent.** Steam exposes no real-time progress in any file Playhook can read (the
     `.acf` byte counters freeze mid-download; the on-disk download folder is preallocated). The percent is
     shown only **while the download is paused** ("Installing paused on N%…").
-  - **Can't pause/resume programmatically** — the Play button just opens Steam's Downloads page so you can
-    do it in Steam itself.
+  - **Can't pause/resume programmatically** — the activity button just opens Steam's Downloads page so
+    you can do it in Steam itself.
   - **Cold start / pre-launch update** can exceed `launchTimeoutSec` → the game process never appears in
     the window and Playhook quietly returns without recording a session. Raise `launchTimeoutSec` for
     Steam games.
@@ -647,27 +739,36 @@ silently fails.
 ```
 src/
   main/        # all work with the FS/processes/disks (Electron main)
-  preload/     # typed contextBridge bridge
-  renderer/    # UI + gamepad/keyboard input (no Node)
-  shared/      # shared contract of types/IPC channels
+    platform/  # everything OS-specific (win32 / linux + Proton, umu)
+  preload/     # typed contextBridge bridges (launcher + settings)
+  renderer/    # UI + gamepad/keyboard input (launcher, settings, configure — no Node)
+  shared/      # shared contract of types/IPC channels + the i18n dictionaries
+test/          # vitest suites (plain Node, no electron)
 ```
 
-npm scripts: `typecheck`, `build`, `start`, `rebuild`, `dist`.
+npm scripts: `typecheck`, `lint`, `test`, `format`, `build`, `start`, `rebuild`, `build:umu`, `dist`.
+Contributor conventions (layers, error handling, adding an IPC channel, the daemon's electron-free
+import graph) live in [`CLAUDE.md`](CLAUDE.md).
 
 ---
 
 ## Contributing
 
-PRs welcome. The codebase is **strict TypeScript** (no `any`, explicit return types,
-functional style). Please run `npm run typecheck` before opening a PR.
+PRs welcome. The codebase is **strict TypeScript** (no `any`, no non-null `!`, explicit return types,
+functional style). Please run `npm run typecheck`, `npm run lint` and `npm test` before opening a PR —
+CI runs all three, on Windows **and** Linux.
 
 ---
 
 ## FAQ
 
-- **Do I have to write `game.json` myself?** No — the [**Playhook Collection**](https://sevenns.github.io/playhook-collection/)
-  hosts ready-made, verified manifests you can browse and drop straight onto a card. Write your own only
-  for a game it doesn't cover yet (and consider [contributing it back](https://github.com/sevenns/playhook-collection)).
+- **Do I have to write `game.json` myself?** No, twice over: the [**Playhook Collection**](https://sevenns.github.io/playhook-collection/)
+  hosts ready-made, verified manifests you can browse and drop straight onto a card, and the tray's
+  **Configure game** editor fills one in through a form (with a raw JSON tab and live validation for
+  when you do want to poke at it). Hand-write one only for a game the Collection doesn't cover yet
+  (and consider [contributing it back](https://github.com/sevenns/playhook-collection)).
+- **Can one card hold several games?** Yes — put an **array** of game objects in `game.json` and switch
+  between them with **More (⋯) → Select game**.
 - **Is the SmartScreen warning normal?** Yes. The builds aren't code-signed, so Windows warns on
   first run. Choose *More info → Run anyway*. Auto-update still works without signing.
 - **Does it run on the Steam Deck / Linux?** **Yes.** The same Windows game cards launch through Proton
@@ -681,6 +782,8 @@ functional style). Please run `npm run typecheck` before opening a PR.
   client (the card is just a pointer by `appid`). For a **non-Steam** wrapper/launcher `.exe`, point it at
   the exe and use [`watchProcesses`](#rules-and-security-the-card-is-untrusted-input) so exit detection
   works.
+- **Is there a Russian UI?** Yes — *Settings → Appearance* has English and Russian (plus a light/dark/system
+  theme), and by default the app follows the system language.
 
 ---
 
