@@ -175,10 +175,10 @@ export interface PowerBackend {
 
 /**
  * Mounts inserted-but-unmounted removable volumes so the drive watcher can see them (Р10). Only SteamOS
- * **Game Mode** needs this: gamescope's session automounts ext4 only, so an exFAT/NTFS card appears as a
- * block device with no mountpoint and `scan()` (which walks mountpoints) never finds it. win32 and the
- * KDE desktop session automount on their own → no-op there. The caller decides WHEN to sweep; this is
- * only the OS bit.
+ * **Game Mode** wires this, as a safety net: the session normally mounts the card itself, but one that
+ * lands there unmounted is just a block device with no mountpoint, and `scan()` (which walks mountpoints)
+ * can never find it. win32 and the KDE desktop session mount on their own → no-op there. The caller
+ * decides WHEN to sweep; this is only the OS bit.
  */
 export interface RemovableMounter {
   /**

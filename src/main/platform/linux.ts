@@ -56,7 +56,7 @@ export function createLinuxPlatform(deps: PlatformDeps): Platform {
     savePathResolver: createLinuxSavePathResolver({ userData: deps.userData, steamLocator }),
     powerBackend: createPowerBackend(),
     // Game Mode automount (Р10): the caller only sweeps in a gamescope session — the KDE desktop session
-    // automounts on its own, so wiring it there would be redundant work.
+    // mounts on its own, so wiring it there would be redundant work.
     removableMounter: createLinuxRemovableMounter(),
     // Install mode is always supported on linux — the prefix is created on demand (Р7). Both views come
     // from umu.installDirs (host path inside the prefix + the `C:\playhook\games\<id>` installer view).

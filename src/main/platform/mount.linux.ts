@@ -1,8 +1,11 @@
-// Automounting removable cards in SteamOS Game Mode (Р10). Out of the box gamescope's session automounts
-// only ext4: an exFAT/NTFS card is enumerated as a block device with NO mountpoint, and the drive watcher
-// — which looks for `game.json` under a mountpoint — never sees it. The documented workaround was "mount
-// it once in Desktop Mode and switch back", which kills the cartridge (insert/eject) model. This sweep
-// finds inserted-but-unmounted removable volumes and mounts them through udisks2, restoring hot-swap.
+// Automounting removable cards in SteamOS Game Mode (Р10). A SAFETY NET, not the primary path: current
+// SteamOS mounts an inserted card itself (exFAT included), and this sweep only covers the case where one
+// arrives WITHOUT a mountpoint — an older/other gamescope session, a filesystem the session skips, or a
+// card the automounter simply didn't pick up. Such a card is enumerated as a block device with no
+// mountpoint, and the drive watcher — which looks for `game.json` under a mountpoint — never sees it; the
+// only workaround left to the user would be "mount it once in Desktop Mode and switch back", which kills
+// the cartridge (insert/eject) model. So we find inserted-but-unmounted removable volumes and mount them
+// through udisks2, keeping hot-swap working regardless of what the session does.
 //
 // Safety: only volumes that are removable/hotplug AND carry a real data filesystem are ever touched — the
 // internal NVMe (rm=false, hotplug=false) can never match. The parsing/filtering is pure (unit-tested);
@@ -24,8 +27,9 @@ const MOUNT_TIMEOUT_MS = 15_000;
 /**
  * Filesystems we are willing to mount: real data filesystems a game card can carry. Everything else —
  * `swap`, `crypto_LUKS`/`LVM2_member`/`linux_raid_member` (container metadata), or no filesystem at all —
- * is never touched. ext4 is listed for completeness; SteamOS already automounts it, so such a volume
- * arrives here already mounted and is filtered out anyway.
+ * is never touched. The list is deliberately broad rather than exFAT-only: whatever the session failed
+ * to mount is what we are here for, and a volume it DID mount is filtered out by the mountpoint check
+ * anyway, so listing a filesystem costs nothing.
  */
 const MOUNTABLE_FSTYPES = new Set([
   'exfat',

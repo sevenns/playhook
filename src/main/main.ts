@@ -168,9 +168,10 @@ async function bootstrap(): Promise<void> {
     umuRunPath,
   });
 
-  // Game Mode only (Р10): gamescope automounts ext4 but not exFAT/NTFS, so an inserted card can sit there
-  // unmounted and invisible to the scan. Sweeping it into /run/media restores hot-swap for those cards.
-  // Windows and the KDE desktop session automount on their own → no sweep wired there.
+  // Game Mode only (Р10), as a safety net: the gamescope session normally mounts an inserted card itself,
+  // but one that arrives unmounted is invisible to the scan (it has no path to look under). Sweeping it
+  // into /run/media keeps hot-swap working in that case. Windows and the KDE desktop session mount on
+  // their own → no sweep wired there.
   const watcher = new DriveWatcher(
     undefined,
     gameModeSession ? () => platform.removableMounter.mountAll() : null,

@@ -114,8 +114,9 @@ export function startDaemon(): void {
   const startedAt = Date.now();
 
   // The automount sweep is wired unconditionally: this daemon only ever runs inside Game Mode (systemd
-  // starts it with gamescope-session.target), and that is exactly the session where gamescope automounts
-  // ext4 but not exFAT/NTFS. In Desktop Mode KDE does the mounting and this process is not running.
+  // starts it with gamescope-session.target), which is exactly the session the safety net is meant for —
+  // a card that lands there unmounted would otherwise be invisible. In Desktop Mode KDE does the mounting
+  // and this process is not running.
   const watcher = new DriveWatcher(undefined, () => platform.removableMounter.mountAll());
 
   watcher.onInsert((root) => {

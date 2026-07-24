@@ -149,9 +149,10 @@ export class DriveWatcher {
 
   /**
    * @param automount Optional sweep that mounts an inserted-but-unmounted removable card before scanning
-   *   (Р10). Wired ONLY in a SteamOS Game Mode session, where gamescope automounts ext4 but not
-   *   exFAT/NTFS — without it such a card has no mountpoint and scan() can never see it. null everywhere
-   *   else (Windows and the KDE desktop session automount on their own). Must never throw.
+   *   (Р10). Wired ONLY in a SteamOS Game Mode session, as a SAFETY NET: the session normally mounts the
+   *   card itself, but a card that arrives without a mountpoint has no path for scan() to look under and
+   *   would stay invisible. null everywhere else (Windows and the KDE desktop session mount on their
+   *   own). Must never throw.
    */
   constructor(
     private readonly intervalMs: number = DEFAULT_INTERVAL_MS,
