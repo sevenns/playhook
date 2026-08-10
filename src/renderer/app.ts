@@ -27,6 +27,8 @@ let currentState: AppState = { kind: 'idle' };
 // stays the truth for the PHASE (busy/ready/error) and the status text. null = neither card nor history,
 // i.e. the genuine "Insert a game card" screen. See BrowseInfo in shared/types.
 let currentBrowse: BrowseInfo | null = null;
+// The carousel hid the title for a pending selection change; the next render reveals the new one.
+let titleSwapPending = false;
 // UI locale + translator (both refreshed on a language push). The HTML ships English fallback text, so
 // until the invoke-seed lands there is no blank flash — the seed then localizes and re-renders.
 let currentLocale: Locale = 'en';
@@ -108,7 +110,14 @@ const carousel = createCarousel({
     if (entry.active && gameOf(currentState)?.id !== entry.id) window.api.selectGame(entry.id);
     carousel.setScreen('detail');
   },
-  onNavigate: () => audio.play('navigate'),
+  onNavigate: () => {
+    audio.play('navigate');
+    // Cut the outgoing title immediately: the new one arrives with the (debounced) browse answer, and a
+    // stale name sitting next to the new card for a third of a second reads as a bug. render() fades the
+    // replacement back in — see titleSwapPending.
+    titleEl.classList.add('is-swapping');
+    titleSwapPending = true;
+  },
 });
 
 /** Back out of a detail screen to the carousel (B). False when there is no carousel to return to. */
@@ -274,6 +283,12 @@ function render(state: AppState): void {
     // an empty list means "wait for the push" (it back-fills), rather than blanking the background.
     hero.repaint();
     titleEl.textContent = browse.title;
+    if (titleSwapPending) {
+      titleSwapPending = false;
+      // Next frame, so the browser sees the hidden state first and actually animates the fade back in
+      // (dropping the class in the same frame as the text would be coalesced into no transition at all).
+      requestAnimationFrame(() => titleEl.classList.remove('is-swapping'));
+    }
     buildInfoPanel(browse.stats);
     controls.applyGameButtons();
   } else {

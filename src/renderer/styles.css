@@ -168,10 +168,15 @@ body {
   /* Straight off the mockup ("Home"): the cards' bottom edge sits 50 design px from the screen bottom —
      the same inset the bar content uses — so the selected 204-tall card's top lands at 254. The BOX
      reaches 30 px lower (20) so the active dot hanging under a card stays inside the clip with a little
-     slack; the strip is inset by the same 30 (see #carousel-strip). */
+     slack; the strip is inset by the same 30 (see #carousel-strip). The top has slack too: the selected
+     card's pulsing ring blooms ~10 px past its edge (inset -7 + a 3 border, scaled 1.09 by the pulse),
+     and this box CLIPS — too tight a height chops the ring's top arc off. */
   bottom: calc(20 * var(--px));
-  height: calc(234 * var(--px));
+  height: calc(260 * var(--px));
   overflow: hidden;
+  /* Above the bottom bar's gradient: the bar comes LATER in the DOM, so without this the overlay paints
+     over the cards and washes them out. The popup sits above both (see .popup). */
+  z-index: 1;
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.3s ease;
@@ -304,7 +309,9 @@ body {
   left: 0;
   right: 0;
   bottom: 0;
-  height: calc(300 * var(--px));
+  /* 400 design px, straight off the mockup's "BackgroundBlur" — a shorter overlay ends mid-card and the
+     strip loses the dark base it is meant to sit on. */
+  height: calc(400 * var(--px));
   /* Vertical gradient of d1: transparent at top → 0.75 → solid at bottom (mockup stops). */
   background: linear-gradient(
     to top,
@@ -578,7 +585,17 @@ html:not(.cursor-hidden) .rect-button:hover,
      the carousel shift (see the carousel block). A second `transform` rule would silently override the
      first, so every mover writes its own variable instead. */
   transform: translate(var(--title-x, 0px), calc(var(--title-y, 0px) - var(--text-lift, 0px)));
-  transition: transform 0.45s cubic-bezier(0.4, 0, 0.2, 1), font-size 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: transform 0.45s cubic-bezier(0.4, 0, 0.2, 1), font-size 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 0.3s ease;
+}
+
+/* Flipping through the carousel: the OLD title must not linger over the new card while main is still
+   answering (the browse request is debounced). The renderer drops it the instant the selection moves —
+   `transition: none` makes that cut instant — and removing the class once the new title is in place
+   fades it back in through the opacity transition above. */
+.title.is-swapping {
+  opacity: 0;
+  transition: none;
 }
 
 /* Carousel level: the text block moves NEXT TO the selected card, not under it — x=202 (the card's right
@@ -651,6 +668,8 @@ html:not(.cursor-hidden) .rect-button:hover,
   position: absolute;
   inset: 0;
   pointer-events: none;
+  /* Above the carousel (which lifts itself over the bar) so the veil covers the whole screen. */
+  z-index: 2;
 }
 
 .popup-veil {
