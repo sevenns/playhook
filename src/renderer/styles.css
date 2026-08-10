@@ -363,28 +363,49 @@ body {
   transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1), height 0.35s cubic-bezier(0.4, 0, 0.2, 1),
     opacity 0.35s ease;
 }
+#app[data-screen='detail'][data-card-morph='off'] #carousel {
+  /* The container has to outlast the shrink it is showing — the default 0.3s fade would take the card
+     with it halfway through. It goes in one frame once the card has reached zero, which is the same
+     moment the other branch hands over to the button. */
+  transition: opacity 0s linear 0.35s;
+}
 
-/* Going BACK is the entry played backwards, not a cross-fade: the button first grows from the play
-   square to the card's size, and only then (0.35s — its own duration) does the strip take over. Without
-   the delay the cards simply faded in over a button that was still growing underneath. */
+/* Going BACK is the entry played backwards, not a cross-fade, and it runs in the same two beats whether
+   or not there is a Play button: FIRST the selected card comes back to full size on its own (0.35s),
+   THEN the rest of the strip arrives. What differs is only WHO does the growing — the button when it
+   exists (morph on), the card itself when it does not (morph off) — and, with it, when the strip's
+   container may be shown: after the grow when the button is on top of it, before it otherwise (the card
+   growing inside it IS the animation). */
 #app[data-screen='carousel'][data-card-morph='on'] #carousel {
   /* Switched on in ONE frame, not faded: the button disappears at exactly 0.35s, and a strip that is
      still climbing out of opacity 0 at that instant leaves a hole where the artwork just was — read as
      a blink at the end of the morph. The strip's own cards decide how they come in. */
   transition: opacity 0s linear 0.35s;
 }
-#app[data-screen='carousel'][data-card-morph='on'] .card {
-  /* ONLY the fade-in waits for the button to finish growing. Delaying width/height here too would also
-     delay every grow/shrink WHILE flipping — the strip would slide first and the cards resize after. */
-  transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1), height 0.35s cubic-bezier(0.4, 0, 0.2, 1),
-    opacity 0.2s ease 0.35s;
+#app[data-screen='carousel'][data-card-morph='off'] #carousel {
+  /* No button to wait for — the container must be up from frame one or the card would grow unseen. */
+  transition: opacity 0s linear;
 }
-#app[data-screen='carousel'][data-card-morph='on'] .card.is-selected {
+#app[data-screen='carousel'] .card {
+  /* ONLY the fade-in waits for the grow. Delaying width/height here too would also delay every
+     grow/shrink WHILE flipping — the strip would slide first and the cards resize after.
+     The fan: each card comes in one stagger step later than its neighbour closer to the selection, so the
+     row opens outwards instead of appearing as one block. --fan is set per card by carousel.ts. */
+  transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1), height 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 0.2s ease calc(0.35s + var(--fan, 0) * 45ms);
+}
+#app[data-screen='carousel'] .card.is-selected {
   /* The hand-back is a SWAP, same as the hand-over: this card is pixel-identical to the button it takes
      over from, so it must be fully opaque in the very frame the button goes — anything softer shows the
      background through it while the button is already gone. Its neighbours may fade in. */
   transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1), height 0.35s cubic-bezier(0.4, 0, 0.2, 1),
     opacity 0s linear 0.35s;
+}
+#app[data-screen='carousel'][data-card-morph='off'] .card.is-selected {
+  /* Here the card IS the button: it is opaque from frame one and grows out of the corner it shrank into,
+     which is exactly what the button does on the other branch. */
+  transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1), height 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 0s linear;
 }
 #app[data-screen='carousel'][data-card-morph='on'] .play-button {
   /* Stays visible (and keeps its cover) for exactly that grow, then is swapped out in one frame. */

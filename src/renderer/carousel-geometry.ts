@@ -43,6 +43,18 @@ export function clampIndex(index: number, count: number): number {
   return Math.min(count - 1, Math.max(0, index));
 }
 
+/** How many places of stagger the returning strip is allowed to spread over (see fanIndex). */
+export const FAN_MAX = 6;
+
+/**
+ * The card's place in the "fan": how many steps from the selection it comes in, once the selected card is
+ * back from the detail screen (styles.css multiplies this by the stagger). Capped, or the far end of a
+ * 40-game history would still be fading in seconds after the near cards are done.
+ */
+export function fanIndex(index: number, selected: number): number {
+  return Math.min(Math.abs(index - selected), FAN_MAX);
+}
+
 /**
  * Whether card `index` is close enough to the anchor to be worth loading its artwork. The window is
  * generous on both sides (the strip animates, and a held direction moves several cards before a repaint),

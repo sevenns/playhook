@@ -7,7 +7,7 @@
 // attribute. What is SHOWN for the selected card (title, stats, background, music) is main's answer to
 // `browseGame(id)` — this module never derives it. The geometry lives in carousel-geometry.ts (pure).
 import type { LibraryEntry } from '../shared/types';
-import { clampIndex, isNearViewport, stripOffset } from './carousel-geometry.js';
+import { clampIndex, fanIndex, isNearViewport, stripOffset } from './carousel-geometry.js';
 import { req } from './dom.js';
 
 /** The two levels of the launcher screen (mirrors `#app[data-screen]`). */
@@ -91,13 +91,15 @@ export function createCarousel(deps: CarouselDeps): Carousel {
     strip.style.setProperty('--strip-offset', String(stripOffset(index)));
     const current = selected();
     const hasHistory = games.some((game) => !game.active);
-    for (const game of games) {
+    games.forEach((game, position) => {
       const card = cards.get(game.id);
-      if (card === undefined) continue;
+      if (card === undefined) return;
       card.classList.toggle('is-selected', game.id === current?.id);
       card.classList.toggle('is-busy', game.id === busyId);
       card.classList.toggle('shows-dot', showsDot(game, hasHistory));
-    }
+      // Its place in the fan the strip returns in (styles.css turns this into a transition-delay).
+      card.style.setProperty('--fan', String(fanIndex(position, index)));
+    });
     // The morph's source image: #play-button wears the selected card's artwork so the swap into `detail`
     // is invisible (see the morph block in styles.css).
     const url = current === undefined ? null : (art.get(artKey(current)) ?? null);

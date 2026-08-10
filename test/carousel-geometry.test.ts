@@ -3,10 +3,12 @@
 import { describe, expect, it } from 'vitest';
 import {
   CARD_W,
+  FAN_MAX,
   GAP,
   STEP,
   cardLeft,
   clampIndex,
+  fanIndex,
   isNearViewport,
   stripOffset,
 } from '../src/renderer/carousel-geometry';
@@ -57,6 +59,23 @@ describe('clampIndex', () => {
 
   it('returns 0 for an empty list', () => {
     expect(clampIndex(5, 0)).toBe(0);
+  });
+});
+
+describe('fanIndex', () => {
+  it('starts the fan at the selection itself', () => {
+    expect(fanIndex(5, 5)).toBe(0);
+  });
+
+  it('counts outwards, both ways alike', () => {
+    expect(fanIndex(4, 5)).toBe(1);
+    expect(fanIndex(6, 5)).toBe(1);
+    expect(fanIndex(8, 5)).toBe(3);
+  });
+
+  it('caps the stagger, so a long history does not keep fading in for seconds', () => {
+    expect(fanIndex(39, 0)).toBe(FAN_MAX);
+    expect(fanIndex(0, 39)).toBe(FAN_MAX);
   });
 });
 
