@@ -85,10 +85,6 @@ const HERO_PARALLAX_STEP = 8;
 const HERO_PARALLAX_MAX = 24;
 let heroParallax = 0;
 
-// Music follows the selection, so a held direction would otherwise read a multi-MB file per step. The
-// debounce lets a burst of moves settle into ONE browse request — the last card you land on.
-const BROWSE_DEBOUNCE_MS = 350;
-let browseTimer = 0;
 // The id this renderer last asked main to browse. It tells the two DIRECTIONS apart: an update carrying
 // this id is main answering US (the strip is already there), anything else is main deciding on its own —
 // a card inserted, a game picked — and then the strip has to follow it (see applyBrowse).
@@ -99,13 +95,11 @@ let userChoseDetail = false;
 
 const carousel = createCarousel({
   requestGrid: (id) => window.api.requestGrid(id),
+  // Sent on every step, undebounced: main answers the LIGHT part (title/stats/status) immediately and
+  // debounces only the heavy hero/music read — so the text never lags behind the highlighted card.
   browseGame: (id) => {
     requestedBrowseId = id;
-    if (browseTimer !== 0) window.clearTimeout(browseTimer);
-    browseTimer = window.setTimeout(() => {
-      browseTimer = 0;
-      window.api.browseGame(id);
-    }, BROWSE_DEBOUNCE_MS);
+    window.api.browseGame(id);
   },
   onScreenChange: (screen) => {
     // The carousel clicks with the bundled fallback sounds; a game's own sounds belong to its screen.

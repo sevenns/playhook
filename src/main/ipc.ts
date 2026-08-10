@@ -76,6 +76,11 @@ export interface ControllerDeps {
   readonly getTranslator: () => Translator;
 }
 
+// How long the browsed game's HEAVY assets (hero images, music — megabytes of data URL each) wait before
+// being read. The light BrowseInfo goes out immediately, so the title/status/stats track the carousel
+// with no lag; only the expensive half is debounced, and a burst of moves reads the disk once.
+const BROWSE_ASSETS_DEBOUNCE_MS = 250;
+
 // Grace-poll cadence after the installer exits, waiting for the game executable to appear.
 const INSTALL_POLL_INTERVAL_MS = 1000;
 
@@ -333,6 +338,8 @@ export class GameController {
   // — which describes one game's process and cannot represent "a history game while no card is in", nor
   // "browsing game B while game A installs". Null only when there is neither a card nor any history.
   private currentBrowse: BrowseInfo | null = null;
+  // Pending read of the browsed game's hero/music (see BROWSE_ASSETS_DEBOUNCE_MS).
+  private browseAssetsTimer: ReturnType<typeof setTimeout> | null = null;
   // The reconciled Stats per game id, captured in loadCard so onSelectRequested can rebuild the selected
   // game's GameInfo without re-reading stats (buildGameInfo still re-reads the .acf for a steam game).
   private statsById = new Map<string, Stats>();
@@ -528,6 +535,7 @@ export class GameController {
 
   /** Stops the process waits and the watcher (on application exit). */
   shutdown(): void {
+    if (this.browseAssetsTimer !== null) clearTimeout(this.browseAssetsTimer);
     this.abort?.abort();
     this.steamWatch.stop();
     this.steamWatch.clearUninstallRequest();
@@ -2021,15 +2029,20 @@ export class GameController {
     await this.browseTo(idRaw);
   }
 
-  /** Builds and pushes BrowseInfo + assets for `id`, from the card when it is there, else the library. */
+  /**
+   * Builds and pushes BrowseInfo for `id` (from the card when it is there, else the history) and schedules
+   * its assets. The INFO goes out at once — the title, the stats and the status line hang off it, and a
+   * carousel whose name lags behind the highlighted card reads as broken — while the hero images and the
+   * music, which are megabytes each, are debounced so flipping through the strip doesn't read the disk
+   * once per step.
+   */
   private async browseTo(id: string): Promise<void> {
     const manifest = this.games.find((m) => m.raw.id === id) ?? null;
     if (manifest !== null) {
       const stats = this.statsById.get(id) ?? (await this.deps.stats.read(id));
       const info = await this.buildGameInfo(manifest, stats);
       this.pushBrowse({ id, title: manifest.raw.title, active: true, stats, game: info });
-      this.pushBrowseHero(await this.assets.readHeroAssets(manifest));
-      this.pushBrowseMusic(await this.assets.readMusicDataUrl(manifest));
+      this.scheduleBrowseAssets(id);
       return;
     }
     const entry = this.deps.library.entry(id);
@@ -2039,6 +2052,27 @@ export class GameController {
     }
     const stats = await this.deps.stats.read(id);
     this.pushBrowse({ id, title: entry.title, active: false, stats });
+    this.scheduleBrowseAssets(id);
+  }
+
+  /** Debounced read+push of the browsed game's hero/music; a newer browse cancels the pending one. */
+  private scheduleBrowseAssets(id: string): void {
+    if (this.browseAssetsTimer !== null) clearTimeout(this.browseAssetsTimer);
+    this.browseAssetsTimer = setTimeout(() => {
+      this.browseAssetsTimer = null;
+      void this.pushBrowseAssets(id);
+    }, BROWSE_ASSETS_DEBOUNCE_MS);
+  }
+
+  private async pushBrowseAssets(id: string): Promise<void> {
+    // The selection moved on while we waited — the read would only fight the newer one.
+    if (this.currentBrowse?.id !== id) return;
+    const manifest = this.games.find((m) => m.raw.id === id) ?? null;
+    if (manifest !== null) {
+      this.pushBrowseHero(await this.assets.readHeroAssets(manifest));
+      this.pushBrowseMusic(await this.assets.readMusicDataUrl(manifest));
+      return;
+    }
     const assets = await this.deps.library.readBrowseAssets(id);
     this.pushBrowseHero(assets.hero);
     this.pushBrowseMusic(await this.browseMusicFor(id));
