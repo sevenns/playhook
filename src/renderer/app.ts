@@ -27,8 +27,8 @@ let currentState: AppState = { kind: 'idle' };
 // stays the truth for the PHASE (busy/ready/error) and the status text. null = neither card nor history,
 // i.e. the genuine "Insert a game card" screen. See BrowseInfo in shared/types.
 let currentBrowse: BrowseInfo | null = null;
-// The carousel hid the title for a pending selection change; the next render reveals the new one.
-let titleSwapPending = false;
+// The carousel hid the title + status for a pending selection change; the next render reveals the new one.
+let textSwapPending = false;
 // UI locale + translator (both refreshed on a language push). The HTML ships English fallback text, so
 // until the invoke-seed lands there is no blank flash — the seed then localizes and re-renders.
 let currentLocale: Locale = 'en';
@@ -126,11 +126,13 @@ const carousel = createCarousel({
       Math.min(HERO_PARALLAX_MAX, heroParallax - delta * HERO_PARALLAX_STEP),
     );
     hero.setParallax(heroParallax);
-    // Cut the outgoing title immediately: the new one arrives with the (debounced) browse answer, and a
+    // Cut the outgoing text immediately: the new one arrives with the (debounced) browse answer, and a
     // stale name sitting next to the new card for a third of a second reads as a bug. render() fades the
-    // replacement back in — see titleSwapPending.
+    // replacement back in — see textSwapPending. The status line goes with it: the two are one block, and
+    // a lingering "Installing…" over the next card is the same lie the stale title would be.
     titleEl.classList.add('is-swapping');
-    titleSwapPending = true;
+    statusEl.classList.add('is-swapping');
+    textSwapPending = true;
   },
 });
 
@@ -302,11 +304,16 @@ function render(state: AppState): void {
     // an empty list means "wait for the push" (it back-fills), rather than blanking the background.
     hero.repaint();
     titleEl.textContent = browse.title;
-    if (titleSwapPending) {
-      titleSwapPending = false;
+    if (textSwapPending) {
+      textSwapPending = false;
       // Next frame, so the browser sees the hidden state first and actually animates the fade back in
       // (dropping the class in the same frame as the text would be coalesced into no transition at all).
-      requestAnimationFrame(() => titleEl.classList.remove('is-swapping'));
+      // The status is revealed together with the title — applyStatus (below) has already put the new
+      // line in, or emptied it, by the time this frame runs.
+      requestAnimationFrame(() => {
+        titleEl.classList.remove('is-swapping');
+        statusEl.classList.remove('is-swapping');
+      });
     }
     buildInfoPanel(browse.stats);
     controls.applyGameButtons();

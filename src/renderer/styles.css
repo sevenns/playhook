@@ -756,11 +756,18 @@ html:not(.cursor-hidden) .rect-button:hover,
     left 0.35s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.3s ease;
 }
 
-/* Flipping through the carousel: the OLD title must not linger over the new card while main is still
+/* Flipping through the carousel: the OLD text must not linger over the new card while main is still
    answering (the browse request is debounced). The renderer drops it the instant the selection moves —
-   `transition: none` makes that cut instant — and removing the class once the new title is in place
-   fades it back in through the opacity transition above. */
+   `transition: none` makes that cut instant — and removing the class once the new text is in place
+   fades it back in through the opacity transition above. The status line behaves exactly like the title:
+   both are cut and revealed together, so the two-line block never half-changes. */
 .title.is-swapping {
+  opacity: 0;
+  transition: none;
+}
+/* The status needs the [data-status] in the selector to be heard at all: `#app[data-status='shown']
+   .status` below sets opacity:1 at the very same specificity, and being later in the file it would win. */
+#app[data-status] .status.is-swapping {
   opacity: 0;
   transition: none;
 }
