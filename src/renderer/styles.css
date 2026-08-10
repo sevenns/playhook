@@ -51,6 +51,7 @@
   /* Palette fallbacks; #app gets --d1/--d2 from the hero background's two dominant colors. */
   --d1: #2a3340;
   --d2: #4caf50;
+  /* Text colour OUTSIDE the app shell (there is none in practice — see the #app override below). */
   --fg: #f0f0f0;
 }
 
@@ -89,6 +90,11 @@ body {
   height: 100vh;
   background-color: var(--bg);
   overflow: hidden;
+  /* All UI text takes the hero's accent colour: the title, the stats, the popup copy and the errors read
+     as part of the current game rather than as a white overlay on top of it. Derived HERE, not in :root,
+     because --d2 is set on this element — resolving it one level up would freeze the fallback green.
+     Every text rule keeps using var(--fg), so this single line is also the whole way back. */
+  --fg: var(--d2);
   /* Palette crossfade, matched to the hero layers' own 1s opacity fade (see .hero-layer) so the colors
      and the image arrive together. hero.ts sets --d1/--d2 on this element. */
   transition: --d1 1s ease, --d2 1s ease;
@@ -109,8 +115,12 @@ body {
      --hero-parallax). It lives on the CONTAINER because each layer's own transform is already spoken for
      by the bg-pan animation. The shift is bounded in app.ts to what that animation's overscan leaves
      free, so it can never pull an edge into view. */
-  transform: translateX(var(--hero-parallax, 0px));
-  transition: transform 0.45s cubic-bezier(0.4, 0, 0.2, 1);
+  /* `scale` is the screen-level zoom (see the data-screen rules below); the two compose into one
+     transform, so both must live in the same declaration. */
+  transform: translateX(var(--hero-parallax, 0px)) scale(var(--hero-zoom, 1));
+  /* Long and symmetric (ease-in-out): the drift should read as the background lagging behind the strip,
+     not as a nudge. Same curve for the zoom, so a card entered mid-drift stays coherent. */
+  transition: transform 1.1s cubic-bezier(0.45, 0, 0.35, 1);
 }
 
 /* Each hero layer paints one image (background-image set per-layer from JS) and slowly drifts to one
@@ -188,6 +198,13 @@ body {
   transition: opacity 0.3s ease;
 }
 
+/* Entering a game pushes the background slightly IN (you moved closer to that game), and stepping back
+   to the strip pulls it out again. Kept small: the hero is already scaled ≥1.06 by its pan, and this
+   multiplies on top of it. */
+#app[data-screen='detail'] #hero {
+  --hero-zoom: 1.05;
+}
+
 /* Only the carousel screen shows the strip; on the detail screen it fades out (the selected card has
    already handed its geometry over to #play-button — see the morph block below). */
 #app[data-screen='carousel'] #carousel {
@@ -236,11 +253,25 @@ body {
 .card.is-selected::after {
   content: '';
   position: absolute;
-  inset: calc(-7 * var(--px));
-  border: calc(3 * var(--px)) solid var(--d2);
-  border-radius: calc(17 * var(--px));
-  animation: pulse-ring 1.1s ease-in-out infinite;
+  /* Half the Play button's ring (inset 7 / border 3 / radius 17): on a 204-tall card the full-size one
+     stands so far off the edge that its pulse reaches the active dot below. */
+  inset: calc(-4 * var(--px));
+  border: calc(2 * var(--px)) solid var(--d2);
+  border-radius: calc(14 * var(--px));
+  /* Its own, gentler pulse for the same reason — pulse-ring's 1.09 scale is 9 px of travel on a card
+     this tall, which would swallow the dot's 16 px of clearance. */
+  animation: card-ring-pulse 1.1s ease-in-out infinite;
   pointer-events: none;
+}
+
+@keyframes card-ring-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.035);
+  }
 }
 /* On the detail screen the strip is fading out — a pulsing ring underneath it would be noise. */
 #app[data-screen='detail'] .card.is-selected::after {
@@ -267,6 +298,10 @@ body {
 
 /* The 8x8 dot marking a game that is ON THE INSERTED CARD (launchable right now); history games have
    none. It hangs below the card, clear of the artwork. */
+/* The dot marks "this game is on the inserted card". It is only shown when that MEANS something: when
+   the row also holds history entries (otherwise every card would carry one and it says nothing), or when
+   this game is busy — there the pulse is the only cue that an install/run is going on elsewhere in the
+   list. carousel.ts computes it and sets .shows-dot. */
 .card-dot {
   position: absolute;
   left: 50%;
@@ -280,13 +315,13 @@ body {
   opacity: 0;
   transition: opacity 0.2s ease;
 }
-.card.is-active .card-dot {
+.card.shows-dot .card-dot {
   opacity: 1;
 }
 
 /* The busy game keeps its dot pulsing wherever you are in the list — that is how "game A is installing"
    stays visible while you browse game B (whose status line is deliberately blank; see app.ts). */
-.card.is-busy .card-dot {
+.card.is-busy.shows-dot .card-dot {
   animation: dot-pulse 1.6s ease-in-out infinite;
 }
 

@@ -71,13 +71,26 @@ export function createCarousel(deps: CarouselDeps): Carousel {
     return games[index];
   }
 
+  /**
+   * Whether a card shows the "on the inserted card" dot. It only earns its place when it TELLS the two
+   * kinds of entry apart — with no history in the row every card would wear one — or when that game is
+   * busy, where the pulsing dot is the only sign of an install/run happening elsewhere in the list.
+   */
+  function showsDot(game: LibraryEntry, hasHistory: boolean): boolean {
+    return (game.active && hasHistory) || game.id === busyId;
+  }
+
   /** The strip's translation + the per-card selected/active/busy state. Cheap; safe to call often. */
   function applyLayout(): void {
     strip.style.setProperty('--strip-offset', String(stripOffset(index)));
     const current = selected();
-    for (const [id, card] of cards) {
-      card.classList.toggle('is-selected', id === current?.id);
-      card.classList.toggle('is-busy', id === busyId);
+    const hasHistory = games.some((game) => !game.active);
+    for (const game of games) {
+      const card = cards.get(game.id);
+      if (card === undefined) continue;
+      card.classList.toggle('is-selected', game.id === current?.id);
+      card.classList.toggle('is-busy', game.id === busyId);
+      card.classList.toggle('shows-dot', showsDot(game, hasHistory));
     }
     // The morph's source image: #play-button wears the selected card's artwork so the swap into `detail`
     // is invisible (see the morph block in styles.css).
@@ -111,8 +124,8 @@ export function createCarousel(deps: CarouselDeps): Carousel {
     const card = document.createElement('div');
     card.className = 'card';
     card.dataset['gameId'] = game.id;
-    // A game on the inserted card gets the dot: it can be launched/installed right now.
-    card.classList.toggle('is-active', game.active);
+    // Whether this card gets the "on the inserted card" dot is decided per render by showsDot
+    // (applyLayout) — it depends on the rest of the row, not on this game alone.
     const label = document.createElement('span');
     label.className = 'card-label';
     // Card data is untrusted (it comes from game.json) — textContent, never innerHTML.
