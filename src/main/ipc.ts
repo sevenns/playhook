@@ -276,9 +276,13 @@ export class GameController {
   private games: ResolvedManifest[] = [];
   private selectedIndex = 0;
   // True while a game is launching/running: main is "locked" on that game — a game switch is refused and
-  // the renderer hides the "Select game" button (its guard is `kind==='ready'`). Set in runLaunchSequence.
+  // the carousel cannot enter another game's detail as actionable (its guard is `kind==='ready'`).
   private locked = false;
   private cardPresent = false;
+  // The id of the game with a Steam download/removal in flight, or null. Steam operations are the one
+  // kind of activity that leaves the state `ready`, so this is what stops a SECOND game from being
+  // launched or installed underneath them (see onLaunchRequested).
+  private steamBusyId: string | null = null;
   // Mirror of AppSettings.alwaysShowEmptyScreen (seeded at startup, toggled live from the settings
   // window): when true the launcher stays on the empty "no card" screen instead of hiding to the tray.
   private alwaysShowEmptyScreen = false;
@@ -409,6 +413,7 @@ export class GameController {
     this.games = [];
     this.selectedIndex = 0;
     this.locked = false;
+    this.steamBusyId = null; // the card is gone; whatever Steam is doing is no longer ours to guard
     this.statsById.clear();
     // Empty screen keeps the default UI sounds (navigation there must stay audible) — not silence. Music
     // is card-only, so the default set carries sounds without music. null only until warmDefaultAudio runs.
@@ -538,6 +543,12 @@ export class GameController {
    * lifecycle is governed in exactly one place (StateManager is not a controller hook).
    */
   private enterReady(info: GameInfo): void {
+    // Remember WHICH game Steam is busy with. A Steam download/removal keeps the state `ready` (it is
+    // non-blocking by design — it can run for hours), so the usual `kind !== 'ready'` guard does not cover
+    // it; and switching to another game rebuilds AppState around THAT game, which would otherwise erase
+    // the only trace of the operation. Cleared by the same game reporting itself idle again.
+    if (info.steamInstalling === true || info.steamUninstalling === true) this.steamBusyId = info.id;
+    else if (this.steamBusyId === info.id) this.steamBusyId = null;
     this.deps.state.set({ kind: 'ready', game: info });
     // Poll for ANY steam game while the card is present: it catches install completion (Install→Play),
     // uninstall completion (Play→Install) — incl. an uninstall the user triggers in Steam directly — and
@@ -566,7 +577,7 @@ export class GameController {
   /**
    * Reads a card at `root` and drives the launcher to `ready` for the selected game (single- or
    * multi-game card), or to `error` — the shared body of an ordinary insert AND a Configure-window reload.
-   * A multi-game card exposes its other games through the "Select game" popup (the light game list). `focus`
+   * A multi-game card exposes its other games through the history carousel (the light game list). `focus`
    * controls whether the launcher pops to the front: true for a real insertion (unchanged behaviour), false
    * for a reload so an Apply from the Configure window doesn't steal focus from the editor. Returns the
    * readManifests verdict so the caller (reloadManifest) can report it; onInsert ignores it.
@@ -803,6 +814,15 @@ export class GameController {
     if (snapshot.kind !== 'ready' || this.launchInFlight || this.reloadInFlight) return;
     const manifest = this.current();
     if (manifest === null) return;
+    // A Steam download/removal of ANOTHER game is in flight. Every other kind of activity moves the state
+    // out of `ready` and is caught by the guard above; a Steam operation deliberately does not (it can run
+    // for hours and the window stays usable), so it needs this explicit check — otherwise a second game
+    // could be launched or installed on top of it from the carousel.
+    if (this.steamBusyId !== null && this.steamBusyId !== manifest.raw.id) {
+      log.info(`[launch] refused id=${manifest.raw.id}: a Steam operation is in flight for id=${this.steamBusyId}`);
+      this.sendError(this.t('errors.steamBusyOther'));
+      return;
+    }
     // Steam mode: not yet installed → open steam://install (fire-and-forget); otherwise launch via
     // steam://rungameid. Both inside runSteamInstall / runLaunchSequence's steam branch.
     if (manifest.steam !== undefined) {
@@ -836,11 +856,11 @@ export class GameController {
   }
 
   /**
-   * "Select game" popup → a game was picked (renderer sent action:select with the game id). Switches to
+   * The carousel entered a game's detail screen (renderer sent action:select with the game id). Switches to
    * it: builds that game's hero/audio/GameInfo on demand (only the selected game ever gets heavy assets)
    * and enters `ready`. Selection is by id (not index) so a card reload that reorders games can't pick the
    * wrong one. Rejected unless we're on `ready` and idle (not locked / launching / reloading) — the same
-   * guard the "Select game" button already enforces, so you can't switch while a game is running.
+   * guard the launch path enforces, so you can't switch the card's game while one is running.
    */
   private async onSelectRequested(idRaw: unknown): Promise<void> {
     if (typeof idRaw !== 'string') return;
@@ -1137,7 +1157,7 @@ export class GameController {
     const { state, window, stats } = this.deps;
     this.launchInFlight = true;
     // Lock the launcher on this game for the launching→running span: a game switch is refused and the
-    // "Select game" button is hidden. Cleared in the finally alongside the other running-scoped fields.
+    // switching the card's game is refused. Cleared in the finally alongside the other running-scoped fields.
     this.locked = true;
     const abort = new AbortController();
     this.abort = abort;
@@ -1319,7 +1339,7 @@ export class GameController {
       // Release the elevated HANDLE (no-op for the normal spawn path).
       proc?.dispose();
       this.launchInFlight = false;
-      // The game is done → unlock (game switching allowed again, "Select game" button reappears).
+      // The game is done → unlock (switching the card's game is allowed again).
       this.locked = false;
       this.abort = null;
       // The game is no longer running → forget its image names (return-to-game only applies while running).

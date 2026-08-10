@@ -74,8 +74,6 @@ export const en = {
   'launcher.menu.quit': 'Close Playhook',
   // Force-close the running game (Details menu item, visible only while a game is running).
   'launcher.menu.forceClose': 'Force close',
-  // Opens the "Select game" list (Details menu item, visible only for a multi-game card on the ready screen).
-  'launcher.menu.selectGame': 'Select game',
   // Confirmation popup copy (controls.ts). The Yes/No buttons use the shared common.* keys.
   'launcher.confirm.install': 'Do you want to install game?',
   'launcher.confirm.uninstall': 'Do you want to uninstall game from your PC?',
@@ -333,6 +331,7 @@ export const en = {
   'errors.finishBeforeApply': 'Finish what’s running before applying the config',
   'errors.reloadInProgress': 'a reload is already in progress',
   'errors.steamNotInstalled': 'Steam is not installed',
+  'errors.steamBusyOther': 'Another game is being downloaded or removed in Steam. Wait for it to finish.',
   'errors.steamOpenInstall': 'failed to open Steam install: {cause}',
   'errors.steamOpenDownloads': 'failed to open Steam downloads: {cause}',
   'errors.steamOpenUninstall': 'failed to open Steam uninstall: {cause}',

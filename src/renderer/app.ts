@@ -51,10 +51,10 @@ const hero = createHeroController({
 });
 
 // ── Interaction layer (popups + focus + actions, see controls.ts) ────────────
-// Owns the popups (incl. the "Select game" list for a multi-game card), the two focus groups and the
+// Owns the popups (Details / Power / Confirm / Error), the focus groups and the
 // actions they trigger, plus their wiring (clicks, hover, gamepad, Esc). render() drives it via
-// applyGameButtons/clearGameButtons/refresh; main's error goes to showError; the game list arrives via
-// setGames; the gamepad loop starts with start().
+// applyGameButtons/clearGameButtons/refresh; main's error goes to showError; the gamepad loop starts
+// with start(). The carousel seam below routes A/B/left/right when the strip is the active surface.
 const controls = createControls({
   getState: () => currentState,
   getBrowse: () => currentBrowse,
@@ -441,7 +441,6 @@ void window.api.requestHero().then((assets) => hero.applyAssets(assets));
 // The carousel list (the inserted card's games + the play history, already ordered) arrives on its own
 // channel. Seed on startup (back-fill after a window reconnect), then live updates.
 function applyLibrary(games: readonly LibraryEntry[]): void {
-  controls.setGames(games);
   carousel.setGames(games);
   // The carousel is the default level whenever there is more than one game to flip through — but never
   // yank the user out of a detail screen they opened themselves (they may be watching an install run).
