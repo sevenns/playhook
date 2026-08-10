@@ -333,12 +333,19 @@ function render(state: AppState): void {
   // screen: (a) a requiresInstall installer/steam game on the ready screen (and NOT steam-busy, when the
   // gear must stay visible) — as before; (b) a HISTORY game, which has no card behind it, so there is
   // nothing to launch — it looks exactly like an uninstalled game (title + More).
+  // Whether the selected card has a Play button waiting for it on the detail screen. Unlike `no-play`
+  // below this holds on BOTH screens, because it decides how the card TRANSITIONS: with a Play it hands
+  // its geometry to the button (a swap, then a morph); without one it has nothing to hand over and
+  // shrinks away instead — and coming back, only the morph case waits for the button to grow (styles.css).
+  const hasPlay =
+    browse !== null &&
+    browse.active &&
+    !(phase === 'ready' && browse.game?.requiresInstall === true && !busySteam);
+  app.dataset['cardMorph'] = hasPlay ? 'on' : 'off';
+
   // Only on the detail screen: in the carousel Play is hidden anyway, and the attribute's `.title{left:0}`
   // half would fight the carousel's own title placement.
-  const noPlay =
-    carousel.screen() === 'detail' &&
-    browse !== null &&
-    (!browse.active || (phase === 'ready' && browse.game?.requiresInstall === true && !busySteam));
+  const noPlay = carousel.screen() === 'detail' && !hasPlay && browse !== null;
   if (noPlay) app.dataset['layout'] = 'no-play';
   else delete app.dataset['layout'];
 

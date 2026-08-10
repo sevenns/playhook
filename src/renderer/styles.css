@@ -165,8 +165,11 @@ body {
 #app[data-phase='error'] #play-button {
   display: none;
 }
-#app[data-phase='idle'] .title,
-#app[data-phase='error'] .title {
+/* …but NOT while the carousel is up: there the title sits beside the selected card (--title-x), and
+   pulling it to x=50 as well would drop it straight on top of the cards. This is what broke the layout
+   the moment a card was removed (no card → phase idle → this rule). */
+#app[data-phase='idle']:not([data-screen='carousel']) .title,
+#app[data-phase='error']:not([data-screen='carousel']) .title {
   left: 0;
 }
 
@@ -341,6 +344,33 @@ body {
    that instant — so the swap is instantaneous and invisible, and only the button animates afterwards. */
 #app[data-screen='detail'] .card {
   opacity: 0;
+}
+
+/* …unless there is no Play to hand over to (a history game, or one that still needs installing): then
+   nothing would take the card's place, so instead of blinking out it SHRINKS into its own bottom-left
+   corner — the same corner the title then slides into. */
+#app[data-screen='detail'][data-card-morph='off'] .card.is-selected {
+  width: 0;
+  height: 0;
+  transform-origin: bottom left;
+  transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1), height 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 0.35s ease;
+}
+
+/* Going BACK is the entry played backwards, not a cross-fade: the button first grows from the play
+   square to the card's size, and only then (0.35s — its own duration) does the strip take over. Without
+   the delay the cards simply faded in over a button that was still growing underneath. */
+#app[data-screen='carousel'][data-card-morph='on'] #carousel,
+#app[data-screen='carousel'][data-card-morph='on'] .card {
+  transition-delay: 0.35s;
+}
+#app[data-screen='carousel'][data-card-morph='on'] .play-button {
+  /* Stays visible (and keeps its cover) for exactly that grow, then is swapped out in one frame. */
+  transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1), height 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 0s linear 0.35s;
+}
+#app[data-screen='carousel'][data-card-morph='on'] .play-button::before {
+  transition-delay: 0s;
 }
 
 /* ── Bottom bar ──────────────────────────────────────────────────────────── */
@@ -626,8 +656,10 @@ html:not(.cursor-hidden) .rect-button:hover,
      the carousel shift (see the carousel block). A second `transform` rule would silently override the
      first, so every mover writes its own variable instead. */
   transform: translate(var(--title-x, 0px), calc(var(--title-y, 0px) - var(--text-lift, 0px)));
+  /* `left` is animated too: it moves between the Play-less slot (x=50) and the normal one (x=174), and
+     an un-animated jump there is exactly what made the name "hop" when entering a game with no Play. */
   transition: transform 0.45s cubic-bezier(0.4, 0, 0.2, 1), font-size 0.35s cubic-bezier(0.4, 0, 0.2, 1),
-    opacity 0.3s ease;
+    left 0.35s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.3s ease;
 }
 
 /* Flipping through the carousel: the OLD title must not linger over the new card while main is still
