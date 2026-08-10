@@ -22,8 +22,8 @@ export interface CarouselDeps {
   onScreenChange(screen: Screen): void;
   /** A card was activated (A / click on the selected card) — app.ts decides what entering detail means. */
   onActivate(entry: LibraryEntry): void;
-  /** The selection moved (a nav sound belongs to the interaction layer, not here). */
-  onNavigate(): void;
+  /** The selection moved by `delta` cards (a nav sound / the background parallax belong to app.ts). */
+  onNavigate(delta: number): void;
 }
 
 export interface Carousel {
@@ -133,8 +133,9 @@ export function createCarousel(deps: CarouselDeps): Carousel {
         activate();
         return;
       }
+      const delta = position - index;
       index = position;
-      deps.onNavigate();
+      deps.onNavigate(delta);
       applyLayout();
       announceSelection();
     });
@@ -176,8 +177,9 @@ export function createCarousel(deps: CarouselDeps): Carousel {
   function move(delta: number): void {
     const next = clampIndex(index + delta, games.length);
     if (next === index) return; // at an end — no move, no sound
+    const moved = next - index;
     index = next;
-    deps.onNavigate();
+    deps.onNavigate(moved);
     applyLayout();
     loadNearbyArt();
     announceSelection();

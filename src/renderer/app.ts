@@ -77,6 +77,14 @@ const controls = createControls({
 // The strip of game cards and the `carousel`/`detail` level live there; this module wires it to main
 // (list, artwork, browse) and to the interaction layer (nav sounds, focus routing).
 
+// Background parallax while flipping through the strip: design px per card, and the cap the total drift
+// never exceeds. The budget is what the hero's Ken Burns pan leaves over: at its minimum scale (1.06)
+// there are ~58 design px of overscan per side, and the pan itself already spends up to 1.5% (~29 px) of
+// it — so the parallax may claim at most the remaining ~29, or a corner of the wallpaper shows through.
+const HERO_PARALLAX_STEP = 8;
+const HERO_PARALLAX_MAX = 24;
+let heroParallax = 0;
+
 // Music follows the selection, so a held direction would otherwise read a multi-MB file per step. The
 // debounce lets a burst of moves settle into ONE browse request — the last card you land on.
 const BROWSE_DEBOUNCE_MS = 350;
@@ -110,8 +118,15 @@ const carousel = createCarousel({
     if (entry.active && gameOf(currentState)?.id !== entry.id) window.api.selectGame(entry.id);
     carousel.setScreen('detail');
   },
-  onNavigate: () => {
+  onNavigate: (delta) => {
     audio.play('navigate');
+    // Parallax: the background drifts the same way the strip does, one notch per card, bounded so it
+    // stays inside the pan's own headroom (see #hero). Moving back unwinds it.
+    heroParallax = Math.max(
+      -HERO_PARALLAX_MAX,
+      Math.min(HERO_PARALLAX_MAX, heroParallax - delta * HERO_PARALLAX_STEP),
+    );
+    hero.setParallax(heroParallax);
     // Cut the outgoing title immediately: the new one arrives with the (debounced) browse answer, and a
     // stale name sitting next to the new card for a third of a second reads as a bug. render() fades the
     // replacement back in — see titleSwapPending.

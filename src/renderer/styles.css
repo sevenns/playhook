@@ -105,6 +105,12 @@ body {
   position: absolute;
   inset: 0;
   z-index: -1;
+  /* Parallax: flipping through the carousel drags the background a little the same way (hero.ts sets
+     --hero-parallax). It lives on the CONTAINER because each layer's own transform is already spoken for
+     by the bg-pan animation. The shift is bounded in app.ts to what that animation's overscan leaves
+     free, so it can never pull an edge into view. */
+  transform: translateX(var(--hero-parallax, 0px));
+  transition: transform 0.45s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 /* Each hero layer paints one image (background-image set per-layer from JS) and slowly drifts to one

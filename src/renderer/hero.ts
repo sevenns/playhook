@@ -31,10 +31,13 @@ export interface HeroController {
   applyEmptyScreen(): void;
   /** Stores the fallback wallpaper data URL (delivered by main); does not repaint on its own. */
   setWallpaper(url: string | null): void;
+  /** Parallax offset in DESIGN px: the background drifts with the carousel (see #hero in styles.css). */
+  setParallax(designPx: number): void;
 }
 
 export function createHeroController(deps: HeroDeps): HeroController {
   const app = req('app');
+  const heroEl = req('hero');
   const titleEl = req('title');
 
   // Fallback wallpaper (data URL from main) for the empty / idle screen, and its cached palette.
@@ -217,5 +220,9 @@ export function createHeroController(deps: HeroDeps): HeroController {
     wallpaperPalette = undefined;
   }
 
-  return { repaint, startRotation, applyAssets, applyEmptyScreen, setWallpaper };
+  function setParallax(designPx: number): void {
+    heroEl.style.setProperty('--hero-parallax', `calc(${designPx} * var(--px))`);
+  }
+
+  return { repaint, startRotation, applyAssets, applyEmptyScreen, setWallpaper, setParallax };
 }
