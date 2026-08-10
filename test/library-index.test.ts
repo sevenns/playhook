@@ -115,15 +115,26 @@ describe('evictBeyond', () => {
 });
 
 describe('orderForCarousel', () => {
-  it('puts the inserted card first IN CARD ORDER, then history by lastPlayedAt desc', () => {
+  it('puts the inserted card first, then history — each group by lastPlayedAt desc', () => {
     const entries = [
       entry('history-old', { lastPlayedAt: '2020-01-01T00:00:00.000Z' }),
-      entry('card-b'),
+      entry('card-old', { lastPlayedAt: '2021-01-01T00:00:00.000Z' }),
       entry('history-new', { lastPlayedAt: '2026-01-01T00:00:00.000Z' }),
-      entry('card-a'),
+      entry('card-new', { lastPlayedAt: '2026-06-01T00:00:00.000Z' }),
     ];
-    const order = orderForCarousel(entries, ['card-a', 'card-b']);
-    expect(order.map((e) => e.id)).toEqual(['card-a', 'card-b', 'history-new', 'history-old']);
+    // The card's ids are passed OLDEST first: the group is ordered by date, not by that argument.
+    const order = orderForCarousel(entries, ['card-old', 'card-new']);
+    expect(order.map((e) => e.id)).toEqual(['card-new', 'card-old', 'history-new', 'history-old']);
+  });
+
+  it('sends a never-played card game to the END of its group, not ahead of a played one', () => {
+    const entries = [
+      entry('never', { launchCount: 0, lastPlayedAt: null }),
+      entry('played', { lastPlayedAt: '2026-01-01T00:00:00.000Z' }),
+      entry('history', { lastPlayedAt: '2025-01-01T00:00:00.000Z' }),
+    ];
+    const order = orderForCarousel(entries, ['never', 'played']);
+    expect(order.map((e) => e.id)).toEqual(['played', 'never', 'history']);
   });
 
   it('breaks equal dates by title, so the order is stable', () => {

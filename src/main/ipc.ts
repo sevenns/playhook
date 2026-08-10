@@ -28,6 +28,7 @@ import { type GameWindow } from './window';
 import { type PcStore } from './pc-store';
 import { type StatsService } from './stats';
 import { type LibraryStore } from './library-store';
+import { byRecentlyPlayed } from './library-index';
 import { type DriveWatcher } from './drive-watcher';
 import { readManifests, findCaseInsensitiveName, type ManifestEnv } from './manifest';
 import { syncDir, syncByChange, snapshotTree } from './save-sync';
@@ -1326,8 +1327,10 @@ export class GameController {
       // recordPlay is the one moment the ordering that decides eviction actually changes.
       await this.deps.library.noteLaunch(manifest.raw.id, updatedStats);
       await this.deps.library.gc(this.games.map((m) => m.raw.id));
-      this.refreshLibrary();
+      // Before the refresh, not after: the card's own games are ordered by these very dates, and this
+      // game has just become the most recently played one.
       this.statsById.set(manifest.raw.id, updatedStats);
+      this.refreshLibrary();
 
       // 6. PC→SD + stats copy (or pending-flush, if the card is already gone). The game just exited,
       // so reclaim the foreground (forceForeground) to surface the launcher over Steam/desktop.
@@ -1948,9 +1951,11 @@ export class GameController {
   }
 
   /**
-   * Rebuilds and pushes the carousel list: the inserted card's games first (in card order — they are the
-   * ones that can be launched right now), then the played history. No stats are read from disk here: the
-   * index caches launchCount/lastPlayedAt for exactly this (Р1).
+   * Rebuilds and pushes the carousel list: the inserted card's games first (they are the ones that can be
+   * launched right now), then the played history — each group most recently played first. No stats are
+   * read from disk here: the index caches launchCount/lastPlayedAt for exactly this (Р1), and the card's
+   * own games use the reconciled stats already in memory (statsById), falling back to the index for a
+   * game whose reconcile hasn't happened yet.
    *
    * A card game is listed even when the library has no record for it yet — the asset copy runs in the
    * background after the window is already up, and the carousel must not wait for it.
@@ -1958,14 +1963,24 @@ export class GameController {
   private refreshLibrary(): void {
     const activeIds = this.games.map((manifest) => manifest.raw.id);
     const active = new Set(activeIds);
+    const cardGames = byRecentlyPlayed(
+      this.games.map((manifest) => ({
+        id: manifest.raw.id,
+        title: manifest.raw.title,
+        lastPlayedAt:
+          this.statsById.get(manifest.raw.id)?.lastPlayedAt ??
+          this.deps.library.entry(manifest.raw.id)?.lastPlayedAt ??
+          null,
+      })),
+    );
     const games = [
-      ...this.games.map((manifest) => {
+      ...cardGames.map((game) => {
         // `artRev` (the record's savedAt) changes only when the assets were actually re-copied, which is
         // what lets the renderer keep its decoded covers cached and still pick up an edited gridImage.
-        const stored = this.deps.library.entry(manifest.raw.id);
+        const stored = this.deps.library.entry(game.id);
         return {
-          id: manifest.raw.id,
-          title: manifest.raw.title,
+          id: game.id,
+          title: game.title,
           active: true,
           ...(stored !== null ? { artRev: stored.savedAt } : {}),
         };

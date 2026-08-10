@@ -108,14 +108,38 @@ export function evictBeyond(
   };
 }
 
+/** The minimum a game must carry to be placed in the carousel — see byRecentlyPlayed. */
+export interface PlayedSortable {
+  readonly title: string;
+  readonly lastPlayedAt: string | null;
+}
+
 /**
- * The carousel order: the games on the inserted card FIRST, in card order (they are the ones you can
- * launch right now), then the history by `lastPlayedAt` descending, `title` breaking ties so equal
- * dates (or two never-played entries) keep a stable, predictable order.
+ * Most recently played first. Never-played games go LAST (a `null` date is "no play at all", not "played
+ * at epoch"), and `title` breaks every tie so equal dates — or a row of never-played games — keep a
+ * stable, predictable order instead of drifting with insertion order.
+ *
+ * Used for BOTH carousel groups: the card's own games and the history are each ordered by it.
+ */
+export function byRecentlyPlayed<T extends PlayedSortable>(items: readonly T[]): readonly T[] {
+  return [...items].sort((a, b) => {
+    if ((a.lastPlayedAt === null) !== (b.lastPlayedAt === null))
+      return a.lastPlayedAt === null ? 1 : -1;
+    if (a.lastPlayedAt !== null && b.lastPlayedAt !== null && a.lastPlayedAt !== b.lastPlayedAt) {
+      return Date.parse(b.lastPlayedAt) - Date.parse(a.lastPlayedAt);
+    }
+    return a.title.localeCompare(b.title);
+  });
+}
+
+/**
+ * The carousel order: the games on the inserted card FIRST (they are the ones you can launch right now),
+ * then the history — each group ordered by `lastPlayedAt` descending, see byRecentlyPlayed.
  *
  * History entries that were never launched are dropped: a card inserted but never played leaves a record
  * (assets are copied on insert), and showing it would put games you never started in your history. They
- * stay on disk only until the GC gets to them.
+ * stay on disk only until the GC gets to them. The ACTIVE group keeps its never-played games — they are
+ * on the card in front of you, just at the end of their group.
  */
 export function orderForCarousel(
   entries: readonly LibraryEntryRecord[],
@@ -128,13 +152,6 @@ export function orderForCarousel(
     if (entry !== undefined) active.push(entry);
   }
   const activeSet = new Set(activeIds);
-  const history = entries
-    .filter((entry) => !activeSet.has(entry.id) && entry.launchCount > 0)
-    .sort((a, b) => {
-      const at = a.lastPlayedAt === null ? 0 : Date.parse(a.lastPlayedAt);
-      const bt = b.lastPlayedAt === null ? 0 : Date.parse(b.lastPlayedAt);
-      if (at !== bt) return bt - at;
-      return a.title.localeCompare(b.title);
-    });
-  return [...active, ...history];
+  const history = entries.filter((entry) => !activeSet.has(entry.id) && entry.launchCount > 0);
+  return [...byRecentlyPlayed(active), ...byRecentlyPlayed(history)];
 }
