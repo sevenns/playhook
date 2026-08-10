@@ -12,7 +12,7 @@
 // (Close / No / Sleep), which the mockup draws filled. B/Esc/veil step BACK one level.
 import type { AppState, BrowseInfo, GameInfo } from '../shared/types';
 import type { Translator } from '../shared/i18n/index.js';
-import { createGamepadController } from './gamepad.js';
+import { NAV_REPEAT_MS, createGamepadController } from './gamepad.js';
 import { type AudioController } from './audio.js';
 import { gameOf, phaseOf, steamBusy } from './state-view.js';
 import { req, reqQuery } from './dom.js';
@@ -786,11 +786,23 @@ export function createControls(deps: ControlsDeps): Controls {
     backspace: navBack,
     escape: navBack,
   };
+  // Left/right are the exception to the edge model: holding them flips through the carousel, matching the
+  // gamepad's hold-to-repeat. The OS auto-repeat supplies the events (its own initial delay is close
+  // enough to the pad's), but its rate is far too fast for a carousel, so it is throttled to the same
+  // NAV_REPEAT_MS cadence. Every other key stays one action per press.
+  const REPEATABLE_KEYS = new Set(['a', 'arrowleft', 'd', 'arrowright']);
+  let lastKeyRepeatAt = 0;
   window.addEventListener('keydown', (event) => {
-    const handler = KEY_NAV[event.key.toLowerCase()];
+    const key = event.key.toLowerCase();
+    const handler = KEY_NAV[key];
     if (handler === undefined) return;
     event.preventDefault(); // suppress the native default even on auto-repeat (e.g. Tab traversal)
-    if (event.repeat) return; // one action per press, like the gamepad edge model
+    if (event.repeat) {
+      if (!REPEATABLE_KEYS.has(key)) return;
+      const now = performance.now();
+      if (now - lastKeyRepeatAt < NAV_REPEAT_MS) return;
+      lastKeyRepeatAt = now;
+    }
     handler();
   });
 
