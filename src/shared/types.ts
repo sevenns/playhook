@@ -306,6 +306,13 @@ export interface LibraryEntry {
   readonly title: string;
   /** The game is on the card currently inserted: it can be launched/installed right now. */
   readonly active: boolean;
+  /**
+   * Revision of this game's stored artwork — it changes whenever main re-copies the card's images. The
+   * renderer caches decoded covers by `id + artRev`, so editing `gridImage` in Configure and hitting
+   * Save & Apply shows the new cover immediately, instead of serving the cached one until a restart.
+   * Absent while the background copy hasn't produced a record yet.
+   */
+  readonly artRev?: string;
 }
 
 /** The carousel list, already in display order — the renderer never sorts it (see orderForCarousel). */

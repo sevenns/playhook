@@ -289,7 +289,10 @@ export const en = {
   'configure.heroImagesHint': 'Up to 3 backgrounds; several cross-fade every minute.',
   'configure.fieldGridImage': 'Card image',
   'configure.gridImageHint':
-    'The game’s card in the launcher’s history carousel (portrait, ~136×204). Optional — without it the card is cropped from the first hero image.',
+    'The game’s card in the launcher’s history carousel. A 600x900 portrait cover is expected (the same format Steam uses). Optional — without it the card is cropped from the first hero image.',
+  // Helper link next to the card-image field (opens SteamGridDB in the default browser), mirroring the
+  // Steam appid link — a 600x900 cover is exactly what that site catalogues.
+  'configure.gridImageHelp': 'Find a 600x900 cover on SteamGridDB',
   'configure.fieldSaveOnCard': 'Save folder on the card',
   'configure.fieldPcSavePath': 'PC save path',
   'configure.pcSavePathPlaceholder': '%APPDATA%/My Game',

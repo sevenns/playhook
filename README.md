@@ -113,8 +113,9 @@ music), with no Play button: there is nothing to launch without the card. The hi
 recently played games; beyond that the oldest ones are dropped, and games that were merely inserted but
 never launched go first. The games on the inserted card are never evicted.
 
-Use `gridImage` in `game.json` to control how a game looks in that row; without it the card is cropped
-from the first `heroImage`.
+Use `gridImage` in `game.json` to control how a game looks in that row. It expects a **600x900** portrait
+cover — the same format Steam uses, so [SteamGridDB](https://www.steamgriddb.com/) is the easiest place to
+find one. Without it the card is cropped from the first `heroImage`.
 
 The empty screen (no card inserted, no history) reuses the same layout over the wallpaper: "Insert a game card",
 no Play button, and **More** offering just the *System* submenu (where *Minimize Playhook* lives).
@@ -158,7 +159,7 @@ hand:
 
 - pick the card (any removable drive — a **blank** one can be initialized from scratch);
 - a **form** with sections *Basics / Launch / Images / Saves / Audio / Advanced*, with Browse pickers
-  for the executable, the hero backgrounds (up to 3), the carousel card image, sounds and save folders
+  for the executable, the hero backgrounds (up to 3), the 600x900 carousel card image, sounds and save folders
   (a picked PC save folder is converted back into a `%APPDATA%`-style prefix automatically, and a file
   outside the card is rejected);
 - a **JSON** tab with the raw manifest, live schema validation, error messages and a formatter — the
@@ -195,7 +196,7 @@ rejected**, since the id keys the PC-side storage. The Configure editor shows th
   "args": [],                               // launch arguments (optional)
   "runAsAdmin": false,                      // launch elevated via UAC for .exe requiring admin (optional, default false)
   "heroImage": "assets/hero.jpg",           // window background: one path, or an array of UP TO 3 paths that cross-fade every minute (optional; falls back to a bundled wallpaper)
-  "gridImage": "assets/grid.jpg",           // the game's card in the history carousel: a portrait cover, ~136x204 (optional; without it the card is cropped from the first heroImage)
+  "gridImage": "assets/grid.jpg",           // the game's card in the history carousel: a 600x900 portrait cover, as on SteamGridDB (optional; without it the card is cropped from the first heroImage)
   "saveOnCard": "saves",                    // copy folder for saves on the card (relative to the root)
   "pcSavePath": "%APPDATA%/Team Cherry/Hollow Knight", // where the game actually writes saves on the PC
   "launchTimeoutSec": 30,                   // how long to wait for the process to appear (optional, default 30)

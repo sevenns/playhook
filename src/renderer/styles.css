@@ -131,8 +131,13 @@ body {
 #app[data-phase='error'] #play-button {
   display: none;
 }
+/* The `left` of the title has exactly ONE owner — the base rule — plus this list of exceptions, all of
+   which mean the same thing: nothing occupies the left slot, so the title takes it. The carousel is one
+   of them (Play is hidden there), which also lines the title up with the cards' left edge. */
 #app[data-phase='idle'] .title,
-#app[data-phase='error'] .title {
+#app[data-phase='error'] .title,
+#app[data-screen='carousel'] .title,
+#app[data-screen='carousel'] .status {
   left: 0;
 }
 
@@ -147,10 +152,12 @@ body {
   position: absolute;
   left: 0;
   right: 0;
-  /* The row sits above the bar's text block: its cards' bottoms align 300 design px from the screen
-     bottom, which puts the selected 204-tall card's top just under the title/status block. */
-  bottom: calc(300 * var(--px));
-  height: calc(220 * var(--px));
+  /* The row stands ON the bottom bar: the cards' bottom edge is 16 design px above .bar-content (whose
+     top edge is at 142 = bottom 50 + height 92), so they sit just over the title — not floating in
+     mid-screen. The box itself reaches 16 px LOWER (134) and the strip is inset by the same amount, so
+     the active-dot hanging below a card stays inside the clip instead of being cut off by it. */
+  bottom: calc(134 * var(--px));
+  height: calc(244 * var(--px));
   overflow: hidden;
   opacity: 0;
   pointer-events: none;
@@ -168,7 +175,8 @@ body {
   position: absolute;
   /* The anchor: the same x=50 the bar content uses, so the selected card lines up with the title. */
   left: calc(50 * var(--px));
-  bottom: 0;
+  /* Room for the dot below the cards (see #carousel's bottom/height). */
+  bottom: calc(24 * var(--px));
   display: flex;
   align-items: flex-end;
   gap: calc(16 * var(--px));
@@ -541,15 +549,9 @@ html:not(.cursor-hidden) .rect-button:hover,
   transition: transform 0.45s cubic-bezier(0.4, 0, 0.2, 1), font-size 0.35s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-/* Carousel level: the text block rises to sit under the selected card and the title shrinks. `--text-lift`
-   is the single knob for the vertical position (both lines share it), and `--title-x`/`--status-x` shift
-   the block right to line up with the card — never a second `left`, which would collide with the three
-   rules that already own it (base, idle/error, no-play). */
-#app[data-screen='carousel'] {
-  --text-lift: calc(130 * var(--px));
-  --title-x: calc(28 * var(--px));
-  --status-x: calc(28 * var(--px));
-}
+/* Carousel level: the title keeps the bar's own vertical slot (the strip stands right above it) and only
+   shrinks. Its horizontal position is handled by the `left: 0` rule below — with Play hidden, the title
+   starts at x=50, exactly under the selected card's left edge. */
 #app[data-screen='carousel'] .title {
   font-size: calc(24 * var(--px));
 }

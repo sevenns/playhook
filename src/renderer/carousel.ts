@@ -54,10 +54,14 @@ export function createCarousel(deps: CarouselDeps): Carousel {
   let index = 0;
   let screen: Screen = 'detail';
   let busyId: string | null = null;
-  // Artwork by game id. Decoded data URLs are heavy, so each is fetched at most once per session; a
-  // card whose game has no art at all is remembered as null so we don't ask again on every re-render.
+  // Artwork, keyed by game id AND artwork revision. Decoded data URLs are heavy, so each is fetched at
+  // most once; a game with no art at all is remembered as null so we don't ask again on every re-render.
+  // The revision is what keeps that cache honest: editing gridImage in Configure re-copies the assets,
+  // main bumps `artRev`, and the new key misses the cache — no restart needed to see the new cover.
   const art = new Map<string, string | null>();
   const cards = new Map<string, HTMLElement>();
+
+  const artKey = (game: LibraryEntry): string => `${game.id}@${game.artRev ?? ''}`;
 
   function exists(): boolean {
     return games.length > 1;
@@ -77,18 +81,19 @@ export function createCarousel(deps: CarouselDeps): Carousel {
     }
     // The morph's source image: #play-button wears the selected card's artwork so the swap into `detail`
     // is invisible (see the morph block in styles.css).
-    const url = current === undefined ? null : (art.get(current.id) ?? null);
+    const url = current === undefined ? null : (art.get(artKey(current)) ?? null);
     playButton.style.setProperty('--card-art', url === null ? 'none' : `url("${url}")`);
   }
 
   /** Loads the artwork of the cards near the selection (a 40-game history must not decode 40 covers). */
   function loadNearbyArt(): void {
     games.forEach((game, i) => {
-      if (!isNearViewport(i, index) || art.has(game.id)) return;
-      art.set(game.id, null); // claim the slot first: the request is async and re-renders are frequent
+      const key = artKey(game);
+      if (!isNearViewport(i, index) || art.has(key)) return;
+      art.set(key, null); // claim the slot first: the request is async and re-renders are frequent
       void deps.requestGrid(game.id).then((url) => {
         if (url === null) return;
-        art.set(game.id, url);
+        art.set(key, url);
         paintArt(game.id, url);
         if (game.id === selected()?.id) applyLayout(); // refresh the morph source
       });
@@ -115,7 +120,7 @@ export function createCarousel(deps: CarouselDeps): Carousel {
     const dot = document.createElement('span');
     dot.className = 'card-dot';
     card.append(label, dot);
-    const url = art.get(game.id);
+    const url = art.get(artKey(game));
     if (url !== undefined && url !== null) {
       card.style.backgroundImage = `url("${url}")`;
       card.classList.add('has-art');

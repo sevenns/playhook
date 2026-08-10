@@ -170,6 +170,47 @@ describe('saveFromCard', () => {
     expect((await fs.stat(path.join(baseDir, 'library', 'a', 'grid.jpg'))).mtimeMs).toBe(copiedAt);
   });
 
+  it('re-copies when the card art changed, bumps savedAt and leaves no orphan of the old cover', async () => {
+    const first = store();
+    await first.init();
+    await first.saveFromCard([manifest('a', { gridImagePath: await card('art/grid.png') })]);
+    const before = (await readIndex()).entries[0];
+    // The lazily-built thumbnail exists too — it must not survive a cover change.
+    await first.readGridThumb('a');
+    expect(await fs.readdir(path.join(baseDir, 'library', 'a'))).toContain('grid-thumb.png');
+
+    // The author swapped the cover for a differently-named file (Configure → Save & Apply).
+    const second = store();
+    await second.init();
+    await second.saveFromCard([manifest('a', { gridImagePath: await card('art/cover.jpg') })]);
+
+    const after = (await readIndex()).entries[0];
+    expect(after?.grid).toBe('grid.jpg');
+    expect(after?.sourceSig).not.toBe(before?.sourceSig);
+    // savedAt is the artwork revision the renderer keys its cover cache by — it MUST move.
+    expect(after?.savedAt).not.toBe(before?.savedAt);
+    expect(await fs.readdir(path.join(baseDir, 'library', 'a'))).toEqual(['grid.jpg']);
+  });
+
+  it('re-copies when only a hero image changed (the signature covers every asset)', async () => {
+    const grid = await card('art/grid.jpg');
+    const first = store();
+    await first.init();
+    await first.saveFromCard([
+      manifest('a', { gridImagePath: grid, heroImagePaths: [await card('art/h0.jpg', 'IMG 1x1')] }),
+    ]);
+    const before = (await readIndex()).entries[0];
+
+    const second = store();
+    await second.init();
+    await second.saveFromCard([
+      manifest('a', { gridImagePath: grid, heroImagePaths: [await card('art/h1.jpg', 'IMG 2x2')] }),
+    ]);
+    const after = (await readIndex()).entries[0];
+    expect(after?.sourceSig).not.toBe(before?.sourceSig);
+    expect(after?.savedAt).not.toBe(before?.savedAt);
+  });
+
   it('writes one index entry per game, sequentially (no lost update)', async () => {
     const library = store();
     await library.init();

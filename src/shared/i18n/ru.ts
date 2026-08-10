@@ -258,7 +258,8 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'configure.heroImagesHint': 'До 3 фонов; если их несколько, они сменяются раз в минуту.',
   'configure.fieldGridImage': 'Карточка игры',
   'configure.gridImageHint':
-    'Карточка игры в карусели истории лаунчера (вертикальная, ~136×204). Необязательно - без неё карточка обрезается из первого фона.',
+    'Карточка игры в карусели истории лаунчера. Нужно вертикальное изображение 600x900 (тот же формат, что у Steam). Необязательно - без неё карточка обрезается из первого фона.',
+  'configure.gridImageHelp': 'Найти обложку 600x900 на SteamGridDB',
   'configure.fieldSaveOnCard': 'Папка сохранений на карте',
   'configure.fieldPcSavePath': 'Путь сохранений на ПК',
   'configure.fieldSoundPlay': 'Звук «Играть»',

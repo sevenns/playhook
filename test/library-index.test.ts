@@ -49,10 +49,13 @@ describe('upsertEntry', () => {
     expect(replacedForeign).toBe(true);
   });
 
-  it('flags a replacement whose source signature changed', () => {
-    const before = indexOf(entry('a', { sourceSig: '111:222' }));
-    const { replacedForeign } = upsertEntry(before, entry('a', { sourceSig: '999:222' }));
-    expect(replacedForeign).toBe(true);
+  it('does NOT flag changed asset bytes under the same title (the author edited their own card)', () => {
+    const before = indexOf(entry('a', { title: 'Alpha', sourceSig: '111:222' }));
+    const { replacedForeign } = upsertEntry(
+      before,
+      entry('a', { title: 'Alpha', sourceSig: '999:222' }),
+    );
+    expect(replacedForeign).toBe(false);
   });
 });
 

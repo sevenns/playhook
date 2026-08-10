@@ -151,11 +151,13 @@ export class LibraryStore {
   private async saveOne(manifest: ResolvedManifest): Promise<void> {
     const id = manifest.raw.id;
     const gridSource = manifest.gridImagePath ?? manifest.heroImagePaths?.[0];
-    const sourceSig = gridSource === undefined ? undefined : await fileSignature(gridSource);
+    const sourceSig = await assetsSignature(manifest);
     const previous = this.entry(id);
     const stats = await this.deps.readStats(id);
 
-    // Same card, same art → nothing to re-copy. Only the cached stats are refreshed.
+    // Same card, same assets → nothing to re-copy. Only the cached stats are refreshed. The signature
+    // covers EVERY source file, not just the cover: editing any of them in Configure (and applying it to
+    // the running launcher) must land in the history without a restart.
     if (
       previous !== null &&
       sourceSig !== undefined &&
@@ -171,6 +173,10 @@ export class LibraryStore {
     }
 
     const gameDir = this.gameDir(id);
+    // A real re-copy replaces the WHOLE set, so wipe the directory first: a renamed asset (grid.png →
+    // grid.jpg), one hero image fewer, or a dropped music track would otherwise leave an orphan behind,
+    // and the lazily-built thumbnail would keep serving the previous cover.
+    if (previous !== null) await fse.remove(gameDir);
     await fse.ensureDir(gameDir);
 
     const grid =
@@ -197,11 +203,6 @@ export class LibraryStore {
       if (source === undefined) continue;
       const name = await copyCapped(source, gameDir, `sfx-${slot}`, MAX_SFX_BYTES);
       if (name !== undefined) sounds[slot] = name;
-    }
-
-    // A fresh grid invalidates the cached thumbnail (it was produced from the previous image).
-    if (previous?.gridThumb !== undefined) {
-      await fse.remove(path.join(gameDir, previous.gridThumb)).catch(() => undefined);
     }
 
     const record: LibraryEntryRecord = {
@@ -361,6 +362,29 @@ function toRecord(stored: z.infer<typeof entrySchema>): LibraryEntryRecord {
     if (name !== undefined) sounds[slot] = name;
   }
   return { ...stored, hero: [...stored.hero], sounds };
+}
+
+/**
+ * A fingerprint of ALL of this game's source assets (`<name>:<mtimeMs>:<size>` per file). Re-inserting an
+ * unchanged card matches it and skips the copy; changing any single image, the music or a sound misses it
+ * and re-copies the set. Undefined when there is nothing to copy, or when a file cannot be stat'ed — both
+ * mean "don't trust the shortcut", so the copy runs.
+ */
+async function assetsSignature(manifest: ResolvedManifest): Promise<string | undefined> {
+  const sources = [
+    manifest.gridImagePath,
+    ...(manifest.heroImagePaths ?? []),
+    manifest.backgroundMusicPath,
+    ...SFX_NAMES.map((slot) => manifest.soundPaths?.[slot]),
+  ].filter((source): source is string => source !== undefined);
+  if (sources.length === 0) return undefined;
+  const parts: string[] = [];
+  for (const source of sources) {
+    const signature = await fileSignature(source);
+    if (signature === undefined) return undefined;
+    parts.push(`${path.basename(source)}:${signature}`);
+  }
+  return parts.join('|');
 }
 
 /** `<mtimeMs>:<size>` of a source file, or undefined when it can't be stat'ed. */

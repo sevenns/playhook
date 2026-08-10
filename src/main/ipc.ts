@@ -1923,15 +1923,26 @@ export class GameController {
     const activeIds = this.games.map((manifest) => manifest.raw.id);
     const active = new Set(activeIds);
     const games = [
-      ...this.games.map((manifest) => ({
-        id: manifest.raw.id,
-        title: manifest.raw.title,
-        active: true,
-      })),
+      ...this.games.map((manifest) => {
+        // `artRev` (the record's savedAt) changes only when the assets were actually re-copied, which is
+        // what lets the renderer keep its decoded covers cached and still pick up an edited gridImage.
+        const stored = this.deps.library.entry(manifest.raw.id);
+        return {
+          id: manifest.raw.id,
+          title: manifest.raw.title,
+          active: true,
+          ...(stored !== null ? { artRev: stored.savedAt } : {}),
+        };
+      }),
       ...this.deps.library
         .entriesForCarousel(activeIds)
         .filter((entry) => !active.has(entry.id))
-        .map((entry) => ({ id: entry.id, title: entry.title, active: false })),
+        .map((entry) => ({
+          id: entry.id,
+          title: entry.title,
+          active: false,
+          artRev: entry.savedAt,
+        })),
     ];
     this.setLibrary(games.length > 0 ? { games } : null);
   }

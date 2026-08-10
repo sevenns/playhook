@@ -22,7 +22,8 @@ export interface LibraryEntryRecord {
   readonly music?: string;
   readonly sounds: Partial<Record<SfxName, string>>;
   readonly savedAt: string;
-  /** `<mtimeMs>:<size>` of the SOURCE grid file — an unchanged card is not re-copied on every insert. */
+  /** Fingerprint of every SOURCE asset file — an unchanged card is not re-copied on every insert, while
+   * an edited image/music/sound misses it and forces a fresh copy (see LibraryStore.assetsSignature). */
   readonly sourceSig?: string;
   /** Cached from stats/<id>.json (see the module doc). */
   readonly launchCount: number;
@@ -37,26 +38,24 @@ export interface LibraryIndex {
 export const EMPTY_LIBRARY_INDEX: LibraryIndex = { schemaVersion: 1, entries: [] };
 
 /** Result of an upsert: the new index plus whether an entry for this id already existed under a
- * DIFFERENT title/source — a card-id collision between two cards, which the store logs (Р3). */
+ * DIFFERENT TITLE — a card-id collision between two cards, which the store logs (Р3). */
 export interface UpsertResult {
   readonly index: LibraryIndex;
   readonly replacedForeign: boolean;
 }
 
 /**
- * Inserts or replaces one game's record, keyed by id. A replacement whose title or source signature
- * differs from the stored one is flagged `replacedForeign`: two different cards sharing a `manifest.id`
- * now clobber each other's COVER AND NAME (before the library they only merged invisible stats numbers),
- * so it deserves a breadcrumb even though replacing is still the right move.
+ * Inserts or replaces one game's record, keyed by id. A replacement under a DIFFERENT TITLE is flagged
+ * `replacedForeign`: two different cards sharing a `manifest.id` now clobber each other's COVER AND NAME
+ * (before the library they only merged invisible stats numbers), so it deserves a breadcrumb even though
+ * replacing is still the right move.
+ *
+ * Changed asset bytes under the SAME title are NOT that: they are the author editing their own card
+ * (Configure → Save & Apply), which must re-copy silently.
  */
 export function upsertEntry(index: LibraryIndex, record: LibraryEntryRecord): UpsertResult {
   const previous = index.entries.find((entry) => entry.id === record.id);
-  const replacedForeign =
-    previous !== undefined &&
-    (previous.title !== record.title ||
-      (previous.sourceSig !== undefined &&
-        record.sourceSig !== undefined &&
-        previous.sourceSig !== record.sourceSig));
+  const replacedForeign = previous !== undefined && previous.title !== record.title;
   const entries =
     previous === undefined
       ? [...index.entries, record]

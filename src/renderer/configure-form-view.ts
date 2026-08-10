@@ -36,6 +36,9 @@ function getChecked(el: CheckedEl): boolean {
 /** Where the SteamDB appid lookup opens (the #7 helper link). */
 const STEAMDB_URL = 'https://steamdb.info/';
 
+/** Where the card-image helper link opens — the 600x900 covers the carousel card expects. */
+const STEAMGRIDDB_URL = 'https://www.steamgriddb.com/';
+
 /** The form's section ids (each a tab / a panel shown one at a time). */
 export type SectionId = 'basics' | 'launch' | 'hero' | 'saves' | 'audio' | 'advanced';
 
@@ -368,7 +371,15 @@ export class FormView {
     const gridHint = document.createElement('div');
     gridHint.className = 'field-hint';
     this.labelRefs.push({ el: gridHint, key: 'configure.gridImageHint' });
-    gridField.append(gridHint);
+    const gridHelp = document.createElement('a');
+    gridHelp.className = 'help-link';
+    gridHelp.href = '#';
+    this.labelRefs.push({ el: gridHelp, key: 'configure.gridImageHelp' });
+    gridHelp.addEventListener('click', (event) => {
+      event.preventDefault();
+      this.deps.openExternal(STEAMGRIDDB_URL);
+    });
+    gridField.append(gridHint, gridHelp);
     this.addSection('hero', [this.heroList.wrapper, gridField]);
 
     // ── Saves ───────────────────────────────────────────────────────────────
