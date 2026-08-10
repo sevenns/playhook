@@ -8,7 +8,7 @@
 // `browseGame(id)` — this module never derives it. The geometry lives in carousel-geometry.ts (pure).
 import type { LibraryEntry } from '../shared/types';
 import {
-  RETURN_MS,
+  RETURN_LOCK_MS,
   clampIndex,
   fanIndex,
   isNearViewport,
@@ -66,9 +66,9 @@ export function createCarousel(deps: CarouselDeps): Carousel {
   let index = 0;
   let screen: Screen = 'detail';
   let busyId: string | null = null;
-  // While the strip is coming back from the detail screen it is mid-morph: cards resizing, the fan still
-  // fading in. Moving the selection through that reorders and re-sizes half-drawn cards, which shows.
-  // Timestamp (performance.now) until which a move is refused; 0 = the strip is settled.
+  // While the strip is coming back from the detail screen the selected card is still growing out of the
+  // play square. Moving the selection through that resizes and reorders a card mid-morph, which shows.
+  // Timestamp (performance.now) until which a move is refused; 0 = the card stands at full size.
   let lockedUntil = 0;
   // Artwork, keyed by game id AND artwork revision. Decoded data URLs are heavy, so each is fetched at
   // most once; a game with no art at all is remembered as null so we don't ask again on every re-render.
@@ -197,13 +197,13 @@ export function createCarousel(deps: CarouselDeps): Carousel {
     if (effective === screen) return;
     screen = effective;
     app.dataset['screen'] = effective;
-    // Coming back, the strip is unusable until the return animation has played out (see RETURN_MS);
+    // Coming back, the strip is unusable until the selected card is back at full size (RETURN_LOCK_MS);
     // leaving, nothing is locked — the detail screen has its own focus model.
-    lockedUntil = effective === 'carousel' ? performance.now() + RETURN_MS : 0;
+    lockedUntil = effective === 'carousel' ? performance.now() + RETURN_LOCK_MS : 0;
     deps.onScreenChange(effective);
   }
 
-  /** Whether the strip is still drawing itself back in, i.e. must not be flipped through yet. */
+  /** Whether the selected card is still growing back to full size, i.e. must not be flipped through yet. */
   function isLocked(): boolean {
     return performance.now() < lockedUntil;
   }
