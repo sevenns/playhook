@@ -72,8 +72,8 @@ function buildInfoPanel(game: GameInfo): void {
 }
 
 // ── Title / status busy layout ──────────────────────────────────────────────
-// While busy (or during a Steam install/uninstall indicator) the title lifts UP and the status line
-// fades in below it — a two-line block that keeps the long title fully visible (it no longer slides
+// While busy (or during a Steam install/uninstall indicator) the title drops DOWN and the status line
+// fades in above it — a two-line block that keeps the long title fully visible (it no longer slides
 // right into the More button). Both moves are pure CSS, keyed off #app[data-phase]/[data-steam-busy]
 // (see styles.css), so there's no JS measurement here anymore.
 

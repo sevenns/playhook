@@ -36,7 +36,7 @@
   /* Palette fallbacks; #app gets --d1/--d2 from the hero background's two dominant colors. */
   --d1: #2a3340;
   --d2: #4caf50;
-  --fg: #ffffff;
+  --fg: #f0f0f0;
 }
 
 * {
@@ -369,15 +369,19 @@ html:not(.cursor-hidden) .rect-button:hover,
   font-size: calc(32 * var(--px));
   line-height: calc(48 * var(--px));
   color: var(--fg);
-  transition: transform 0.45s cubic-bezier(0.4, 0, 0.2, 1);
+  /* One transform, composed from two independent offsets: --title-y is the busy shift (below), --title-x
+     the carousel shift (see the carousel block). A second `transform` rule would silently override the
+     first, so every mover writes its own variable instead. */
+  transform: translate(var(--title-x, 0px), var(--title-y, 0px));
+  transition: transform 0.45s cubic-bezier(0.4, 0, 0.2, 1), font-size 0.35s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-/* Busy / steam-busy: the title lifts UP (instead of sliding right) so the status line fades in below
-   it — a two-line block that keeps a long title fully visible. The status sits pre-positioned below
-   center (see .status) and only its opacity animates. */
+/* Busy / steam-busy: the title drops DOWN so the status line fades in ABOVE it — a two-line block that
+   keeps a long title fully visible. The status sits pre-positioned above center (see .status) and only
+   its opacity animates. */
 #app[data-phase='busy'] .title,
 #app[data-steam-busy='true'] .title {
-  transform: translateY(calc(-18 * var(--px)));
+  --title-y: calc(18 * var(--px));
 }
 
 /* no-play layout (requiresInstall installer/steam game, not steam-busy): the left slot is empty (Play
@@ -403,11 +407,11 @@ html:not(.cursor-hidden) .rect-button:hover,
   font-size: calc(24 * var(--px));
   line-height: calc(36 * var(--px));
   color: var(--fg);
-  /* Pre-positioned below center so it forms the second line under the lifted title; only opacity
-     animates (it's invisible outside busy anyway). */
-  transform: translateY(calc(18 * var(--px)));
+  /* Pre-positioned ABOVE center so it forms the first line over the lowered title; only opacity
+     animates (it's invisible outside busy anyway). --status-x is the carousel shift, like --title-x. */
+  transform: translate(var(--status-x, 0px), calc(-18 * var(--px)));
   opacity: 0;
-  transition: opacity 0.3s ease;
+  transition: opacity 0.3s ease, transform 0.45s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 /* Status fades in just after the title starts lifting (the delay sequences the two moves: title up,
