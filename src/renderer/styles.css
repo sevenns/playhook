@@ -432,13 +432,15 @@ body {
   /* 400 design px, straight off the mockup's "BackgroundBlur" — a shorter overlay ends mid-card and the
      strip loses the dark base it is meant to sit on. */
   height: calc(400 * var(--px));
-  /* The mockup's "BackgroundBlur" is no longer a full-width band but a POOL in the bottom-left corner:
-     an ellipse centred at 439/1009 of the 1920x1080 grid with radii 711 x 290 (Figma node 222:1484 — its
-     linear fill is switched off there, the radial one is what is drawn). 1009 from the top of the screen
-     is 329 from the top of this 400-tall element; the pool's bottom half falls off the screen edge. */
-  --pool-x: calc(439 * var(--px));
+  /* The mockup's "BackgroundBlur" is no longer a full-width band but a POOL in the bottom-left corner
+     (Figma node 222:1484 — its linear fill is switched off there, the radial one is what is drawn). The
+     mockup's own centre is 439/1009 of the 1920x1080 grid with radii 711 x 290; we pin the centre to the
+     left EDGE instead, so the corner is at full strength rather than on the falling side of the curve,
+     and stretch it to 1350 wide so it reaches further across the bar. Vertically it is unchanged: 1009 is
+     329 from the top of this 400-tall element, and the pool's bottom half falls off the screen edge. */
+  --pool-x: 0px;
   --pool-y: calc(329 * var(--px));
-  --pool-rx: calc(711 * var(--px));
+  --pool-rx: calc(1350 * var(--px));
   --pool-ry: calc(290 * var(--px));
   /* d1 at the centre → 0.75 at 42% → gone at the rim (the mockup's three stops). NO mask on this element:
      a mask multiplies the fill as well as the backdrop, which halved the corner the mockup deliberately
