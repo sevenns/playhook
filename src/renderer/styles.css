@@ -368,13 +368,23 @@ body {
    square to the card's size, and only then (0.35s — its own duration) does the strip take over. Without
    the delay the cards simply faded in over a button that was still growing underneath. */
 #app[data-screen='carousel'][data-card-morph='on'] #carousel {
-  transition-delay: 0.35s;
+  /* Switched on in ONE frame, not faded: the button disappears at exactly 0.35s, and a strip that is
+     still climbing out of opacity 0 at that instant leaves a hole where the artwork just was — read as
+     a blink at the end of the morph. The strip's own cards decide how they come in. */
+  transition: opacity 0s linear 0.35s;
 }
 #app[data-screen='carousel'][data-card-morph='on'] .card {
   /* ONLY the fade-in waits for the button to finish growing. Delaying width/height here too would also
      delay every grow/shrink WHILE flipping — the strip would slide first and the cards resize after. */
   transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1), height 0.35s cubic-bezier(0.4, 0, 0.2, 1),
     opacity 0.2s ease 0.35s;
+}
+#app[data-screen='carousel'][data-card-morph='on'] .card.is-selected {
+  /* The hand-back is a SWAP, same as the hand-over: this card is pixel-identical to the button it takes
+     over from, so it must be fully opaque in the very frame the button goes — anything softer shows the
+     background through it while the button is already gone. Its neighbours may fade in. */
+  transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1), height 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 0s linear 0.35s;
 }
 #app[data-screen='carousel'][data-card-morph='on'] .play-button {
   /* Stays visible (and keeps its cover) for exactly that grow, then is swapped out in one frame. */
