@@ -685,11 +685,12 @@ html:not(.cursor-hidden) .rect-button:hover,
   font-size: calc(24 * var(--px));
 }
 
-/* Busy / steam-busy: the title drops DOWN so the status line fades in ABOVE it — a two-line block that
-   keeps a long title fully visible. The status sits pre-positioned above center (see .status) and only
-   its opacity animates. */
-#app[data-phase='busy'] .title,
-#app[data-steam-busy='true'] .title {
+/* A status line on screen: the title drops DOWN so the status can fade in ABOVE it — a two-line block
+   that keeps a long title fully visible. Keyed on the status TEXT actually being there (app.ts sets
+   data-status), not on the busy phase: while a game installs you can browse another card in the
+   carousel, and there the status line is deliberately blank — dropping that game's title would leave it
+   sitting low with nothing above it. */
+#app[data-status='shown'] .title {
   --title-y: calc(18 * var(--px));
 }
 
@@ -724,10 +725,9 @@ html:not(.cursor-hidden) .rect-button:hover,
   transition: opacity 0.3s ease, transform 0.45s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-/* Status fades in just after the title starts lifting (the delay sequences the two moves: title up,
-   then status in). Covers busy and the Steam non-blocking "Installing… X%" / "Uninstalling…" indicators. */
-#app[data-phase='busy'] .status,
-#app[data-steam-busy='true'] .status {
+/* Status fades in just after the title starts moving (the delay sequences the two: title down, then
+   status in). Covers busy and the Steam non-blocking "Installing… X%" / "Uninstalling…" indicators. */
+#app[data-status='shown'] .status {
   opacity: 1;
   transition-delay: 0.35s;
 }

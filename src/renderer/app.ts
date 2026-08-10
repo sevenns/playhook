@@ -247,16 +247,21 @@ function rotateChatter(kind: ChatterKind): void {
 // ("Installing…" under another game's cover would be a lie — the busy game is marked by its pulsing dot
 // on the carousel instead).
 function applyStatus(): void {
+  statusEl.textContent = statusText();
+  // The two-line block (status above, title below) is keyed on the TEXT being there, not on the phase:
+  // browsing another card while a game installs shows no status, and the title must stay put there.
+  if (statusEl.textContent === '') delete app.dataset['status'];
+  else app.dataset['status'] = 'shown';
+}
+
+/** The status line for what is ON SCREEN — empty while looking at a game the state isn't about. */
+function statusText(): string {
   const subject = gameOf(currentState)?.id;
-  if (currentBrowse !== null && subject !== undefined && subject !== currentBrowse.id) {
-    statusEl.textContent = '';
-    return;
-  }
+  if (currentBrowse !== null && subject !== undefined && subject !== currentBrowse.id) return '';
   const base = statusOf(currentState, translator);
-  statusEl.textContent =
-    chatterSuffix !== null && currentState.kind === chatterKind
-      ? `${base} ${translator(chatterSuffix)}`
-      : base;
+  return chatterSuffix !== null && currentState.kind === chatterKind
+    ? `${base} ${translator(chatterSuffix)}`
+    : base;
 }
 
 // (Re)starts / stops the chatter timer as the state enters/leaves a long busy phase. First suffix appears
