@@ -59,6 +59,7 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'launcher.menu.minimize': 'Свернуть Playhook',
   'launcher.menu.quit': 'Закрыть Playhook',
   'launcher.menu.forceClose': 'Закрыть принудительно',
+  'launcher.menu.library': 'Библиотека',
   'launcher.confirm.install': 'Установить игру?',
   'launcher.confirm.uninstall': 'Удалить игру с компьютера?',
   'launcher.confirm.uninstallPrefix': 'Очистить Proton-префикс?',

@@ -1875,6 +1875,34 @@ export class GameController {
     const manifest = this.current();
     if (manifest !== null) this.setAudio(await this.assets.readAudioAssets(manifest));
     else this.setAudio(this.defaultAudio);
+    // The carousel plays the BUNDLED set, and what you hear on screen comes from the browse channel —
+    // both have to follow the setting too, or a change only lands after you flip to another card (the
+    // browse music outranks the card's own, so a stale value would keep playing over it).
+    this.pushAudioDefaults();
+    await this.refreshBrowseMusic();
+  }
+
+  /**
+   * Re-sends the browsed game's music after an audio-settings change ("only global ambience", the sound
+   * set). Music only — re-running the whole browse would re-encode the hero images for nothing.
+   */
+  private async refreshBrowseMusic(): Promise<void> {
+    const browse = this.currentBrowse;
+    if (browse === null) return;
+    this.pushBrowseMusic(await this.browseMusicFor(browse.id));
+  }
+
+  /**
+   * The music to play for a browsed game: the card's own file when it is on the inserted card, else the
+   * copy in the history. "Only global ambience" suppresses BOTH — AssetReader applies it for the card,
+   * and the history copy is checked here (LibraryStore knows nothing about settings), so a history game
+   * cannot smuggle its theme past a setting that silenced the card games.
+   */
+  private async browseMusicFor(id: string): Promise<string | null> {
+    const manifest = this.games.find((m) => m.raw.id === id) ?? null;
+    if (manifest !== null) return this.assets.readMusicDataUrl(manifest);
+    if ((await this.deps.settings.read()).onlyGlobalAmbient) return null;
+    return (await this.deps.library.readBrowseAssets(id)).music;
   }
 
   /** Applies a default-ambience change live: re-reads the track as a data URL and pushes it to the game
@@ -2013,7 +2041,7 @@ export class GameController {
     this.pushBrowse({ id, title: entry.title, active: false, stats });
     const assets = await this.deps.library.readBrowseAssets(id);
     this.pushBrowseHero(assets.hero);
-    this.pushBrowseMusic(assets.music);
+    this.pushBrowseMusic(await this.browseMusicFor(id));
   }
 
   /**

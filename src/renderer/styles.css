@@ -28,6 +28,21 @@
   src: url('./fonts/MPLUSRounded1c-ExtraBold.ttf') format('truetype');
 }
 
+/* The two palette colors are declared as TYPED custom properties so they can be TRANSITIONED: a plain
+   `--d1` is just a token and jumps instantly, which made the bar, the buttons and the popup snap to the
+   new game's colors while the hero image was still cross-fading. With a `<color>` syntax the browser
+   interpolates them, and every surface built on var(--d1)/var(--d2) follows the background smoothly. */
+@property --d1 {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #2a3340;
+}
+@property --d2 {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #4caf50;
+}
+
 :root {
   /* One design pixel (mockup is 1920x1080) expressed in vh, so the layout scales with the
      fullscreen height and keeps the mockup's proportions at 16:9. Write design px as calc(N*var(--px)). */
@@ -74,6 +89,9 @@ body {
   height: 100vh;
   background-color: var(--bg);
   overflow: hidden;
+  /* Palette crossfade, matched to the hero layers' own 1s opacity fade (see .hero-layer) so the colors
+     and the image arrive together. hero.ts sets --d1/--d2 on this element. */
+  transition: --d1 1s ease, --d2 1s ease;
   /* Establish a stacking context so the z-index:-1 hero ::before paints ABOVE #app's own
      background-color (otherwise the opaque bg covers it → black screen) but below the UI. */
   isolation: isolate;
@@ -131,13 +149,8 @@ body {
 #app[data-phase='error'] #play-button {
   display: none;
 }
-/* The `left` of the title has exactly ONE owner — the base rule — plus this list of exceptions, all of
-   which mean the same thing: nothing occupies the left slot, so the title takes it. The carousel is one
-   of them (Play is hidden there), which also lines the title up with the cards' left edge. */
 #app[data-phase='idle'] .title,
-#app[data-phase='error'] .title,
-#app[data-screen='carousel'] .title,
-#app[data-screen='carousel'] .status {
+#app[data-phase='error'] .title {
   left: 0;
 }
 
@@ -152,12 +165,12 @@ body {
   position: absolute;
   left: 0;
   right: 0;
-  /* The row stands ON the bottom bar: the cards' bottom edge is 16 design px above .bar-content (whose
-     top edge is at 142 = bottom 50 + height 92), so they sit just over the title — not floating in
-     mid-screen. The box itself reaches 16 px LOWER (134) and the strip is inset by the same amount, so
-     the active-dot hanging below a card stays inside the clip instead of being cut off by it. */
-  bottom: calc(134 * var(--px));
-  height: calc(244 * var(--px));
+  /* Straight off the mockup ("Home"): the cards' bottom edge sits 50 design px from the screen bottom —
+     the same inset the bar content uses — so the selected 204-tall card's top lands at 254. The BOX
+     reaches 30 px lower (20) so the active dot hanging under a card stays inside the clip with a little
+     slack; the strip is inset by the same 30 (see #carousel-strip). */
+  bottom: calc(20 * var(--px));
+  height: calc(234 * var(--px));
   overflow: hidden;
   opacity: 0;
   pointer-events: none;
@@ -176,7 +189,7 @@ body {
   /* The anchor: the same x=50 the bar content uses, so the selected card lines up with the title. */
   left: calc(50 * var(--px));
   /* Room for the dot below the cards (see #carousel's bottom/height). */
-  bottom: calc(24 * var(--px));
+  bottom: calc(30 * var(--px));
   display: flex;
   align-items: flex-end;
   gap: calc(16 * var(--px));
@@ -189,8 +202,8 @@ body {
 .card {
   position: relative;
   flex: 0 0 auto;
-  width: calc(92 * var(--px));
-  height: calc(138 * var(--px));
+  width: calc(90 * var(--px));
+  height: calc(135 * var(--px));
   border-radius: calc(10 * var(--px));
   background-color: color-mix(in srgb, var(--d1) 70%, transparent);
   background-size: cover;
@@ -204,6 +217,24 @@ body {
 .card.is-selected {
   width: calc(136 * var(--px));
   height: calc(204 * var(--px));
+}
+
+/* The selected card wears the SAME pulsing ring as a focused Play button: on the carousel the card IS
+   the focus, so it must read as focused. Reuses the play-button's @keyframes and proportions (a 3px d2
+   border 7px out, radius 17), and rides the size transition because it's anchored to the card's box. */
+.card.is-selected::after {
+  content: '';
+  position: absolute;
+  inset: calc(-7 * var(--px));
+  border: calc(3 * var(--px)) solid var(--d2);
+  border-radius: calc(17 * var(--px));
+  animation: pulse-ring 1.1s ease-in-out infinite;
+  pointer-events: none;
+}
+/* On the detail screen the strip is fading out — a pulsing ring underneath it would be noise. */
+#app[data-screen='detail'] .card.is-selected::after {
+  animation: none;
+  opacity: 0;
 }
 
 /* The title placeholder shown until the artwork arrives (a card may have none at all). */
@@ -228,7 +259,8 @@ body {
 .card-dot {
   position: absolute;
   left: 50%;
-  bottom: calc(-16 * var(--px));
+  /* 16 px of clearance under the card, then the 8 px dot — the mockup puts its bottom edge at 26. */
+  bottom: calc(-24 * var(--px));
   width: calc(8 * var(--px));
   height: calc(8 * var(--px));
   margin-left: calc(-4 * var(--px));
@@ -549,9 +581,16 @@ html:not(.cursor-hidden) .rect-button:hover,
   transition: transform 0.45s cubic-bezier(0.4, 0, 0.2, 1), font-size 0.35s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-/* Carousel level: the title keeps the bar's own vertical slot (the strip stands right above it) and only
-   shrinks. Its horizontal position is handled by the `left: 0` rule below — with Play hidden, the title
-   starts at x=50, exactly under the selected card's left edge. */
+/* Carousel level: the text block moves NEXT TO the selected card, not under it — x=202 (the card's right
+   edge plus the 16 gap) with the title's centre 226 from the screen bottom, as in the mockup.
+   `--text-lift` is the single vertical knob (both lines share it) and `--title-x`/`--status-x` the
+   horizontal one — never a second `left`, which would collide with the rules that already own it (base,
+   idle/error, no-play). The busy shift stacks on top, reproducing the mockup's "Home - Installing". */
+#app[data-screen='carousel'] {
+  --text-lift: calc(130 * var(--px));
+  --title-x: calc(28 * var(--px));
+  --status-x: calc(28 * var(--px));
+}
 #app[data-screen='carousel'] .title {
   font-size: calc(24 * var(--px));
 }
@@ -588,8 +627,9 @@ html:not(.cursor-hidden) .rect-button:hover,
   line-height: calc(36 * var(--px));
   color: var(--fg);
   /* Pre-positioned ABOVE center so it forms the first line over the lowered title; only opacity
-     animates (it's invisible outside busy anyway). --status-x is the carousel shift, like --title-x. */
-  transform: translate(var(--status-x, 0px), calc(-18 * var(--px)));
+     animates (it's invisible outside busy anyway). --status-x/--text-lift are the carousel's horizontal
+     and vertical shifts, exactly as on .title — the two lines move as ONE block. */
+  transform: translate(var(--status-x, 0px), calc(-18 * var(--px) - var(--text-lift, 0px)));
   opacity: 0;
   transition: opacity 0.3s ease, transform 0.45s cubic-bezier(0.4, 0, 0.2, 1);
 }

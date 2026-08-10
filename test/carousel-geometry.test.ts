@@ -18,8 +18,10 @@ describe('stripOffset', () => {
 
   it('advances by one card + gap per index', () => {
     expect(STEP).toBe(CARD_W + GAP);
-    expect(stripOffset(1)).toBe(-108);
-    expect(stripOffset(3)).toBe(-324);
+    // 90 (card) + 16 (gap) — the step measured off the mockup, where consecutive unselected cards sit
+    // at x=202/308/414.
+    expect(stripOffset(1)).toBe(-106);
+    expect(stripOffset(3)).toBe(-318);
   });
 
   it('is linear — the step between neighbours never depends on where you are', () => {

@@ -67,6 +67,7 @@ const controls = createControls({
     move: (delta) => carousel.move(delta),
     activate: () => carousel.activate(),
     leaveDetail: () => leaveDetail(),
+    exists: () => carousel.exists(),
   },
 });
 
@@ -98,6 +99,8 @@ const carousel = createCarousel({
     render(currentState);
   },
   onActivate: (entry) => {
+    // Entering a card is an ordinary button press — same cue as any other "open" action.
+    audio.play('button');
     userChoseDetail = true;
     // An active game must also become the CARD's selected game (main rebuilds its hero/audio/GameInfo).
     // If that is refused — a launch or install is in flight — the detail screen is still correct: it is

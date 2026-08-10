@@ -5,9 +5,9 @@
 // row slides under it. Cards to its LEFT keep the normal width, which is what makes the offset linear in
 // the index — no per-index accumulation, no dependency on WHICH card is selected.
 
-/** Unselected card size. */
-export const CARD_W = 92;
-export const CARD_H = 138;
+/** Unselected card size (Figma "Home": Rectangle 11/12/13 are 90x135, bottom-aligned with the selected). */
+export const CARD_W = 90;
+export const CARD_H = 135;
 /** Selected card size (it grows in place, anchored at its bottom-left corner). */
 export const SEL_W = 136;
 export const SEL_H = 204;

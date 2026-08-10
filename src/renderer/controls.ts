@@ -55,6 +55,8 @@ export interface CarouselNav {
   activate(): void;
   /** Steps back from a detail screen to the strip; false when there is no carousel to return to. */
   leaveDetail(): boolean;
+  /** Whether a carousel exists at all (>1 game) — gates the Details menu's "Library" item. */
+  exists(): boolean;
 }
 
 export interface Controls {
@@ -119,6 +121,7 @@ export function createControls(deps: ControlsDeps): Controls {
   const menuShutdown = req<HTMLButtonElement>('menu-shutdown');
   const menuInstallToggle = req<HTMLButtonElement>('menu-install-toggle');
   const menuKill = req<HTMLButtonElement>('menu-kill');
+  const menuLibrary = req<HTMLButtonElement>('menu-library');
   const menuClose = req<HTMLButtonElement>('menu-close');
   const powerShutdown = req<HTMLButtonElement>('power-shutdown');
   const powerReboot = req<HTMLButtonElement>('power-reboot');
@@ -161,6 +164,7 @@ export function createControls(deps: ControlsDeps): Controls {
   function openDetails(): void {
     applyMenuInstallToggle(); // keep the toggle's text/visibility fresh for the current game
     applyMenuKill(); // keep the force-close item's visibility fresh (running-only)
+    applyMenuLibrary(); // keep the "Library" item fresh (only when there is a carousel to go back to)
     setView('details');
     focusStackBottom(); // default focus: Close
     applyFocus(); // main highlight clears (focusActive false with a popup open)
@@ -304,6 +308,15 @@ export function createControls(deps: ControlsDeps): Controls {
     if (running) menuKill.textContent = t()('launcher.menu.forceClose');
   }
 
+  // ── Menu item: Library (back to the history carousel) ────────────────────────
+  // The MOUSE route out of a detail screen — the gamepad/keyboard have B for it, but a mouse user had no
+  // way back to the strip. Shown only on a detail screen that has a carousel behind it.
+  function applyMenuLibrary(): void {
+    const show = deps.carousel.exists() && deps.carousel.screen() === 'detail';
+    menuLibrary.classList.toggle('is-hidden', !show);
+    if (show) menuLibrary.textContent = t()('launcher.menu.library');
+  }
+
   // The power menu's primary item. Desktop/Windows: "Minimize Playhook" (hide to tray). Game Mode: "Close
   // Playhook" — a full quit, since there is no tray to minimize into (mirrors how closing the window quits
   // in Game Mode). Label from JS (no data-i18n) so a language change relabels it at render time and it
@@ -432,6 +445,7 @@ export function createControls(deps: ControlsDeps): Controls {
     menuShutdown,
     menuInstallToggle,
     menuKill,
+    menuLibrary,
     menuClose,
     powerShutdown,
     powerReboot,
@@ -450,6 +464,7 @@ export function createControls(deps: ControlsDeps): Controls {
         const items: HTMLButtonElement[] = [menuShutdown];
         if (!menuInstallToggle.classList.contains('is-hidden')) items.push(menuInstallToggle);
         if (!menuKill.classList.contains('is-hidden')) items.push(menuKill);
+        if (!menuLibrary.classList.contains('is-hidden')) items.push(menuLibrary);
         items.push(menuClose);
         return items;
       }
@@ -553,6 +568,11 @@ export function createControls(deps: ControlsDeps): Controls {
     } else if (btn === menuKill) {
       audio.play('button');
       openConfirm('kill');
+    } else if (btn === menuLibrary) {
+      // Non-destructive, so no confirm: close the popup and hand control back to the strip.
+      audio.play('back');
+      closePopup();
+      deps.carousel.leaveDetail();
     } else if (btn === menuClose || btn === errorClose || btn === powerClose) {
       // back() dispatches by the current view: Details/Error → close the popup; Power → step back to
       // the Details menu (so "Close" in the Power submenu returns you one level up, like the B gesture).
@@ -780,6 +800,7 @@ export function createControls(deps: ControlsDeps): Controls {
     // running→syncing-out self-exit must drop Force close; a ready→ready update doesn't close the popup).
     applyMenuInstallToggle();
     applyMenuKill();
+    applyMenuLibrary();
   }
 
   function clearGameButtons(): void {
@@ -787,6 +808,7 @@ export function createControls(deps: ControlsDeps): Controls {
     // screen anyway; no-game is never `running`).
     menuInstallToggle.classList.add('is-hidden');
     menuKill.classList.add('is-hidden');
+    applyMenuLibrary(); // the carousel can still be there with no game on screen (history only)
   }
 
   function refresh(): void {
