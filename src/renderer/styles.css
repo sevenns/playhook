@@ -440,16 +440,26 @@ body {
   --pool-y: calc(329 * var(--px));
   --pool-rx: calc(711 * var(--px));
   --pool-ry: calc(290 * var(--px));
-  /* d1 at the centre → 0.75 at 42% → gone at the rim (the mockup's three stops). */
+  /* d1 at the centre → 0.75 at 42% → gone at the rim (the mockup's three stops). NO mask on this element:
+     a mask multiplies the fill as well as the backdrop, which halved the corner the mockup deliberately
+     drags off-screen to keep filled. The blur wears its own mask instead — see ::before. */
   background: radial-gradient(
     var(--pool-rx) var(--pool-ry) at var(--pool-x) var(--pool-y),
     var(--d1) 0%,
     color-mix(in srgb, var(--d1) 75%, transparent) 42%,
     transparent 100%
   );
+  transition: opacity 0.3s ease;
+}
+
+/* The blur, as its own layer so it can be masked to the pool's shape without touching the fill above.
+   Masking the bar itself would be simpler, but it would take the fill down with it; leaving the blur
+   unmasked would stand a blurred full-width band out to the right of the pool, where nothing is dimmed. */
+#bottom-bar::before {
+  content: '';
+  position: absolute;
+  inset: 0;
   backdrop-filter: blur(6px);
-  /* The blur must take the same shape. A mask applies to the whole element, backdrop-filter included, so
-     the old linear one would now leave a blurred band standing out to the right of the pool. */
   -webkit-mask-image: radial-gradient(
     var(--pool-rx) var(--pool-ry) at var(--pool-x) var(--pool-y),
     #000 0%,
@@ -462,7 +472,7 @@ body {
     #000 45%,
     transparent 100%
   );
-  transition: opacity 0.3s ease;
+  pointer-events: none;
 }
 
 .bar-content {
