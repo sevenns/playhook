@@ -82,6 +82,8 @@ export interface ManifestFormModel {
   readonly runAsAdmin: boolean;
   readonly watchProcesses: readonly string[];
   readonly heroImage: readonly string[];
+  /** The carousel card image (one path, '' = omitted → cropped from the first hero image). */
+  readonly gridImage: string;
   readonly saveOnCard: string;
   readonly pcSavePath: string;
   readonly launchTimeoutSec: string;
@@ -136,6 +138,7 @@ export const KNOWN_MANIFEST_KEYS: readonly string[] = [
   'runAsAdmin',
   'watchProcesses',
   'heroImage',
+  'gridImage',
   'saveOnCard',
   'pcSavePath',
   'launchTimeoutSec',
@@ -187,6 +190,7 @@ export function emptyFormModel(): ManifestFormModel {
     runAsAdmin: false,
     watchProcesses: [],
     heroImage: [],
+    gridImage: '',
     saveOnCard: '',
     pcSavePath: '',
     launchTimeoutSec: '',
@@ -328,6 +332,7 @@ function valueToFormResult(parsed: unknown): ParseFormResult {
   const pcSavePath = readString('pcSavePath');
   const backgroundMusic = readString('backgroundMusic');
   const umuGameId = readString('umuGameId');
+  const gridImage = readString('gridImage');
 
   let runAsAdmin = false;
   if (has('runAsAdmin')) {
@@ -425,6 +430,7 @@ function valueToFormResult(parsed: unknown): ParseFormResult {
     runAsAdmin,
     watchProcesses,
     heroImage,
+    gridImage,
     saveOnCard,
     pcSavePath,
     launchTimeoutSec,
@@ -556,6 +562,8 @@ function buildManifestObject(
   const hero = nonEmpty(model.heroImage);
   if (hero.length === 1) out.heroImage = hero[0];
   else if (hero.length > 1) out.heroImage = hero;
+
+  if (model.gridImage !== '') out.gridImage = model.gridImage;
 
   if (model.saveOnCard !== '') out.saveOnCard = model.saveOnCard;
   if (model.pcSavePath !== '') out.pcSavePath = model.pcSavePath;

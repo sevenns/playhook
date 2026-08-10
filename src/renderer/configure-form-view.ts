@@ -18,6 +18,7 @@ import {
   type ManifestFormModel,
   type ParseFormResult,
 } from './configure-form-model.js';
+import { MAX_HERO_IMAGES } from '../shared/types.js';
 import type { ConfigPickKind, ConfigPickResult, ManifestValidationIssue } from '../shared/types';
 import type { Translator } from '../shared/i18n/index';
 import type { MessageKey } from '../shared/i18n/en';
@@ -75,6 +76,7 @@ type FieldKey =
   | 'runAsAdmin'
   | 'watchProcesses'
   | 'heroImage'
+  | 'gridImage'
   | 'saveOnCard'
   | 'pcSavePath'
   | 'backgroundMusic'
@@ -130,6 +132,7 @@ export class FormView {
   private readonly installType: ValueEl;
   private readonly installRunAsAdminSwitch: CheckedEl;
   private readonly appidInput: ValueEl;
+  private readonly gridImageInput: ValueEl;
   private readonly saveOnCardInput: ValueEl;
   private readonly pcSavePathInput: ValueEl;
   private readonly soundPlay: AudioField;
@@ -337,16 +340,36 @@ export class FormView {
       this.watchList.wrapper,
     ]);
 
-    // ── Hero images (with thumbnails) ────────────────────────────────────────
-    this.heroList = this.dynamicList('heroImage', 'configure.sectionHero', {
+    // ── Images: hero backgrounds (with thumbnails) + the carousel card ───────
+    this.heroList = this.dynamicList('heroImage', 'configure.fieldHeroImages', {
       browseKind: 'image',
       browseLabelKey: 'configure.addFile', // the bottom "Add…" button (multi-select adds rows)
       replaceKind: 'image', // each row gets a "Replace…" button to swap its file
       preview: true,
       reorder: true,
       noAdd: true,
+      // Card-format cap (MAX_HERO_IMAGES): the picker stops adding past it, so the form can't produce a
+      // manifest the editor's own validator would then reject.
+      maxItems: MAX_HERO_IMAGES,
     });
-    this.addSection('hero', [this.heroList.wrapper]);
+    const heroHint = document.createElement('div');
+    heroHint.className = 'field-hint';
+    this.labelRefs.push({ el: heroHint, key: 'configure.heroImagesHint' });
+    this.heroList.wrapper.append(heroHint);
+
+    // The carousel card: a single card-relative image, optional (see gridImageHint).
+    this.gridImageInput = this.textInput('gridImage');
+    const gridField = this.fieldWithBrowse(
+      'configure.fieldGridImage',
+      'gridImage',
+      this.gridImageInput,
+      'image',
+    );
+    const gridHint = document.createElement('div');
+    gridHint.className = 'field-hint';
+    this.labelRefs.push({ el: gridHint, key: 'configure.gridImageHint' });
+    gridField.append(gridHint);
+    this.addSection('hero', [this.heroList.wrapper, gridField]);
 
     // ── Saves ───────────────────────────────────────────────────────────────
     this.saveOnCardInput = this.textInput('saveOnCard');
@@ -442,6 +465,7 @@ export class FormView {
     this.idTouched = model.id !== '';
     this.setScalar('executable', this.executableInput, model.executable);
     this.setScalarChecked('runAsAdmin', this.runAsAdminSwitch, model.runAsAdmin);
+    this.setScalar('gridImage', this.gridImageInput, model.gridImage);
     this.setScalar('saveOnCard', this.saveOnCardInput, model.saveOnCard);
     this.setScalar('pcSavePath', this.pcSavePathInput, model.pcSavePath);
     this.setScalar('launchTimeoutSec', this.launchTimeoutInput, model.launchTimeoutSec);
@@ -522,6 +546,7 @@ export class FormView {
       this.installType,
       this.installRunAsAdminSwitch,
       this.appidInput,
+      this.gridImageInput,
       this.saveOnCardInput,
       this.pcSavePathInput,
       this.umuGameIdInput,
@@ -568,6 +593,7 @@ export class FormView {
       winetricks: this.gameWinetricksList.values(),
       umuGameId: getValue(this.umuGameIdInput),
       heroImage: this.heroList.values(),
+      gridImage: getValue(this.gridImageInput),
       saveOnCard: getValue(this.saveOnCardInput),
       pcSavePath: getValue(this.pcSavePathInput),
       launchTimeoutSec: getValue(this.launchTimeoutInput),
@@ -928,6 +954,9 @@ export class FormView {
       readonly preview?: boolean;
       readonly reorder?: boolean;
       readonly noAdd?: boolean;
+      /** Hard cap on the number of rows (heroImage — see MAX_HERO_IMAGES). Adding past it is a no-op and
+       * the Add/Browse buttons go disabled, so the form can't build a manifest its own validator rejects. */
+      readonly maxItems?: number;
       /** Error slot / container key, when it must differ from `corruptKey` (e.g. a second list sharing the
        * `install` block's corrupt-clear but needing its own error slot). Defaults to the corruptKey rule. */
       readonly errorKey?: FieldKey;
@@ -960,7 +989,21 @@ export class FormView {
       rows.addEventListener('drop', (event) => event.preventDefault());
     }
 
-    const addRow = (value: string): void => {
+    // Row cap (opts.maxItems): the Add/Browse buttons go disabled once it is reached, and addRow itself
+    // refuses — a multi-select Browse can hand us more paths than there is room for.
+    const capReached = (): boolean =>
+      opts.maxItems !== undefined && rows.children.length >= opts.maxItems;
+    const refreshCap = (): void => {
+      if (opts.maxItems === undefined) return;
+      const full = capReached();
+      for (const el of buttonRow.querySelectorAll('fluent-button')) setElDisabled(el as HTMLElement, full);
+    };
+
+    // `fromSource` rows come from the manifest text and are ALWAYS shown, cap or not: hiding a 4th hero
+    // image would silently drop it on the next Save. The validator flags it instead (manifest.heroTooMany),
+    // Save stays blocked, and the user removes a row. Only a user-initiated add respects the cap.
+    const addRow = (value: string, fromSource = false): void => {
+      if (!fromSource && capReached()) return;
       const row = document.createElement('div');
       row.className = 'list-row';
       // Drag handle (grip) — the row is reordered by dragging this, not the whole row (so the text field
@@ -1051,6 +1094,7 @@ export class FormView {
       const remove = this.iconButton('configure.remove', trashIcon(), () => {
         row.remove();
         refreshHandles();
+        refreshCap();
         this.clearCorrupt(corruptKey);
         this.deps.onChange();
       });
@@ -1058,6 +1102,7 @@ export class FormView {
       row.append(remove);
       rows.append(row);
       refreshHandles();
+      refreshCap();
       refreshThumb();
       // Rows are built AFTER the constructor's applyLabels(), so label their fresh elements (the Replace…
       // text, drag-handle/remove aria) now — otherwise they stay blank until the next language change.
@@ -1097,7 +1142,8 @@ export class FormView {
       values: () => [...rows.querySelectorAll('fluent-text-input')].map((el) => getValue(el as ValueEl)),
       setValues: (values) => {
         rows.replaceChildren();
-        for (const value of values) addRow(value);
+        for (const value of values) addRow(value, true);
+        refreshCap();
       },
       setDisabled: (disabled) => {
         for (const el of buttonRow.querySelectorAll('fluent-button')) setElDisabled(el as HTMLElement, disabled);
@@ -1108,7 +1154,10 @@ export class FormView {
         for (const handle of rows.querySelectorAll<HTMLElement>('.drag-handle')) {
           handle.setAttribute('draggable', disabled ? 'false' : 'true');
         }
-        if (!disabled) refreshHandles();
+        if (!disabled) {
+          refreshHandles();
+          refreshCap(); // the cap outlives the block: a full list keeps its Add/Browse disabled
+        }
       },
     };
   }
@@ -1303,6 +1352,7 @@ function fieldKeyForPath(path: string, copyToPc: boolean): FieldKey | null {
     case 'args':
     case 'runAsAdmin':
     case 'watchProcesses':
+    case 'gridImage':
     case 'saveOnCard':
     case 'pcSavePath':
     case 'backgroundMusic':

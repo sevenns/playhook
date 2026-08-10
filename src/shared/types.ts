@@ -14,6 +14,16 @@ export const MANIFEST_FILENAME = 'game.json' as const;
 export const CARD_STATS_FILENAME = 'stats.json' as const;
 
 /**
+ * How many hero backgrounds one game may carry — a CARD-FORMAT limit (not a library budget), so it lives
+ * in the shared contract: main enforces it (manifest.ts) and the Configure form caps its picker by it.
+ *
+ * Enforced with the same split as the "≥1 heroImage" policy: the EDITOR rejects a 4th image (it gates
+ * Save), the runtime stays lenient — readManifests keeps the first three and logs a warn. A hard cap in
+ * the schema would turn an existing card with four backgrounds into an unreadable one.
+ */
+export const MAX_HERO_IMAGES = 3;
+
+/**
  * Optional `install` block in `game.json` (install mode).
  * When present, the card carries an INSTALLER (not the game itself): the app runs it silently,
  * feeding it the install directory through the installer's own dir-key, and only afterwards does
@@ -145,6 +155,12 @@ export interface GameManifest {
    * Normalized to an array of resolved paths in ResolvedManifest.heroImagePaths.
    */
   readonly heroImage?: string | readonly string[];
+  /**
+   * Card-relative GRID image — the game's card in the launcher's history carousel (a portrait cover, not a
+   * background). Optional: when absent the carousel falls back to the first heroImage, cropped to the card
+   * (object-fit: cover), so existing cards keep working unchanged.
+   */
+  readonly gridImage?: string;
   readonly saveOnCard?: string;
   readonly pcSavePath?: string;
   readonly launchTimeoutSec: number;
@@ -221,6 +237,8 @@ export interface ResolvedManifest {
   readonly cwd: string;
   /** Resolved, card-relative hero image paths (normalized to an array when at least one is set). */
   readonly heroImagePaths?: readonly string[];
+  /** Resolved, card-relative grid (carousel card) image path. Absent → the carousel falls back to hero. */
+  readonly gridImagePath?: string;
   readonly saveOnCardPath?: string;
   /**
    * The Windows-dictionary save location (`%APPDATA%\…`), stored VERBATIM — a DEFERRED field (Р5/Э6).

@@ -161,7 +161,7 @@ hand:
 > [github.com/sevenns/playhook-collection](https://github.com/sevenns/playhook-collection).
 
 Place a `game.json` in the **root** of the card. The paths
-`executable` / `heroImage` / `saveOnCard` are **relative to the card root**; `pcSavePath` is
+`executable` / `heroImage` / `gridImage` / `saveOnCard` are **relative to the card root**; `pcSavePath` is
 absolute and must start with one of the allowed prefixes (see below).
 
 The file holds **either one game object** (below) **or an array of them** — a card can carry several
@@ -178,7 +178,8 @@ rejected**, since the id keys the PC-side storage. The Configure editor shows th
   "executable": "game/hollow_knight.exe",   // relative path to the .exe from the card root
   "args": [],                               // launch arguments (optional)
   "runAsAdmin": false,                      // launch elevated via UAC for .exe requiring admin (optional, default false)
-  "heroImage": "assets/hero.jpg",           // window background: one path, or an array of paths that cross-fade every minute (optional; falls back to a bundled wallpaper)
+  "heroImage": "assets/hero.jpg",           // window background: one path, or an array of UP TO 3 paths that cross-fade every minute (optional; falls back to a bundled wallpaper)
+  "gridImage": "assets/grid.jpg",           // the game's card in the history carousel: a portrait cover, ~136x204 (optional; without it the card is cropped from the first heroImage)
   "saveOnCard": "saves",                    // copy folder for saves on the card (relative to the root)
   "pcSavePath": "%APPDATA%/Team Cherry/Hollow Knight", // where the game actually writes saves on the PC
   "launchTimeoutSec": 30,                   // how long to wait for the process to appear (optional, default 30)
@@ -208,7 +209,7 @@ E:\
 
 ### Rules and security (the card is untrusted input)
 
-- After resolution, `executable` / `heroImage` / `saveOnCard` **must lie inside the card
+- After resolution, `executable` / `heroImage` / `gridImage` / `saveOnCard` **must lie inside the card
   root** — `..` and absolute paths are forbidden (otherwise the game won't launch and an error
   is shown). The `executable` must also **exist on the card**, or launch is rejected.
 - `pcSavePath` — only from an allowlist of prefixes, with no traversal (`..`). Otherwise rejected:

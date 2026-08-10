@@ -328,6 +328,28 @@ describe('heroImage string ↔ array', () => {
   });
 });
 
+describe('gridImage (carousel card)', () => {
+  it('round-trips through the model', () => {
+    const src =
+      '{"schemaVersion":1,"id":"g","title":"G","executable":"g.exe","heroImage":"h.jpg","gridImage":"art/grid.jpg"}';
+    const { model } = parseOk(src);
+    expect(model.gridImage).toBe('art/grid.jpg');
+    expect(JSON.parse(serialize(src))).toHaveProperty('gridImage', 'art/grid.jpg');
+  });
+
+  it('is omitted when empty', () => {
+    const text = serialize('{"schemaVersion":1,"id":"g","title":"G","executable":"g.exe","heroImage":"h.jpg"}');
+    expect(JSON.parse(text)).not.toHaveProperty('gridImage');
+  });
+
+  it('keeps a wrong-typed value verbatim (corrupt round-trip)', () => {
+    const src = '{"schemaVersion":1,"id":"g","title":"G","executable":"g.exe","gridImage":5}';
+    const { corrupt } = parseOk(src);
+    expect(corrupt).toHaveProperty('gridImage', 5);
+    expect(JSON.parse(serialize(src))).toHaveProperty('gridImage', 5);
+  });
+});
+
 describe('launch mode', () => {
   it('resolves steam > install > executable for a mixed manifest and flags mixed', () => {
     const result = parseOk(

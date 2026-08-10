@@ -241,7 +241,7 @@ export const en = {
   // Section headings.
   'configure.sectionBasics': 'Basics',
   'configure.sectionLaunch': 'Launch',
-  'configure.sectionHero': 'Hero images',
+  'configure.sectionHero': 'Images',
   'configure.sectionSaves': 'Saves',
   'configure.sectionAudio': 'Audio',
   'configure.sectionAdvanced': 'Advanced',
@@ -287,6 +287,11 @@ export const en = {
   'configure.fieldAppid': 'Steam appid',
   'configure.fieldWatchProcesses': 'Watched processes',
   'configure.watchProcessesHint': '1–16 process image names ending in .exe.',
+  'configure.fieldHeroImages': 'Hero images',
+  'configure.heroImagesHint': 'Up to 3 backgrounds; several cross-fade every minute.',
+  'configure.fieldGridImage': 'Card image',
+  'configure.gridImageHint':
+    'The game’s card in the launcher’s history carousel (portrait, ~136×204). Optional — without it the card is cropped from the first hero image.',
   'configure.fieldSaveOnCard': 'Save folder on the card',
   'configure.fieldPcSavePath': 'PC save path',
   'configure.pcSavePathPlaceholder': '%APPDATA%/My Game',
@@ -391,6 +396,8 @@ export const en = {
   'manifest.executableNotFoundCase':
     'executable not found: {path} — found "{found}" instead (fix the case on this filesystem)',
   'manifest.heroEscapes': 'heroImage path escapes card root: {path}',
+  'manifest.heroTooMany': 'at most {max} heroImage entries are allowed ({count} given)',
+  'manifest.gridEscapes': 'gridImage path escapes card root: {path}',
   'manifest.saveOnCardEscapes': 'saveOnCard path escapes card root: {path}',
   'manifest.soundEscapes': 'sound "{name}" path escapes card root: {path}',
   'manifest.backgroundMusicEscapes': 'backgroundMusic path escapes card root: {path}',

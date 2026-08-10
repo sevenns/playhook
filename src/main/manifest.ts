@@ -10,6 +10,7 @@ import fse from 'fs-extra';
 import { z } from 'zod';
 import {
   MANIFEST_FILENAME,
+  MAX_HERO_IMAGES,
   type GameManifest,
   type ManifestValidationIssue,
   type ConfigValidationResult,
@@ -110,6 +111,9 @@ const manifestSchema = z
     // A single card-relative path, or a non-empty array of them (multi-hero rotation). Normalized to an
     // array of resolved paths in readManifest. Backwards compatible: a lone string still works.
     heroImage: z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]).optional(),
+    // Card-relative GRID image (the carousel card). Optional and deliberately NOT an array — a game has one
+    // card. Absent → the carousel crops the first heroImage instead (see LibraryStore).
+    gridImage: z.string().min(1).optional(),
     saveOnCard: z.string().min(1).optional(),
     pcSavePath: z.string().min(1).optional(),
     launchTimeoutSec: z.number().int().positive().default(30),
@@ -187,6 +191,10 @@ const manifestSchema = z
 
 /** The sound slots resolved inside the card root (order is stable for iteration). */
 const SFX_NAMES: readonly SfxName[] = ['play', 'navigate', 'button', 'back'];
+
+// MAX_HERO_IMAGES (the card-format cap on hero backgrounds) lives in shared/types.ts: the Configure form
+// caps its picker by the same number, and the renderer cannot import this module (fs/zod). Enforced here
+// leniently — resolveOne truncates with a warn — and strictly in pushGameSemanticIssues (which gates Save).
 
 export type ManifestResult =
   | { readonly ok: true; readonly manifest: ResolvedManifest }
@@ -609,8 +617,25 @@ async function resolveOne(
       }
       resolvedHeroImages.push(resolved);
     }
+    // Runtime side of the MAX_HERO_IMAGES policy: keep the first three (manifest order is load-bearing —
+    // the renderer keys its palette cache by position) and leave a breadcrumb. The card still loads.
+    if (resolvedHeroImages.length > MAX_HERO_IMAGES) {
+      log.warn(
+        `[manifest] id=${raw.id} declares ${resolvedHeroImages.length} heroImage entries — using the first ${MAX_HERO_IMAGES}, dropping ${resolvedHeroImages.length - MAX_HERO_IMAGES}`,
+      );
+      resolvedHeroImages.length = MAX_HERO_IMAGES;
+    }
     // The schema guarantees a non-empty array, but guard so an empty result stays undefined (as before).
     if (resolvedHeroImages.length > 0) heroImagePaths = resolvedHeroImages;
+  }
+
+  let gridImagePath: string | undefined;
+  if (raw.gridImage !== undefined) {
+    const resolved = resolveInside(root, raw.gridImage);
+    if (resolved === null) {
+      return { ok: false, message: t('manifest.gridEscapes', { path: raw.gridImage }) };
+    }
+    gridImagePath = resolved;
   }
 
   let saveOnCardPath: string | undefined;
@@ -677,6 +702,7 @@ async function resolveOne(
     executablePath,
     cwd,
     ...(heroImagePaths !== undefined ? { heroImagePaths } : {}),
+    ...(gridImagePath !== undefined ? { gridImagePath } : {}),
     ...(saveOnCardPath !== undefined ? { saveOnCardPath } : {}),
     ...(pcSavePath !== undefined ? { pcSavePath } : {}),
     ...(soundPaths !== undefined ? { soundPaths } : {}),
@@ -761,9 +787,23 @@ function pushGameSemanticIssues(
       const name = typeof raw.heroImage === 'string' ? 'heroImage' : `heroImage.${index}`;
       pushIfEscapes(issues, field(name), rel, t, 'heroImage');
     }
+    // Card-format cap (editor-only, like the ≥1 policy above): the runtime truncates with a warn instead
+    // of rejecting the game — see MAX_HERO_IMAGES.
+    if (heroes.length > MAX_HERO_IMAGES) {
+      issues.push({
+        path: field('heroImage'),
+        message: t('manifest.heroTooMany', { max: MAX_HERO_IMAGES, count: heroes.length }),
+      });
+    }
   } else {
     // Multi-game policy: a hero image is required for every game (editor-only gate — see above).
     issues.push({ path: field('heroImage'), message: t('manifest.heroRequired') });
+  }
+  // gridImage stays OPTIONAL (Р12): only its traversal is checked. The "without it the carousel card is
+  // cropped from hero" advice is a static hint under the field in Configure — an issue here would gate
+  // Save and turn every existing card invalid, which is exactly what the optionality is for.
+  if (raw.gridImage !== undefined) {
+    pushIfEscapes(issues, field('gridImage'), raw.gridImage, t, 'gridImage');
   }
   if (raw.saveOnCard !== undefined)
     pushIfEscapes(issues, field('saveOnCard'), raw.saveOnCard, t, 'saveOnCard');

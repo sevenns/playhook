@@ -1,9 +1,12 @@
+import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   absoluteToPcSavePath,
   expandPcSavePath,
   manifestJsonSchema,
+  readManifests,
   resolveInside,
   stripCopySourcePrefix,
   validateManifestText,
@@ -386,5 +389,113 @@ describe('manifestJsonSchema', () => {
     for (const type of ['nsis', 'inno', 'custom', 'copy']) {
       expect(json).toContain(`"${type}"`);
     }
+  });
+});
+
+// ── gridImage + the hero cap (carousel feature) ──────────────────────────────
+// The runtime/editor split: `validateManifestText` (the editor's Save gate) is STRICT about a 4th hero
+// image, while `readManifests` stays lenient — it truncates and keeps the card readable. Both halves are
+// asserted, because enforcing the cap in the schema instead would make an existing 4-hero card unloadable.
+
+describe('validateManifestText — gridImage', () => {
+  const game = (extra: Record<string, unknown>): string =>
+    JSON.stringify({
+      schemaVersion: 1,
+      id: 'x',
+      title: 'X',
+      executable: 'g/g.exe',
+      heroImage: 'hero.jpg',
+      ...extra,
+    });
+
+  it('accepts a card-relative gridImage', () => {
+    expect(validateManifestText(game({ gridImage: 'art/grid.jpg' }), t).ok).toBe(true);
+  });
+
+  it('accepts a manifest WITHOUT gridImage (the field is optional)', () => {
+    expect(validateManifestText(game({}), t).ok).toBe(true);
+  });
+
+  it('rejects gridImage path traversal', () => {
+    const result = validateManifestText(game({ gridImage: '../../etc/passwd' }), t);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.issues.some((i) => i.path === 'gridImage')).toBe(true);
+  });
+
+  it('rejects a 4th heroImage (editor-only cap)', () => {
+    const result = validateManifestText(game({ heroImage: ['a.jpg', 'b.jpg', 'c.jpg', 'd.jpg'] }), t);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.issues.some((i) => i.path === 'heroImage')).toBe(true);
+  });
+
+  it('accepts exactly three heroImages', () => {
+    expect(validateManifestText(game({ heroImage: ['a.jpg', 'b.jpg', 'c.jpg'] }), t).ok).toBe(true);
+  });
+});
+
+describe('readManifests — gridImage + hero truncation (runtime is lenient)', () => {
+  const env = { documents: path.resolve('documents'), t };
+  const resolveInstallDir = (): null => null;
+  let cardRoot: string;
+
+  beforeEach(async () => {
+    cardRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'playhook-card-'));
+    await fs.mkdir(path.join(cardRoot, 'g'), { recursive: true });
+    await fs.writeFile(path.join(cardRoot, 'g', 'g.exe'), '');
+  });
+
+  afterEach(async () => {
+    await fs.rm(cardRoot, { recursive: true, force: true });
+  });
+
+  const write = async (game: Record<string, unknown>): Promise<void> => {
+    await fs.writeFile(path.join(cardRoot, 'game.json'), JSON.stringify(game));
+  };
+
+  it('keeps the first three heroImages IN ORDER and still loads the card', async () => {
+    await write({
+      schemaVersion: 1,
+      id: 'x',
+      title: 'X',
+      executable: 'g/g.exe',
+      heroImage: ['a.jpg', 'b.jpg', 'c.jpg', 'd.jpg'],
+    });
+    const result = await readManifests(cardRoot, env, resolveInstallDir);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const paths = result.manifests[0]?.heroImagePaths ?? [];
+    expect(paths).toEqual([
+      path.join(cardRoot, 'a.jpg'),
+      path.join(cardRoot, 'b.jpg'),
+      path.join(cardRoot, 'c.jpg'),
+    ]);
+  });
+
+  it('resolves gridImage inside the card root', async () => {
+    await write({ schemaVersion: 1, id: 'x', title: 'X', executable: 'g/g.exe', gridImage: 'art/grid.jpg' });
+    const result = await readManifests(cardRoot, env, resolveInstallDir);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.manifests[0]?.gridImagePath).toBe(path.join(cardRoot, 'art', 'grid.jpg'));
+  });
+
+  it('leaves gridImagePath undefined when the field is absent', async () => {
+    await write({ schemaVersion: 1, id: 'x', title: 'X', executable: 'g/g.exe' });
+    const result = await readManifests(cardRoot, env, resolveInstallDir);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.manifests[0]?.gridImagePath).toBeUndefined();
+  });
+
+  it('rejects a gridImage escaping the card root', async () => {
+    await write({
+      schemaVersion: 1,
+      id: 'x',
+      title: 'X',
+      executable: 'g/g.exe',
+      gridImage: '../../etc/passwd',
+    });
+    const result = await readManifests(cardRoot, env, resolveInstallDir);
+    expect(result.ok).toBe(false);
   });
 });
