@@ -44,7 +44,22 @@ export function clampIndex(index: number, count: number): number {
 }
 
 /** How many places of stagger the returning strip is allowed to spread over (see fanIndex). */
-export const FAN_MAX = 6;
+export const FAN_MAX = 4;
+
+// The return animation, in milliseconds. These MIRROR the timings in styles.css (the morph block) — CSS
+// cannot read them and JS cannot set them, so the two must be edited together. They exist here because
+// input is locked out for exactly as long as the return lasts (see RETURN_MS).
+const MORPH_MS = 350;
+const FAN_STEP_MS = 50;
+const FAN_FADE_MS = 400;
+
+/**
+ * How long the carousel takes to come back in full: the selected card's morph, then the last card of the
+ * fan starting and finishing its fade. Flipping through cards is refused for this long — mid-return the
+ * strip is a stack of half-faded cards being resized, and moving the selection through that leaves visible
+ * artefacts.
+ */
+export const RETURN_MS = MORPH_MS + FAN_MAX * FAN_STEP_MS + FAN_FADE_MS;
 
 /**
  * The card's place in the "fan": how many steps from the selection it comes in, once the selected card is
