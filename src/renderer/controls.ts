@@ -10,7 +10,7 @@
 // The popup is a state machine: one #popup element whose content + action stack switch by data-view.
 // Navigation is vertical (up/down) inside a stack; the default focus is always the BOTTOM button
 // (Close / No / Sleep), which the mockup draws filled. B/Esc/veil step BACK one level.
-import type { AppState, LibraryEntry } from '../shared/types';
+import type { AppState, BrowseInfo, GameInfo, LibraryEntry } from '../shared/types';
 import type { Translator } from '../shared/i18n/index.js';
 import { createGamepadController } from './gamepad.js';
 import { type AudioController } from './audio.js';
@@ -29,6 +29,12 @@ const PRESS_MS = 130;
 export interface ControlsDeps {
   /** The current AppState snapshot (app.ts owns it; updated before it calls into here). */
   getState(): AppState;
+  /**
+   * What is on screen (browse:update). Needed because AppState alone can no longer answer "does Play act
+   * on what I'm looking at?": while a card is inserted the state describes ITS game, but the screen may
+   * be showing a history game — pressing Play there would launch someone else.
+   */
+  getBrowse(): BrowseInfo | null;
   /** The shared audio controller (UI sounds). */
   audio: AudioController;
   /** The current translator (read live so menu/confirm copy follows the language). */
@@ -59,6 +65,27 @@ export function createControls(deps: ControlsDeps): Controls {
   const { audio } = deps;
   const state = (): AppState => deps.getState();
   const t = (): Translator => deps.getTranslator();
+
+  /**
+   * The GameInfo of what is on screen, or undefined when the screen shows a history game (nothing to
+   * install, uninstall or launch there). Everything that used to read `gameOf(state())` for a SCREEN
+   * decision goes through here; `state()` is still read for PHASE decisions (busy / running / killing).
+   */
+  const screenGame = (): GameInfo | undefined => {
+    const browse = deps.getBrowse();
+    if (browse === null) return gameOf(state()); // no browse model yet (first paint) — behave as before
+    return browse.active ? (browse.game ?? gameOf(state())) : undefined;
+  };
+
+  /** Whether the launch/uninstall actions apply to what is on screen: it must be a card game AND the one
+   * AppState is currently about (you can browse game B while game A is busy — B is not actionable). */
+  const screenIsActionable = (): boolean => {
+    const browse = deps.getBrowse();
+    if (browse === null) return true; // pre-browse behaviour
+    if (!browse.active) return false;
+    const subject = gameOf(state())?.id;
+    return subject === undefined || subject === browse.id;
+  };
   // The card's games ({id,title}), delivered by main; drives the "Select game" popup. ≥2 → the button
   // shows and the list has entries (the current game is filtered out).
   let games: readonly LibraryEntry[] = [];
@@ -146,7 +173,7 @@ export function createControls(deps: ControlsDeps): Controls {
   // and closes the whole stack; No/back returns to where it came from.
   function openConfirm(mode: ConfirmMode): void {
     if (mode === 'install' || mode === 'uninstall') {
-      const game = gameOf(state());
+      const game = screenIsActionable() ? screenGame() : undefined;
       if (game === undefined) return;
       if (mode === 'install' && !game.requiresInstall) return; // nothing to install
       if (mode === 'uninstall' && !game.canUninstall) return; // nothing to uninstall
@@ -251,7 +278,7 @@ export function createControls(deps: ControlsDeps): Controls {
   // One button whose text + visibility follow the current game: "Install" when it needs installing,
   // "Uninstall" when installed & removable, hidden entirely for a plain executable (no install block).
   function applyMenuInstallToggle(): void {
-    const game = gameOf(state());
+    const game = screenIsActionable() ? screenGame() : undefined;
     // While an install/uninstall (card or Steam) is in flight, the Install/Uninstall item is hidden —
     // acting on it mid-operation makes no sense (Details still opens for the stats + power actions).
     const busy = phaseOf(state()) === 'busy' || steamBusy(state());
@@ -492,8 +519,9 @@ export function createControls(deps: ControlsDeps): Controls {
     // Hard busy (install / uninstall / launch / save-sync): the Play button is a non-interactive activity
     // indicator (spinner/gear), so only More is focusable — it still opens Details.
     if (phaseOf(state()) === 'busy') return [moreButton];
-    // Empty screen (no card) or a requiresInstall installer/steam game → Play is hidden, only More.
-    const game = gameOf(state());
+    // Empty screen, a HISTORY game (nothing to launch) or a requiresInstall installer/steam game → Play is
+    // hidden, only More.
+    const game = screenIsActionable() ? screenGame() : undefined;
     if (game === undefined || game.requiresInstall === true) return [moreButton];
     return [playButton, moreButton];
   }
@@ -668,7 +696,10 @@ export function createControls(deps: ControlsDeps): Controls {
 
   function triggerPlay(): void {
     if (!focusActive()) return;
-    const game = gameOf(state());
+    // Play acts on the game AppState is about, so it must be the one on screen: a history game has
+    // nothing to launch, and while you browse game B, "Play" must not start game A behind your back.
+    if (!screenIsActionable()) return;
+    const game = screenGame();
     // Steam download in progress: the gear opens Steam's Downloads page, where the user can
     // pause/resume (we can't control that programmatically).
     if (game?.steamInstalling === true) {
@@ -941,7 +972,7 @@ export function createControls(deps: ControlsDeps): Controls {
     if (
       popupView === 'confirm' &&
       (confirmMode === 'install' || confirmMode === 'uninstall') &&
-      gameOf(state()) === undefined
+      screenGame() === undefined
     ) {
       closePopup();
     }

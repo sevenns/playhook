@@ -19,6 +19,13 @@ const FADE_EPSILON = 0.001;
 export interface AudioController {
   /** Loads a new card's audio (sfx + its own music), or clears it when null. */
   setAssets(assets: AudioAssets | null): void;
+  /**
+   * Music of the game currently ON SCREEN (the carousel's browse channel), which wins over the card's own
+   * music: with the card pulled you are looking at a history game and must hear ITS theme. null falls back
+   * to the card music, then to the ambience. Music only — the SFX set is untouched, so flipping through
+   * the carousel never rebuilds the sound elements.
+   */
+  setBrowseMusic(url: string | null): void;
   /** Sets the app-wide default ambience (data URL), or clears it when null. */
   setAmbient(url: string | null): void;
   /** Plays a one-shot UI sound; a no-op when that slot isn't configured. */
@@ -40,8 +47,11 @@ interface Player {
 export function createAudioController(): AudioController {
   const sfx = new Map<SfxName, HTMLAudioElement>();
 
-  // The two music sources; the EFFECTIVE one is `gameMusic ?? ambient`. Changing the effective identity
-  // (a different URL) triggers a crossfade; an unchanged identity is a no-op (never restarts playback).
+  // The three music sources; the EFFECTIVE one is `browseMusic ?? gameMusic ?? ambient`. Changing the
+  // effective identity (a different URL) triggers a crossfade; an unchanged identity is a no-op (never
+  // restarts playback) — which is why a single-game card, where browse and card music are the same file,
+  // behaves exactly as before.
+  let browseMusic: string | null = null;
   let gameMusic: string | null = null;
   let ambient: string | null = null;
 
@@ -155,7 +165,7 @@ export function createAudioController(): AudioController {
   };
 
   const applyEffective = (): void => {
-    const target = gameMusic ?? ambient;
+    const target = browseMusic ?? gameMusic ?? ambient;
     if (target === activeUrl) return; // idempotent: same effective source → never restart playback
     if (wantPlay) crossfadeTo(target);
     else hardSwap(target);
@@ -177,6 +187,12 @@ export function createAudioController(): AudioController {
       const music = assets?.music ?? null;
       if (music === gameMusic) return;
       gameMusic = music;
+      applyEffective();
+    },
+
+    setBrowseMusic(url: string | null): void {
+      if (url === browseMusic) return;
+      browseMusic = url;
       applyEffective();
     },
 

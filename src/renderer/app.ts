@@ -5,7 +5,7 @@
 // wires them together and owns only the bits that don't belong to any one subsystem (phase attribute,
 // info panel, title slide, music gating).
 // IMPORTANT: title/data come from the card (untrusted) — rendered via textContent, never innerHTML.
-import type { AppState, GameInfo } from '../shared/types';
+import type { AppState, BrowseInfo, Stats } from '../shared/types';
 import { createTranslator, type Locale, type Translator, type MessageKey } from '../shared/i18n/index.js';
 import { localizeDocument } from './i18n-dom.js';
 import { createAudioController } from './audio.js';
@@ -21,6 +21,11 @@ const statusEl = req('status');
 const infoPanel = req('info-panel');
 
 let currentState: AppState = { kind: 'idle' };
+// What is ON SCREEN (main's browse:update): the source of truth for the title, the stats, the background
+// and the music — for a game on the inserted card AND for one that only exists in the history. AppState
+// stays the truth for the PHASE (busy/ready/error) and the status text. null = neither card nor history,
+// i.e. the genuine "Insert a game card" screen. See BrowseInfo in shared/types.
+let currentBrowse: BrowseInfo | null = null;
 // UI locale + translator (both refreshed on a language push). The HTML ships English fallback text, so
 // until the invoke-seed lands there is no blank flash — the seed then localizes and re-renders.
 let currentLocale: Locale = 'en';
@@ -34,9 +39,13 @@ const audio = createAudioController();
 // and the current game id (for the per-hero palette cache key). render() drives it via repaint/
 // startRotation/applyEmptyScreen; the hero:update channel feeds applyAssets; main's wallpaper feeds
 // setWallpaper.
+// Both hooks read the BROWSE model, not AppState: a history game is browsed while the state is `idle`,
+// where `gameOf` is undefined. Left on AppState, hasGameOnScreen would suppress the rotation AND the very
+// first frame (hero.ts guards both), and every history game would share the palette cache key `#index`,
+// bleeding one game's background colors into another's.
 const hero = createHeroController({
-  hasGameOnScreen: () => gameOf(currentState) !== undefined,
-  getGameId: () => gameOf(currentState)?.id ?? '',
+  hasGameOnScreen: () => currentBrowse !== null,
+  getGameId: () => currentBrowse?.id ?? '',
   getTranslator,
 });
 
@@ -45,7 +54,12 @@ const hero = createHeroController({
 // actions they trigger, plus their wiring (clicks, hover, gamepad, Esc). render() drives it via
 // applyGameButtons/clearGameButtons/refresh; main's error goes to showError; the game list arrives via
 // setGames; the gamepad loop starts with start().
-const controls = createControls({ getState: () => currentState, audio, getTranslator });
+const controls = createControls({
+  getState: () => currentState,
+  getBrowse: () => currentBrowse,
+  audio,
+  getTranslator,
+});
 
 // ── Info panel ──────────────────────────────────────────────────────────────
 
@@ -62,12 +76,12 @@ function infoItem(label: string, value: string): HTMLElement {
   return item;
 }
 
-function buildInfoPanel(game: GameInfo): void {
+function buildInfoPanel(stats: Stats): void {
   while (infoPanel.firstChild !== null) infoPanel.removeChild(infoPanel.firstChild);
   infoPanel.append(
-    infoItem(translator('launcher.info.lastPlayed'), formatDate(game.lastPlayedAt, translator, currentLocale)),
-    infoItem(translator('launcher.info.playtime'), formatPlaytime(game.totalPlaySeconds, translator)),
-    infoItem(translator('launcher.info.launches'), String(game.launchCount)),
+    infoItem(translator('launcher.info.lastPlayed'), formatDate(stats.lastPlayedAt, translator, currentLocale)),
+    infoItem(translator('launcher.info.playtime'), formatPlaytime(stats.totalPlaySeconds, translator)),
+    infoItem(translator('launcher.info.launches'), String(stats.launchCount)),
   );
 }
 
@@ -148,7 +162,15 @@ function rotateChatter(kind: ChatterKind): void {
 }
 
 // Sets the status line: the base label for the current state, plus the current funny suffix when active.
+// The status belongs to the game AppState is about, so it is blank while you look at a DIFFERENT game
+// ("Installing…" under another game's cover would be a lie — the busy game is marked by its pulsing dot
+// on the carousel instead).
 function applyStatus(): void {
+  const subject = gameOf(currentState)?.id;
+  if (currentBrowse !== null && subject !== undefined && subject !== currentBrowse.id) {
+    statusEl.textContent = '';
+    return;
+  }
   const base = statusOf(currentState, translator);
   statusEl.textContent =
     chatterSuffix !== null && currentState.kind === chatterKind
@@ -184,16 +206,20 @@ function render(state: AppState): void {
 
   app.dataset['phase'] = phase;
 
-  if (game !== undefined) {
-    // Hero images travel on their own channel (hero:update), independent of state:update — on a window
-    // reconnect render can arrive before the hero payload. Only paint when we already have images; an
-    // empty list means "wait for onHeroUpdate" (it back-fills), rather than blanking the background.
+  // What is on screen comes from the BROWSE model, not from AppState: with the card pulled the state is
+  // `idle` while the history still has games to show, and while game A installs you may be looking at
+  // game B. The single-game card case is unchanged by construction — there browse.id === state.game.id.
+  const browse = currentBrowse;
+  if (browse !== null) {
+    // Hero images travel on their own channels (hero:update / browse:hero), independent of state:update —
+    // on a window reconnect render can arrive before the payload. Only paint when we already have images;
+    // an empty list means "wait for the push" (it back-fills), rather than blanking the background.
     hero.repaint();
-    titleEl.textContent = game.title;
-    buildInfoPanel(game);
+    titleEl.textContent = browse.title;
+    buildInfoPanel(browse.stats);
     controls.applyGameButtons();
   } else {
-    // idle / no-game error → the empty "Insert a game card" screen (wallpaper background). Clear any
+    // No card AND no history → the empty "Insert a game card" screen (wallpaper background). Clear any
     // stale stats so the empty screen's Details menu (opened via More) shows just System + Close.
     hero.applyEmptyScreen();
     while (infoPanel.firstChild !== null) infoPanel.removeChild(infoPanel.firstChild);
@@ -215,10 +241,12 @@ function render(state: AppState): void {
   if (busyKind !== 'none') app.dataset['busy'] = busyKind;
   else delete app.dataset['busy'];
 
-  // no-play layout: a requiresInstall installer/steam game on the ready screen (and NOT steam-busy, when
-  // the gear must stay visible) hides Play and moves the title to x=50. Set here by phase so it is cleared
-  // in every other state (idle/error move the title via their own per-phase rule).
-  const noPlay = phase === 'ready' && game?.requiresInstall === true && !busySteam;
+  // no-play layout: Play is hidden and the title moves to x=50. TWO cases now, both only on the detail
+  // screen: (a) a requiresInstall installer/steam game on the ready screen (and NOT steam-busy, when the
+  // gear must stay visible) — as before; (b) a HISTORY game, which has no card behind it, so there is
+  // nothing to launch — it looks exactly like an uninstalled game (title + More).
+  const noPlay =
+    browse !== null && (!browse.active || (phase === 'ready' && browse.game?.requiresInstall === true && !busySteam));
   if (noPlay) app.dataset['layout'] = 'no-play';
   else delete app.dataset['layout'];
 
@@ -255,6 +283,31 @@ void window.api.getLanguage().then(applyLocale);
 
 window.api.onStateUpdate(render);
 void window.api.requestState().then(render);
+
+// What is on screen (title / stats / active / GameInfo). Subscribe BEFORE the seed, like every other
+// channel here, so a push arriving in between isn't lost.
+function applyBrowse(browse: BrowseInfo | null): void {
+  currentBrowse = browse;
+  render(currentState);
+}
+window.api.onBrowseUpdate(applyBrowse);
+void window.api.requestBrowse().then((browse) => {
+  applyBrowse(browse);
+  // The seed carries the INFO only; asking main to browse the same game again replays its hero/music, so
+  // a reloaded window doesn't come back with a blank background.
+  if (browse !== null) window.api.browseGame(browse.id);
+});
+
+// The browsed game's background: a channel of its own, so a history game can be shown without touching
+// the inserted card's hero:update payload (which stays valid for the card's selected game).
+window.api.onBrowseHero((assets) => hero.applyAssets(assets));
+
+// The browsed game's music. Music ONLY — the SFX set is never rebuilt by browsing, so flipping through
+// the carousel doesn't re-create the sound elements on every step.
+window.api.onBrowseMusic((url) => {
+  audio.setBrowseMusic(url);
+  syncMusic();
+});
 
 // A failed launch returns to 'ready' and sends the reason here to open the error popup.
 window.api.onError((messageText) => controls.showError(messageText));
