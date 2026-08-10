@@ -111,15 +111,22 @@ body {
   position: absolute;
   inset: 0;
   z-index: -1;
-  /* Parallax: flipping through the carousel drags the background a little the same way (hero.ts sets
-     --hero-parallax). It lives on the CONTAINER because each layer's own transform is already spoken for
-     by the bg-pan animation. The shift is bounded in app.ts to what that animation's overscan leaves
-     free, so it can never pull an edge into view. */
-  /* `scale` is the screen-level zoom (see the data-screen rules below); the two compose into one
-     transform, so both must live in the same declaration. */
-  transform: translateX(var(--hero-parallax, 0px)) scale(var(--hero-zoom, 1));
-  /* Long and symmetric (ease-in-out): the drift should read as the background lagging behind the strip,
-     not as a nudge. Same curve for the zoom, so a card entered mid-drift stays coherent. */
+  /* The screen-level zoom (see the data-screen rules below). Short on purpose: going back it has to be
+     DONE by the time the strip returns, which is 0.35s after the switch (see the reverse-morph delay). */
+  transform: scale(var(--hero-zoom, 1));
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Parallax: flipping through the carousel drags the background a little the same way (hero.ts sets
+   --hero-parallax). It is a SEPARATE element from the zoom above because the two need different tempos —
+   the drift is long and symmetric (ease-in-out), so it reads as the background lagging behind the strip
+   rather than as a nudge — and one element can only transition its transform at one speed. Each layer's
+   own transform is already spoken for by the bg-pan animation, hence the extra wrapper. The shift is
+   bounded in app.ts to what that animation's overscan leaves free, so it never pulls an edge into view. */
+#hero-pan {
+  position: absolute;
+  inset: 0;
+  transform: translateX(var(--hero-parallax, 0px));
   transition: transform 1.1s cubic-bezier(0.45, 0, 0.35, 1);
 }
 

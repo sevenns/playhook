@@ -37,7 +37,7 @@ export interface HeroController {
 
 export function createHeroController(deps: HeroDeps): HeroController {
   const app = req('app');
-  const heroEl = req('hero');
+  const heroPanEl = req('hero-pan');
   const titleEl = req('title');
 
   // Fallback wallpaper (data URL from main) for the empty / idle screen, and its cached palette.
@@ -221,7 +221,8 @@ export function createHeroController(deps: HeroDeps): HeroController {
   }
 
   function setParallax(designPx: number): void {
-    heroEl.style.setProperty('--hero-parallax', `calc(${designPx} * var(--px))`);
+    // On the pan wrapper, not on #hero: that one carries the (much faster) screen zoom — see styles.css.
+    heroPanEl.style.setProperty('--hero-parallax', `calc(${designPx} * var(--px))`);
   }
 
   return { repaint, startRotation, applyAssets, applyEmptyScreen, setWallpaper, setParallax };
