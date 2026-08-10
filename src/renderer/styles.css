@@ -360,9 +360,14 @@ body {
 /* Going BACK is the entry played backwards, not a cross-fade: the button first grows from the play
    square to the card's size, and only then (0.35s — its own duration) does the strip take over. Without
    the delay the cards simply faded in over a button that was still growing underneath. */
-#app[data-screen='carousel'][data-card-morph='on'] #carousel,
-#app[data-screen='carousel'][data-card-morph='on'] .card {
+#app[data-screen='carousel'][data-card-morph='on'] #carousel {
   transition-delay: 0.35s;
+}
+#app[data-screen='carousel'][data-card-morph='on'] .card {
+  /* ONLY the fade-in waits for the button to finish growing. Delaying width/height here too would also
+     delay every grow/shrink WHILE flipping — the strip would slide first and the cards resize after. */
+  transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1), height 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 0.2s ease 0.35s;
 }
 #app[data-screen='carousel'][data-card-morph='on'] .play-button {
   /* Stays visible (and keeps its cover) for exactly that grow, then is swapped out in one frame. */
@@ -725,11 +730,11 @@ html:not(.cursor-hidden) .rect-button:hover,
   transition: opacity 0.3s ease, transform 0.45s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-/* Status fades in just after the title starts moving (the delay sequences the two: title down, then
-   status in). Covers busy and the Steam non-blocking "Installing… X%" / "Uninstalling…" indicators. */
+/* The status fades in TOGETHER with the title's move — no delay: sequencing them made the line look
+   like it was lagging behind the state it reports. Covers busy and the Steam non-blocking
+   "Installing… X%" / "Uninstalling…" indicators. */
 #app[data-status='shown'] .status {
   opacity: 1;
-  transition-delay: 0.35s;
 }
 
 /* ── Popup (unified: Details / Power / Confirm / Error) ─────────────────────
