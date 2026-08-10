@@ -381,8 +381,10 @@ body {
   transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1), height 0.35s cubic-bezier(0.4, 0, 0.2, 1),
     opacity 0s linear 0.35s;
 }
+/* The cover comes back in the SAME frame the screen flips, not over 0.3s: the button has to be the card
+   from the first pixel of the grow, or the first third of a second is a blank plate — the flash again. */
 #app[data-screen='carousel'][data-card-morph='on'] .play-button::before {
-  transition-delay: 0s;
+  transition: none;
 }
 
 /* ── Bottom bar ──────────────────────────────────────────────────────────── */
@@ -471,6 +473,19 @@ body {
   height: calc(204 * var(--px));
   opacity: 0;
   pointer-events: none;
+  /* On this screen the button is not a button — it is the card's stand-in, so nothing that makes it read
+     as Play may survive the flip. Coming BACK it is focused (the d2 fill + the icon) and grows from 92 to
+     136x204: without this reset a bright plate flashes over the artwork for the whole grow. The focus fill
+     outranks .play-button's own transparent background, hence the explicit override. */
+  background: transparent;
+}
+#app[data-screen='carousel'] .play-button > * {
+  opacity: 0;
+}
+#app[data-screen='carousel'] .play-button::after {
+  opacity: 0;
+  animation: none;
+  transition: none;
 }
 #app[data-screen='carousel'] .play-button::before {
   opacity: 1;
