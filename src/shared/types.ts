@@ -296,19 +296,40 @@ export interface HeroAssets {
 }
 
 /**
- * One game's identity for the "Select game" popup list. A card can carry several games; the light list
- * of {id, title} is delivered once per card on the `library:update` channel so the renderer can render
- * the picker without a round-trip. The SELECTED game's heavy assets (hero/audio/GameInfo) still travel
- * on the existing hero:update / audio:update / state:update channels — only for the one game on screen.
+ * One card in the launcher's history carousel: a game on the inserted card (`active` — launchable right
+ * now) or one that was played on this device before. Deliberately LIGHT ({id,title,active}) so main can
+ * re-push the whole list on every insert/removal/play; the artwork travels one card at a time, on demand,
+ * over `library:grid-request` (see Р5).
  */
 export interface LibraryEntry {
   readonly id: string;
   readonly title: string;
+  /** The game is on the card currently inserted: it can be launched/installed right now. */
+  readonly active: boolean;
 }
 
-/** The list of games on the current card (empty only transiently; a card with 0 valid games errors). */
+/** The carousel list, already in display order — the renderer never sorts it (see orderForCarousel). */
 export interface GameLibrary {
   readonly games: readonly LibraryEntry[];
+}
+
+/**
+ * What is currently ON SCREEN — the source of truth for the title, the stats, the background and the
+ * music, whether that game is on the inserted card or only in the history.
+ *
+ * It exists BECAUSE AppState cannot answer that question: AppState is the state machine of ONE game's
+ * process (idle/ready/installing/running…), so browsing game B while game A installs, or showing a
+ * history game with no card in (`kind: 'idle'`), has no representation there. AppState stays the truth
+ * for the PHASE and the STATUS text; BrowseInfo is the truth for what you are looking at.
+ */
+export interface BrowseInfo {
+  readonly id: string;
+  readonly title: string;
+  /** The browsed game is on the inserted card (so Play/Install apply to it). */
+  readonly active: boolean;
+  readonly stats: Stats;
+  /** Only for an active game: everything the ready screen needs (requiresInstall, canUninstall, …). */
+  readonly game?: GameInfo;
 }
 
 /** Game statistics. The source of truth is on the PC; the card copy is best-effort. */
@@ -602,12 +623,33 @@ export const IPC = {
   heroUpdate: 'hero:update',
   /** renderer → main: request the current hero images (on window startup). */
   heroRequest: 'hero:request',
-  /** main → renderer: the light list of games ({id,title}) on the current card (or null when no card).
-   * Delivered once per card so the renderer can render the "Select game" popup without a round-trip. */
+  /** main → renderer: the light carousel list ({id,title,active}) — the inserted card's games plus the
+   * play history, already in display order (or null when there is nothing to show at all). */
   libraryUpdate: 'library:update',
-  /** renderer → main (invoke): request the current game list (on window startup / back-fill). */
+  /** renderer → main (invoke): request the current carousel list (on window startup / back-fill). */
   libraryRequest: 'library:request',
-  /** renderer → main: pick a game by id from the "Select game" popup. Switches to it on the ready screen. */
+  /** renderer → main (invoke): the carousel card artwork of one game as a data URL (null when it has
+   * none). Requested per visible card and cached in the renderer — the list channel stays light. */
+  libraryGridRequest: 'library:grid-request',
+  /** renderer → main: "the user is looking at this id" — main answers with browse:update + browse:hero
+   * (+ browse:music). Does NOT change the selected game or the AppState. */
+  libraryBrowse: 'library:browse',
+  /** main → renderer: what is on screen (title/stats/active/GameInfo) — see BrowseInfo. */
+  browseUpdate: 'browse:update',
+  /** renderer → main (invoke): the current BrowseInfo (seed on window startup, like state:request). */
+  browseRequest: 'browse:request',
+  /** main → renderer: hero backgrounds of the BROWSED game. Separate from hero:update, which keeps
+   * carrying the inserted card's selected game — so browsing never overwrites the card's assets. */
+  browseHero: 'browse:hero',
+  /** main → renderer: background music of the browsed game (or null). Music only: the SFX set is left
+   * alone, so flipping through the carousel never rebuilds the sound elements. */
+  browseMusic: 'browse:music',
+  /** main → renderer: the bundled fallback UI sounds, played on the carousel level (a game's own sounds
+   * belong to its detail screen). */
+  audioDefaultsUpdate: 'audio:defaults-update',
+  /** renderer → main (invoke): the fallback UI sound set (seed on window startup). */
+  audioDefaultsRequest: 'audio:defaults-request',
+  /** renderer → main: pick a game by id (entering its detail screen). Switches to it on the ready screen. */
   actionSelect: 'action:select',
   /** renderer → main: request the fallback wallpaper data URL (for the idle / empty screen). */
   wallpaperRequest: 'wallpaper:request',
@@ -853,11 +895,27 @@ export interface RendererApi {
   onSfxPlay(callback: (name: SfxName) => void): void;
   onHeroUpdate(callback: (assets: HeroAssets | null) => void): void;
   requestHero(): Promise<HeroAssets | null>;
-  /** Live game-list updates (the card's games as {id,title}), pushed once per card (null when no card). */
+  /** Live carousel-list updates (card games + history, in display order; null when there is nothing). */
   onLibraryUpdate(callback: (library: GameLibrary | null) => void): void;
-  /** Current game list (on window startup / back-fill after a reload). */
+  /** Current carousel list (on window startup / back-fill after a reload). */
   requestLibrary(): Promise<GameLibrary | null>;
-  /** Pick a game by id (from the "Select game" popup) — switches to it on the ready screen. */
+  /** The carousel card artwork of one game as a data URL (null when it has none). Cached per id. */
+  requestGrid(id: string): Promise<string | null>;
+  /** Tell main which game the carousel is on — it answers with browse:update/hero/music. */
+  browseGame(id: string): void;
+  /** Live updates of what is on screen (title/stats/active/GameInfo). */
+  onBrowseUpdate(callback: (browse: BrowseInfo | null) => void): void;
+  /** What is on screen right now (on window startup). */
+  requestBrowse(): Promise<BrowseInfo | null>;
+  /** Hero backgrounds of the browsed game (independent of the inserted card's hero:update). */
+  onBrowseHero(callback: (assets: HeroAssets | null) => void): void;
+  /** Background music of the browsed game (music only — the SFX set is untouched). */
+  onBrowseMusic(callback: (url: string | null) => void): void;
+  /** Live updates of the fallback UI sounds used on the carousel level. */
+  onAudioDefaults(callback: (assets: AudioAssets | null) => void): void;
+  /** The fallback UI sounds (on window startup). */
+  requestAudioDefaults(): Promise<AudioAssets | null>;
+  /** Pick a game by id (entering its detail screen) — switches to it on the ready screen. */
   selectGame(id: string): void;
   requestWallpaper(): Promise<string | null>;
   /** Live Empty-screen wallpaper updates, pushed when the custom wallpaper changes in the settings window. */

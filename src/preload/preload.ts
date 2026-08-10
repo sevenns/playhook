@@ -11,6 +11,7 @@ import type {
   AppState,
   AudioAssets,
   AudioVolumes,
+  BrowseInfo,
   GameLibrary,
   HeroAssets,
   RendererApi,
@@ -43,6 +44,14 @@ const CHANNELS = {
   heroRequest: 'hero:request',
   libraryUpdate: 'library:update',
   libraryRequest: 'library:request',
+  libraryGridRequest: 'library:grid-request',
+  libraryBrowse: 'library:browse',
+  browseUpdate: 'browse:update',
+  browseRequest: 'browse:request',
+  browseHero: 'browse:hero',
+  browseMusic: 'browse:music',
+  audioDefaultsUpdate: 'audio:defaults-update',
+  audioDefaultsRequest: 'audio:defaults-request',
   actionSelect: 'action:select',
   wallpaperRequest: 'wallpaper:request',
   wallpaperUpdate: 'wallpaper:update',
@@ -137,6 +146,38 @@ const api: RendererApi = {
   },
   requestLibrary(): Promise<GameLibrary | null> {
     return ipcRenderer.invoke(CHANNELS.libraryRequest) as Promise<GameLibrary | null>;
+  },
+  requestGrid(id: string): Promise<string | null> {
+    return ipcRenderer.invoke(CHANNELS.libraryGridRequest, id) as Promise<string | null>;
+  },
+  browseGame(id: string): void {
+    ipcRenderer.send(CHANNELS.libraryBrowse, id);
+  },
+  onBrowseUpdate(callback: (browse: BrowseInfo | null) => void): void {
+    ipcRenderer.on(CHANNELS.browseUpdate, (_event: IpcRendererEvent, browse: BrowseInfo | null) => {
+      callback(browse);
+    });
+  },
+  requestBrowse(): Promise<BrowseInfo | null> {
+    return ipcRenderer.invoke(CHANNELS.browseRequest) as Promise<BrowseInfo | null>;
+  },
+  onBrowseHero(callback: (assets: HeroAssets | null) => void): void {
+    ipcRenderer.on(CHANNELS.browseHero, (_event: IpcRendererEvent, assets: HeroAssets | null) => {
+      callback(assets);
+    });
+  },
+  onBrowseMusic(callback: (url: string | null) => void): void {
+    ipcRenderer.on(CHANNELS.browseMusic, (_event: IpcRendererEvent, url: string | null) => {
+      callback(url);
+    });
+  },
+  onAudioDefaults(callback: (assets: AudioAssets | null) => void): void {
+    ipcRenderer.on(CHANNELS.audioDefaultsUpdate, (_event: IpcRendererEvent, assets: AudioAssets | null) => {
+      callback(assets);
+    });
+  },
+  requestAudioDefaults(): Promise<AudioAssets | null> {
+    return ipcRenderer.invoke(CHANNELS.audioDefaultsRequest) as Promise<AudioAssets | null>;
   },
   selectGame(id: string): void {
     ipcRenderer.send(CHANNELS.actionSelect, id);
