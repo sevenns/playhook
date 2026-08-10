@@ -432,16 +432,36 @@ body {
   /* 400 design px, straight off the mockup's "BackgroundBlur" — a shorter overlay ends mid-card and the
      strip loses the dark base it is meant to sit on. */
   height: calc(400 * var(--px));
-  /* Vertical gradient of d1: transparent at top → 0.75 → solid at bottom (mockup stops). */
-  background: linear-gradient(
-    to top,
+  /* The mockup's "BackgroundBlur" is no longer a full-width band but a POOL in the bottom-left corner:
+     an ellipse centred at 439/1009 of the 1920x1080 grid with radii 711 x 290 (Figma node 222:1484 — its
+     linear fill is switched off there, the radial one is what is drawn). 1009 from the top of the screen
+     is 329 from the top of this 400-tall element; the pool's bottom half falls off the screen edge. */
+  --pool-x: calc(439 * var(--px));
+  --pool-y: calc(329 * var(--px));
+  --pool-rx: calc(711 * var(--px));
+  --pool-ry: calc(290 * var(--px));
+  /* d1 at the centre → 0.75 at 42% → gone at the rim (the mockup's three stops). */
+  background: radial-gradient(
+    var(--pool-rx) var(--pool-ry) at var(--pool-x) var(--pool-y),
     var(--d1) 0%,
-    color-mix(in srgb, var(--d1) 75%, transparent) 58%,
+    color-mix(in srgb, var(--d1) 75%, transparent) 42%,
     transparent 100%
   );
   backdrop-filter: blur(6px);
-  -webkit-mask-image: linear-gradient(to top, #000 0%, #000 55%, transparent 100%);
-  mask-image: linear-gradient(to top, #000 0%, #000 55%, transparent 100%);
+  /* The blur must take the same shape. A mask applies to the whole element, backdrop-filter included, so
+     the old linear one would now leave a blurred band standing out to the right of the pool. */
+  -webkit-mask-image: radial-gradient(
+    var(--pool-rx) var(--pool-ry) at var(--pool-x) var(--pool-y),
+    #000 0%,
+    #000 45%,
+    transparent 100%
+  );
+  mask-image: radial-gradient(
+    var(--pool-rx) var(--pool-ry) at var(--pool-x) var(--pool-y),
+    #000 0%,
+    #000 45%,
+    transparent 100%
+  );
   transition: opacity 0.3s ease;
 }
 
