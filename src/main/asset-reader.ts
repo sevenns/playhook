@@ -52,6 +52,22 @@ export async function readImageDataUrl(filePath: string): Promise<string | undef
   }
 }
 
+/**
+ * Reads an audio file into a base64 data URL (or undefined on any failure). A free function for the same
+ * reason as readImageDataUrl: both the AssetReader instance (card audio) and the LibraryStore (the copied
+ * history assets) encode with one MIME table.
+ */
+export async function readAudioDataUrl(filePath: string): Promise<string | undefined> {
+  try {
+    const mime = AUDIO_MIME[path.extname(filePath).toLowerCase()] ?? 'application/octet-stream';
+    const buffer = await fse.readFile(filePath);
+    return `data:${mime};base64,${buffer.toString('base64')}`;
+  } catch (cause) {
+    log.warn('[audio] failed to read, skipping:', describe(cause));
+    return undefined;
+  }
+}
+
 const SFX_NAMES: readonly SfxName[] = ['play', 'navigate', 'button', 'back'];
 
 // The sound set shipped as the default, and the fallback whenever the chosen set's folder is missing.
@@ -279,6 +295,18 @@ export class AssetReader {
   }
 
   /**
+   * The manifest's background music alone, for the carousel's browse channel: flipping through cards must
+   * change the music WITHOUT rebuilding the renderer's sound elements (readAudioAssets would re-send the
+   * whole SFX set). Honours "only global ambience" exactly like readAudioAssets — a suppressed card music
+   * reads as null, and the renderer falls back to the ambience.
+   */
+  async readMusicDataUrl(manifest: ResolvedManifest): Promise<string | null> {
+    if (manifest.backgroundMusicPath === undefined) return null;
+    if (await this.deps.getOnlyGlobalAmbient()) return null;
+    return (await this.readAudioDataUrl(manifest.backgroundMusicPath)) ?? null;
+  }
+
+  /**
    * The chosen set's default UI sounds alone (no music), for the empty "insert a card" screen — so
    * navigating the System menu there is audible even without a game's own sounds. Same per-slot defaults
    * readAudioAssets falls back to, minus any game/music.
@@ -341,13 +369,6 @@ export class AssetReader {
   private ambientCache: { track: string; url: string | null } | undefined;
 
   private async readAudioDataUrl(filePath: string): Promise<string | undefined> {
-    try {
-      const mime = AUDIO_MIME[path.extname(filePath).toLowerCase()] ?? 'application/octet-stream';
-      const buffer = await fse.readFile(filePath);
-      return `data:${mime};base64,${buffer.toString('base64')}`;
-    } catch (cause) {
-      log.warn('[audio] failed to read, skipping:', describe(cause));
-      return undefined;
-    }
+    return readAudioDataUrl(filePath);
   }
 }

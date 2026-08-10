@@ -1,0 +1,257 @@
+// The history store's data-touching half: byte caps, the lazy thumbnail (and its fallbacks), the
+// unchanged-card shortcut, hero ORDER, and the index write. Importable in plain Node because `electron`
+// is aliased to test/stubs/electron.ts (whose nativeImage stub decodes a trivial "IMG WxH" text format).
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { LibraryStore } from '../src/main/library-store';
+import type { ResolvedManifest, Stats } from '../src/shared/types';
+
+const NO_STATS: Stats = { schemaVersion: 1, totalPlaySeconds: 0, lastPlayedAt: null, launchCount: 0 };
+
+let baseDir: string;
+let cardRoot: string;
+let statsById: Map<string, Stats>;
+
+function store(): LibraryStore {
+  return new LibraryStore({
+    baseDir,
+    readStats: (id) => Promise.resolve(statsById.get(id) ?? NO_STATS),
+  });
+}
+
+/** Writes a file on the "card" and returns its absolute path. `size` pads it to that many bytes. */
+async function card(relative: string, content = 'IMG 800x1200', size?: number): Promise<string> {
+  const full = path.join(cardRoot, relative);
+  await fs.mkdir(path.dirname(full), { recursive: true });
+  const padded = size === undefined ? content : content.padEnd(size, '.');
+  await fs.writeFile(full, padded);
+  return full;
+}
+
+function manifest(id: string, overrides: Partial<ResolvedManifest> = {}): ResolvedManifest {
+  return {
+    raw: {
+      schemaVersion: 1,
+      id,
+      title: id.toUpperCase(),
+      args: [],
+      runAsAdmin: false,
+      launchTimeoutSec: 30,
+      killTimeoutSec: 60,
+      winetricks: [],
+    },
+    root: cardRoot,
+    executablePath: path.join(cardRoot, 'g.exe'),
+    cwd: cardRoot,
+    ...overrides,
+  };
+}
+
+async function readIndex(): Promise<{
+  entries: Array<{
+    id: string;
+    hero: string[];
+    grid?: string;
+    music?: string;
+    sourceSig?: string;
+    launchCount: number;
+  }>;
+}> {
+  const raw = await fs.readFile(path.join(baseDir, 'library', 'index.json'), 'utf8');
+  return JSON.parse(raw) as never;
+}
+
+beforeEach(async () => {
+  baseDir = await fs.mkdtemp(path.join(os.tmpdir(), 'playhook-library-'));
+  cardRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'playhook-card-'));
+  statsById = new Map();
+});
+
+afterEach(async () => {
+  await fs.rm(baseDir, { recursive: true, force: true });
+  await fs.rm(cardRoot, { recursive: true, force: true });
+});
+
+describe('saveFromCard', () => {
+  it('copies grid/hero/music/sounds and records them in the index', async () => {
+    const library = store();
+    await library.init();
+    await library.saveFromCard([
+      manifest('a', {
+        gridImagePath: await card('art/grid.png'),
+        heroImagePaths: [await card('art/h0.jpg'), await card('art/h1.jpg')],
+        backgroundMusicPath: await card('audio/theme.mp3', 'music'),
+        soundPaths: { play: await card('audio/play.wav', 'sfx') },
+      }),
+    ]);
+
+    const gameDir = path.join(baseDir, 'library', 'a');
+    expect((await fs.readdir(gameDir)).sort()).toEqual([
+      'grid.png',
+      'hero-0.jpg',
+      'hero-1.jpg',
+      'music.mp3',
+      'sfx-play.wav',
+    ]);
+    const index = await readIndex();
+    expect(index.entries[0]?.hero).toEqual(['hero-0.jpg', 'hero-1.jpg']);
+    expect(index.entries[0]?.grid).toBe('grid.png');
+  });
+
+  it('keeps the hero order of the manifest (the renderer keys its palette cache by position)', async () => {
+    const library = store();
+    await library.init();
+    await library.saveFromCard([
+      manifest('a', {
+        heroImagePaths: [await card('z.jpg'), await card('a.jpg'), await card('m.jpg')],
+      }),
+    ]);
+    const assets = await library.readBrowseAssets('a');
+    // hero-0 came from z.jpg, hero-1 from a.jpg, hero-2 from m.jpg — the order of the manifest, not of
+    // the file names.
+    expect(assets.hero?.images).toHaveLength(3);
+    expect((await readIndex()).entries[0]?.hero).toEqual(['hero-0.jpg', 'hero-1.jpg', 'hero-2.jpg']);
+  });
+
+  it('falls back to the first heroImage when the card has no gridImage', async () => {
+    const library = store();
+    await library.init();
+    await library.saveFromCard([manifest('a', { heroImagePaths: [await card('h.jpg')] })]);
+    expect((await readIndex()).entries[0]?.grid).toBe('grid.jpg');
+  });
+
+  it('skips an asset over its byte cap but still records the game', async () => {
+    const library = store();
+    await library.init();
+    await library.saveFromCard([
+      manifest('a', {
+        gridImagePath: await card('art/grid.jpg'),
+        backgroundMusicPath: await card('audio/huge.mp3', 'music', 9 * 1024 * 1024),
+      }),
+    ]);
+    const entry = (await readIndex()).entries[0];
+    expect(entry?.grid).toBe('grid.jpg');
+    expect(entry?.music).toBeUndefined();
+    expect(await fs.readdir(path.join(baseDir, 'library', 'a'))).toEqual(['grid.jpg']);
+  });
+
+  it('does not re-copy an unchanged card, but refreshes the cached stats', async () => {
+    const gridPath = await card('art/grid.jpg');
+    const first = store();
+    await first.init();
+    await first.saveFromCard([manifest('a', { gridImagePath: gridPath })]);
+    const sigBefore = (await readIndex()).entries[0]?.sourceSig;
+    const copiedAt = (await fs.stat(path.join(baseDir, 'library', 'a', 'grid.jpg'))).mtimeMs;
+
+    statsById.set('a', { schemaVersion: 1, totalPlaySeconds: 60, lastPlayedAt: '2026-08-01T00:00:00.000Z', launchCount: 3 });
+    const second = store();
+    await second.init();
+    await second.saveFromCard([manifest('a', { gridImagePath: gridPath })]);
+
+    const entry = (await readIndex()).entries[0];
+    expect(entry?.sourceSig).toBe(sigBefore);
+    expect(entry?.launchCount).toBe(3);
+    expect((await fs.stat(path.join(baseDir, 'library', 'a', 'grid.jpg'))).mtimeMs).toBe(copiedAt);
+  });
+
+  it('writes one index entry per game, sequentially (no lost update)', async () => {
+    const library = store();
+    await library.init();
+    await library.saveFromCard([
+      manifest('a', { gridImagePath: await card('a.jpg') }),
+      manifest('b', { gridImagePath: await card('b.jpg') }),
+      manifest('c', { gridImagePath: await card('c.jpg') }),
+    ]);
+    expect((await readIndex()).entries.map((e) => e.id)).toEqual(['a', 'b', 'c']);
+  });
+
+  it('survives a game whose assets vanished mid-copy (card yanked)', async () => {
+    const library = store();
+    await library.init();
+    await library.saveFromCard([
+      manifest('gone', { gridImagePath: path.join(cardRoot, 'missing.jpg') }),
+      manifest('ok', { gridImagePath: await card('ok.jpg') }),
+    ]);
+    const entries = await readIndex();
+    expect(entries.entries.map((e) => e.id)).toEqual(['gone', 'ok']);
+    expect(entries.entries[0]?.grid).toBeUndefined();
+    expect(entries.entries[1]?.grid).toBe('grid.jpg');
+  });
+});
+
+describe('readGridThumb', () => {
+  it('downscales once and caches the thumbnail on disk', async () => {
+    const library = store();
+    await library.init();
+    await library.saveFromCard([manifest('a', { gridImagePath: await card('grid.jpg', 'IMG 800x1200') })]);
+
+    const first = await library.readGridThumb('a');
+    expect(first).toMatch(/^data:image\/jpeg;base64,/);
+    expect(await fs.readdir(path.join(baseDir, 'library', 'a'))).toContain('grid-thumb.jpg');
+    // The cached file is what the second call serves — identical bytes, no second encode.
+    expect(await library.readGridThumb('a')).toBe(first);
+  });
+
+  it('keeps a PNG a PNG (toJPEG would flatten its alpha to black)', async () => {
+    const library = store();
+    await library.init();
+    await library.saveFromCard([manifest('a', { gridImagePath: await card('grid.png', 'IMG 800x1200') })]);
+    expect(await library.readGridThumb('a')).toMatch(/^data:image\/png;base64,/);
+    expect(await fs.readdir(path.join(baseDir, 'library', 'a'))).toContain('grid-thumb.png');
+  });
+
+  it('serves the raw file when the image cannot be decoded (webp/gif/avif)', async () => {
+    const library = store();
+    await library.init();
+    await library.saveFromCard([manifest('a', { gridImagePath: await card('grid.webp', 'not-an-image') })]);
+    const url = await library.readGridThumb('a');
+    expect(url).toMatch(/^data:image\/webp;base64,/);
+    expect(await fs.readdir(path.join(baseDir, 'library', 'a'))).not.toContain('grid-thumb.jpg');
+  });
+
+  it('serves the raw file when the image is already small enough', async () => {
+    const library = store();
+    await library.init();
+    await library.saveFromCard([manifest('a', { gridImagePath: await card('grid.jpg', 'IMG 136x204') })]);
+    const url = await library.readGridThumb('a');
+    expect(url).toMatch(/^data:image\/jpeg;base64,/);
+    expect(await fs.readdir(path.join(baseDir, 'library', 'a'))).not.toContain('grid-thumb.jpg');
+  });
+
+  it('returns null for a game that was never copied in', async () => {
+    const library = store();
+    await library.init();
+    expect(await library.readGridThumb('nobody')).toBeNull();
+  });
+});
+
+describe('init — cached stats vs their authority', () => {
+  it('re-syncs launchCount/lastPlayedAt from the stats service', async () => {
+    const first = store();
+    await first.init();
+    await first.saveFromCard([manifest('a', { gridImagePath: await card('a.jpg') })]);
+    expect((await readIndex()).entries[0]?.launchCount).toBe(0);
+
+    statsById.set('a', { schemaVersion: 1, totalPlaySeconds: 10, lastPlayedAt: '2026-08-09T00:00:00.000Z', launchCount: 5 });
+    const second = store();
+    await second.init();
+    expect((await readIndex()).entries[0]?.launchCount).toBe(5);
+    expect(second.entry('a')?.lastPlayedAt).toBe('2026-08-09T00:00:00.000Z');
+  });
+});
+
+describe('entriesForCarousel', () => {
+  it('lists the inserted card first and hides never-played history', async () => {
+    const library = store();
+    await library.init();
+    statsById.set('played', { schemaVersion: 1, totalPlaySeconds: 1, lastPlayedAt: '2026-01-01T00:00:00.000Z', launchCount: 1 });
+    await library.saveFromCard([
+      manifest('played', { gridImagePath: await card('p.jpg') }),
+      manifest('orphan', { gridImagePath: await card('o.jpg') }),
+    ]);
+    await library.saveFromCard([manifest('card', { gridImagePath: await card('c.jpg') })]);
+    expect(library.entriesForCarousel(['card']).map((e) => e.id)).toEqual(['card', 'played']);
+  });
+});
