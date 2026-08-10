@@ -89,6 +89,10 @@ let heroParallax = 0;
 // debounce lets a burst of moves settle into ONE browse request — the last card you land on.
 const BROWSE_DEBOUNCE_MS = 350;
 let browseTimer = 0;
+// The id this renderer last asked main to browse. It tells the two DIRECTIONS apart: an update carrying
+// this id is main answering US (the strip is already there), anything else is main deciding on its own —
+// a card inserted, a game picked — and then the strip has to follow it (see applyBrowse).
+let requestedBrowseId: string | null = null;
 // Set when the user opens a detail screen themselves (A / a click). It keeps a later list update — a
 // finished session, an eviction — from bouncing them back to the carousel mid-install.
 let userChoseDetail = false;
@@ -96,6 +100,7 @@ let userChoseDetail = false;
 const carousel = createCarousel({
   requestGrid: (id) => window.api.requestGrid(id),
   browseGame: (id) => {
+    requestedBrowseId = id;
     if (browseTimer !== 0) window.clearTimeout(browseTimer);
     browseTimer = window.setTimeout(() => {
       browseTimer = 0;
@@ -392,6 +397,13 @@ void window.api.requestState().then(render);
 // channel here, so a push arriving in between isn't lost.
 function applyBrowse(browse: BrowseInfo | null): void {
   currentBrowse = browse;
+  // Main moved the screen onto a game we didn't ask for — inserting a card switches to ITS game — so the
+  // strip must follow, or the title/background belong to one game while the highlighted card is another.
+  // Guarded by the requested id: while flipping, a late answer must NOT drag the selection backwards.
+  if (browse !== null && browse.id !== requestedBrowseId) {
+    requestedBrowseId = browse.id;
+    carousel.focusGame(browse.id);
+  }
   render(currentState);
 }
 window.api.onBrowseUpdate(applyBrowse);

@@ -31,6 +31,12 @@ export interface Carousel {
   setGames(games: readonly LibraryEntry[]): void;
   /** Moves the selection by `delta` cards (no wrap-around — the ends are hard stops). */
   move(delta: number): void;
+  /**
+   * Puts the selection on `id` WITHOUT telling main about it — for the reverse direction, where main
+   * decided what is on screen (a card was inserted, a game was picked) and the strip has to follow.
+   * A no-op when the id isn't in the list.
+   */
+  focusGame(id: string): void;
   /** Activates the selected card (A / a click on it). */
   activate(): void;
   /** The current screen level. */
@@ -202,6 +208,13 @@ export function createCarousel(deps: CarouselDeps): Carousel {
   app.dataset['screen'] = screen;
 
   return {
+    focusGame(id: string): void {
+      const position = games.findIndex((game) => game.id === id);
+      if (position === -1 || position === index) return;
+      index = position;
+      applyLayout();
+      loadNearbyArt();
+    },
     setGames(list: readonly LibraryEntry[]): void {
       // The selection is remembered BY ID, not by position: the list is re-ordered whenever a card is
       // inserted or a session ends, and a positional cursor would silently land on a different game.
