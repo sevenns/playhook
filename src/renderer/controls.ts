@@ -39,6 +39,23 @@ export interface ControlsDeps {
   audio: AudioController;
   /** The current translator (read live so menu/confirm copy follows the language). */
   getTranslator(): Translator;
+  /** The history carousel — the THIRD focus group, above the bar and the popup stack (see navLeft…). */
+  carousel: CarouselNav;
+}
+
+/**
+ * What the interaction layer needs from the carousel. A narrow seam on purpose: the carousel owns its
+ * strip and selection, this module owns which surface the buttons currently drive.
+ */
+export interface CarouselNav {
+  /** 'carousel' (the strip) or 'detail' (the bar screen). */
+  screen(): 'carousel' | 'detail';
+  /** Moves the selection by `delta` cards. */
+  move(delta: number): void;
+  /** Enters the selected card's detail screen. */
+  activate(): void;
+  /** Steps back from a detail screen to the strip; false when there is no carousel to return to. */
+  leaveDetail(): boolean;
 }
 
 export interface Controls {
@@ -526,9 +543,11 @@ export function createControls(deps: ControlsDeps): Controls {
     return [playButton, moreButton];
   }
 
-  // Main focus is meaningful on every screen (the More button is always present) with the popup closed.
+  // Main focus is meaningful on every DETAIL screen (the More button is always present there) with the
+  // popup closed. On the carousel the bar buttons are hidden, so the highlight has nothing to sit on —
+  // the selection lives in the strip instead.
   function focusActive(): boolean {
-    return popupView === 'none';
+    return popupView === 'none' && deps.carousel.screen() === 'detail';
   }
 
   function applyFocus(): void {
@@ -883,13 +902,20 @@ export function createControls(deps: ControlsDeps): Controls {
   // stacks are vertical); up/down move the vertical popup stack (no-op on the bar); activate fires the
   // focused control (Play/More) or stack button; back steps out of the popup. Minimizing/closing lives in
   // the System menu, not a nav key.
+  // Which surface the six primitives drive. Three, in priority order: the popup stack (when open), the
+  // carousel strip (the top-level screen), then the bar. The primitives themselves are unchanged — the
+  // routing lives HERE, in one place, so the gamepad and the keyboard can never diverge.
+  const onCarousel = (): boolean => popupView === 'none' && deps.carousel.screen() === 'carousel';
+
   function navLeft(): void {
     noteGamepadActivity();
-    if (popupView === 'none') moveFocus(-1);
+    if (onCarousel()) deps.carousel.move(-1);
+    else if (popupView === 'none') moveFocus(-1);
   }
   function navRight(): void {
     noteGamepadActivity();
-    if (popupView === 'none') moveFocus(1);
+    if (onCarousel()) deps.carousel.move(1);
+    else if (popupView === 'none') moveFocus(1);
   }
   function navUp(): void {
     noteGamepadActivity();
@@ -902,12 +928,38 @@ export function createControls(deps: ControlsDeps): Controls {
   function navActivate(): void {
     noteGamepadActivity();
     if (popupView !== 'none') activateStack();
+    else if (onCarousel()) deps.carousel.activate();
     else activateFocused();
   }
   function navBack(): void {
     noteGamepadActivity();
-    if (popupView !== 'none') back();
+    // Deepest level first: a popup closes, then a detail screen steps back to the carousel. On the
+    // carousel itself B does nothing — it is the top level.
+    if (popupView !== 'none') {
+      back();
+      return;
+    }
+    if (deps.carousel.leaveDetail()) audio.play('back');
   }
+
+  // The wheel flips through the carousel. Throttled: one notch of a mouse wheel is one event, but a
+  // trackpad emits a stream of them, which would fly past a dozen cards per gesture.
+  const WHEEL_THROTTLE_MS = 120;
+  let lastWheelAt = 0;
+  window.addEventListener(
+    'wheel',
+    (event) => {
+      if (!onCarousel()) return;
+      noteMouseActivity();
+      const delta = event.deltaY !== 0 ? event.deltaY : event.deltaX;
+      if (delta === 0) return;
+      const now = performance.now();
+      if (now - lastWheelAt < WHEEL_THROTTLE_MS) return;
+      lastWheelAt = now;
+      deps.carousel.move(delta > 0 ? 1 : -1);
+    },
+    { passive: true },
+  );
 
   const gamepad = createGamepadController({
     onLeft: navLeft,

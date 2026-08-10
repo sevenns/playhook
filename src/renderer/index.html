@@ -20,6 +20,14 @@
         <div class="hero-layer"></div>
       </div>
 
+      <!-- History carousel (the `carousel` screen): a horizontal strip of game cards sliding under a
+           fixed anchor — the selected card stays put, the row moves. The inserted card's games come first
+           (marked with a dot: they can be launched right now), then the games played on this device
+           before. Cards are built from JS (carousel.ts); artwork is fetched per card, on demand. -->
+      <div id="carousel" aria-hidden="true">
+        <div id="carousel-strip"></div>
+      </div>
+
       <!-- Bottom bar (same layout for every screen): play / title / status + the More button on the
            right. The empty (no-card) screen shows no Play; More there opens System + Close only. -->
       <footer id="bottom-bar">

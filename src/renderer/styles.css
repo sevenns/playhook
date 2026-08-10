@@ -136,6 +136,127 @@ body {
   left: 0;
 }
 
+/* ── History carousel (the `carousel` screen) ──────────────────────────────
+   A strip of cards that slides under a FIXED anchor: the selected card's left edge always sits at
+   x=50 (the same left inset as .bar-content), and the row translates by -108 design px per index (see
+   carousel-geometry.ts). Cards left of the selection keep the normal width — that is what makes the
+   offset linear — and honestly travel off the LEFT EDGE OF THE SCREEN, so the clip is on #carousel
+   (full-width), not on the card row. */
+
+#carousel {
+  position: absolute;
+  left: 0;
+  right: 0;
+  /* The row sits above the bar's text block: its cards' bottoms align 300 design px from the screen
+     bottom, which puts the selected 204-tall card's top just under the title/status block. */
+  bottom: calc(300 * var(--px));
+  height: calc(220 * var(--px));
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.3s ease;
+}
+
+/* Only the carousel screen shows the strip; on the detail screen it fades out (the selected card has
+   already handed its geometry over to #play-button — see the morph block below). */
+#app[data-screen='carousel'] #carousel {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+#carousel-strip {
+  position: absolute;
+  /* The anchor: the same x=50 the bar content uses, so the selected card lines up with the title. */
+  left: calc(50 * var(--px));
+  bottom: 0;
+  display: flex;
+  align-items: flex-end;
+  gap: calc(16 * var(--px));
+  transform: translateX(calc(var(--strip-offset, 0) * var(--px)));
+  transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* A card. The size transition MUST match the strip's curve and duration, or the card's growth and the
+   row's slide visibly drift apart mid-move. */
+.card {
+  position: relative;
+  flex: 0 0 auto;
+  width: calc(92 * var(--px));
+  height: calc(138 * var(--px));
+  border-radius: calc(10 * var(--px));
+  background-color: color-mix(in srgb, var(--d1) 70%, transparent);
+  background-size: cover;
+  background-position: center;
+  overflow: visible;
+  transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1), height 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 0.2s ease;
+  cursor: pointer;
+}
+
+.card.is-selected {
+  width: calc(136 * var(--px));
+  height: calc(204 * var(--px));
+}
+
+/* The title placeholder shown until the artwork arrives (a card may have none at all). */
+.card-label {
+  position: absolute;
+  inset: calc(8 * var(--px));
+  display: flex;
+  align-items: flex-end;
+  overflow: hidden;
+  font-weight: 500;
+  font-size: calc(14 * var(--px));
+  line-height: calc(18 * var(--px));
+  color: color-mix(in srgb, var(--fg) 75%, transparent);
+}
+/* Once the artwork is in, the label would only fight the cover for attention. */
+.card.has-art .card-label {
+  display: none;
+}
+
+/* The 8x8 dot marking a game that is ON THE INSERTED CARD (launchable right now); history games have
+   none. It hangs below the card, clear of the artwork. */
+.card-dot {
+  position: absolute;
+  left: 50%;
+  bottom: calc(-16 * var(--px));
+  width: calc(8 * var(--px));
+  height: calc(8 * var(--px));
+  margin-left: calc(-4 * var(--px));
+  border-radius: 50%;
+  background: var(--d2);
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+.card.is-active .card-dot {
+  opacity: 1;
+}
+
+/* The busy game keeps its dot pulsing wherever you are in the list — that is how "game A is installing"
+   stays visible while you browse game B (whose status line is deliberately blank; see app.ts). */
+.card.is-busy .card-dot {
+  animation: dot-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes dot-pulse {
+  0%,
+  100% {
+    opacity: 0.25;
+    transform: scale(0.85);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.15);
+  }
+}
+
+/* Entering the detail screen the selected card hands over to #play-button, which is pixel-identical at
+   that instant — so the swap is instantaneous and invisible, and only the button animates afterwards. */
+#app[data-screen='detail'] .card {
+  opacity: 0;
+}
+
 /* ── Bottom bar ──────────────────────────────────────────────────────────── */
 
 #bottom-bar {
@@ -170,10 +291,14 @@ body {
    same visual model holds in every state — idle (triangle), game busy (spinner), system busy (gear):
    inactive = icon only, active = fill + icon. */
 
+/* The vertical anchor is the BOTTOM edge, not the top: in the carousel morph the button is 204 tall and
+   must grow UPWARDS out of the bar (it overflows .bar-content, which has no overflow:hidden). At the
+   default 92x92 — the same height as .bar-content — bottom:0 and top:0 are the same position, so the
+   ordinary screens are pixel-identical to before. */
 .play-button {
   position: absolute;
   left: 0;
-  top: 0;
+  bottom: 0;
   width: calc(92 * var(--px));
   height: calc(92 * var(--px));
   display: flex;
@@ -185,7 +310,40 @@ body {
   background: transparent;
   color: var(--d2);
   cursor: pointer;
-  transition: background 0.2s ease, color 0.2s ease, transform 0.12s ease;
+  /* width/height are part of the carousel→detail morph and share the strip's curve; `opacity` is
+     deliberately NOT transitioned — the carousel card and this button swap places instantaneously while
+     they are pixel-identical, and a fade there would show both at once. */
+  transition: background 0.2s ease, color 0.2s ease, transform 0.12s ease,
+    width 0.35s cubic-bezier(0.4, 0, 0.2, 1), height 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* The morph's cover layer: the selected card's artwork, painted behind the button's own content. It is
+   what makes the button pixel-identical to the card at the moment of the swap, and it fades out as the
+   button shrinks back into the play square. `--card-art` is set from JS (carousel.ts). */
+.play-button::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background-image: var(--card-art, none);
+  background-size: cover;
+  background-position: center;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  pointer-events: none;
+}
+
+/* On the carousel screen the button IS the selected card, geometrically — but invisible: the real card
+   in the strip is what the user sees. Entering detail flips the two and animates this one down to the
+   play square. */
+#app[data-screen='carousel'] .play-button {
+  width: calc(136 * var(--px));
+  height: calc(204 * var(--px));
+  opacity: 0;
+  pointer-events: none;
+}
+#app[data-screen='carousel'] .play-button::before {
+  opacity: 1;
 }
 
 /* :hover gated on a live cursor — see the note on .text-button:hover (avoids a stale hover highlight
@@ -258,6 +416,13 @@ html:not(.cursor-hidden) .play-button:hover::after,
 }
 
 /* ── Rect (Info) button — normal: no background, content d2; fills with d2 on hover/focus ── */
+
+/* Carousel level: Play and More are hidden entirely (Р8) — the actions live one level deeper, on the
+   detail screen (A → detail → More → System/Close), so the carousel stays a pure browsing surface. */
+#app[data-screen='carousel'] #more-button {
+  opacity: 0;
+  pointer-events: none;
+}
 
 .rect-button {
   position: absolute;
@@ -372,8 +537,21 @@ html:not(.cursor-hidden) .rect-button:hover,
   /* One transform, composed from two independent offsets: --title-y is the busy shift (below), --title-x
      the carousel shift (see the carousel block). A second `transform` rule would silently override the
      first, so every mover writes its own variable instead. */
-  transform: translate(var(--title-x, 0px), var(--title-y, 0px));
+  transform: translate(var(--title-x, 0px), calc(var(--title-y, 0px) - var(--text-lift, 0px)));
   transition: transform 0.45s cubic-bezier(0.4, 0, 0.2, 1), font-size 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Carousel level: the text block rises to sit under the selected card and the title shrinks. `--text-lift`
+   is the single knob for the vertical position (both lines share it), and `--title-x`/`--status-x` shift
+   the block right to line up with the card — never a second `left`, which would collide with the three
+   rules that already own it (base, idle/error, no-play). */
+#app[data-screen='carousel'] {
+  --text-lift: calc(130 * var(--px));
+  --title-x: calc(28 * var(--px));
+  --status-x: calc(28 * var(--px));
+}
+#app[data-screen='carousel'] .title {
+  font-size: calc(24 * var(--px));
 }
 
 /* Busy / steam-busy: the title drops DOWN so the status line fades in ABOVE it — a two-line block that

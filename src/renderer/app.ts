@@ -5,12 +5,13 @@
 // wires them together and owns only the bits that don't belong to any one subsystem (phase attribute,
 // info panel, title slide, music gating).
 // IMPORTANT: title/data come from the card (untrusted) — rendered via textContent, never innerHTML.
-import type { AppState, BrowseInfo, Stats } from '../shared/types';
+import type { AppState, BrowseInfo, LibraryEntry, Stats } from '../shared/types';
 import { createTranslator, type Locale, type Translator, type MessageKey } from '../shared/i18n/index.js';
 import { localizeDocument } from './i18n-dom.js';
 import { createAudioController } from './audio.js';
 import { createHeroController } from './hero.js';
 import { createControls } from './controls.js';
+import { createCarousel } from './carousel.js';
 import { formatDate, formatPlaytime } from './format.js';
 import { busyKindOf, gameOf, phaseOf, statusOf, steamBusy } from './state-view.js';
 import { req } from './dom.js';
@@ -59,7 +60,61 @@ const controls = createControls({
   getBrowse: () => currentBrowse,
   audio,
   getTranslator,
+  // Read lazily: the carousel is created below (it needs `controls` for its own callbacks), so the seam
+  // is a set of thunks rather than the object itself.
+  carousel: {
+    screen: () => carousel.screen(),
+    move: (delta) => carousel.move(delta),
+    activate: () => carousel.activate(),
+    leaveDetail: () => leaveDetail(),
+  },
 });
+
+// ── History carousel (the top-level screen, see carousel.ts) ─────────────────
+// The strip of game cards and the `carousel`/`detail` level live there; this module wires it to main
+// (list, artwork, browse) and to the interaction layer (nav sounds, focus routing).
+
+// Music follows the selection, so a held direction would otherwise read a multi-MB file per step. The
+// debounce lets a burst of moves settle into ONE browse request — the last card you land on.
+const BROWSE_DEBOUNCE_MS = 350;
+let browseTimer = 0;
+// Set when the user opens a detail screen themselves (A / a click). It keeps a later list update — a
+// finished session, an eviction — from bouncing them back to the carousel mid-install.
+let userChoseDetail = false;
+
+const carousel = createCarousel({
+  requestGrid: (id) => window.api.requestGrid(id),
+  browseGame: (id) => {
+    if (browseTimer !== 0) window.clearTimeout(browseTimer);
+    browseTimer = window.setTimeout(() => {
+      browseTimer = 0;
+      window.api.browseGame(id);
+    }, BROWSE_DEBOUNCE_MS);
+  },
+  onScreenChange: (screen) => {
+    // The carousel clicks with the bundled fallback sounds; a game's own sounds belong to its screen.
+    audio.setSfxScope(screen === 'carousel' ? 'fallback' : 'game');
+    controls.refresh();
+    render(currentState);
+  },
+  onActivate: (entry) => {
+    userChoseDetail = true;
+    // An active game must also become the CARD's selected game (main rebuilds its hero/audio/GameInfo).
+    // If that is refused — a launch or install is in flight — the detail screen is still correct: it is
+    // drawn from the browse model, so it shows the game you picked, just without an actionable Play.
+    if (entry.active && gameOf(currentState)?.id !== entry.id) window.api.selectGame(entry.id);
+    carousel.setScreen('detail');
+  },
+  onNavigate: () => audio.play('navigate'),
+});
+
+/** Back out of a detail screen to the carousel (B). False when there is no carousel to return to. */
+function leaveDetail(): boolean {
+  if (!carousel.exists() || carousel.screen() !== 'detail') return false;
+  userChoseDetail = false;
+  carousel.setScreen('carousel');
+  return true;
+}
 
 // ── Info panel ──────────────────────────────────────────────────────────────
 
@@ -245,10 +300,19 @@ function render(state: AppState): void {
   // screen: (a) a requiresInstall installer/steam game on the ready screen (and NOT steam-busy, when the
   // gear must stay visible) — as before; (b) a HISTORY game, which has no card behind it, so there is
   // nothing to launch — it looks exactly like an uninstalled game (title + More).
+  // Only on the detail screen: in the carousel Play is hidden anyway, and the attribute's `.title{left:0}`
+  // half would fight the carousel's own title placement.
   const noPlay =
-    browse !== null && (!browse.active || (phase === 'ready' && browse.game?.requiresInstall === true && !busySteam));
+    carousel.screen() === 'detail' &&
+    browse !== null &&
+    (!browse.active || (phase === 'ready' && browse.game?.requiresInstall === true && !busySteam));
   if (noPlay) app.dataset['layout'] = 'no-play';
   else delete app.dataset['layout'];
+
+  // The busy game keeps a pulsing dot on its own card, so "game A is installing" stays visible while you
+  // browse game B (whose status line is blank — see applyStatus).
+  const busyGame = phase === 'busy' || busySteam ? (gameOf(state)?.id ?? null) : null;
+  carousel.setBusyGame(busyGame);
 
   syncChatter(state);
   applyStatus();
@@ -348,6 +412,10 @@ void window.api.requestAmbient().then((url) => {
   syncMusic();
 });
 
+// The bundled fallback UI sounds for the carousel level (a game's own sounds stay on its own screen).
+window.api.onAudioDefaults((assets) => audio.setFallbackSounds(assets));
+void window.api.requestAudioDefaults().then((assets) => audio.setFallbackSounds(assets));
+
 // One-shot UI sounds pushed from main (main has no <audio> — the renderer owns playback). Used for the
 // "play" sound when an install/copy/Steam download completes, where the trigger lives in main.
 window.api.onSfxPlay((name) => audio.play(name));
@@ -370,10 +438,18 @@ window.api.onWindowFocus((focused) => controls.setGamepadPaused(!focused));
 window.api.onHeroUpdate((assets) => hero.applyAssets(assets));
 void window.api.requestHero().then((assets) => hero.applyAssets(assets));
 
-// The card's game list ({id,title}) is delivered on its own channel; controls uses it to build the
-// "Select game" popup. Seed on startup (back-fill after a window reconnect), then live updates.
-window.api.onLibraryUpdate((library) => controls.setGames(library?.games ?? []));
-void window.api.requestLibrary().then((library) => controls.setGames(library?.games ?? []));
+// The carousel list (the inserted card's games + the play history, already ordered) arrives on its own
+// channel. Seed on startup (back-fill after a window reconnect), then live updates.
+function applyLibrary(games: readonly LibraryEntry[]): void {
+  controls.setGames(games);
+  carousel.setGames(games);
+  // The carousel is the default level whenever there is more than one game to flip through — but never
+  // yank the user out of a detail screen they opened themselves (they may be watching an install run).
+  if (carousel.exists() && !userChoseDetail) carousel.setScreen('carousel');
+  render(currentState);
+}
+window.api.onLibraryUpdate((library) => applyLibrary(library?.games ?? []));
+void window.api.requestLibrary().then((library) => applyLibrary(library?.games ?? []));
 
 // Game Mode (gamescope) is static for the process — seed it once so the power menu shows "Close Playhook"
 // (full quit) instead of the no-op "Minimize Playhook".
