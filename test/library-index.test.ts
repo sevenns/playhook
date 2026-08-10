@@ -11,10 +11,7 @@ import {
   type LibraryIndex,
 } from '../src/main/library-index';
 
-function entry(
-  id: string,
-  overrides: Partial<LibraryEntryRecord> = {},
-): LibraryEntryRecord {
+function entry(id: string, overrides: Partial<LibraryEntryRecord> = {}): LibraryEntryRecord {
   return {
     id,
     title: id.toUpperCase(),

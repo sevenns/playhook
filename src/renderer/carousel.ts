@@ -188,7 +188,12 @@ export function createCarousel(deps: CarouselDeps): Carousel {
       const currentId = selected()?.id;
       games = list;
       index = clampIndex(
-        currentId === undefined ? 0 : Math.max(0, games.findIndex((game) => game.id === currentId)),
+        currentId === undefined
+          ? 0
+          : Math.max(
+              0,
+              games.findIndex((game) => game.id === currentId),
+            ),
         games.length,
       );
       rebuild();

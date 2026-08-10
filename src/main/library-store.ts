@@ -290,7 +290,9 @@ export class LibraryStore {
       if (url !== undefined) images.push(url);
     }
     const music =
-      entry.music === undefined ? null : ((await readAudioDataUrl(path.join(gameDir, entry.music))) ?? null);
+      entry.music === undefined
+        ? null
+        : ((await readAudioDataUrl(path.join(gameDir, entry.music))) ?? null);
     return { hero: images.length > 0 ? { images } : null, music };
   }
 

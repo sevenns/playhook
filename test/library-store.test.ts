@@ -8,7 +8,12 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { LibraryStore } from '../src/main/library-store';
 import type { ResolvedManifest, Stats } from '../src/shared/types';
 
-const NO_STATS: Stats = { schemaVersion: 1, totalPlaySeconds: 0, lastPlayedAt: null, launchCount: 0 };
+const NO_STATS: Stats = {
+  schemaVersion: 1,
+  totalPlaySeconds: 0,
+  lastPlayedAt: null,
+  launchCount: 0,
+};
 
 let baseDir: string;
 let cardRoot: string;
@@ -112,7 +117,11 @@ describe('saveFromCard', () => {
     // hero-0 came from z.jpg, hero-1 from a.jpg, hero-2 from m.jpg — the order of the manifest, not of
     // the file names.
     expect(assets.hero?.images).toHaveLength(3);
-    expect((await readIndex()).entries[0]?.hero).toEqual(['hero-0.jpg', 'hero-1.jpg', 'hero-2.jpg']);
+    expect((await readIndex()).entries[0]?.hero).toEqual([
+      'hero-0.jpg',
+      'hero-1.jpg',
+      'hero-2.jpg',
+    ]);
   });
 
   it('falls back to the first heroImage when the card has no gridImage', async () => {
@@ -145,7 +154,12 @@ describe('saveFromCard', () => {
     const sigBefore = (await readIndex()).entries[0]?.sourceSig;
     const copiedAt = (await fs.stat(path.join(baseDir, 'library', 'a', 'grid.jpg'))).mtimeMs;
 
-    statsById.set('a', { schemaVersion: 1, totalPlaySeconds: 60, lastPlayedAt: '2026-08-01T00:00:00.000Z', launchCount: 3 });
+    statsById.set('a', {
+      schemaVersion: 1,
+      totalPlaySeconds: 60,
+      lastPlayedAt: '2026-08-01T00:00:00.000Z',
+      launchCount: 3,
+    });
     const second = store();
     await second.init();
     await second.saveFromCard([manifest('a', { gridImagePath: gridPath })]);
@@ -185,7 +199,9 @@ describe('readGridThumb', () => {
   it('downscales once and caches the thumbnail on disk', async () => {
     const library = store();
     await library.init();
-    await library.saveFromCard([manifest('a', { gridImagePath: await card('grid.jpg', 'IMG 800x1200') })]);
+    await library.saveFromCard([
+      manifest('a', { gridImagePath: await card('grid.jpg', 'IMG 800x1200') }),
+    ]);
 
     const first = await library.readGridThumb('a');
     expect(first).toMatch(/^data:image\/jpeg;base64,/);
@@ -197,7 +213,9 @@ describe('readGridThumb', () => {
   it('keeps a PNG a PNG (toJPEG would flatten its alpha to black)', async () => {
     const library = store();
     await library.init();
-    await library.saveFromCard([manifest('a', { gridImagePath: await card('grid.png', 'IMG 800x1200') })]);
+    await library.saveFromCard([
+      manifest('a', { gridImagePath: await card('grid.png', 'IMG 800x1200') }),
+    ]);
     expect(await library.readGridThumb('a')).toMatch(/^data:image\/png;base64,/);
     expect(await fs.readdir(path.join(baseDir, 'library', 'a'))).toContain('grid-thumb.png');
   });
@@ -205,7 +223,9 @@ describe('readGridThumb', () => {
   it('serves the raw file when the image cannot be decoded (webp/gif/avif)', async () => {
     const library = store();
     await library.init();
-    await library.saveFromCard([manifest('a', { gridImagePath: await card('grid.webp', 'not-an-image') })]);
+    await library.saveFromCard([
+      manifest('a', { gridImagePath: await card('grid.webp', 'not-an-image') }),
+    ]);
     const url = await library.readGridThumb('a');
     expect(url).toMatch(/^data:image\/webp;base64,/);
     expect(await fs.readdir(path.join(baseDir, 'library', 'a'))).not.toContain('grid-thumb.jpg');
@@ -214,7 +234,9 @@ describe('readGridThumb', () => {
   it('serves the raw file when the image is already small enough', async () => {
     const library = store();
     await library.init();
-    await library.saveFromCard([manifest('a', { gridImagePath: await card('grid.jpg', 'IMG 136x204') })]);
+    await library.saveFromCard([
+      manifest('a', { gridImagePath: await card('grid.jpg', 'IMG 136x204') }),
+    ]);
     const url = await library.readGridThumb('a');
     expect(url).toMatch(/^data:image\/jpeg;base64,/);
     expect(await fs.readdir(path.join(baseDir, 'library', 'a'))).not.toContain('grid-thumb.jpg');
@@ -234,7 +256,12 @@ describe('init — cached stats vs their authority', () => {
     await first.saveFromCard([manifest('a', { gridImagePath: await card('a.jpg') })]);
     expect((await readIndex()).entries[0]?.launchCount).toBe(0);
 
-    statsById.set('a', { schemaVersion: 1, totalPlaySeconds: 10, lastPlayedAt: '2026-08-09T00:00:00.000Z', launchCount: 5 });
+    statsById.set('a', {
+      schemaVersion: 1,
+      totalPlaySeconds: 10,
+      lastPlayedAt: '2026-08-09T00:00:00.000Z',
+      launchCount: 5,
+    });
     const second = store();
     await second.init();
     expect((await readIndex()).entries[0]?.launchCount).toBe(5);
@@ -246,7 +273,12 @@ describe('entriesForCarousel', () => {
   it('lists the inserted card first and hides never-played history', async () => {
     const library = store();
     await library.init();
-    statsById.set('played', { schemaVersion: 1, totalPlaySeconds: 1, lastPlayedAt: '2026-01-01T00:00:00.000Z', launchCount: 1 });
+    statsById.set('played', {
+      schemaVersion: 1,
+      totalPlaySeconds: 1,
+      lastPlayedAt: '2026-01-01T00:00:00.000Z',
+      launchCount: 1,
+    });
     await library.saveFromCard([
       manifest('played', { gridImagePath: await card('p.jpg') }),
       manifest('orphan', { gridImagePath: await card('o.jpg') }),

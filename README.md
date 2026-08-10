@@ -80,9 +80,13 @@ the inserted card for you — see [Settings and the card editor](#settings-and-t
    bottom bar with the **Play** button on the left, the game title in the middle and the **More** (⋯)
    button on the right (state `ready`). If the manifest has no `heroImage`, a bundled wallpaper — or
    your own, set in Settings — is used.
-3. Press **A** on the gamepad (the window is force-focused) **or** click **Play**.
-4. Saves are synced card → PC and the game launches; it takes the foreground over the launcher.
-5. When the game closes, Playhook counts the play time, updates the statistics, and syncs the
+3. With more than one game to show, the launcher opens on the **history carousel** instead: a row of
+   game cards you flip through with **left/right**. The games on the inserted card come first (each
+   marked with a dot — those you can launch right now), followed by the games you have played on this
+   device before. **A** opens the selected game's screen, **B** goes back to the row.
+4. Press **A** on the gamepad (the window is force-focused) **or** click **Play**.
+5. Saves are synced card → PC and the game launches; it takes the foreground over the launcher.
+6. When the game closes, Playhook counts the play time, updates the statistics, and syncs the
    saves PC → card. The game card window returns.
 
 **The More (⋯) button** opens the **Details** menu — one right-side popup that carries everything
@@ -93,7 +97,6 @@ state, offers:
   [Steam-mode](#steam-mode-launch-and-install-steam-games) cards (an uninstalled game has no Play
   button at all — you start from here);
 - **Force close** — while a game is running, kills it and still records the session and syncs saves;
-- **Select game** — on a card that carries several games (see [`game.json`](#preparing-a-card-gamejson));
 - **System** — a submenu with Shutdown / Reboot / Sleep (each behind a confirmation) and
   **Minimize Playhook**, which sends the window back to the tray. In Game Mode that last item is
   **Close Playhook** (a full quit) instead, since there is no tray to minimize into.
@@ -101,7 +104,19 @@ state, offers:
 Every confirmation and every error uses that same popup; close it with **B** or a click on **Close**.
 If a launch fails, the reason appears there and you can simply retry.
 
-The empty screen (no card inserted) reuses the same layout over the wallpaper: "Insert a game card",
+### Launch history
+
+Every game inserted into this device leaves a copy of its art, music and sounds in
+`%APPDATA%/playhook/library/` (`~/.config/playhook/` on Linux), so the carousel still shows the games
+you have played once the card is out — pick one and you get its screen (title, stats, background and
+music), with no Play button: there is nothing to launch without the card. The history keeps the 40 most
+recently played games; beyond that the oldest ones are dropped, and games that were merely inserted but
+never launched go first. The games on the inserted card are never evicted.
+
+Use `gridImage` in `game.json` to control how a game looks in that row; without it the card is cropped
+from the first `heroImage`.
+
+The empty screen (no card inserted, no history) reuses the same layout over the wallpaper: "Insert a game card",
 no Play button, and **More** offering just the *System* submenu (where *Minimize Playhook* lives).
 
 When the launcher is hidden you can **hold Start + Back** on the gamepad to re-summon it (the hotkey
@@ -142,9 +157,10 @@ Settings live in `settings.json` next to the rest of the app state (`%APPDATA%\p
 hand:
 
 - pick the card (any removable drive — a **blank** one can be initialized from scratch);
-- a **form** with sections *Basics / Launch / Hero images / Saves / Audio / Advanced*, with Browse
-  pickers for the executable, hero images, sounds and save folders (a picked PC save folder is
-  converted back into a `%APPDATA%`-style prefix automatically, and a file outside the card is rejected);
+- a **form** with sections *Basics / Launch / Images / Saves / Audio / Advanced*, with Browse pickers
+  for the executable, the hero backgrounds (up to 3), the carousel card image, sounds and save folders
+  (a picked PC save folder is converted back into a `%APPDATA%`-style prefix automatically, and a file
+  outside the card is rejected);
 - a **JSON** tab with the raw manifest, live schema validation, error messages and a formatter — the
   form and the JSON tab are two views of the same document;
 - **Add game** / **Remove current** for a multi-game card;
@@ -165,7 +181,7 @@ Place a `game.json` in the **root** of the card. The paths
 absolute and must start with one of the allowed prefixes (see below).
 
 The file holds **either one game object** (below) **or an array of them** — a card can carry several
-games. The launcher opens on the first one and you switch with **More (⋯) → Select game**; each game
+games. The launcher opens on the history carousel and you switch by flipping through it; each game
 keeps its own stats, saves and install state (they are keyed by `id`). One bad entry doesn't sink the
 whole card — it is skipped (with a line in the log) and the rest still load; **duplicate `id`s are
 rejected**, since the id keys the PC-side storage. The Configure editor shows the issue per game.
@@ -769,7 +785,7 @@ CI runs all three, on Windows **and** Linux.
   when you do want to poke at it). Hand-write one only for a game the Collection doesn't cover yet
   (and consider [contributing it back](https://github.com/sevenns/playhook-collection)).
 - **Can one card hold several games?** Yes — put an **array** of game objects in `game.json` and switch
-  between them with **More (⋯) → Select game**.
+  between them in the history carousel (left/right, then **A**).
 - **Is the SmartScreen warning normal?** Yes. The builds aren't code-signed, so Windows warns on
   first run. Choose *More info → Run anyway*. Auto-update still works without signing.
 - **Does it run on the Steam Deck / Linux?** **Yes.** The same Windows game cards launch through Proton

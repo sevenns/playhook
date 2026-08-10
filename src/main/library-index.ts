@@ -93,13 +93,16 @@ export function evictBeyond(
   // Weakest first: orphans, then oldest lastPlayedAt. Ties fall back to the title/id so the choice is
   // deterministic (a test asserting "which one went" must not depend on insertion order).
   const byWeakest = [...removable].sort((a, b) => {
-    if ((a.lastPlayedAt === null) !== (b.lastPlayedAt === null)) return a.lastPlayedAt === null ? -1 : 1;
+    if ((a.lastPlayedAt === null) !== (b.lastPlayedAt === null))
+      return a.lastPlayedAt === null ? -1 : 1;
     if (a.lastPlayedAt !== null && b.lastPlayedAt !== null && a.lastPlayedAt !== b.lastPlayedAt) {
       return Date.parse(a.lastPlayedAt) - Date.parse(b.lastPlayedAt);
     }
     return a.id.localeCompare(b.id);
   });
-  const evicted = new Set(byWeakest.slice(0, Math.min(overflow, byWeakest.length)).map((e) => e.id));
+  const evicted = new Set(
+    byWeakest.slice(0, Math.min(overflow, byWeakest.length)).map((e) => e.id),
+  );
   return {
     index: { schemaVersion: 1, entries: index.entries.filter((entry) => !evicted.has(entry.id)) },
     evicted: [...evicted],
