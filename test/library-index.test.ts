@@ -17,6 +17,7 @@ function entry(id: string, overrides: Partial<LibraryEntryRecord> = {}): Library
     title: id.toUpperCase(),
     hero: [],
     savedAt: '2026-01-01T00:00:00.000Z',
+    lastSeenAt: null,
     launchCount: 1,
     lastPlayedAt: '2026-01-01T00:00:00.000Z',
     ...overrides,
@@ -73,15 +74,33 @@ describe('evictBeyond', () => {
     expect(index).toBe(before);
   });
 
-  it('evicts never-played orphans FIRST, even when they are the newest records', () => {
+  it('evicts a record with no date at all FIRST (never played, never seen since the field existed)', () => {
     const before = indexOf(
       entry('played-old', { lastPlayedAt: '2020-01-01T00:00:00.000Z' }),
-      entry('orphan', { launchCount: 0, lastPlayedAt: null, savedAt: '2026-08-01T00:00:00.000Z' }),
+      entry('undated', { launchCount: 0, lastPlayedAt: null, savedAt: '2026-08-01T00:00:00.000Z' }),
       entry('played-new', { lastPlayedAt: '2026-08-01T00:00:00.000Z' }),
     );
     const { index, evicted } = evictBeyond(before, 2);
-    expect(evicted).toEqual(['orphan']);
+    expect(evicted).toEqual(['undated']);
     expect(index.entries.map((e) => e.id)).toEqual(['played-old', 'played-new']);
+  });
+
+  // The carousel sorts by the same date, so a freshly inserted card must not be the first thing thrown
+  // away while it sits at the top of the strip.
+  it('keeps a recently inserted but never-played game over an old played one', () => {
+    const before = indexOf(
+      entry('played-long-ago', {
+        lastPlayedAt: '2020-01-01T00:00:00.000Z',
+        lastSeenAt: '2020-01-01T00:00:00.000Z',
+      }),
+      entry('inserted-yesterday', {
+        launchCount: 0,
+        lastPlayedAt: null,
+        lastSeenAt: '2026-08-10T00:00:00.000Z',
+      }),
+    );
+    const { evicted } = evictBeyond(before, 1);
+    expect(evicted).toEqual(['played-long-ago']);
   });
 
   it('then evicts the least recently played', () => {
@@ -145,14 +164,41 @@ describe('orderForCarousel', () => {
     expect(orderForCarousel(entries, []).map((e) => e.id)).toEqual(['a', 'z']);
   });
 
-  it('hides never-played history entries but keeps a never-played ACTIVE game', () => {
+  // The history is "everything this device has seen", played or not — it is ordered by the last time the
+  // game was available, and hiding a game you had yesterday would contradict that very date.
+  it('keeps a never-played history entry, ordered by when its card was last inserted', () => {
     const entries = [
-      entry('orphan', { launchCount: 0, lastPlayedAt: null }),
-      entry('fresh-card-game', { launchCount: 0, lastPlayedAt: null }),
-      entry('played'),
+      entry('played-long-ago', {
+        lastPlayedAt: '2020-01-01T00:00:00.000Z',
+        lastSeenAt: '2020-01-01T00:00:00.000Z',
+      }),
+      entry('seen-yesterday', {
+        launchCount: 0,
+        lastPlayedAt: null,
+        lastSeenAt: '2026-08-10T00:00:00.000Z',
+      }),
     ];
-    const order = orderForCarousel(entries, ['fresh-card-game']);
-    expect(order.map((e) => e.id)).toEqual(['fresh-card-game', 'played']);
+    expect(orderForCarousel(entries, []).map((e) => e.id)).toEqual([
+      'seen-yesterday',
+      'played-long-ago',
+    ]);
+  });
+
+  // The two dates are a MAXIMUM, not a replacement: a game played today stays on top even though its
+  // card has not been re-inserted since.
+  it('ranks a game played today above one merely inserted today', () => {
+    const entries = [
+      entry('played-today', {
+        lastPlayedAt: '2026-08-11T12:00:00.000Z',
+        lastSeenAt: '2024-01-01T00:00:00.000Z',
+      }),
+      entry('seen-today', {
+        launchCount: 0,
+        lastPlayedAt: null,
+        lastSeenAt: '2026-08-11T09:00:00.000Z',
+      }),
+    ];
+    expect(orderForCarousel(entries, []).map((e) => e.id)).toEqual(['played-today', 'seen-today']);
   });
 
   it('ignores an active id that has no record yet (assets are still being copied)', () => {

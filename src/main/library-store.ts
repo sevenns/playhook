@@ -75,6 +75,7 @@ const entrySchema = z.object({
   hero: z.array(z.string()).default([]),
   music: z.string().optional(),
   savedAt: z.string(),
+  lastSeenAt: z.string().nullable().default(null),
   sourceSig: z.string().optional(),
   launchCount: z.number().int().nonnegative().default(0),
   lastPlayedAt: z.string().nullable().default(null),
@@ -174,6 +175,9 @@ export class LibraryStore {
     const sourceSig = await assetsSignature(manifest);
     const previous = this.entry(id);
     const stats = await this.deps.readStats(id);
+    // "This game was available at this moment" — the carousel orders the history by it, so it is stamped
+    // on EVERY insert, including the one below that copies nothing.
+    const lastSeenAt = new Date().toISOString();
 
     // Same card, same assets → nothing to re-copy. Only the cached stats are refreshed. The signature
     // covers EVERY source file, not just the cover: editing any of them in Configure (and applying it to
@@ -186,6 +190,7 @@ export class LibraryStore {
     ) {
       await this.replace({
         ...previous,
+        lastSeenAt,
         launchCount: stats.launchCount,
         lastPlayedAt: stats.lastPlayedAt,
       });
@@ -229,7 +234,8 @@ export class LibraryStore {
       ...(grid !== undefined ? { grid } : {}),
       hero,
       ...(music !== undefined ? { music } : {}),
-      savedAt: new Date().toISOString(),
+      savedAt: lastSeenAt,
+      lastSeenAt,
       ...(sourceSig !== undefined ? { sourceSig } : {}),
       launchCount: stats.launchCount,
       lastPlayedAt: stats.lastPlayedAt,

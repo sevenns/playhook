@@ -4,7 +4,7 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LibraryStore } from '../src/main/library-store';
 import type { ResolvedManifest, Stats } from '../src/shared/types';
 
@@ -61,6 +61,8 @@ async function readIndex(): Promise<{
     grid?: string;
     music?: string;
     sourceSig?: string;
+    savedAt: string;
+    lastSeenAt: string | null;
     launchCount: number;
   }>;
 }> {
@@ -172,6 +174,31 @@ describe('saveFromCard', () => {
     const entry = (await readIndex()).entries[0];
     expect(entry?.hero).toEqual([]);
     expect(entry?.grid).toBe('grid.jpg');
+  });
+
+  // The carousel orders the history by "when was this game last available", so the stamp has to move on
+  // an insert that copies nothing — unlike savedAt, which marks the last real re-copy (it is the artwork
+  // revision the renderer caches by).
+  it('stamps lastSeenAt on every insert, including the one that re-copies nothing', async () => {
+    const gridPath = await card('art/grid.jpg');
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+      const first = store();
+      await first.init();
+      await first.saveFromCard([manifest('a', { gridImagePath: gridPath })]);
+      expect((await readIndex()).entries[0]?.lastSeenAt).toBe('2026-01-01T00:00:00.000Z');
+
+      vi.setSystemTime(new Date('2026-02-02T00:00:00.000Z'));
+      const second = store();
+      await second.init();
+      await second.saveFromCard([manifest('a', { gridImagePath: gridPath })]);
+      const entry = (await readIndex()).entries[0];
+      expect(entry?.lastSeenAt).toBe('2026-02-02T00:00:00.000Z');
+      expect(entry?.savedAt).toBe('2026-01-01T00:00:00.000Z'); // nothing was re-copied
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('does not re-copy an unchanged card, but refreshes the cached stats', async () => {
@@ -339,7 +366,7 @@ describe('init — cached stats vs their authority', () => {
 });
 
 describe('entriesForCarousel', () => {
-  it('lists the inserted card first and hides never-played history', async () => {
+  it('lists the inserted card first, then everything seen before (played or not)', async () => {
     const library = store();
     await library.init();
     statsById.set('played', {
@@ -353,6 +380,12 @@ describe('entriesForCarousel', () => {
       manifest('orphan', { gridImagePath: await card('o.jpg') }),
     ]);
     await library.saveFromCard([manifest('card', { gridImagePath: await card('c.jpg') })]);
-    expect(library.entriesForCarousel(['card']).map((e) => e.id)).toEqual(['card', 'played']);
+    // `orphan` was never launched, but it WAS available on this device — and it shared the insert with
+    // `played`, so the tie falls to the title.
+    expect(library.entriesForCarousel(['card']).map((e) => e.id)).toEqual([
+      'card',
+      'orphan',
+      'played',
+    ]);
   });
 });

@@ -20,6 +20,10 @@ export interface LibraryEntryRecord {
   readonly hero: readonly string[];
   readonly music?: string;
   readonly savedAt: string;
+  /** When this game was last AVAILABLE — the last time its card was inserted. Written on every insert,
+   * including the one that re-copies nothing (unlike `savedAt`, which only moves when the assets really
+   * changed). Null for a record written before this field existed; the next insert fills it in. */
+  readonly lastSeenAt: string | null;
   /** Fingerprint of every SOURCE asset file — an unchanged card is not re-copied on every insert, while
    * an edited image or music track misses it and forces a fresh copy (see LibraryStore.assetsSignature). */
   readonly sourceSig?: string;
@@ -73,9 +77,14 @@ export interface EvictResult {
 }
 
 /**
- * Trims the index to `limit` records. Eviction order: never-played "orphans" (`lastPlayedAt === null` —
- * a card that was inserted but never launched) first, then the least recently played. Ids on the
- * currently-inserted card (`protectedIds`) are never evicted: they are on screen right now.
+ * Trims the index to `limit` records. Eviction order is the carousel's order read backwards: the least
+ * recently TOUCHED goes first (see lastTouchedAt), and an entry with no date at all — never played, and
+ * written before `lastSeenAt` existed — goes before those. Ids on the currently-inserted card
+ * (`protectedIds`) are never evicted: they are on screen right now.
+ *
+ * Ranking by the same date the carousel sorts by is what keeps the two consistent: judged by play date
+ * alone, a card you inserted yesterday but never started would be the FIRST thing thrown away while
+ * sitting at the top of the strip.
  */
 export function evictBeyond(
   index: LibraryIndex,
@@ -87,14 +96,13 @@ export function evictBeyond(
   const overflow = index.entries.length - limit;
   if (overflow <= 0 || removable.length === 0) return { index, evicted: [] };
 
-  // Weakest first: orphans, then oldest lastPlayedAt. Ties fall back to the title/id so the choice is
+  // Weakest first: undated entries, then the oldest touch. Ties fall back to the id so the choice is
   // deterministic (a test asserting "which one went" must not depend on insertion order).
   const byWeakest = [...removable].sort((a, b) => {
-    if ((a.lastPlayedAt === null) !== (b.lastPlayedAt === null))
-      return a.lastPlayedAt === null ? -1 : 1;
-    if (a.lastPlayedAt !== null && b.lastPlayedAt !== null && a.lastPlayedAt !== b.lastPlayedAt) {
-      return Date.parse(a.lastPlayedAt) - Date.parse(b.lastPlayedAt);
-    }
+    const at = lastTouchedAt(a);
+    const bt = lastTouchedAt(b);
+    if ((at === null) !== (bt === null)) return at === null ? -1 : 1;
+    if (at !== null && bt !== null && at !== bt) return Date.parse(at) - Date.parse(bt);
     return a.id.localeCompare(b.id);
   });
   const evicted = new Set(
@@ -112,32 +120,65 @@ export interface PlayedSortable {
   readonly lastPlayedAt: string | null;
 }
 
+/** A game that also remembers when its card was last inserted — see lastTouchedAt. */
+export interface TouchedSortable extends PlayedSortable {
+  readonly lastSeenAt: string | null;
+}
+
 /**
- * Most recently played first. Never-played games go LAST (a `null` date is "no play at all", not "played
- * at epoch"), and `title` breaks every tie so equal dates — or a row of never-played games — keep a
- * stable, predictable order instead of drifting with insertion order.
- *
- * Used for BOTH carousel groups: the card's own games and the history are each ordered by it.
+ * Newest date first, `null` (never) LAST — a missing date means "never happened", not "happened at
+ * epoch". `title` breaks every tie, so equal dates (or a row of never-dated games) keep a stable,
+ * predictable order instead of drifting with insertion order.
  */
-export function byRecentlyPlayed<T extends PlayedSortable>(items: readonly T[]): readonly T[] {
+function byDateDesc<T extends { readonly title: string }>(
+  items: readonly T[],
+  dateOf: (item: T) => string | null,
+): readonly T[] {
   return [...items].sort((a, b) => {
-    if ((a.lastPlayedAt === null) !== (b.lastPlayedAt === null))
-      return a.lastPlayedAt === null ? 1 : -1;
-    if (a.lastPlayedAt !== null && b.lastPlayedAt !== null && a.lastPlayedAt !== b.lastPlayedAt) {
-      return Date.parse(b.lastPlayedAt) - Date.parse(a.lastPlayedAt);
-    }
+    const at = dateOf(a);
+    const bt = dateOf(b);
+    if ((at === null) !== (bt === null)) return at === null ? 1 : -1;
+    if (at !== null && bt !== null && at !== bt) return Date.parse(bt) - Date.parse(at);
     return a.title.localeCompare(b.title);
   });
 }
 
+/** Most recently played first. Used for the group on the INSERTED card, where every game shares one
+ *  insertion moment and only the play dates tell them apart. */
+export function byRecentlyPlayed<T extends PlayedSortable>(items: readonly T[]): readonly T[] {
+  return byDateDesc(items, (item) => item.lastPlayedAt);
+}
+
+/**
+ * When the game was last RELEVANT: the later of "its card was inserted" (it became launchable) and "it
+ * was played". Null only when neither ever happened — an entry written before `lastSeenAt` existed and
+ * never launched since.
+ *
+ * Two dates rather than one because each alone gets a case wrong: by play date, a game inserted
+ * yesterday but not started sinks below one played months ago; by insertion date, a game played today
+ * sinks because its card has not been re-inserted since.
+ */
+export function lastTouchedAt(entry: TouchedSortable): string | null {
+  if (entry.lastSeenAt === null) return entry.lastPlayedAt;
+  if (entry.lastPlayedAt === null) return entry.lastSeenAt;
+  return Date.parse(entry.lastSeenAt) >= Date.parse(entry.lastPlayedAt)
+    ? entry.lastSeenAt
+    : entry.lastPlayedAt;
+}
+
+/** Most recently touched first (see lastTouchedAt). Used for the HISTORY group. */
+export function byRecentlyTouched<T extends TouchedSortable>(items: readonly T[]): readonly T[] {
+  return byDateDesc(items, lastTouchedAt);
+}
+
 /**
  * The carousel order: the games on the inserted card FIRST (they are the ones you can launch right now),
- * then the history — each group ordered by `lastPlayedAt` descending, see byRecentlyPlayed.
+ * ordered by `lastPlayedAt` — they all share one insertion moment, so only play dates separate them —
+ * then the history, ordered by `lastTouchedAt`.
  *
- * History entries that were never launched are dropped: a card inserted but never played leaves a record
- * (assets are copied on insert), and showing it would put games you never started in your history. They
- * stay on disk only until the GC gets to them. The ACTIVE group keeps its never-played games — they are
- * on the card in front of you, just at the end of their group.
+ * The history holds EVERY game this device has seen, played or not: a card you inserted yesterday and
+ * did not get around to starting still belongs at the top of "what I had recently", and hiding it would
+ * contradict the very date the group is sorted by.
  */
 export function orderForCarousel(
   entries: readonly LibraryEntryRecord[],
@@ -150,6 +191,6 @@ export function orderForCarousel(
     if (entry !== undefined) active.push(entry);
   }
   const activeSet = new Set(activeIds);
-  const history = entries.filter((entry) => !activeSet.has(entry.id) && entry.launchCount > 0);
-  return [...byRecentlyPlayed(active), ...byRecentlyPlayed(history)];
+  const history = entries.filter((entry) => !activeSet.has(entry.id));
+  return [...byRecentlyPlayed(active), ...byRecentlyTouched(history)];
 }

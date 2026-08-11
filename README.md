@@ -107,11 +107,15 @@ If a launch fails, the reason appears there and you can simply retry.
 ### Launch history
 
 Every game inserted into this device leaves a copy of its art and music in
-`%APPDATA%/playhook/library/` (`~/.config/playhook/` on Linux), so the carousel still shows the games
-you have played once the card is out — pick one and you get its screen (title, stats, background and
-music), with no Play button: there is nothing to launch without the card. The history keeps the 40 most
-recently played games; beyond that the oldest ones are dropped, and games that were merely inserted but
-never launched go first. The games on the inserted card are never evicted.
+`%APPDATA%/playhook/library/` (`~/.config/playhook/` on Linux), so the carousel still shows the games you
+have had once the card is out — pick one and you get its screen (title, stats, background and music),
+with no Play button: there is nothing to launch without the card.
+
+The row is ordered by how recently you **touched** a game — the later of "its card was inserted" and "you
+played it" — so a card you put in yesterday and never got around to starting still sits near the front.
+The games on the currently inserted card come first, ordered by when you last played them. The history
+keeps 40 games; beyond that the least recently touched are dropped, and the games on the inserted card
+are never evicted.
 
 Use `gridImage` in `game.json` to control how a game looks in that row. It expects a **600x900** portrait
 cover — the same format Steam uses, so [SteamGridDB](https://www.steamgriddb.com/) is the easiest place to
