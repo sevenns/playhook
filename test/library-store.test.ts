@@ -146,6 +146,36 @@ describe('saveFromCard', () => {
     expect(await fs.readdir(path.join(baseDir, 'library', 'a'))).toEqual(['grid.jpg']);
   });
 
+  it('re-encodes an oversized IMAGE instead of dropping it', async () => {
+    const library = store();
+    await library.init();
+    await library.saveFromCard([
+      manifest('a', {
+        heroImagePaths: [await card('art/hero.png', 'IMG 3840x2160', 12 * 1024 * 1024)],
+      }),
+    ]);
+    const entry = (await readIndex()).entries[0];
+    // Kept, not skipped — and stored as a JPEG, whatever the source extension was.
+    expect(entry?.hero).toEqual(['hero-0.jpg']);
+    const written = await fs.readFile(path.join(baseDir, 'library', 'a', 'hero-0.jpg'), 'utf8');
+    // The stub encodes its size into the bytes: scaled down to the first step, not left at 2160p.
+    expect(written).toBe('JPEG 3840x1440 q85');
+  });
+
+  it('still skips an oversized image it cannot decode (no re-encode possible)', async () => {
+    const library = store();
+    await library.init();
+    await library.saveFromCard([
+      manifest('a', {
+        gridImagePath: await card('art/grid.jpg'),
+        heroImagePaths: [await card('art/hero.webp', 'RIFFWEBP', 12 * 1024 * 1024)],
+      }),
+    ]);
+    const entry = (await readIndex()).entries[0];
+    expect(entry?.hero).toEqual([]);
+    expect(entry?.grid).toBe('grid.jpg');
+  });
+
   it('does not re-copy an unchanged card, but refreshes the cached stats', async () => {
     const gridPath = await card('art/grid.jpg');
     const first = store();

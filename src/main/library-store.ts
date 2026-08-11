@@ -9,8 +9,10 @@
 //   library/<id>/music.<ext>, sfx-<slot>.<ext>
 //
 // Two deliberate performance rules (they are the reason the copy is safe to do on card insert):
-//  • copying NEVER decodes an image — it is a byte copy under a size cap. `nativeImage` is synchronous
-//    and would block the main thread at the exact moment the window appears;
+//  • copying is a byte copy under a size cap and does NOT decode — `nativeImage` is synchronous and would
+//    block the main thread. The single exception is an image ALREADY over its cap, which is re-encoded
+//    down instead of being dropped (copyImageCapped): the alternative is a game with no background in the
+//    history at all, and it happens once per card, in the background, after the window is up;
 //  • the downscale happens on demand, once per game, and is cached on disk.
 //
 // GUI-only (it imports `electron` for nativeImage): the Game Mode daemon must never reach this module —
@@ -39,10 +41,31 @@ export const MAX_LIBRARY_ENTRIES = 40;
 /** Target height of the carousel card thumbnail: 2x the 204 design px, so it stays crisp on a 4K screen. */
 const GRID_TARGET_HEIGHT = 408;
 const JPEG_QUALITY = 85;
-/** Per-asset byte caps. A file over its cap is skipped with a warn — the game still gets a record. */
+/** Per-asset byte caps. An AUDIO file over its cap is skipped with a warn (nothing to shrink); an IMAGE
+ *  over it is re-encoded down to fit — see copyImageCapped. */
 const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
 const MAX_MUSIC_BYTES = 8 * 1024 * 1024;
 const MAX_SFX_BYTES = 2 * 1024 * 1024;
+
+/** One attempt at squeezing an oversized image under the cap: scale to `height`, encode at `quality`.
+ *  Tried in order until one fits, so a picture only loses as much as it has to. */
+interface CompressStep {
+  readonly height: number;
+  readonly quality: number;
+}
+/** Backgrounds are drawn full-screen, so the first step still covers a 1440p panel; a 4K hero is
+ *  downscaled rather than lost. */
+const HERO_COMPRESS_STEPS: readonly CompressStep[] = [
+  { height: 1440, quality: 85 },
+  { height: 1080, quality: 75 },
+  { height: 720, quality: 65 },
+];
+/** The stored cover only ever feeds the 408-tall thumbnail, so it can be squeezed harder. */
+const GRID_COMPRESS_STEPS: readonly CompressStep[] = [
+  { height: 1200, quality: 85 },
+  { height: 900, quality: 80 },
+  { height: 600, quality: 70 },
+];
 
 const SFX_NAMES: readonly SfxName[] = ['play', 'navigate', 'button', 'back'];
 
@@ -182,13 +205,19 @@ export class LibraryStore {
     const grid =
       gridSource === undefined
         ? undefined
-        : await copyCapped(gridSource, gameDir, 'grid', MAX_IMAGE_BYTES);
+        : await copyImageCapped(gridSource, gameDir, 'grid', MAX_IMAGE_BYTES, GRID_COMPRESS_STEPS);
 
     const hero: string[] = [];
     for (const [index, heroPath] of (manifest.heroImagePaths ?? []).entries()) {
       // Position is load-bearing: the renderer keys its palette cache by `${id}#${index}`, so a copy that
       // reordered the backgrounds would hand a game the colors of another of its own images.
-      const name = await copyCapped(heroPath, gameDir, `hero-${index}`, MAX_IMAGE_BYTES);
+      const name = await copyImageCapped(
+        heroPath,
+        gameDir,
+        `hero-${index}`,
+        MAX_IMAGE_BYTES,
+        HERO_COMPRESS_STEPS,
+      );
       if (name !== undefined) hero.push(name);
     }
 
@@ -365,11 +394,18 @@ function toRecord(stored: z.infer<typeof entrySchema>): LibraryEntryRecord {
 }
 
 /**
- * A fingerprint of ALL of this game's source assets (`<name>:<mtimeMs>:<size>` per file). Re-inserting an
- * unchanged card matches it and skips the copy; changing any single image, the music or a sound misses it
- * and re-copies the set. Undefined when there is nothing to copy, or when a file cannot be stat'ed — both
- * mean "don't trust the shortcut", so the copy runs.
+ * A fingerprint of ALL of this game's source assets (`<name>:<mtimeMs>:<size>` per file), prefixed with
+ * the copy's own version. Re-inserting an unchanged card matches it and skips the copy; changing any
+ * single image, the music or a sound misses it and re-copies the set. Undefined when there is nothing to
+ * copy, or when a file cannot be stat'ed — both mean "don't trust the shortcut", so the copy runs.
+ *
+ * The version prefix is what refreshes records the OLD copy produced: an image that was skipped for being
+ * over the cap is re-encoded now, but the sources it was skipped from are untouched, so their fingerprint
+ * alone would keep serving the incomplete record forever. Bump it whenever the copy's OUTPUT changes —
+ * every game is then re-copied ONCE, and the shortcut holds again from the next insert on.
  */
+const COPY_VERSION = 'v2';
+
 async function assetsSignature(manifest: ResolvedManifest): Promise<string | undefined> {
   const sources = [
     manifest.gridImagePath,
@@ -384,7 +420,7 @@ async function assetsSignature(manifest: ResolvedManifest): Promise<string | und
     if (signature === undefined) return undefined;
     parts.push(`${path.basename(source)}:${signature}`);
   }
-  return parts.join('|');
+  return [COPY_VERSION, ...parts].join('|');
 }
 
 /** `<mtimeMs>:<size>` of a source file, or undefined when it can't be stat'ed. */
@@ -408,23 +444,101 @@ async function copyCapped(
   baseName: string,
   maxBytes: number,
 ): Promise<string | undefined> {
-  let size: number;
-  try {
-    size = (await fse.stat(source)).size;
-  } catch (cause) {
-    log.warn(`[library] source asset missing "${source}":`, describe(cause));
-    return undefined;
-  }
+  const size = await fileSize(source);
+  if (size === undefined) return undefined;
   if (size > maxBytes) {
     log.warn(`[library] skipping "${source}": ${size} bytes exceeds the ${maxBytes}-byte cap`);
     return undefined;
   }
+  return copyRaw(source, gameDir, baseName);
+}
+
+/**
+ * The same for an IMAGE, except that being over the cap is not the end: rather than lose the picture, it
+ * is re-encoded down through `steps` until one fits. A 12 MB 4K background is a perfectly ordinary card
+ * asset — dropping it left the game with no background in the history at all, while the card itself
+ * (which reads the original) still showed one.
+ *
+ * This is the ONE place the copy decodes an image, and it is deliberate: it runs only for a file that
+ * would otherwise be skipped, only once per card (the signature shortcut skips unchanged cards), and the
+ * whole copy already happens in the background, after the window is up. An image nativeImage cannot read
+ * (webp/gif/avif) is still skipped — there is nothing to re-encode.
+ */
+async function copyImageCapped(
+  source: string,
+  gameDir: string,
+  baseName: string,
+  maxBytes: number,
+  steps: readonly CompressStep[],
+): Promise<string | undefined> {
+  const size = await fileSize(source);
+  if (size === undefined) return undefined;
+  if (size <= maxBytes) return copyRaw(source, gameDir, baseName);
+  return compressUnderCap(source, gameDir, baseName, maxBytes, steps, size);
+}
+
+/** Byte-copy, no questions asked. Returns the written file's name. */
+async function copyRaw(
+  source: string,
+  gameDir: string,
+  baseName: string,
+): Promise<string | undefined> {
   const name = `${baseName}${path.extname(source).toLowerCase()}`;
   try {
     await fse.copy(source, path.join(gameDir, name), { overwrite: true, dereference: true });
     return name;
   } catch (cause) {
     log.warn(`[library] failed to copy "${source}":`, describe(cause));
+    return undefined;
+  }
+}
+
+/** Walks `steps` until one encodes under the cap, writes it as JPEG and returns the name. */
+async function compressUnderCap(
+  source: string,
+  gameDir: string,
+  baseName: string,
+  maxBytes: number,
+  steps: readonly CompressStep[],
+  originalSize: number,
+): Promise<string | undefined> {
+  try {
+    const image = nativeImage.createFromPath(source);
+    if (image.isEmpty()) {
+      log.warn(
+        `[library] skipping "${source}": ${originalSize} bytes over the ${maxBytes}-byte cap and not decodable (webp/gif/avif?)`,
+      );
+      return undefined;
+    }
+    const name = `${baseName}.jpg`;
+    for (const step of steps) {
+      // JPEG throughout — a background/cover has no use for the alpha channel PNG would keep, and keeping
+      // it is exactly what makes these files too big in the first place.
+      const scaled = image.getSize().height > step.height ? image.resize({ height: step.height }) : image;
+      const buffer = scaled.toJPEG(step.quality);
+      if (buffer.byteLength > maxBytes) continue;
+      await fse.writeFile(path.join(gameDir, name), buffer);
+      log.info(
+        `[library] re-encoded "${source}" to fit the history: ${originalSize} → ${buffer.byteLength} bytes (${step.height}p, q${step.quality})`,
+      );
+      return name;
+    }
+    log.warn(
+      `[library] skipping "${source}": still over the ${maxBytes}-byte cap after re-encoding it down`,
+    );
+    return undefined;
+  } catch (cause) {
+    log.warn(`[library] failed to re-encode "${source}":`, describe(cause));
+    return undefined;
+  }
+}
+
+/** The file's size in bytes, or undefined (with a breadcrumb) when it cannot be stat'ed. */
+async function fileSize(source: string): Promise<number | undefined> {
+  try {
+    return (await fse.stat(source)).size;
+  } catch (cause) {
+    log.warn(`[library] source asset missing "${source}":`, describe(cause));
     return undefined;
   }
 }
