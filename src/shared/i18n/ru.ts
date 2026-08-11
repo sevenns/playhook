@@ -264,7 +264,6 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'configure.fieldLaunchTimeout': 'Таймаут запуска (секунды)',
   'configure.fieldKillTimeout': 'Таймаут принудительного закрытия (секунды)',
   'configure.browse': 'Обзор…',
-  'configure.clear': 'Очистить',
   'configure.add': 'Добавить',
   'configure.addFile': 'Добавить…',
   'configure.replace': 'Заменить…',

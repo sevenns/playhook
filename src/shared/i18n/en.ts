@@ -303,7 +303,6 @@ export const en = {
   'configure.appidHelp': 'Find the appid on SteamDB',
   // Dynamic-list + picker buttons.
   'configure.browse': 'Browse…',
-  'configure.clear': 'Clear',
   'configure.add': 'Add',
   'configure.addFile': 'Add…',
   'configure.replace': 'Replace…',

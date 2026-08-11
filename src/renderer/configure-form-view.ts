@@ -849,8 +849,8 @@ export class FormView {
     wrapper.className = 'field';
 
     // The value IS the state: a path means "play this", empty means "no music of its own". There is no
-    // Default/Custom selector — an empty field says the same thing with one control fewer, and Clear is
-    // how you get back to it.
+    // Default/Custom selector — an empty field says the same thing with one control fewer, and the trash
+    // button is how you get back to it.
     const row = document.createElement('div');
     row.className = 'field-row';
     const input = document.createElement('fluent-text-input') as ValueEl;
@@ -866,7 +866,9 @@ export class FormView {
         this.deps.onPickError(result.message);
       }
     });
-    const clear = this.textButton('configure.clear', () => {
+    // The same trash button the hero/args rows use — clearing a path is the same gesture, so it looks
+    // the same instead of inventing a second vocabulary for it.
+    const clear = this.iconButton('configure.remove', trashIcon(), () => {
       if (getValue(input) === '') return; // nothing to clear — not a change, don't mark the form dirty
       input.value = '';
       this.clearCorrupt(corruptKey);
@@ -886,7 +888,7 @@ export class FormView {
     const refresh = (): void => {
       const empty = getValue(input) === '';
       hint.hidden = !empty;
-      // Clear is dead while there is nothing to clear — but the form-wide disable still wins.
+      // The trash button is dead while there is nothing to clear — the form-wide disable still wins.
       setElDisabled(clear, formDisabled || empty);
     };
     input.addEventListener('input', () => {
