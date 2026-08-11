@@ -77,6 +77,18 @@ export interface Controls {
   setGamepadPaused(paused: boolean): void;
 }
 
+/**
+ * Whether the pointer is over text the user is allowed to select — computed from the effective
+ * `user-select`, not from a hard-coded class list, so any future selectable text is covered by
+ * construction. Everything in this UI is `user-select: none` (styles.css) except where a rule opts back
+ * in, currently the install path in the confirm popup.
+ */
+function isOverSelectableText(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) return false;
+  const selectable = getComputedStyle(target).userSelect;
+  return selectable !== 'none';
+}
+
 export function createControls(deps: ControlsDeps): Controls {
   const { audio } = deps;
   const state = (): AppState => deps.getState();
@@ -761,6 +773,11 @@ export function createControls(deps: ControlsDeps): Controls {
   // is also why this listens on the window rather than per-element: the gesture means the same thing
   // wherever the pointer is.
   window.addEventListener('contextmenu', (event) => {
+    // …except over SELECTABLE text, where the right-click means "Copy". The whole UI is user-select:none
+    // save for the install path in the confirm popup, and main puts a Copy menu on it (window.ts) — but
+    // that menu only appears if the DOM event is left alone: preventDefault here kills the native
+    // context-menu event main listens for, which is exactly how this broke copying the path.
+    if (isOverSelectableText(event.target)) return;
     event.preventDefault();
     navBack();
     // AFTER, not before: navBack() is written for the gamepad and hides the cursor as its first act.
