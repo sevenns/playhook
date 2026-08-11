@@ -111,6 +111,11 @@ Every game inserted into this device leaves a copy of its art and music in
 have had once the card is out — pick one and you get its screen (title, stats, background and music),
 with no Play button: there is nothing to launch without the card.
 
+Flip through the row with **left/right** (hold to run through it), open a game with **A**, and step back
+to the row with **B**. With a mouse: the wheel scrolls the row, a click selects a card, a second click
+opens it, and a right-click steps back. The row is the top level — the game's screen sits one step
+inside it, which is where **More** ⋯ and its actions live.
+
 The row is ordered by how recently you **touched** a game — the later of "its card was inserted" and "you
 played it" — so a card you put in yesterday and never got around to starting still sits near the front.
 The games on the currently inserted card come first, ordered by when you last played them. The history
@@ -792,8 +797,10 @@ CI runs all three, on Windows **and** Linux.
   (via umu-launcher) on SteamOS/Linux — see [Steam Deck](#steam-deck-linux--steamos). Native Linux/ELF
   games and macOS are not supported.
 - **Does it work without a gamepad?** Yes — mouse and keyboard both work. Keyboard: **WASD / arrow keys**
-  to move, **Space / Enter** to activate, **Tab / Backspace** (or **Esc**) to go back. Every gamepad
-  action also has a mouse fallback (click **Play**, etc.).
+  to move, **Space / Enter** to activate, **Tab / Backspace** (or **Esc**) to go back. Mouse: click a
+  card in the row to select it and click it again to open it, the **wheel** flips through the row, and
+  **right-click** goes back (the same as **B**). Holding left/right — on the gamepad or the keyboard —
+  runs through the row quickly. Every gamepad action also has a mouse fallback (click **Play**, etc.).
 - **Can I use it with Steam games?** **Yes** — via [Steam mode](#steam-mode-launch-and-install-steam-games):
   a `game.json` with a `steam` block launches, installs and uninstalls the game through your local Steam
   client (the card is just a pointer by `appid`). For a **non-Steam** wrapper/launcher `.exe`, point it at
