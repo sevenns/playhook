@@ -756,6 +756,18 @@ export function createControls(deps: ControlsDeps): Controls {
     { passive: true },
   );
 
+  // A right-click is the mouse's B button: the same "step back" as B / Esc / Tab / Backspace. The
+  // launcher has nothing to offer in a context menu, so the native one is suppressed either way — which
+  // is also why this listens on the window rather than per-element: the gesture means the same thing
+  // wherever the pointer is.
+  window.addEventListener('contextmenu', (event) => {
+    event.preventDefault();
+    navBack();
+    // AFTER, not before: navBack() is written for the gamepad and hides the cursor as its first act.
+    // This click IS the mouse, so the cursor has to come back — and it is this call that restores it.
+    noteMouseActivity();
+  });
+
   const gamepad = createGamepadController({
     onLeft: navLeft,
     onRight: navRight,
