@@ -2089,8 +2089,17 @@ export class GameController {
       return;
     }
     const assets = await this.deps.library.readBrowseAssets(id);
-    this.pushBrowseHero(assets.hero);
+    // A history game with no hero of its own falls back to the wallpaper, exactly like a card game does
+    // (readHeroAssets). Without it this push carried `null`, the renderer had nothing to paint, and the
+    // PREVIOUS game's background stayed on screen under the new game's name.
+    this.pushBrowseHero(assets.hero ?? (await this.wallpaperHero()));
     this.pushBrowseMusic(await this.browseMusicFor(id));
+  }
+
+  /** The wallpaper as a one-image hero payload — the per-game fallback shared by both browse paths. */
+  private async wallpaperHero(): Promise<HeroAssets | null> {
+    const wallpaper = await this.assets.readWallpaperDataUrl();
+    return wallpaper === null ? null : { images: [wallpaper] };
   }
 
   /**

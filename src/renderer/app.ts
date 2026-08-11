@@ -422,7 +422,7 @@ void window.api.requestBrowse().then((browse) => {
 
 // The browsed game's background: a channel of its own, so a history game can be shown without touching
 // the inserted card's hero:update payload (which stays valid for the card's selected game).
-window.api.onBrowseHero((assets) => hero.applyAssets(assets));
+window.api.onBrowseHero((assets) => hero.applyBrowseAssets(assets));
 
 // The browsed game's music. Music ONLY — the SFX set is never rebuilt by browsing, so flipping through
 // the carousel doesn't re-create the sound elements on every step.
