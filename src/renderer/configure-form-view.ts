@@ -386,7 +386,7 @@ export class FormView {
 
     // ── Audio (Default/Custom) — the card's own background music. UI sounds are NOT here: they always
     // come from the bundled set chosen in Settings → Audio.
-    this.music = this.audioField('configure.fieldBackgroundMusic', 'backgroundMusic', 'backgroundMusic', 'configure.musicNoneHint');
+    this.music = this.musicField('configure.fieldBackgroundMusic', 'backgroundMusic', 'backgroundMusic', 'configure.musicNoneHint');
     this.addSection('audio', [this.music.wrapper]);
 
     // ── Advanced ──────────────────────────────────────────────────────────────
@@ -837,10 +837,9 @@ export class FormView {
     return wrapper;
   }
 
-  // An audio field: a Default/Custom selector plus (in Custom) a text-input + Browse + clear. Default and
-  // Custom-empty both leave the value empty → the field is omitted from game.json (no music), and a hint
-  // says so. Value state IS the model (empty = default); the toggle is pure UI.
-  private audioField(
+  // The background-music field: a text-input + Browse + Clear. An empty value omits the key from
+  // game.json (the game plays no music of its own), and a hint says so.
+  private musicField(
     labelKey: MessageKey,
     errorKey: FieldKey,
     corruptKey: string,
@@ -849,13 +848,9 @@ export class FormView {
     const wrapper = document.createElement('div');
     wrapper.className = 'field';
 
-    // Default → the field is omitted from game.json (no music); Custom → a path field.
-    const modeSelect = this.dropdown([
-      ['default', 'configure.audioDefault'],
-      ['custom', 'configure.audioCustom'],
-    ]);
-    modeSelect.classList.add('audio-mode');
-
+    // The value IS the state: a path means "play this", empty means "no music of its own". There is no
+    // Default/Custom selector — an empty field says the same thing with one control fewer, and Clear is
+    // how you get back to it.
     const row = document.createElement('div');
     row.className = 'field-row';
     const input = document.createElement('fluent-text-input') as ValueEl;
@@ -864,62 +859,54 @@ export class FormView {
       const result = await this.deps.pickPath('audio');
       if (result.ok) {
         input.value = result.paths[0] ?? getValue(input);
-        setMode('custom');
         this.clearCorrupt(corruptKey);
+        refresh();
         this.deps.onChange();
       } else if (!('cancelled' in result)) {
         this.deps.onPickError(result.message);
       }
     });
-    // No separate clear button: selecting "Default" in the dropdown clears the field and omits it.
-    row.append(input, browse);
+    const clear = this.textButton('configure.clear', () => {
+      if (getValue(input) === '') return; // nothing to clear — not a change, don't mark the form dirty
+      input.value = '';
+      this.clearCorrupt(corruptKey);
+      refresh();
+      this.deps.onChange();
+    });
+    row.append(input, browse, clear);
 
     const hint = document.createElement('div');
     hint.className = 'field-hint';
     this.labelRefs.push({ el: hint, key: hintKey });
 
-    wrapper.append(this.fieldLabel(labelKey), modeSelect, row, hint, this.errorSlot(errorKey));
+    wrapper.append(this.fieldLabel(labelKey), row, hint, this.errorSlot(errorKey));
     this.registerContainer(errorKey, wrapper);
 
-    let mode: 'default' | 'custom' = 'default';
+    let formDisabled = false;
     const refresh = (): void => {
       const empty = getValue(input) === '';
-      row.hidden = mode === 'default';
-      hint.hidden = !(mode === 'default' || empty);
-      modeSelect.value = mode;
+      hint.hidden = !empty;
+      // Clear is dead while there is nothing to clear — but the form-wide disable still wins.
+      setElDisabled(clear, formDisabled || empty);
     };
-    const setMode = (next: 'default' | 'custom'): void => {
-      mode = next;
-      if (next === 'default') input.value = '';
-      refresh();
-    };
-    modeSelect.addEventListener('change', () => {
-      const next = getValue(modeSelect) === 'custom' ? 'custom' : 'default';
-      const clearedValue = next === 'default' && getValue(input) !== '';
-      setMode(next);
-      // Only a real content change (clearing a set path) marks dirty/re-validates; merely revealing the
-      // empty Custom input does not.
-      if (clearedValue) {
-        this.clearCorrupt(corruptKey);
-        this.deps.onChange();
-      }
-    });
     input.addEventListener('input', () => {
       this.clearCorrupt(corruptKey);
       refresh();
       this.deps.onChange();
     });
+    refresh();
 
     return {
       wrapper,
       input,
       setValue: (value) => {
-        mode = value === '' ? 'default' : 'custom';
         input.value = value;
         refresh();
       },
       setDisabled: (disabled) => {
-        for (const el of [input, browse, modeSelect]) setElDisabled(el, disabled);
+        formDisabled = disabled;
+        for (const el of [input, browse]) setElDisabled(el, disabled);
+        refresh();
       },
     };
   }

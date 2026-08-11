@@ -298,13 +298,12 @@ export const en = {
   'configure.fieldLaunchTimeout': 'Launch timeout (seconds)',
   'configure.fieldKillTimeout': 'Force-close timeout (seconds)',
   // Audio Default/Custom selector (Default → the field is omitted from game.json).
-  'configure.audioDefault': 'Default',
-  'configure.audioCustom': 'Custom',
   'configure.musicNoneHint': 'No background music.',
   // Steam appid helper link (opens SteamDB in the default browser).
   'configure.appidHelp': 'Find the appid on SteamDB',
   // Dynamic-list + picker buttons.
   'configure.browse': 'Browse…',
+  'configure.clear': 'Clear',
   'configure.add': 'Add',
   'configure.addFile': 'Add…',
   'configure.replace': 'Replace…',

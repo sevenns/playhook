@@ -264,6 +264,7 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'configure.fieldLaunchTimeout': 'Таймаут запуска (секунды)',
   'configure.fieldKillTimeout': 'Таймаут принудительного закрытия (секунды)',
   'configure.browse': 'Обзор…',
+  'configure.clear': 'Очистить',
   'configure.add': 'Добавить',
   'configure.addFile': 'Добавить…',
   'configure.replace': 'Заменить…',
@@ -274,8 +275,6 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'configure.fixSyntaxSwitch': 'Исправьте синтаксические ошибки JSON перед переключением на форму.',
   'configure.mixedLaunchModes':
     'В манифесте указано несколько типов запуска. Активным останется только «{mode}»; при сохранении остальные блоки будут удалены.',
-  'configure.audioDefault': 'По умолчанию',
-  'configure.audioCustom': 'Свой',
   'configure.musicNoneHint': 'Без фоновой музыки.',
   'configure.appidHelp': 'Найти appid на SteamDB',
   'configure.pickOutsideCard': 'Выбранный файл вне карты. Выберите файл на карте.',
