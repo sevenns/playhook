@@ -867,7 +867,8 @@ export class FormView {
       }
     });
     // The same trash button the hero/args rows use — clearing a path is the same gesture, so it looks
-    // the same instead of inventing a second vocabulary for it.
+    // the same instead of inventing a second vocabulary for it. `icon-danger` is part of that button,
+    // not decoration: it carries the destructive hover/pressed tokens (see configure.css).
     const clear = this.iconButton('configure.remove', trashIcon(), () => {
       if (getValue(input) === '') return; // nothing to clear — not a change, don't mark the form dirty
       input.value = '';
@@ -875,6 +876,7 @@ export class FormView {
       refresh();
       this.deps.onChange();
     });
+    clear.classList.add('icon-danger');
     row.append(input, browse, clear);
 
     const hint = document.createElement('div');
