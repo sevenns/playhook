@@ -8,7 +8,7 @@ import { app, BrowserWindow, dialog, ipcMain, type WebContents } from 'electron'
 import {
   IPC,
   type AppState,
-  type AudioAssets,
+  type SfxSet,
   type BrowseInfo,
   type GameInfo,
   type GameLibrary,
@@ -321,11 +321,12 @@ export class GameController {
   // The installing/launching state to restore once winetricks provisioning ends (Р7g). Null when not
   // provisioning. The "Configuring Proton" screen + its rotating funny suffix are the renderer's job (Р7j).
   private protonConfigPriorState: AppState | null = null;
-  // Audio for the current card, sent on its own channel (not on every AppState) — see AudioAssets.
-  private currentAudio: AudioAssets | null = null;
-  // The bundled default UI sounds, delivered on the empty "insert a card" screen so navigation there is
-  // audible even without a game's own sounds. Read once at init (warmDefaultAudio); null until then.
-  private defaultAudio: AudioAssets | null = null;
+  // The inserted card's background music, sent on its own channel (not on every AppState) — it is the
+  // card's only audio contribution. Null when there is no card, or when "only global ambience" mutes it.
+  private currentCardMusic: string | null = null;
+  // The bundled UI sound set chosen in Settings — the only source of UI sounds there is, on every screen.
+  // Read once at init (warmSfxSet); null until then.
+  private sfxSet: SfxSet | null = null;
   // The default ambience data URL, delivered on its own channel (independent of the card's music). The
   // renderer prioritizes a card's own music over this and crossfades between them. Null = no ambience.
   private currentAmbient: string | null = null;
@@ -350,7 +351,6 @@ export class GameController {
     userData: app.getPath('userData'),
     getCustomWallpaperName: async () => (await this.deps.settings.read()).customWallpaper,
     getSoundSet: async () => (await this.deps.settings.read()).soundSet,
-    getOnlyGlobalSounds: async () => (await this.deps.settings.read()).onlyGlobalSounds,
     getAmbientTrack: async () => (await this.deps.settings.read()).ambientTrack,
     getOnlyGlobalAmbient: async () => (await this.deps.settings.read()).onlyGlobalAmbient,
   });
@@ -423,9 +423,9 @@ export class GameController {
     this.locked = false;
     this.steamBusyId = null; // the card is gone; whatever Steam is doing is no longer ours to guard
     this.statsById.clear();
-    // Empty screen keeps the default UI sounds (navigation there must stay audible) — not silence. Music
-    // is card-only, so the default set carries sounds without music. null only until warmDefaultAudio runs.
-    this.setAudio(this.defaultAudio);
+    // Music is card-only, so there is none on the empty screen. UI sounds are unaffected: they come from
+    // the bundled set on its own channel, which no card ever touched.
+    this.setCardMusic(null);
     this.setHero(null);
     // NOT setLibrary(null): the history outlives the card, and this runs from FIVE places (a rejected
     // card, onRemove, and a card pulled mid-install/launch/uninstall). Blanking the list in any of them
@@ -463,12 +463,12 @@ export class GameController {
     ipcMain.handle(IPC.stateRequest, (): AppState => state.get());
     // Static for the process lifetime — seeds the renderer's Game Mode UI (e.g. "Close Playhook").
     ipcMain.handle(IPC.gameModeRequest, (): boolean => this.deps.isGamescope);
-    ipcMain.handle(IPC.audioRequest, (): AudioAssets | null => this.currentAudio);
+    ipcMain.handle(IPC.audioRequest, (): string | null => this.currentCardMusic);
     ipcMain.handle(IPC.ambientRequest, (): string | null => this.currentAmbient);
     ipcMain.handle(IPC.heroRequest, (): HeroAssets | null => this.currentHero);
     ipcMain.handle(IPC.libraryRequest, (): GameLibrary | null => this.currentLibrary);
     ipcMain.handle(IPC.browseRequest, (): BrowseInfo | null => this.currentBrowse);
-    ipcMain.handle(IPC.audioDefaultsRequest, (): AudioAssets | null => this.defaultAudio);
+    ipcMain.handle(IPC.audioDefaultsRequest, (): SfxSet | null => this.sfxSet);
     // The carousel asks for one card's artwork at a time, only for what is on screen, and caches it by id
     // — that is what keeps the list channel light enough to re-push on every change (Р5).
     ipcMain.handle(IPC.libraryGridRequest, (_event, id: unknown): Promise<string | null> => {
@@ -495,20 +495,16 @@ export class GameController {
     ipcMain.on(IPC.actionKill, () => void this.onKillRequested());
     ipcMain.on(IPC.actionSelect, (_event, id: unknown) => void this.onSelectRequested(id));
 
-    void this.warmDefaultAudio();
+    void this.warmSfxSet();
     void this.warmAmbient();
     void this.warmLibrary();
   }
 
-  /** Reads the bundled default UI sounds once and delivers them to the empty screen (the initial state,
-   *  before any card). Later empty transitions reuse the cached set via clearCard. */
-  private async warmDefaultAudio(): Promise<void> {
-    this.defaultAudio = await this.assets.readDefaultAudioAssets();
-    // Only the startup empty screen still has null audio here; a card loaded meanwhile owns the channel.
-    if (this.currentAudio === null) this.setAudio(this.defaultAudio);
-    // The same set doubles as the carousel's fallback sounds: a history game's own sounds belong to its
-    // detail screen, so flipping through cards must click with the bundled set (see IPC.audioDefaults*).
-    this.pushAudioDefaults();
+  /** Reads the bundled UI sound set once and delivers it to the window. It is screen-independent — the
+   *  same set clicks on the empty screen, the carousel and a game's detail screen. */
+  private async warmSfxSet(): Promise<void> {
+    this.sfxSet = await this.assets.readSfxSet();
+    this.pushSfxSet();
   }
 
   /** Seeds the history carousel at startup: with no card inserted, the list and the browse cursor come
@@ -662,7 +658,7 @@ export class GameController {
     const selected = manifests[this.selectedIndex] ?? manifests[0];
     if (selected !== undefined) {
       const stats = this.statsById.get(selected.raw.id) ?? (await this.deps.stats.read(selected.raw.id));
-      this.setAudio(await this.assets.readAudioAssets(selected));
+      this.setCardMusic(await this.assets.readMusicDataUrl(selected));
       this.setHero(await this.assets.readHeroAssets(selected));
       this.enterReady(await this.buildGameInfo(selected, stats));
       // The card's own game is what you look at on insert (the single-game case is then exactly today's
@@ -887,7 +883,7 @@ export class GameController {
     // (buildGameInfo still re-reads a steam game's .acf); fall back to a fresh read if somehow absent.
     const stats = this.statsById.get(manifest.raw.id) ?? (await this.deps.stats.read(manifest.raw.id));
     this.setHero(await this.assets.readHeroAssets(manifest));
-    this.setAudio(await this.assets.readAudioAssets(manifest));
+    this.setCardMusic(await this.assets.readMusicDataUrl(manifest));
     this.enterReady(await this.buildGameInfo(manifest, stats));
     // Keep what's on screen in step with the selection (the renderer reads the title/stats from here).
     await this.browseTo(manifest.raw.id);
@@ -1862,34 +1858,34 @@ export class GameController {
     }
   }
 
-  // ── Audio assets (sounds + background music) ─────────────────────────────
+  // ── Audio (the card's music + the bundled UI sound set) ──────────────────
 
-  /** Stores the current audio and pushes it to the window (null when no card / on error). */
-  private setAudio(assets: AudioAssets | null): void {
-    this.currentAudio = assets;
+  /** Stores the current card's music and pushes it to the window (null when no card / on error). */
+  private setCardMusic(url: string | null): void {
+    this.currentCardMusic = url;
     const browserWindow = this.deps.window.browserWindow;
     if (browserWindow !== null && !browserWindow.isDestroyed()) {
-      browserWindow.webContents.send(IPC.audioUpdate, assets);
+      browserWindow.webContents.send(IPC.audioUpdate, url);
     }
   }
 
   /**
-   * Recomputes and re-pushes the current audio after an audio-settings change (sound set, "only global
-   * sounds", "only global ambience"). Re-reads the default set (the AssetReader cache re-keys on the set)
-   * and re-pushes either the loaded card's audio (rebuilt with the current set + only-global flags) or the
-   * default set on the empty screen. A card's `music` is unaffected by a set switch, and the renderer
-   * treats an identical music URL as a no-op, so switching sets never restarts the music; toggling "only
-   * global ambience" DOES change whether `music` is present, so the renderer crossfades to/from ambience.
+   * Recomputes and re-pushes the audio after an audio-settings change (the sound set, "only global
+   * ambience"). Re-reads the sound set (the AssetReader cache re-keys on the set) and re-pushes the
+   * loaded card's music — that second half is not optional: "only global ambience" is what decides
+   * whether the card's music exists at all (readMusicDataUrl), so without a re-push the browse channel
+   * would go silent while a stale card music, read while the flag was off, kept playing over it.
+   * A set switch leaves the music URL identical, and the renderer treats that as a no-op, so it never
+   * restarts the track.
    */
   async refreshAudio(): Promise<void> {
-    this.defaultAudio = await this.assets.readDefaultAudioAssets();
+    this.sfxSet = await this.assets.readSfxSet();
     const manifest = this.current();
-    if (manifest !== null) this.setAudio(await this.assets.readAudioAssets(manifest));
-    else this.setAudio(this.defaultAudio);
+    this.setCardMusic(manifest === null ? null : await this.assets.readMusicDataUrl(manifest));
     // The carousel plays the BUNDLED set, and what you hear on screen comes from the browse channel —
     // both have to follow the setting too, or a change only lands after you flip to another card (the
     // browse music outranks the card's own, so a stale value would keep playing over it).
-    this.pushAudioDefaults();
+    this.pushSfxSet();
     await this.refreshBrowseMusic();
   }
 
@@ -2026,11 +2022,11 @@ export class GameController {
     }
   }
 
-  /** Pushes the bundled fallback UI sounds used on the carousel level. */
-  private pushAudioDefaults(): void {
+  /** Pushes the bundled UI sound set (every UI sound the app plays). */
+  private pushSfxSet(): void {
     const browserWindow = this.deps.window.browserWindow;
     if (browserWindow !== null && !browserWindow.isDestroyed()) {
-      browserWindow.webContents.send(IPC.audioDefaultsUpdate, this.defaultAudio);
+      browserWindow.webContents.send(IPC.audioDefaultsUpdate, this.sfxSet);
     }
   }
 

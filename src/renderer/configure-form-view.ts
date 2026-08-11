@@ -98,11 +98,7 @@ type FieldKey =
   | 'install.type'
   | 'install.runAsAdmin'
   | 'install.args'
-  | 'install.winetricks'
-  | 'sounds.play'
-  | 'sounds.navigate'
-  | 'sounds.button'
-  | 'sounds.back';
+  | 'install.winetricks';
 
 /** A dynamic string list (args / watchProcesses / heroImage / install.args): a stack of rows + Add. */
 interface DynamicList {
@@ -138,10 +134,6 @@ export class FormView {
   private readonly gridImageInput: ValueEl;
   private readonly saveOnCardInput: ValueEl;
   private readonly pcSavePathInput: ValueEl;
-  private readonly soundPlay: AudioField;
-  private readonly soundNavigate: AudioField;
-  private readonly soundButton: AudioField;
-  private readonly soundBack: AudioField;
   private readonly music: AudioField;
   private readonly launchTimeoutInput: ValueEl;
   private readonly killTimeoutInput: ValueEl;
@@ -186,10 +178,9 @@ export class FormView {
   // card already carries an id.
   private idTouched = false;
   private rest: Readonly<Record<string, unknown>> = {};
-  // Unknown keys nested inside the sounds/install/steam blocks: the form has no field for them, so they
+  // Unknown keys nested inside the install/steam blocks: the form has no field for them, so they
   // must be remembered from load() and put back in readModel() (else serialize() drops them — the blocks'
   // zod is strip-mode, so the loss would be silent). Mirrors the top-level `rest` round-trip.
-  private soundsRest: Readonly<Record<string, unknown>> = {};
   private installRest: Readonly<Record<string, unknown>> = {};
   /** The copy slot's own unknown keys — kept apart from installRest, like the two slots themselves. */
   private copyInstallRest: Readonly<Record<string, unknown>> = {};
@@ -393,19 +384,10 @@ export class FormView {
       this.fieldWithBrowse('configure.fieldPcSavePath', 'pcSavePath', this.pcSavePathInput, 'pc-save'),
     ]);
 
-    // ── Audio (Default/Custom per slot) ──────────────────────────────────────
-    this.soundPlay = this.audioField('configure.fieldSoundPlay', 'sounds.play', 'sounds', 'configure.soundBuiltinHint');
-    this.soundNavigate = this.audioField('configure.fieldSoundNavigate', 'sounds.navigate', 'sounds', 'configure.soundBuiltinHint');
-    this.soundButton = this.audioField('configure.fieldSoundButton', 'sounds.button', 'sounds', 'configure.soundBuiltinHint');
-    this.soundBack = this.audioField('configure.fieldSoundBack', 'sounds.back', 'sounds', 'configure.soundBuiltinHint');
+    // ── Audio (Default/Custom) — the card's own background music. UI sounds are NOT here: they always
+    // come from the bundled set chosen in Settings → Audio.
     this.music = this.audioField('configure.fieldBackgroundMusic', 'backgroundMusic', 'backgroundMusic', 'configure.musicNoneHint');
-    this.addSection('audio', [
-      this.soundPlay.wrapper,
-      this.soundNavigate.wrapper,
-      this.soundButton.wrapper,
-      this.soundBack.wrapper,
-      this.music.wrapper,
-    ]);
+    this.addSection('audio', [this.music.wrapper]);
 
     // ── Advanced ──────────────────────────────────────────────────────────────
     this.launchTimeoutInput = this.numberInput('launchTimeoutSec');
@@ -461,7 +443,6 @@ export class FormView {
     mixed: boolean,
   ): void {
     this.rest = rest;
-    this.soundsRest = model.sounds.rest;
     this.installRest = model.install.rest;
     this.copyInstallRest = model.copyInstall.rest;
     this.steamRest = model.steam.rest;
@@ -506,12 +487,7 @@ export class FormView {
     // steam block (corrupt = whole block).
     this.setScalar('steam', this.appidInput, model.steam.appid);
 
-    // audio blocks (sounds corrupt = whole block; backgroundMusic is its own key).
-    const soundsCorrupt = 'sounds' in this.corrupt;
-    this.soundPlay.setValue(soundsCorrupt ? '' : model.sounds.play);
-    this.soundNavigate.setValue(soundsCorrupt ? '' : model.sounds.navigate);
-    this.soundButton.setValue(soundsCorrupt ? '' : model.sounds.button);
-    this.soundBack.setValue(soundsCorrupt ? '' : model.sounds.back);
+    // audio (backgroundMusic is its own key).
     this.music.setValue('backgroundMusic' in this.corrupt ? '' : model.backgroundMusic);
 
     this.mixed = mixed;
@@ -576,7 +552,7 @@ export class FormView {
     ]) {
       list.setDisabled(disabled);
     }
-    for (const audio of [this.soundPlay, this.soundNavigate, this.soundButton, this.soundBack, this.music]) {
+    for (const audio of [this.music]) {
       audio.setDisabled(disabled);
     }
     // Keep the custom-installer rule even while enabling.
@@ -609,13 +585,6 @@ export class FormView {
       pcSavePath: getValue(this.pcSavePathInput),
       launchTimeoutSec: getValue(this.launchTimeoutInput),
       killTimeoutSec: getValue(this.killTimeoutInput),
-      sounds: {
-        play: getValue(this.soundPlay.input),
-        navigate: getValue(this.soundNavigate.input),
-        button: getValue(this.soundButton.input),
-        back: getValue(this.soundBack.input),
-        rest: this.soundsRest,
-      },
       backgroundMusic: getValue(this.music.input),
       install: {
         installer: getValue(this.installInstallerInput),
@@ -869,8 +838,8 @@ export class FormView {
   }
 
   // An audio field: a Default/Custom selector plus (in Custom) a text-input + Browse + clear. Default and
-  // Custom-empty both leave the value empty → the field is omitted from game.json (built-in sound / no
-  // music), and a hint says so. Value state IS the model (empty = default); the toggle is pure UI.
+  // Custom-empty both leave the value empty → the field is omitted from game.json (no music), and a hint
+  // says so. Value state IS the model (empty = default); the toggle is pure UI.
   private audioField(
     labelKey: MessageKey,
     errorKey: FieldKey,
@@ -880,7 +849,7 @@ export class FormView {
     const wrapper = document.createElement('div');
     wrapper.className = 'field';
 
-    // Default → the field is omitted from game.json (built-in sound / no music); Custom → a path field.
+    // Default → the field is omitted from game.json (no music); Custom → a path field.
     const modeSelect = this.dropdown([
       ['default', 'configure.audioDefault'],
       ['custom', 'configure.audioCustom'],
@@ -1342,7 +1311,6 @@ function topLevelOf(key: FieldKey): string {
   // The copy fields live in the `install` block too — editing them must clear ITS corrupt state.
   if (key === 'copySource' || key === 'copyToPc') return 'install';
   if (key.startsWith('install.')) return 'install';
-  if (key.startsWith('sounds.')) return 'sounds';
   if (key === 'steam.appid') return 'steam';
   return key;
 }
@@ -1390,10 +1358,6 @@ function fieldKeyForPath(path: string, copyToPc: boolean): FieldKey | null {
     if (path.startsWith('install.winetricks')) return 'install.winetricks';
     if (path.startsWith('install.args')) return 'install.args';
   }
-  if (path === 'sounds' || path === 'sounds.play') return 'sounds.play';
-  if (path === 'sounds.navigate') return 'sounds.navigate';
-  if (path === 'sounds.button') return 'sounds.button';
-  if (path === 'sounds.back') return 'sounds.back';
   return null;
 }
 

@@ -487,6 +487,26 @@ describe('readManifests — gridImage + hero truncation (runtime is lenient)', (
     expect(result.manifests[0]?.gridImagePath).toBeUndefined();
   });
 
+  // The card-supplied UI sounds were dropped from the product. An old card still carries the block, and
+  // it must load exactly as before: zod strips the unknown key (the schema is not strict) and nothing of
+  // it reaches the resolved manifest.
+  it('loads a card whose game.json still carries a `sounds` block, ignoring it', async () => {
+    await write({
+      schemaVersion: 1,
+      id: 'x',
+      title: 'X',
+      executable: 'g/g.exe',
+      sounds: { play: 'audio/play.wav', navigate: '../outside.wav' },
+    });
+    const result = await readManifests(cardRoot, env, resolveInstallDir);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const manifest = result.manifests[0];
+    expect(manifest?.raw.id).toBe('x');
+    expect(manifest).not.toHaveProperty('soundPaths');
+    expect(manifest?.raw).not.toHaveProperty('sounds');
+  });
+
   it('rejects a gridImage escaping the card root', async () => {
     await write({
       schemaVersion: 1,

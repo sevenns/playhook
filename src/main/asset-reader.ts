@@ -1,10 +1,10 @@
-// Reading card assets (hero images, UI sounds, background music, fallback wallpaper) into data URLs
-// for the renderer (split out of the GameController god-object). Stateless except for the
-// bundled-wallpaper cache. GameController owns delivery (setHero/setAudio push to the window); this
-// class only reads bytes off disk and encodes them.
+// Reading assets into data URLs for the renderer (split out of the GameController god-object): the
+// card's hero images and background music, the bundled UI sound set and ambience, the fallback
+// wallpaper. Stateless except for the bundled-wallpaper and sound-set caches. GameController owns
+// delivery (setHero/setCardMusic push to the window); this class only reads bytes and encodes them.
 import path from 'node:path';
 import fse from 'fs-extra';
-import { type AudioAssets, type HeroAssets, type ResolvedManifest, type SfxName } from '../shared/types';
+import { type HeroAssets, type ResolvedManifest, type SfxName, type SfxSet } from '../shared/types';
 import { log } from './logger';
 import { describe } from './util';
 
@@ -130,8 +130,6 @@ export interface AssetReaderDeps {
   readonly getCustomWallpaperName: () => Promise<string | null>;
   /** The current navigation sound set from settings (folder under audio/ui/). Read live. */
   readonly getSoundSet: () => Promise<string>;
-  /** Whether to use ONLY the global set's sounds, ignoring a card's own sounds. Read live. */
-  readonly getOnlyGlobalSounds: () => Promise<boolean>;
   /** The current default ambience track from settings (file name, or null for none). Read live. */
   readonly getAmbientTrack: () => Promise<string | null>;
   /** Whether to use ONLY the global ambience, ignoring a card's own background music. Read live. */
@@ -269,36 +267,10 @@ export class AssetReader {
     return { images };
   }
 
-  /** Reads the manifest's sounds + music into data URLs. Returns null when nothing is configured. */
-  async readAudioAssets(manifest: ResolvedManifest): Promise<AudioAssets | null> {
-    const set = await this.effectiveSoundSet();
-    const onlyGlobalSounds = await this.deps.getOnlyGlobalSounds();
-    const onlyGlobalAmbient = await this.deps.getOnlyGlobalAmbient();
-    const sounds: Record<string, string> = {};
-    for (const name of SFX_NAMES) {
-      // Per slot: the game's own sound if set, otherwise the chosen set's default. When "only global
-      // sounds" is on, the card's own sound is ignored — every slot comes from the set.
-      const gameSound = onlyGlobalSounds ? undefined : manifest.soundPaths?.[name];
-      const filePath = gameSound ?? defaultSfxPath(set, name);
-      const url = await this.readAudioDataUrl(filePath);
-      if (url !== undefined) sounds[name] = url;
-    }
-    // When "only global ambience" is on, the card's own music is SUPPRESSED here — the renderer then sees
-    // no game music and falls back to the global ambience (delivered on its own channel), no engine change.
-    const music =
-      !onlyGlobalAmbient && manifest.backgroundMusicPath !== undefined
-        ? await this.readAudioDataUrl(manifest.backgroundMusicPath)
-        : undefined;
-
-    if (Object.keys(sounds).length === 0 && music === undefined) return null;
-    return { sounds, ...(music !== undefined ? { music } : {}) };
-  }
-
   /**
-   * The manifest's background music alone, for the carousel's browse channel: flipping through cards must
-   * change the music WITHOUT rebuilding the renderer's sound elements (readAudioAssets would re-send the
-   * whole SFX set). Honours "only global ambience" exactly like readAudioAssets — a suppressed card music
-   * reads as null, and the renderer falls back to the ambience.
+   * The manifest's background music, the card's ONLY audio contribution (UI sounds always come from the
+   * bundled set — see readSfxSet). Honours "only global ambience": a suppressed card music reads as null,
+   * and the renderer falls back to the ambience.
    */
   async readMusicDataUrl(manifest: ResolvedManifest): Promise<string | null> {
     if (manifest.backgroundMusicPath === undefined) return null;
@@ -307,25 +279,24 @@ export class AssetReader {
   }
 
   /**
-   * The chosen set's default UI sounds alone (no music), for the empty "insert a card" screen — so
-   * navigating the System menu there is audible even without a game's own sounds. Same per-slot defaults
-   * readAudioAssets falls back to, minus any game/music.
+   * The chosen set's UI sounds — every sound the app plays, on every screen (the card cannot supply its
+   * own). A slot whose file is missing within the set simply stays silent.
    */
-  async readDefaultAudioAssets(): Promise<AudioAssets> {
+  async readSfxSet(): Promise<SfxSet> {
     const set = await this.effectiveSoundSet();
     // Cache keyed by the effective set: a live getSoundSet() differing from the cached key re-reads, so a
     // set change invalidates without an explicit call. Files within a set never change → same-key hits are safe.
-    if (this.defaultAudioCache?.set === set) return this.defaultAudioCache.assets;
+    if (this.sfxSetCache?.set === set) return this.sfxSetCache.assets;
     const sounds: Record<string, string> = {};
     for (const name of SFX_NAMES) {
       const url = await this.readAudioDataUrl(defaultSfxPath(set, name));
       if (url !== undefined) sounds[name] = url;
     }
-    const assets: AudioAssets = { sounds };
-    this.defaultAudioCache = { set, assets };
+    const assets: SfxSet = { sounds };
+    this.sfxSetCache = { set, assets };
     return assets;
   }
-  private defaultAudioCache: { set: string; assets: AudioAssets } | undefined;
+  private sfxSetCache: { set: string; assets: SfxSet } | undefined;
 
   /**
    * The chosen navigation sound set if it is present, else the bundled default (winhanced). A missing set

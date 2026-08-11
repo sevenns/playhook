@@ -34,7 +34,7 @@ The card can carry the game itself, an **installer** for heavy games
 
 <div align="center">
   <img src="assets/github/playhook-bloodborne-example.jpg" width="760" alt="Playhook game card — Bloodborne">
-  <p><em>The Playhook game card, running Bloodborne. Ready-made cards like this — <code>game.json</code>, hero art and sounds — live in the <a href="https://sevenns.github.io/playhook-collection/">Playhook Collection</a>, whose UI you can also try right in the browser.</em></p>
+  <p><em>The Playhook game card, running Bloodborne. Ready-made cards like this — <code>game.json</code>, hero art and music — live in the <a href="https://sevenns.github.io/playhook-collection/">Playhook Collection</a>, whose UI you can also try right in the browser.</em></p>
 </div>
 
 ---
@@ -106,7 +106,7 @@ If a launch fails, the reason appears there and you can simply retry.
 
 ### Launch history
 
-Every game inserted into this device leaves a copy of its art, music and sounds in
+Every game inserted into this device leaves a copy of its art and music in
 `%APPDATA%/playhook/library/` (`~/.config/playhook/` on Linux), so the carousel still shows the games
 you have played once the card is out — pick one and you get its screen (title, stats, background and
 music), with no Play button: there is nothing to launch without the card. The history keeps the 40 most
@@ -145,8 +145,9 @@ Both windows open from the tray, so they are **Desktop-Mode only** on the Steam 
   (see [Install mode](#install-mode-heavy-games-on-slow-media)), and, on the Steam Deck, the Game Mode
   auto-launch on card insertion.
 - **Audio** — the **navigation sound set** and the **background ambience** shipped with the app, a
-  volume slider for each, and an *only global* switch per category that makes the app's sound/ambience
-  win over whatever the card carries in `sounds` / `backgroundMusic`.
+  volume slider for each, and an *only global ambience* switch that makes the app's ambience win over
+  whatever the card carries in `backgroundMusic`. The navigation sounds always come from the chosen set:
+  a card cannot supply its own.
 - **Advanced** — *Open logs*, *Open games folder* (the install-mode directory), *Reset to defaults*.
 
 Settings live in `settings.json` next to the rest of the app state (`%APPDATA%\playhook\` on Windows,
@@ -159,7 +160,8 @@ hand:
 
 - pick the card (any removable drive — a **blank** one can be initialized from scratch);
 - a **form** with sections *Basics / Launch / Images / Saves / Audio / Advanced*, with Browse pickers
-  for the executable, the hero backgrounds (up to 3), the 600x900 carousel card image, sounds and save folders
+  for the executable, the hero backgrounds (up to 3), the 600x900 carousel card image, the background
+  music and the save folders
   (a picked PC save folder is converted back into a `%APPDATA%`-style prefix automatically, and a file
   outside the card is rejected);
 - a **JSON** tab with the raw manifest, live schema validation, error messages and a formatter — the
@@ -173,7 +175,7 @@ hand:
 ## Preparing a card: `game.json`
 
 > **Don't want to write one by hand?** The [**Playhook Collection**](https://sevenns.github.io/playhook-collection/)
-> is a growing set of ready-made, verified manifests — sounds, hero art, save paths and all. Browse it,
+> is a growing set of ready-made, verified manifests — hero art, music, save paths and all. Browse it,
 > preview a game, and grab its `game.json` + assets for your card. Source and contribution guide:
 > [github.com/sevenns/playhook-collection](https://github.com/sevenns/playhook-collection).
 
@@ -202,12 +204,6 @@ rejected**, since the id keys the PC-side storage. The Configure editor shows th
   "launchTimeoutSec": 30,                   // how long to wait for the process to appear (optional, default 30)
   "killTimeoutSec": 60,                     // how long "Force close" waits for the game to die (optional, default 60)
   "watchProcesses": ["Game-Win64-Shipping.exe"], // for launcher/wrapper games: track THESE process names, not the spawned launcher (optional)
-  "sounds": {                               // per-game UI sounds (all optional; omitted slots use the sound set from Settings)
-    "play": "audio/play.ogg",               // pressing "Play"
-    "navigate": "audio/move.ogg",           // moving focus between controls
-    "button": "audio/button.ogg",           // pressing an ordinary button (e.g. an item in the More menu)
-    "back": "audio/back.ogg"                // gamepad B closing the info popup
-  },
   "backgroundMusic": "audio/theme.ogg"      // looping music while the window is visible (volume from Settings, optional)
 }
 ```
@@ -267,13 +263,12 @@ E:\
     matching would latch onto that pre-existing process.
 - `saveOnCard` and `pcSavePath` are set **together** or **both omitted**. If both are omitted,
   the game writes its saves next to its exe on the card and syncing is fully disabled.
-- `sounds.*` and `backgroundMusic` — card-relative like `heroImage`, **must lie inside the card
-  root**. Any omitted sound slot falls back to the **navigation sound set chosen in Settings**, so every
-  game has UI sounds out of the box; `backgroundMusic` is off unless set (unless a global ambience is
-  chosen in Settings), loops and pauses while a game is running or the window is hidden. Both can be
-  overridden globally — *only global navigation sounds* / *only global ambience* in Settings make the
-  app's choice win over the card's. Use a common web-playable audio format
-  (mp3, ogg/oga, opus, wav, m4a, aac, flac, webm).
+- `backgroundMusic` — card-relative like `heroImage`, **must lie inside the card root**. It is off
+  unless set (unless a global ambience is chosen in Settings), loops, and pauses while a game is running
+  or the window is hidden; *only global ambience* in Settings makes the app's choice win over the card's.
+  Use a common web-playable audio format (mp3, ogg/oga, opus, wav, m4a, aac, flac, webm).
+  UI sounds are **not** a card setting — they always come from the navigation sound set chosen in
+  Settings (a `sounds` block in an older `game.json` is ignored, not rejected).
 - `killTimeoutSec` — how long **Force close** (More ⋯ menu) waits for the game's processes to vanish
   before reporting a failure; the wait ends as soon as they're gone (optional, default 60).
 
@@ -403,7 +398,7 @@ local Steam client** (via `steam://` URIs) — the card only needs the manifest,
 ```
 
 There are **no game files on the card** — `executable` / `install` are not used (and are rejected if
-present). `heroImage`, `sounds`, `backgroundMusic`, and `saveOnCard` / `pcSavePath` work exactly as
+present). `heroImage`, `backgroundMusic`, and `saveOnCard` / `pcSavePath` work exactly as
 for a normal game.
 
 **Rules (enforced by the schema):**

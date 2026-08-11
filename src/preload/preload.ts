@@ -9,7 +9,7 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
 import type {
   AppState,
-  AudioAssets,
+  SfxSet,
   AudioVolumes,
   BrowseInfo,
   GameLibrary,
@@ -110,13 +110,13 @@ const api: RendererApi = {
       callback(message);
     });
   },
-  onAudioUpdate(callback: (assets: AudioAssets | null) => void): void {
-    ipcRenderer.on(CHANNELS.audioUpdate, (_event: IpcRendererEvent, assets: AudioAssets | null) => {
+  onAudioUpdate(callback: (url: string | null) => void): void {
+    ipcRenderer.on(CHANNELS.audioUpdate, (_event: IpcRendererEvent, assets: string | null) => {
       callback(assets);
     });
   },
-  requestAudio(): Promise<AudioAssets | null> {
-    return ipcRenderer.invoke(CHANNELS.audioRequest) as Promise<AudioAssets | null>;
+  requestAudio(): Promise<string | null> {
+    return ipcRenderer.invoke(CHANNELS.audioRequest) as Promise<string | null>;
   },
   onAmbientUpdate(callback: (url: string | null) => void): void {
     ipcRenderer.on(CHANNELS.ambientUpdate, (_event: IpcRendererEvent, url: string | null) => {
@@ -171,13 +171,13 @@ const api: RendererApi = {
       callback(url);
     });
   },
-  onAudioDefaults(callback: (assets: AudioAssets | null) => void): void {
-    ipcRenderer.on(CHANNELS.audioDefaultsUpdate, (_event: IpcRendererEvent, assets: AudioAssets | null) => {
+  onAudioDefaults(callback: (set: SfxSet | null) => void): void {
+    ipcRenderer.on(CHANNELS.audioDefaultsUpdate, (_event: IpcRendererEvent, assets: SfxSet | null) => {
       callback(assets);
     });
   },
-  requestAudioDefaults(): Promise<AudioAssets | null> {
-    return ipcRenderer.invoke(CHANNELS.audioDefaultsRequest) as Promise<AudioAssets | null>;
+  requestAudioDefaults(): Promise<SfxSet | null> {
+    return ipcRenderer.invoke(CHANNELS.audioDefaultsRequest) as Promise<SfxSet | null>;
   },
   selectGame(id: string): void {
     ipcRenderer.send(CHANNELS.actionSelect, id);

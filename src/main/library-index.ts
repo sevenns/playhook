@@ -5,7 +5,6 @@
 // copies of `stats/<id>.json` (the authority), kept here so building the carousel doesn't read up to
 // MAX_LIBRARY_ENTRIES stats files off disk on every card insert. LibraryStore re-syncs them on init and
 // after every recorded play.
-import type { SfxName } from '../shared/types';
 
 /** One game's copied assets + the cached stats that order the carousel. Paths are FILE NAMES inside
  * `library/<id>/`, never absolute — the store owns the base directory. */
@@ -20,10 +19,9 @@ export interface LibraryEntryRecord {
    * reshuffle would hand a game another game's background colors. */
   readonly hero: readonly string[];
   readonly music?: string;
-  readonly sounds: Partial<Record<SfxName, string>>;
   readonly savedAt: string;
   /** Fingerprint of every SOURCE asset file — an unchanged card is not re-copied on every insert, while
-   * an edited image/music/sound misses it and forces a fresh copy (see LibraryStore.assetsSignature). */
+   * an edited image or music track misses it and forces a fresh copy (see LibraryStore.assetsSignature). */
   readonly sourceSig?: string;
   /** Cached from stats/<id>.json (see the module doc). */
   readonly launchCount: number;

@@ -80,7 +80,7 @@ afterEach(async () => {
 });
 
 describe('saveFromCard', () => {
-  it('copies grid/hero/music/sounds and records them in the index', async () => {
+  it('copies grid/hero/music and records them in the index', async () => {
     const library = store();
     await library.init();
     await library.saveFromCard([
@@ -88,7 +88,6 @@ describe('saveFromCard', () => {
         gridImagePath: await card('art/grid.png'),
         heroImagePaths: [await card('art/h0.jpg'), await card('art/h1.jpg')],
         backgroundMusicPath: await card('audio/theme.mp3', 'music'),
-        soundPaths: { play: await card('audio/play.wav', 'sfx') },
       }),
     ]);
 
@@ -98,7 +97,6 @@ describe('saveFromCard', () => {
       'hero-0.jpg',
       'hero-1.jpg',
       'music.mp3',
-      'sfx-play.wav',
     ]);
     const index = await readIndex();
     expect(index.entries[0]?.hero).toEqual(['hero-0.jpg', 'hero-1.jpg']);

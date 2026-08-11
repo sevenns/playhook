@@ -1,4 +1,4 @@
-// The game HISTORY store: `<userData>/library/` — copies of the assets (grid, hero, music, sounds) of
+// The game HISTORY store: `<userData>/library/` — copies of the assets (grid, hero, music) of
 // every game that has been inserted into this device, so the launcher's carousel works with NO card in.
 //
 // Layout:
@@ -6,7 +6,7 @@
 //   library/<id>/grid.<ext>     — raw copy of the card's gridImage (or its first heroImage)
 //   library/<id>/grid-thumb.*   — the downscaled card, produced LAZILY on the first grid request
 //   library/<id>/hero-<n>.<ext> — hero backgrounds, manifest order preserved
-//   library/<id>/music.<ext>, sfx-<slot>.<ext>
+//   library/<id>/music.<ext>
 //
 // Two deliberate performance rules (they are the reason the copy is safe to do on card insert):
 //  • copying is a byte copy under a size cap and does NOT decode — `nativeImage` is synchronous and would
@@ -21,7 +21,7 @@ import path from 'node:path';
 import fse from 'fs-extra';
 import { nativeImage } from 'electron';
 import { z } from 'zod';
-import type { HeroAssets, ResolvedManifest, SfxName, Stats } from '../shared/types';
+import type { HeroAssets, ResolvedManifest, Stats } from '../shared/types';
 import { readAudioDataUrl, readImageDataUrl } from './asset-reader';
 import { readJsonValidated, writeJsonAtomic } from './json-store';
 import {
@@ -45,7 +45,6 @@ const JPEG_QUALITY = 85;
  *  over it is re-encoded down to fit — see copyImageCapped. */
 const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
 const MAX_MUSIC_BYTES = 8 * 1024 * 1024;
-const MAX_SFX_BYTES = 2 * 1024 * 1024;
 
 /** One attempt at squeezing an oversized image under the cap: scale to `height`, encode at `quality`.
  *  Tried in order until one fits, so a picture only loses as much as it has to. */
@@ -67,7 +66,6 @@ const GRID_COMPRESS_STEPS: readonly CompressStep[] = [
   { height: 600, quality: 70 },
 ];
 
-const SFX_NAMES: readonly SfxName[] = ['play', 'navigate', 'button', 'back'];
 
 const entrySchema = z.object({
   id: z.string().min(1),
@@ -76,7 +74,6 @@ const entrySchema = z.object({
   gridThumb: z.string().optional(),
   hero: z.array(z.string()).default([]),
   music: z.string().optional(),
-  sounds: z.record(z.string(), z.string()).default({}),
   savedAt: z.string(),
   sourceSig: z.string().optional(),
   launchCount: z.number().int().nonnegative().default(0),
@@ -226,21 +223,12 @@ export class LibraryStore {
         ? undefined
         : await copyCapped(manifest.backgroundMusicPath, gameDir, 'music', MAX_MUSIC_BYTES);
 
-    const sounds: Partial<Record<SfxName, string>> = {};
-    for (const slot of SFX_NAMES) {
-      const source = manifest.soundPaths?.[slot];
-      if (source === undefined) continue;
-      const name = await copyCapped(source, gameDir, `sfx-${slot}`, MAX_SFX_BYTES);
-      if (name !== undefined) sounds[slot] = name;
-    }
-
     const record: LibraryEntryRecord = {
       id,
       title: manifest.raw.title,
       ...(grid !== undefined ? { grid } : {}),
       hero,
       ...(music !== undefined ? { music } : {}),
-      sounds,
       savedAt: new Date().toISOString(),
       ...(sourceSig !== undefined ? { sourceSig } : {}),
       launchCount: stats.launchCount,
@@ -380,17 +368,12 @@ export class LibraryStore {
 }
 
 /**
- * Narrows a validated (mutable, loosely-keyed) index entry to the domain record: the on-disk `sounds` map
- * is `Record<string, string>` (an unknown slot name written by an older/newer build must not fail
- * validation), so unknown slots are dropped here rather than trusted into `SfxName`.
+ * Narrows a validated (mutable) index entry to the domain record. An entry written by an older build may
+ * still carry fields this one no longer knows (the `sounds` map of the card-supplied UI sounds, dropped
+ * from the product) — the schema strips them, and the next write persists the file without them.
  */
 function toRecord(stored: z.infer<typeof entrySchema>): LibraryEntryRecord {
-  const sounds: Partial<Record<SfxName, string>> = {};
-  for (const slot of SFX_NAMES) {
-    const name = stored.sounds[slot];
-    if (name !== undefined) sounds[slot] = name;
-  }
-  return { ...stored, hero: [...stored.hero], sounds };
+  return { ...stored, hero: [...stored.hero] };
 }
 
 /**
@@ -411,7 +394,6 @@ async function assetsSignature(manifest: ResolvedManifest): Promise<string | und
     manifest.gridImagePath,
     ...(manifest.heroImagePaths ?? []),
     manifest.backgroundMusicPath,
-    ...SFX_NAMES.map((slot) => manifest.soundPaths?.[slot]),
   ].filter((source): source is string => source !== undefined);
   if (sources.length === 0) return undefined;
   const parts: string[] = [];

@@ -16,7 +16,6 @@ function entry(id: string, overrides: Partial<LibraryEntryRecord> = {}): Library
     id,
     title: id.toUpperCase(),
     hero: [],
-    sounds: {},
     savedAt: '2026-01-01T00:00:00.000Z',
     launchCount: 1,
     lastPlayedAt: '2026-01-01T00:00:00.000Z',

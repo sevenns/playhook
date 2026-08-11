@@ -101,9 +101,7 @@ const carousel = createCarousel({
     requestedBrowseId = id;
     window.api.browseGame(id);
   },
-  onScreenChange: (screen) => {
-    // The carousel clicks with the bundled fallback sounds; a game's own sounds belong to its screen.
-    audio.setSfxScope(screen === 'carousel' ? 'fallback' : 'game');
+  onScreenChange: () => {
     controls.refresh();
     render(currentState);
   },
@@ -447,13 +445,13 @@ window.api.onWallpaperUpdate((url) => {
   if (gameOf(currentState) === undefined) hero.applyEmptyScreen();
 });
 
-// Audio assets are delivered on their own channel (not in AppState); load them and keep music in sync.
-window.api.onAudioUpdate((assets) => {
-  audio.setAssets(assets);
+// The card's music is delivered on its own channel (not in AppState); load it and keep music in sync.
+window.api.onAudioUpdate((url) => {
+  audio.setCardMusic(url);
   syncMusic();
 });
-void window.api.requestAudio().then((assets) => {
-  audio.setAssets(assets);
+void window.api.requestAudio().then((url) => {
+  audio.setCardMusic(url);
   syncMusic();
 });
 
@@ -470,9 +468,9 @@ void window.api.requestAmbient().then((url) => {
   syncMusic();
 });
 
-// The bundled fallback UI sounds for the carousel level (a game's own sounds stay on its own screen).
-window.api.onAudioDefaults((assets) => audio.setFallbackSounds(assets));
-void window.api.requestAudioDefaults().then((assets) => audio.setFallbackSounds(assets));
+// The bundled UI sound set — every sound the app plays, on every screen (chosen in Settings → Audio).
+window.api.onAudioDefaults((set) => audio.setSounds(set));
+void window.api.requestAudioDefaults().then((set) => audio.setSounds(set));
 
 // One-shot UI sounds pushed from main (main has no <audio> — the renderer owns playback). Used for the
 // "play" sound when an install/copy/Steam download completes, where the trigger lives in main.

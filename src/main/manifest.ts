@@ -15,7 +15,6 @@ import {
   type ManifestValidationIssue,
   type ConfigValidationResult,
   type ResolvedManifest,
-  type SfxName,
 } from '../shared/types';
 import { translateIssueMessage, type Translator } from '../shared/i18n/index';
 import { log } from './logger';
@@ -120,14 +119,6 @@ const manifestSchema = z
     // Max seconds a force-close waits for the game's processes to vanish before reporting a failure (the
     // wait ends early once they're gone). `.default(60)` so an older/partial file stays valid.
     killTimeoutSec: z.number().int().positive().default(60),
-    sounds: z
-      .object({
-        play: z.string().min(1).optional(),
-        navigate: z.string().min(1).optional(),
-        button: z.string().min(1).optional(),
-        back: z.string().min(1).optional(),
-      })
-      .optional(),
     backgroundMusic: z.string().min(1).optional(),
     // Linux-only (Р7b): extra winetricks verbs/settings provisioned into the game's Wine prefix BEFORE the
     // game launches, on top of the app's baseline set — a runtime a game needs on a bare Proton prefix
@@ -188,9 +179,6 @@ const manifestSchema = z
       });
     }
   });
-
-/** The sound slots resolved inside the card root (order is stable for iteration). */
-const SFX_NAMES: readonly SfxName[] = ['play', 'navigate', 'button', 'back'];
 
 // MAX_HERO_IMAGES (the card-format cap on hero backgrounds) lives in shared/types.ts: the Configure form
 // caps its picker by the same number, and the renderer cannot import this module (fs/zod). Enforced here
@@ -557,7 +545,7 @@ async function resolveOne(
   if (raw.steam !== undefined) {
     // Steam mode: there is no card executable to resolve. executablePath/cwd are placeholders ('')
     // that are NEVER read — every consumer branches on `steam` first (see ResolvedManifest). The
-    // card-relative assets (heroImage/sounds/music/saveOnCard) are resolved below as usual.
+    // card-relative assets (heroImage/music/saveOnCard) are resolved below as usual.
     executablePath = '';
     cwd = '';
     steamResolved = { appid: raw.steam.appid };
@@ -660,21 +648,6 @@ async function resolveOne(
     pcSavePath = raw.pcSavePath;
   }
 
-  let soundPaths: Record<string, string> | undefined;
-  if (raw.sounds !== undefined) {
-    const resolvedSounds: Record<string, string> = {};
-    for (const name of SFX_NAMES) {
-      const rel = raw.sounds[name];
-      if (rel === undefined) continue;
-      const resolved = resolveInside(root, rel);
-      if (resolved === null) {
-        return { ok: false, message: t('manifest.soundEscapes', { name, path: rel }) };
-      }
-      resolvedSounds[name] = resolved;
-    }
-    if (Object.keys(resolvedSounds).length > 0) soundPaths = resolvedSounds;
-  }
-
   let backgroundMusicPath: string | undefined;
   if (raw.backgroundMusic !== undefined) {
     const resolved = resolveInside(root, raw.backgroundMusic);
@@ -705,7 +678,6 @@ async function resolveOne(
     ...(gridImagePath !== undefined ? { gridImagePath } : {}),
     ...(saveOnCardPath !== undefined ? { saveOnCardPath } : {}),
     ...(pcSavePath !== undefined ? { pcSavePath } : {}),
-    ...(soundPaths !== undefined ? { soundPaths } : {}),
     ...(backgroundMusicPath !== undefined ? { backgroundMusicPath } : {}),
     ...(installResolved !== undefined ? { install: installResolved } : {}),
     ...(steamResolved !== undefined ? { steam: steamResolved } : {}),
@@ -809,12 +781,6 @@ function pushGameSemanticIssues(
     pushIfEscapes(issues, field('saveOnCard'), raw.saveOnCard, t, 'saveOnCard');
   if (raw.backgroundMusic !== undefined) {
     pushIfEscapes(issues, field('backgroundMusic'), raw.backgroundMusic, t, 'backgroundMusic');
-  }
-  if (raw.sounds !== undefined) {
-    for (const name of SFX_NAMES) {
-      const rel = raw.sounds[name];
-      if (rel !== undefined) pushIfEscapes(issues, field(`sounds.${name}`), rel, t, `sound "${name}"`);
-    }
   }
   if (raw.pcSavePath !== undefined) {
     const message = validatePcSavePathStatic(raw.pcSavePath, t);

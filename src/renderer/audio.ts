@@ -1,11 +1,12 @@
 // UI sound effects + looping background music/ambience for the launcher.
-// SFX and the card's music arrive from main as data URLs (read from the card's game.json). A DEFAULT
-// AMBIENCE track (app-wide, chosen in settings) arrives on its own channel and plays only while the card
-// has no music of its own — a game's music always wins. The engine treats the effective source as
+// The UI sounds are ONE app-wide set (the bundle chosen in Settings → Audio) — a card cannot supply its
+// own. The card's music arrives from main as a data URL, and a DEFAULT AMBIENCE track (app-wide, chosen
+// in settings) arrives on its own channel and plays only while the card has no music of its own — a
+// game's music always wins. The engine treats the effective source as
 // `gameMusic ?? ambient` and CROSSFADES between sources (so inserting/removing a card, or switching the
 // ambience, glides instead of cutting). Music/ambience share one volume; UI sounds have their own.
 // Playback is gated by app.ts (visible && !running) via setMusicPlaying.
-import type { AudioAssets, SfxName } from '../shared/types';
+import type { SfxName, SfxSet } from '../shared/types';
 
 // Fallback volumes until the persisted ones arrive from main (music historically played at 0.5).
 const DEFAULT_MUSIC_VOLUME = 0.5;
@@ -17,8 +18,8 @@ const FADE_MS = 800;
 const FADE_EPSILON = 0.001;
 
 export interface AudioController {
-  /** Loads a new card's audio (sfx + its own music), or clears it when null. */
-  setAssets(assets: AudioAssets | null): void;
+  /** Sets the inserted card's own background music (data URL), or clears it when null. */
+  setCardMusic(url: string | null): void;
   /**
    * Music of the game currently ON SCREEN (the carousel's browse channel), which wins over the card's own
    * music: with the card pulled you are looking at a history game and must hear ITS theme. null falls back
@@ -28,13 +29,8 @@ export interface AudioController {
   setBrowseMusic(url: string | null): void;
   /** Sets the app-wide default ambience (data URL), or clears it when null. */
   setAmbient(url: string | null): void;
-  /**
-   * The bundled FALLBACK UI sounds, used while the carousel is on screen: a game's own click/back sounds
-   * belong to its own screen, so flipping through other games must not play them.
-   */
-  setFallbackSounds(assets: AudioAssets | null): void;
-  /** Which sound set play() uses: the bundled fallback (carousel) or the current game's (detail). */
-  setSfxScope(scope: SfxScope): void;
+  /** The bundled UI sound set — every sound the app plays, on every screen. */
+  setSounds(set: SfxSet | null): void;
   /** Plays a one-shot UI sound; a no-op when that slot isn't configured. */
   play(name: SfxName): void;
   /** Starts/stops the background music+ambience to match the desired playing state. */
@@ -45,12 +41,6 @@ export interface AudioController {
   setSfxVolume(volume: number): void;
 }
 
-/**
- * Which UI sound set is in effect. Deliberately not "which screen": the audio engine knows nothing about
- * screens — the renderer flips the scope when the level changes.
- */
-export type SfxScope = 'game' | 'fallback';
-
 /** A live music/ambience element paired with the source URL it holds. */
 interface Player {
   readonly el: HTMLAudioElement;
@@ -59,11 +49,9 @@ interface Player {
 
 export function createAudioController(): AudioController {
   const sfx = new Map<SfxName, HTMLAudioElement>();
-  const fallbackSfx = new Map<SfxName, HTMLAudioElement>();
-  let sfxScope: SfxScope = 'game';
 
   /** Builds the <audio> elements for one sound set into `target` (cleared first). */
-  const loadSounds = (target: Map<SfxName, HTMLAudioElement>, assets: AudioAssets | null): void => {
+  const loadSounds = (target: Map<SfxName, HTMLAudioElement>, assets: SfxSet | null): void => {
     target.clear();
     if (assets === null) return;
     for (const name of Object.keys(assets.sounds) as SfxName[]) {
@@ -201,11 +189,9 @@ export function createAudioController(): AudioController {
   };
 
   return {
-    setAssets(assets: AudioAssets | null): void {
-      loadSounds(sfx, assets);
-      const music = assets?.music ?? null;
-      if (music === gameMusic) return;
-      gameMusic = music;
+    setCardMusic(url: string | null): void {
+      if (url === gameMusic) return;
+      gameMusic = url;
       applyEffective();
     },
 
@@ -221,18 +207,12 @@ export function createAudioController(): AudioController {
       applyEffective();
     },
 
-    setFallbackSounds(assets: AudioAssets | null): void {
-      loadSounds(fallbackSfx, assets);
-    },
-
-    setSfxScope(scope: SfxScope): void {
-      sfxScope = scope;
+    setSounds(set: SfxSet | null): void {
+      loadSounds(sfx, set);
     },
 
     play(name: SfxName): void {
-      // The fallback set is only as good as what main sent; fall back to the game's own sound rather than
-      // going silent if a slot is missing there.
-      const el = (sfxScope === 'fallback' ? (fallbackSfx.get(name) ?? sfx.get(name)) : sfx.get(name));
+      const el = sfx.get(name);
       if (el === undefined) return;
       // Clone so rapid retriggers (fast navigation) overlap instead of cutting each other off.
       const node = el.cloneNode() as HTMLAudioElement;

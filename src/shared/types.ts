@@ -182,8 +182,6 @@ export interface GameManifest {
    * `install`/`executable` and requires `watchProcesses` (enforced by the schema). See SteamManifest.
    */
   readonly steam?: SteamManifest;
-  /** Optional per-game UI sound effects (card-relative paths). Missing slots are silent. */
-  readonly sounds?: SoundManifest;
   /** Optional looping background music (card-relative path), played while the window is visible. */
   readonly backgroundMusic?: string;
   /**
@@ -200,20 +198,9 @@ export interface GameManifest {
   readonly umuGameId?: string;
 }
 
-/** UI sound-effect slots. Each maps to a file in game.json (all optional). */
+/** UI sound-effect slots. Each maps to a file in the bundled set chosen in Settings → Audio; a card
+ *  cannot supply its own (the `sounds` block in an old game.json is ignored, not rejected). */
 export type SfxName = 'play' | 'navigate' | 'button' | 'back';
-
-/** The `sounds` block in game.json — a file per UI sound slot. */
-export interface SoundManifest {
-  /** Pressing the "Play" button. */
-  readonly play?: string;
-  /** Moving focus between UI controls. */
-  readonly navigate?: string;
-  /** Pressing an ordinary button (e.g. "Info"). */
-  readonly button?: string;
-  /** Hiding something — gamepad B closing the info popup. */
-  readonly back?: string;
-}
 
 /**
  * Manifest with already-resolved and security-checked paths.
@@ -248,8 +235,6 @@ export interface ResolvedManifest {
    * launch — resolving it eagerly (and rejecting the card when absent) would break install/steam modes.
    */
   readonly pcSavePath?: string;
-  /** Resolved, card-relative sound-effect file paths (any subset present). */
-  readonly soundPaths?: Partial<Record<SfxName, string>>;
   /** Resolved background-music file path. */
   readonly backgroundMusicPath?: string;
   /** Resolved install descriptor (install mode only). */
@@ -273,20 +258,19 @@ export interface LaunchTarget {
 }
 
 /**
- * Per-game audio for the renderer, delivered as data URLs.
- * Kept OUT of GameInfo/AppState on purpose: AppState is re-sent on every transition, and these
- * payloads (especially music) can be large — so audio is delivered once per card on its own channel.
+ * The bundled UI sound set for the renderer, delivered as data URLs. One set for the whole app — the
+ * card has no say in it — rebuilt and re-sent whenever Settings → Audio changes the chosen set.
+ * Kept OUT of GameInfo/AppState on purpose: AppState is re-sent on every transition and these payloads
+ * are large, so they travel once, on their own channel.
  */
-export interface AudioAssets {
+export interface SfxSet {
   /** UI sound effects (data URLs); any subset of slots present. */
   readonly sounds: Partial<Record<SfxName, string>>;
-  /** Looping background music (data URL), if the manifest provides it. */
-  readonly music?: string;
 }
 
 /**
  * Per-game hero background image(s) for the renderer, delivered as data URLs.
- * Kept OUT of GameInfo/AppState on purpose (like AudioAssets): AppState is re-sent on every
+ * Kept OUT of GameInfo/AppState on purpose (like SfxSet): AppState is re-sent on every
  * transition, and an array of encoded images is a large payload — so hero images are delivered
  * once per card on their own channel and the renderer rotates through them locally.
  */
@@ -531,17 +515,12 @@ export interface AppSettings {
    */
   readonly steamAutoLaunch: boolean;
   /**
-   * Name of the UI sound set used for navigation (the folder under `audio/ui/<set>/`), applied per slot
-   * when a game.json omits a sound. A plain string (not an enum): sets are enumerated dynamically from
-   * what ships in the bundle, and a missing/incomplete folder falls back at read time (see AssetReader).
+   * Name of the UI sound set used for navigation (the folder under `audio/ui/<set>/`) — the only source
+   * of UI sounds there is. A plain string (not an enum): sets are enumerated dynamically from what ships
+   * in the bundle, and a missing/incomplete folder falls back at read time (see AssetReader).
    * Default 'winhanced'. `.default('winhanced')` migrates an older settings.json without the field.
    */
   readonly soundSet: string;
-  /**
-   * When true, every game uses the global navigation sound set — a card's own `sounds` are ignored. When
-   * false (default), a card's own sound overrides the set per slot. Default false.
-   */
-  readonly onlyGlobalSounds: boolean;
   /**
    * Default background ambience track (a file name under `audio/ambience/`, extension included), played
    * only when the current card has no music of its own — the game's music always wins. `null` = no
@@ -616,9 +595,10 @@ export const IPC = {
   actionKill: 'action:kill',
   /** main → renderer: a transient error to surface in the error popup (e.g. a failed launch). */
   errorShow: 'error:show',
-  /** main → renderer: audio assets for the current game (or null when no card). */
+  /** main → renderer: the inserted card's background music as a data URL (or null when no card / muted
+   * by the "only global ambience" setting). */
   audioUpdate: 'audio:update',
-  /** renderer → main: request the current audio assets (on window startup). */
+  /** renderer → main: request the current card's music (on window startup). */
   audioRequest: 'audio:request',
   /** main → game-renderer: the default ambience track as a data URL (or null when none / on card music). */
   ambientUpdate: 'ambient:update',
@@ -651,10 +631,10 @@ export const IPC = {
   /** main → renderer: background music of the browsed game (or null). Music only: the SFX set is left
    * alone, so flipping through the carousel never rebuilds the sound elements. */
   browseMusic: 'browse:music',
-  /** main → renderer: the bundled fallback UI sounds, played on the carousel level (a game's own sounds
-   * belong to its detail screen). */
+  /** main → renderer: the bundled UI sound set chosen in Settings → Audio — the only source of UI
+   * sounds there is. Re-sent when the setting changes. */
   audioDefaultsUpdate: 'audio:defaults-update',
-  /** renderer → main (invoke): the fallback UI sound set (seed on window startup). */
+  /** renderer → main (invoke): that same set (seed on window startup). */
   audioDefaultsRequest: 'audio:defaults-request',
   /** renderer → main: pick a game by id (entering its detail screen). Switches to it on the ready screen. */
   actionSelect: 'action:select',
@@ -722,8 +702,6 @@ export const IPC = {
   moveSoundRequest: 'app:move-sound',
   /** settings-renderer → main: change the navigation sound set (payload set name string). */
   settingsSetSoundSet: 'settings:set-sound-set',
-  /** settings-renderer → main: toggle using only the global navigation sounds (payload boolean). */
-  settingsSetOnlyGlobalSounds: 'settings:set-only-global-sounds',
   /** settings-renderer → main: change the default ambience track (payload file name string or null). */
   settingsSetAmbientTrack: 'settings:set-ambient-track',
   /** settings-renderer → main: toggle using only the global ambience (payload boolean). */
@@ -892,8 +870,9 @@ export interface RendererApi {
   /** Force-close the running game (after the in-launcher confirm). */
   requestKill(): void;
   onError(callback: (message: string) => void): void;
-  onAudioUpdate(callback: (assets: AudioAssets | null) => void): void;
-  requestAudio(): Promise<AudioAssets | null>;
+  /** The inserted card's background music (data URL), or null when there is none. */
+  onAudioUpdate(callback: (url: string | null) => void): void;
+  requestAudio(): Promise<string | null>;
   /** Live default-ambience updates (data URL or null), pushed when the track changes in settings. */
   onAmbientUpdate(callback: (url: string | null) => void): void;
   /** The current default-ambience data URL (on window startup); null when no ambience is set. */
@@ -918,10 +897,10 @@ export interface RendererApi {
   onBrowseHero(callback: (assets: HeroAssets | null) => void): void;
   /** Background music of the browsed game (music only — the SFX set is untouched). */
   onBrowseMusic(callback: (url: string | null) => void): void;
-  /** Live updates of the fallback UI sounds used on the carousel level. */
-  onAudioDefaults(callback: (assets: AudioAssets | null) => void): void;
-  /** The fallback UI sounds (on window startup). */
-  requestAudioDefaults(): Promise<AudioAssets | null>;
+  /** Live updates of the bundled UI sound set (the chosen set changed in Settings). */
+  onAudioDefaults(callback: (set: SfxSet | null) => void): void;
+  /** The bundled UI sound set (on window startup). */
+  requestAudioDefaults(): Promise<SfxSet | null>;
   /** Pick a game by id (entering its detail screen) — switches to it on the ready screen. */
   selectGame(id: string): void;
   requestWallpaper(): Promise<string | null>;
@@ -951,8 +930,6 @@ export interface SettingsApi {
   getAudioOptions(): Promise<AudioOptions>;
   /** Change the navigation sound set (applied live to the game window by main). */
   setSoundSet(set: string): void;
-  /** Toggle using only the global navigation sounds (a card's own sounds ignored when on). */
-  setOnlyGlobalSounds(on: boolean): void;
   /** Change the default ambience track (null = no ambience; applied live to the game window by main). */
   setAmbientTrack(track: string | null): void;
   /** Toggle using only the global ambience (a card's own music ignored when on). */

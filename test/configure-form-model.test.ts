@@ -287,11 +287,14 @@ describe('unknown keys survive the round-trip (rest)', () => {
     expect(JSON.parse(text)).toHaveProperty('future', 42);
   });
 
-  it('preserves an unknown key NESTED inside sounds', () => {
+  // `sounds` is no longer a manifest key: the form has no field for it, so it rides the top-level `rest`
+  // and is written back verbatim. That is what keeps an old card's block from being silently wiped by a
+  // re-save from Configure.
+  it('preserves a whole `sounds` block as an unknown top-level key', () => {
     const src =
       '{"schemaVersion":1,"id":"g","title":"G","executable":"g.exe","sounds":{"play":"p.wav","custom":7}}';
     const parsed = JSON.parse(serialize(src)) as { sounds?: Record<string, unknown> };
-    expect(parsed.sounds).toMatchObject({ play: 'p.wav', custom: 7 });
+    expect(parsed.sounds).toEqual({ play: 'p.wav', custom: 7 });
   });
 });
 
@@ -304,13 +307,6 @@ describe('corrupt known keys are kept verbatim until edited', () => {
     const text = formModelToText(model, rest, corrupt);
     expect(JSON.parse(text)).toHaveProperty('args', 'oops'); // verbatim
     expect(validateManifestText(text, t).ok).toBe(false); // error preserved → Save blocked
-  });
-
-  it('marks the whole sounds block corrupt when a slot has the wrong type', () => {
-    const src =
-      '{"schemaVersion":1,"id":"g","title":"G","executable":"g.exe","sounds":{"play":5}}';
-    const { corrupt } = parseOk(src);
-    expect(corrupt).toHaveProperty('sounds');
   });
 });
 
