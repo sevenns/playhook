@@ -463,12 +463,12 @@ export class GameController {
     ipcMain.handle(IPC.stateRequest, (): AppState => state.get());
     // Static for the process lifetime — seeds the renderer's Game Mode UI (e.g. "Close Playhook").
     ipcMain.handle(IPC.gameModeRequest, (): boolean => this.deps.isGamescope);
-    ipcMain.handle(IPC.audioRequest, (): string | null => this.currentCardMusic);
+    ipcMain.handle(IPC.cardMusicRequest, (): string | null => this.currentCardMusic);
     ipcMain.handle(IPC.ambientRequest, (): string | null => this.currentAmbient);
     ipcMain.handle(IPC.heroRequest, (): HeroAssets | null => this.currentHero);
     ipcMain.handle(IPC.libraryRequest, (): GameLibrary | null => this.currentLibrary);
     ipcMain.handle(IPC.browseRequest, (): BrowseInfo | null => this.currentBrowse);
-    ipcMain.handle(IPC.audioDefaultsRequest, (): SfxSet | null => this.sfxSet);
+    ipcMain.handle(IPC.sfxSetRequest, (): SfxSet | null => this.sfxSet);
     // The carousel asks for one card's artwork at a time, only for what is on screen, and caches it by id
     // — that is what keeps the list channel light enough to re-push on every change (Р5).
     ipcMain.handle(IPC.libraryGridRequest, (_event, id: unknown): Promise<string | null> => {
@@ -1865,7 +1865,7 @@ export class GameController {
     this.currentCardMusic = url;
     const browserWindow = this.deps.window.browserWindow;
     if (browserWindow !== null && !browserWindow.isDestroyed()) {
-      browserWindow.webContents.send(IPC.audioUpdate, url);
+      browserWindow.webContents.send(IPC.cardMusicUpdate, url);
     }
   }
 
@@ -2026,7 +2026,7 @@ export class GameController {
   private pushSfxSet(): void {
     const browserWindow = this.deps.window.browserWindow;
     if (browserWindow !== null && !browserWindow.isDestroyed()) {
-      browserWindow.webContents.send(IPC.audioDefaultsUpdate, this.sfxSet);
+      browserWindow.webContents.send(IPC.sfxSetUpdate, this.sfxSet);
     }
   }
 

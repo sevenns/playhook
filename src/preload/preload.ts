@@ -34,8 +34,8 @@ const CHANNELS = {
   actionSleep: 'action:sleep',
   actionKill: 'action:kill',
   errorShow: 'error:show',
-  audioUpdate: 'audio:update',
-  audioRequest: 'audio:request',
+  cardMusicUpdate: 'card-music:update',
+  cardMusicRequest: 'card-music:request',
   ambientUpdate: 'ambient:update',
   ambientRequest: 'ambient:request',
   sfxPlay: 'sfx:play',
@@ -50,8 +50,8 @@ const CHANNELS = {
   browseRequest: 'browse:request',
   browseHero: 'browse:hero',
   browseMusic: 'browse:music',
-  audioDefaultsUpdate: 'audio:defaults-update',
-  audioDefaultsRequest: 'audio:defaults-request',
+  sfxSetUpdate: 'sfx:set-update',
+  sfxSetRequest: 'sfx:set-request',
   actionSelect: 'action:select',
   wallpaperRequest: 'wallpaper:request',
   wallpaperUpdate: 'wallpaper:update',
@@ -110,13 +110,13 @@ const api: RendererApi = {
       callback(message);
     });
   },
-  onAudioUpdate(callback: (url: string | null) => void): void {
-    ipcRenderer.on(CHANNELS.audioUpdate, (_event: IpcRendererEvent, assets: string | null) => {
+  onCardMusic(callback: (url: string | null) => void): void {
+    ipcRenderer.on(CHANNELS.cardMusicUpdate, (_event: IpcRendererEvent, assets: string | null) => {
       callback(assets);
     });
   },
-  requestAudio(): Promise<string | null> {
-    return ipcRenderer.invoke(CHANNELS.audioRequest) as Promise<string | null>;
+  requestCardMusic(): Promise<string | null> {
+    return ipcRenderer.invoke(CHANNELS.cardMusicRequest) as Promise<string | null>;
   },
   onAmbientUpdate(callback: (url: string | null) => void): void {
     ipcRenderer.on(CHANNELS.ambientUpdate, (_event: IpcRendererEvent, url: string | null) => {
@@ -171,13 +171,13 @@ const api: RendererApi = {
       callback(url);
     });
   },
-  onAudioDefaults(callback: (set: SfxSet | null) => void): void {
-    ipcRenderer.on(CHANNELS.audioDefaultsUpdate, (_event: IpcRendererEvent, assets: SfxSet | null) => {
+  onSfxSet(callback: (set: SfxSet | null) => void): void {
+    ipcRenderer.on(CHANNELS.sfxSetUpdate, (_event: IpcRendererEvent, assets: SfxSet | null) => {
       callback(assets);
     });
   },
-  requestAudioDefaults(): Promise<SfxSet | null> {
-    return ipcRenderer.invoke(CHANNELS.audioDefaultsRequest) as Promise<SfxSet | null>;
+  requestSfxSet(): Promise<SfxSet | null> {
+    return ipcRenderer.invoke(CHANNELS.sfxSetRequest) as Promise<SfxSet | null>;
   },
   selectGame(id: string): void {
     ipcRenderer.send(CHANNELS.actionSelect, id);

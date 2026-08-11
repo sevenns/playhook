@@ -597,9 +597,9 @@ export const IPC = {
   errorShow: 'error:show',
   /** main → renderer: the inserted card's background music as a data URL (or null when no card / muted
    * by the "only global ambience" setting). */
-  audioUpdate: 'audio:update',
+  cardMusicUpdate: 'card-music:update',
   /** renderer → main: request the current card's music (on window startup). */
-  audioRequest: 'audio:request',
+  cardMusicRequest: 'card-music:request',
   /** main → game-renderer: the default ambience track as a data URL (or null when none / on card music). */
   ambientUpdate: 'ambient:update',
   /** game-renderer → main (invoke): request the current ambience data URL (on window startup). */
@@ -633,9 +633,9 @@ export const IPC = {
   browseMusic: 'browse:music',
   /** main → renderer: the bundled UI sound set chosen in Settings → Audio — the only source of UI
    * sounds there is. Re-sent when the setting changes. */
-  audioDefaultsUpdate: 'audio:defaults-update',
+  sfxSetUpdate: 'sfx:set-update',
   /** renderer → main (invoke): that same set (seed on window startup). */
-  audioDefaultsRequest: 'audio:defaults-request',
+  sfxSetRequest: 'sfx:set-request',
   /** renderer → main: pick a game by id (entering its detail screen). Switches to it on the ready screen. */
   actionSelect: 'action:select',
   /** renderer → main: request the fallback wallpaper data URL (for the idle / empty screen). */
@@ -871,8 +871,8 @@ export interface RendererApi {
   requestKill(): void;
   onError(callback: (message: string) => void): void;
   /** The inserted card's background music (data URL), or null when there is none. */
-  onAudioUpdate(callback: (url: string | null) => void): void;
-  requestAudio(): Promise<string | null>;
+  onCardMusic(callback: (url: string | null) => void): void;
+  requestCardMusic(): Promise<string | null>;
   /** Live default-ambience updates (data URL or null), pushed when the track changes in settings. */
   onAmbientUpdate(callback: (url: string | null) => void): void;
   /** The current default-ambience data URL (on window startup); null when no ambience is set. */
@@ -898,9 +898,9 @@ export interface RendererApi {
   /** Background music of the browsed game (music only — the SFX set is untouched). */
   onBrowseMusic(callback: (url: string | null) => void): void;
   /** Live updates of the bundled UI sound set (the chosen set changed in Settings). */
-  onAudioDefaults(callback: (set: SfxSet | null) => void): void;
+  onSfxSet(callback: (set: SfxSet | null) => void): void;
   /** The bundled UI sound set (on window startup). */
-  requestAudioDefaults(): Promise<SfxSet | null>;
+  requestSfxSet(): Promise<SfxSet | null>;
   /** Pick a game by id (entering its detail screen) — switches to it on the ready screen. */
   selectGame(id: string): void;
   requestWallpaper(): Promise<string | null>;

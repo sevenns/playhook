@@ -446,11 +446,11 @@ window.api.onWallpaperUpdate((url) => {
 });
 
 // The card's music is delivered on its own channel (not in AppState); load it and keep music in sync.
-window.api.onAudioUpdate((url) => {
+window.api.onCardMusic((url) => {
   audio.setCardMusic(url);
   syncMusic();
 });
-void window.api.requestAudio().then((url) => {
+void window.api.requestCardMusic().then((url) => {
   audio.setCardMusic(url);
   syncMusic();
 });
@@ -469,8 +469,8 @@ void window.api.requestAmbient().then((url) => {
 });
 
 // The bundled UI sound set — every sound the app plays, on every screen (chosen in Settings → Audio).
-window.api.onAudioDefaults((set) => audio.setSounds(set));
-void window.api.requestAudioDefaults().then((set) => audio.setSounds(set));
+window.api.onSfxSet((set) => audio.setSounds(set));
+void window.api.requestSfxSet().then((set) => audio.setSounds(set));
 
 // One-shot UI sounds pushed from main (main has no <audio> — the renderer owns playback). Used for the
 // "play" sound when an install/copy/Steam download completes, where the trigger lives in main.
