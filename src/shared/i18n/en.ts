@@ -74,8 +74,7 @@ export const en = {
   'launcher.menu.quit': 'Close Playhook',
   // Force-close the running game (Details menu item, visible only while a game is running).
   'launcher.menu.forceClose': 'Force close',
-  // Opens the "Select game" list (Details menu item, visible only for a multi-game card on the ready screen).
-  'launcher.menu.selectGame': 'Select game',
+  'launcher.menu.library': 'Library',
   // Confirmation popup copy (controls.ts). The Yes/No buttons use the shared common.* keys.
   'launcher.confirm.install': 'Do you want to install game?',
   'launcher.confirm.uninstall': 'Do you want to uninstall game from your PC?',
@@ -172,9 +171,6 @@ export const en = {
   'settings.wallpaperReset': 'Reset',
   'settings.sectionAudio': 'Audio',
   'settings.soundSet': 'Navigation sounds',
-  'settings.onlyGlobalSounds': 'Only global navigation sounds',
-  'settings.onlyGlobalSoundsHint':
-    "When on, every game uses the global navigation sounds — a game's own sounds are ignored.",
   'settings.soundSetVolume': 'Navigation sounds volume',
   'settings.ambientTrack': 'Background ambience',
   'settings.ambientNone': 'No ambience',
@@ -241,7 +237,7 @@ export const en = {
   // Section headings.
   'configure.sectionBasics': 'Basics',
   'configure.sectionLaunch': 'Launch',
-  'configure.sectionHero': 'Hero images',
+  'configure.sectionHero': 'Images',
   'configure.sectionSaves': 'Saves',
   'configure.sectionAudio': 'Audio',
   'configure.sectionAdvanced': 'Advanced',
@@ -287,20 +283,21 @@ export const en = {
   'configure.fieldAppid': 'Steam appid',
   'configure.fieldWatchProcesses': 'Watched processes',
   'configure.watchProcessesHint': '1–16 process image names ending in .exe.',
+  'configure.fieldHeroImages': 'Hero images',
+  'configure.heroImagesHint': 'Up to 3 backgrounds; several cross-fade every minute.',
+  'configure.fieldGridImage': 'Card image',
+  'configure.gridImageHint':
+    'The game’s card in the launcher’s history carousel. A 600x900 portrait cover is expected (the same format Steam uses). Optional — without it the card is cropped from the first hero image.',
+  // Helper link next to the card-image field (opens SteamGridDB in the default browser), mirroring the
+  // Steam appid link — a 600x900 cover is exactly what that site catalogues.
+  'configure.gridImageHelp': 'Find a 600x900 cover on SteamGridDB',
   'configure.fieldSaveOnCard': 'Save folder on the card',
   'configure.fieldPcSavePath': 'PC save path',
   'configure.pcSavePathPlaceholder': '%APPDATA%/My Game',
-  'configure.fieldSoundPlay': 'Play sound',
-  'configure.fieldSoundNavigate': 'Navigate sound',
-  'configure.fieldSoundButton': 'Button sound',
-  'configure.fieldSoundBack': 'Back sound',
   'configure.fieldBackgroundMusic': 'Background music',
   'configure.fieldLaunchTimeout': 'Launch timeout (seconds)',
   'configure.fieldKillTimeout': 'Force-close timeout (seconds)',
   // Audio Default/Custom selector (Default → the field is omitted from game.json).
-  'configure.audioDefault': 'Default',
-  'configure.audioCustom': 'Custom',
-  'configure.soundBuiltinHint': 'The built-in sound will be used.',
   'configure.musicNoneHint': 'No background music.',
   // Steam appid helper link (opens SteamDB in the default browser).
   'configure.appidHelp': 'Find the appid on SteamDB',
@@ -328,6 +325,7 @@ export const en = {
   'errors.finishBeforeApply': 'Finish what’s running before applying the config',
   'errors.reloadInProgress': 'a reload is already in progress',
   'errors.steamNotInstalled': 'Steam is not installed',
+  'errors.steamBusyOther': 'Another game is being downloaded or removed in Steam. Wait for it to finish.',
   'errors.steamOpenInstall': 'failed to open Steam install: {cause}',
   'errors.steamOpenDownloads': 'failed to open Steam downloads: {cause}',
   'errors.steamOpenUninstall': 'failed to open Steam uninstall: {cause}',
@@ -391,8 +389,9 @@ export const en = {
   'manifest.executableNotFoundCase':
     'executable not found: {path} — found "{found}" instead (fix the case on this filesystem)',
   'manifest.heroEscapes': 'heroImage path escapes card root: {path}',
+  'manifest.heroTooMany': 'at most {max} heroImage entries are allowed ({count} given)',
+  'manifest.gridEscapes': 'gridImage path escapes card root: {path}',
   'manifest.saveOnCardEscapes': 'saveOnCard path escapes card root: {path}',
-  'manifest.soundEscapes': 'sound "{name}" path escapes card root: {path}',
   'manifest.backgroundMusicEscapes': 'backgroundMusic path escapes card root: {path}',
   'manifest.savePairing': 'saveOnCard and pcSavePath must be set together or both omitted',
   'manifest.invalid': 'invalid manifest',

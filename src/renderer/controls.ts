@@ -10,16 +10,15 @@
 // The popup is a state machine: one #popup element whose content + action stack switch by data-view.
 // Navigation is vertical (up/down) inside a stack; the default focus is always the BOTTOM button
 // (Close / No / Sleep), which the mockup draws filled. B/Esc/veil step BACK one level.
-import type { AppState, LibraryEntry } from '../shared/types';
+import type { AppState, BrowseInfo, GameInfo } from '../shared/types';
 import type { Translator } from '../shared/i18n/index.js';
-import { createGamepadController } from './gamepad.js';
+import { NAV_REPEAT_MS, createGamepadController } from './gamepad.js';
 import { type AudioController } from './audio.js';
 import { gameOf, phaseOf, steamBusy } from './state-view.js';
 import { req, reqQuery } from './dom.js';
 
 // The current popup view (mutually exclusive; 'none' = closed). Mirrors the data-view on #popup.
-// `select-game` is the multi-game picker (a scrollable list of the card's OTHER games).
-type PopupView = 'none' | 'details' | 'power' | 'confirm' | 'error' | 'select-game';
+type PopupView = 'none' | 'details' | 'power' | 'confirm' | 'error';
 // Which action the confirm view is asking about (only meaningful while popupView === 'confirm').
 type ConfirmMode = 'install' | 'uninstall' | 'kill' | 'shutdown' | 'reboot' | 'sleep';
 // Gamepad A doesn't trigger :active, so flash a press class to play the scale-down animation.
@@ -29,10 +28,35 @@ const PRESS_MS = 130;
 export interface ControlsDeps {
   /** The current AppState snapshot (app.ts owns it; updated before it calls into here). */
   getState(): AppState;
+  /**
+   * What is on screen (browse:update). Needed because AppState alone can no longer answer "does Play act
+   * on what I'm looking at?": while a card is inserted the state describes ITS game, but the screen may
+   * be showing a history game — pressing Play there would launch someone else.
+   */
+  getBrowse(): BrowseInfo | null;
   /** The shared audio controller (UI sounds). */
   audio: AudioController;
   /** The current translator (read live so menu/confirm copy follows the language). */
   getTranslator(): Translator;
+  /** The history carousel — the THIRD focus group, above the bar and the popup stack (see navLeft…). */
+  carousel: CarouselNav;
+}
+
+/**
+ * What the interaction layer needs from the carousel. A narrow seam on purpose: the carousel owns its
+ * strip and selection, this module owns which surface the buttons currently drive.
+ */
+export interface CarouselNav {
+  /** 'carousel' (the strip) or 'detail' (the bar screen). */
+  screen(): 'carousel' | 'detail';
+  /** Moves the selection by `delta` cards. */
+  move(delta: number): void;
+  /** Enters the selected card's detail screen. */
+  activate(): void;
+  /** Steps back from a detail screen to the strip; false when there is no carousel to return to. */
+  leaveDetail(): boolean;
+  /** Whether a carousel exists at all (>1 game) — gates the Details menu's "Library" item. */
+  exists(): boolean;
 }
 
 export interface Controls {
@@ -44,8 +68,6 @@ export interface Controls {
   refresh(): void;
   /** Opens the error popup with the given message (a failed launch/action from main). */
   showError(message: string): void;
-  /** Sets the card's game list ({id,title}) — drives the "Select game" popup (rebuilds it if open). */
-  setGames(list: readonly LibraryEntry[]): void;
   /** Seeds whether this is a Game Mode (gamescope) session — flips the power menu's primary item from
    *  "Minimize Playhook" (hide to tray) to "Close Playhook" (full quit). Called once at startup. */
   setGameMode(gameMode: boolean): void;
@@ -55,13 +77,43 @@ export interface Controls {
   setGamepadPaused(paused: boolean): void;
 }
 
+/**
+ * Whether the pointer is over text the user is allowed to select — computed from the effective
+ * `user-select`, not from a hard-coded class list, so any future selectable text is covered by
+ * construction. Everything in this UI is `user-select: none` (styles.css) except where a rule opts back
+ * in, currently the install path in the confirm popup.
+ */
+function isOverSelectableText(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) return false;
+  const selectable = getComputedStyle(target).userSelect;
+  return selectable !== 'none';
+}
+
 export function createControls(deps: ControlsDeps): Controls {
   const { audio } = deps;
   const state = (): AppState => deps.getState();
   const t = (): Translator => deps.getTranslator();
-  // The card's games ({id,title}), delivered by main; drives the "Select game" popup. ≥2 → the button
-  // shows and the list has entries (the current game is filtered out).
-  let games: readonly LibraryEntry[] = [];
+
+  /**
+   * The GameInfo of what is on screen, or undefined when the screen shows a history game (nothing to
+   * install, uninstall or launch there). Everything that used to read `gameOf(state())` for a SCREEN
+   * decision goes through here; `state()` is still read for PHASE decisions (busy / running / killing).
+   */
+  const screenGame = (): GameInfo | undefined => {
+    const browse = deps.getBrowse();
+    if (browse === null) return gameOf(state()); // no browse model yet (first paint) — behave as before
+    return browse.active ? (browse.game ?? gameOf(state())) : undefined;
+  };
+
+  /** Whether the launch/uninstall actions apply to what is on screen: it must be a card game AND the one
+   * AppState is currently about (you can browse game B while game A is busy — B is not actionable). */
+  const screenIsActionable = (): boolean => {
+    const browse = deps.getBrowse();
+    if (browse === null) return true; // pre-browse behaviour
+    if (!browse.active) return false;
+    const subject = gameOf(state())?.id;
+    return subject === undefined || subject === browse.id;
+  };
   // SteamOS Game Mode (gamescope): no tray, so the power menu's primary item quits instead of minimizing.
   // Seeded once at startup (setGameMode); false until then — the power menu isn't reachable that early.
   let gameMode = false;
@@ -81,13 +133,8 @@ export function createControls(deps: ControlsDeps): Controls {
   const menuShutdown = req<HTMLButtonElement>('menu-shutdown');
   const menuInstallToggle = req<HTMLButtonElement>('menu-install-toggle');
   const menuKill = req<HTMLButtonElement>('menu-kill');
-  const menuSelectGame = req<HTMLButtonElement>('menu-select-game');
+  const menuLibrary = req<HTMLButtonElement>('menu-library');
   const menuClose = req<HTMLButtonElement>('menu-close');
-  // "Select game" list: a scrollable container of dynamically-built game buttons + a static Close button,
-  // plus the custom scrollbar thumb overlaying the list (the native one is hidden — see styles.css).
-  const selectGameList = req('select-game-list');
-  const selectGameThumb = req('select-game-thumb');
-  const menuSelectClose = req<HTMLButtonElement>('menu-select-close');
   const powerShutdown = req<HTMLButtonElement>('power-shutdown');
   const powerReboot = req<HTMLButtonElement>('power-reboot');
   const powerSleep = req<HTMLButtonElement>('power-sleep');
@@ -129,7 +176,7 @@ export function createControls(deps: ControlsDeps): Controls {
   function openDetails(): void {
     applyMenuInstallToggle(); // keep the toggle's text/visibility fresh for the current game
     applyMenuKill(); // keep the force-close item's visibility fresh (running-only)
-    applyMenuSelectGame(); // keep the "Select game" item fresh (multi-game ready-screen only)
+    applyMenuLibrary(); // keep the "Library" item fresh (only when there is a carousel to go back to)
     setView('details');
     focusStackBottom(); // default focus: Close
     applyFocus(); // main highlight clears (focusActive false with a popup open)
@@ -146,7 +193,7 @@ export function createControls(deps: ControlsDeps): Controls {
   // and closes the whole stack; No/back returns to where it came from.
   function openConfirm(mode: ConfirmMode): void {
     if (mode === 'install' || mode === 'uninstall') {
-      const game = gameOf(state());
+      const game = screenIsActionable() ? screenGame() : undefined;
       if (game === undefined) return;
       if (mode === 'install' && !game.requiresInstall) return; // nothing to install
       if (mode === 'uninstall' && !game.canUninstall) return; // nothing to uninstall
@@ -231,12 +278,6 @@ export function createControls(deps: ControlsDeps): Controls {
         setView(confirmReturnTo);
         focusStackBottom();
         break;
-      case 'select-game':
-        // Back to the Details menu it was opened from (Close in the list does the same — like Power).
-        audio.play('back');
-        setView('details');
-        focusStackBottom();
-        break;
       case 'details':
       case 'error':
         audio.play('back');
@@ -251,7 +292,7 @@ export function createControls(deps: ControlsDeps): Controls {
   // One button whose text + visibility follow the current game: "Install" when it needs installing,
   // "Uninstall" when installed & removable, hidden entirely for a plain executable (no install block).
   function applyMenuInstallToggle(): void {
-    const game = gameOf(state());
+    const game = screenIsActionable() ? screenGame() : undefined;
     // While an install/uninstall (card or Steam) is in flight, the Install/Uninstall item is hidden —
     // acting on it mid-operation makes no sense (Details still opens for the stats + power actions).
     const busy = phaseOf(state()) === 'busy' || steamBusy(state());
@@ -279,6 +320,15 @@ export function createControls(deps: ControlsDeps): Controls {
     if (running) menuKill.textContent = t()('launcher.menu.forceClose');
   }
 
+  // ── Menu item: Library (back to the history carousel) ────────────────────────
+  // The MOUSE route out of a detail screen — the gamepad/keyboard have B for it, but a mouse user had no
+  // way back to the strip. Shown only on a detail screen that has a carousel behind it.
+  function applyMenuLibrary(): void {
+    const show = deps.carousel.exists() && deps.carousel.screen() === 'detail';
+    menuLibrary.classList.toggle('is-hidden', !show);
+    if (show) menuLibrary.textContent = t()('launcher.menu.library');
+  }
+
   // The power menu's primary item. Desktop/Windows: "Minimize Playhook" (hide to tray). Game Mode: "Close
   // Playhook" — a full quit, since there is no tray to minimize into (mirrors how closing the window quits
   // in Game Mode). Label from JS (no data-i18n) so a language change relabels it at render time and it
@@ -287,183 +337,6 @@ export function createControls(deps: ControlsDeps): Controls {
     powerMinimize.textContent = t()(gameMode ? 'launcher.menu.quit' : 'launcher.menu.minimize');
   }
 
-  // ── Menu item: Select game (opens the multi-game picker) ─────────────────────
-  // Shown ONLY for a multi-game card on the ready screen — pointless with one game, and refused while a
-  // game is launching/running (kind ≠ ready, and main guards it too). Text from JS (no data-i18n) so a
-  // language change relabels it at render time.
-  function applyMenuSelectGame(): void {
-    const show = state().kind === 'ready' && games.length >= 2;
-    menuSelectGame.classList.toggle('is-hidden', !show);
-    if (show) menuSelectGame.textContent = t()('launcher.menu.selectGame');
-  }
-
-  // ── "Select game" list (a scrollable list of the card's OTHER games) ─────────
-  // Dynamically-built buttons (one per game, excluding the current one), each carrying data-game-id. Held
-  // here so the focus machine can highlight/clear them; rebuilt on every open (the card/selection may have
-  // changed).
-  let selectGameButtons: HTMLButtonElement[] = [];
-
-  // (Re)builds the game buttons for the current card, excluding the game on screen. Wires click + hover.
-  // Each title lives in a clip box (.game-label) + a moving inner span (.game-label-inner) so a long name
-  // is hard-clipped by default and marquee-scrolls only while focused (see updateSelectGameMarquee).
-  function buildSelectGameButtons(): void {
-    const currentId = gameOf(state())?.id;
-    selectGameButtons = games
-      .filter((g) => g.id !== currentId)
-      .map((g) => {
-        const btn = document.createElement('button');
-        btn.type = 'button';
-        btn.className = 'text-button game-button';
-        btn.dataset['gameId'] = g.id;
-        const label = document.createElement('span');
-        label.className = 'game-label';
-        const inner = document.createElement('span');
-        inner.className = 'game-label-inner';
-        inner.textContent = g.title;
-        label.append(inner);
-        btn.append(label);
-        btn.addEventListener('click', () => {
-          pressFlash(btn);
-          triggerStackButton(btn);
-        });
-        btn.addEventListener('mouseenter', () => {
-          if (!stackActive()) return;
-          const idx = stackFocusables().indexOf(btn);
-          if (idx === -1) return;
-          stackIndex = idx;
-          applyStackFocus();
-        });
-        return btn;
-      });
-    selectGameList.replaceChildren(...selectGameButtons);
-  }
-
-  // Constant scroll speed for the focused game title's marquee (design px per second).
-  const MARQUEE_SPEED_PX_PER_S = 60;
-
-  // Marks every overflowing game title as clipped (→ a soft right-edge fade) and starts the marquee on the
-  // FOCUSED one (→ a both-edge fade + scroll). Overflow is measured live (inner text width vs the visible
-  // clip box). No-op unless the picker is open, so unrelated re-renders don't force a reflow.
-  function updateSelectGameMarquee(): void {
-    if (popupView !== 'select-game') return;
-    for (const btn of selectGameButtons) {
-      const label = btn.querySelector<HTMLElement>('.game-label');
-      const inner = btn.querySelector<HTMLElement>('.game-label-inner');
-      if (label === null || inner === null) continue;
-      const overflow = inner.scrollWidth - label.clientWidth;
-      const clipped = overflow > 1;
-      btn.classList.toggle('is-clipped', clipped);
-      if (clipped && btn.classList.contains('is-focused')) {
-        inner.style.setProperty('--marquee-shift', `${-overflow}px`);
-        inner.style.setProperty('--marquee-duration', `${Math.max(2, overflow / MARQUEE_SPEED_PX_PER_S)}s`);
-        btn.classList.add('is-scrolling');
-      } else {
-        btn.classList.remove('is-scrolling');
-        inner.style.removeProperty('--marquee-shift');
-        inner.style.removeProperty('--marquee-duration');
-      }
-    }
-  }
-
-  // Opens the picker: build the list, show the view, focus the first game (or Close when the list is empty).
-  function openSelectGame(): void {
-    buildSelectGameButtons();
-    setView('select-game');
-    stackIndex = 0; // top of the list (the first other game), not the bottom Close
-    applyStackFocus();
-    applyFocus();
-    noteSelectGameActivity();
-  }
-
-  // ── Custom scrollbar for the game list ──────────────────────────────────────
-  // The native scrollbar is hidden (Chromium never animates ::-webkit-scrollbar), so we drive a real
-  // element and fade it. It shows only while the list overflows AND the focus is ON a game button AND
-  // there has been input recently — i.e. it appears exactly when you're scrolling through games.
-  const SCROLLBAR_IDLE_MS = 2000;
-  let scrollbarAwake = false;
-  let scrollbarIdleTimer = 0;
-  // Thumb drag (mouse): the pointer is captured, so it keeps scrolling even when it leaves the thin bar.
-  let thumbDragging = false;
-  let dragStartY = 0;
-  let dragStartScrollTop = 0;
-
-  /** True when the popup focus sits on one of the (dynamic) game buttons, not on Close. */
-  function focusedIsGameButton(): boolean {
-    if (popupView !== 'select-game') return false;
-    const focused = stackFocusables()[stackIndex];
-    return focused !== undefined && selectGameButtons.includes(focused);
-  }
-
-  /** Repositions the thumb and decides whether it should be visible. Its height is fixed (see styles.css),
-   * so this only maps the scroll position onto the thumb's travel. Cheap; safe to call often. */
-  function updateSelectGameScrollbar(): void {
-    if (popupView !== 'select-game') {
-      selectGameThumb.classList.remove('is-visible');
-      return;
-    }
-    const { scrollHeight, clientHeight, scrollTop } = selectGameList;
-    const scrollable = scrollHeight - clientHeight;
-    const overflowing = scrollable > 1;
-    // Stay visible for the whole drag, even if the pointer is held still past the idle timeout.
-    const show = overflowing && (thumbDragging || (scrollbarAwake && focusedIsGameButton()));
-    selectGameThumb.classList.toggle('is-visible', show);
-    if (!overflowing) return;
-    // Travel = the track minus the (fixed) thumb. Guard a track shorter than the thumb itself.
-    const track = Math.max(0, clientHeight - selectGameThumb.offsetHeight);
-    selectGameThumb.style.transform = `translateY(${(scrollTop / scrollable) * track}px)`;
-  }
-
-  /** Marks the scrollbar awake and restarts the idle countdown; after it elapses the thumb fades out. */
-  function noteSelectGameActivity(): void {
-    scrollbarAwake = true;
-    if (scrollbarIdleTimer !== 0) window.clearTimeout(scrollbarIdleTimer);
-    scrollbarIdleTimer = window.setTimeout(() => {
-      scrollbarIdleTimer = 0;
-      scrollbarAwake = false;
-      updateSelectGameScrollbar();
-    }, SCROLLBAR_IDLE_MS);
-    updateSelectGameScrollbar();
-  }
-
-  // Scrolling (wheel / scrollIntoView from gamepad navigation) counts as activity and moves the thumb.
-  selectGameList.addEventListener('scroll', () => noteSelectGameActivity());
-
-  // Drag the thumb to scroll (the native scrollbar is hidden, so we implement the grab ourselves). The
-  // pointer is captured on press, so the drag survives the pointer wandering off the 4px bar.
-  selectGameThumb.addEventListener('pointerdown', (event) => {
-    if (popupView !== 'select-game') return;
-    if (selectGameList.scrollHeight - selectGameList.clientHeight <= 1) return;
-    thumbDragging = true;
-    selectGameThumb.classList.add('is-dragging'); // keep it emphasised even if the pointer leaves the bar
-    dragStartY = event.clientY;
-    dragStartScrollTop = selectGameList.scrollTop;
-    selectGameThumb.setPointerCapture(event.pointerId);
-    event.preventDefault(); // no text selection / native drag
-    noteSelectGameActivity();
-  });
-
-  selectGameThumb.addEventListener('pointermove', (event) => {
-    if (!thumbDragging) return;
-    const { scrollHeight, clientHeight } = selectGameList;
-    const scrollable = scrollHeight - clientHeight;
-    // The thumb travels `clientHeight - thumbHeight`; map that travel onto the scrollable distance.
-    const track = clientHeight - selectGameThumb.offsetHeight;
-    if (track <= 0 || scrollable <= 0) return;
-    selectGameList.scrollTop = dragStartScrollTop + ((event.clientY - dragStartY) / track) * scrollable;
-    noteSelectGameActivity();
-  });
-
-  function endThumbDrag(event: PointerEvent): void {
-    if (!thumbDragging) return;
-    thumbDragging = false;
-    selectGameThumb.classList.remove('is-dragging');
-    if (selectGameThumb.hasPointerCapture(event.pointerId)) {
-      selectGameThumb.releasePointerCapture(event.pointerId);
-    }
-    noteSelectGameActivity(); // restart the idle countdown from the moment the drag ended
-  }
-  selectGameThumb.addEventListener('pointerup', endThumbDrag);
-  selectGameThumb.addEventListener('pointercancel', endThumbDrag);
 
   // ── Main bar focus (gamepad / mouse) ─────────────────────────────────────────
 
@@ -492,15 +365,18 @@ export function createControls(deps: ControlsDeps): Controls {
     // Hard busy (install / uninstall / launch / save-sync): the Play button is a non-interactive activity
     // indicator (spinner/gear), so only More is focusable — it still opens Details.
     if (phaseOf(state()) === 'busy') return [moreButton];
-    // Empty screen (no card) or a requiresInstall installer/steam game → Play is hidden, only More.
-    const game = gameOf(state());
+    // Empty screen, a HISTORY game (nothing to launch) or a requiresInstall installer/steam game → Play is
+    // hidden, only More.
+    const game = screenIsActionable() ? screenGame() : undefined;
     if (game === undefined || game.requiresInstall === true) return [moreButton];
     return [playButton, moreButton];
   }
 
-  // Main focus is meaningful on every screen (the More button is always present) with the popup closed.
+  // Main focus is meaningful on every DETAIL screen (the More button is always present there) with the
+  // popup closed. On the carousel the bar buttons are hidden, so the highlight has nothing to sit on —
+  // the selection lives in the strip instead.
   function focusActive(): boolean {
-    return popupView === 'none';
+    return popupView === 'none' && deps.carousel.screen() === 'detail';
   }
 
   function applyFocus(): void {
@@ -548,14 +424,12 @@ export function createControls(deps: ControlsDeps): Controls {
   function noteGamepadActivity(): void {
     setCursorHidden(true);
     armIdleTimer();
-    noteSelectGameActivity();
   }
 
   // Real mouse movement = activity: show the cursor + restart the idle.
   function noteMouseActivity(): void {
     setCursorHidden(false);
     armIdleTimer();
-    noteSelectGameActivity();
   }
 
   function moveFocus(delta: number): void {
@@ -583,7 +457,7 @@ export function createControls(deps: ControlsDeps): Controls {
     menuShutdown,
     menuInstallToggle,
     menuKill,
-    menuSelectGame,
+    menuLibrary,
     menuClose,
     powerShutdown,
     powerReboot,
@@ -593,7 +467,6 @@ export function createControls(deps: ControlsDeps): Controls {
     confirmYes,
     confirmNo,
     errorClose,
-    menuSelectClose,
   ];
   let stackIndex = 0;
 
@@ -603,7 +476,7 @@ export function createControls(deps: ControlsDeps): Controls {
         const items: HTMLButtonElement[] = [menuShutdown];
         if (!menuInstallToggle.classList.contains('is-hidden')) items.push(menuInstallToggle);
         if (!menuKill.classList.contains('is-hidden')) items.push(menuKill);
-        if (!menuSelectGame.classList.contains('is-hidden')) items.push(menuSelectGame);
+        if (!menuLibrary.classList.contains('is-hidden')) items.push(menuLibrary);
         items.push(menuClose);
         return items;
       }
@@ -613,9 +486,6 @@ export function createControls(deps: ControlsDeps): Controls {
         return [confirmYes, confirmNo];
       case 'error':
         return [errorClose];
-      case 'select-game':
-        // The (dynamic) game buttons, then Close at the bottom.
-        return [...selectGameButtons, menuSelectClose];
       default:
         return [];
     }
@@ -629,16 +499,8 @@ export function createControls(deps: ControlsDeps): Controls {
     const items = stackFocusables();
     stackIndex = Math.min(items.length - 1, Math.max(0, stackIndex));
     const focused = stackActive() ? items[stackIndex] : undefined;
-    // Clear/set on the static stack buttons AND the dynamic game buttons (the picker builds its own).
     for (const btn of ALL_STACK_BUTTONS) btn.classList.toggle('is-focused', btn === focused);
-    for (const btn of selectGameButtons) btn.classList.toggle('is-focused', btn === focused);
-    // Keep the focused button in view when the list is long (scrollable select-game — see styles.css).
     if (focused !== undefined) focused.scrollIntoView({ block: 'nearest' });
-    // Start/stop the focused game title's marquee (a no-op unless the picker is open).
-    updateSelectGameMarquee();
-    // Reflect the new focus on the scrollbar (it hides when the focus leaves the game list). NOT an
-    // activity ping: applyStackFocus also runs on ordinary re-renders, which must not keep it awake.
-    updateSelectGameScrollbar();
   }
 
   function focusStackBottom(): void {
@@ -668,7 +530,10 @@ export function createControls(deps: ControlsDeps): Controls {
 
   function triggerPlay(): void {
     if (!focusActive()) return;
-    const game = gameOf(state());
+    // Play acts on the game AppState is about, so it must be the one on screen: a history game has
+    // nothing to launch, and while you browse game B, "Play" must not start game A behind your back.
+    if (!screenIsActionable()) return;
+    const game = screenGame();
     // Steam download in progress: the gear opens Steam's Downloads page, where the user can
     // pause/resume (we can't control that programmatically).
     if (game?.steamInstalling === true) {
@@ -706,15 +571,6 @@ export function createControls(deps: ControlsDeps): Controls {
 
   // Dispatch a stack button (shared by gamepad A and mouse click). Each opener/back plays its own sound.
   function triggerStackButton(btn: HTMLButtonElement): void {
-    // A dynamic game button (from the "Select game" list) carries data-game-id. Both gamepad A (via
-    // activateStack → here) and a mouse click go through this one path: close the whole popup and switch.
-    const gameId = btn.dataset['gameId'];
-    if (gameId !== undefined) {
-      audio.play('button');
-      closePopup();
-      window.api.selectGame(gameId);
-      return;
-    }
     if (btn === menuShutdown) {
       audio.play('button');
       openPower();
@@ -724,11 +580,12 @@ export function createControls(deps: ControlsDeps): Controls {
     } else if (btn === menuKill) {
       audio.play('button');
       openConfirm('kill');
-    } else if (btn === menuSelectGame) {
-      // Open the multi-game picker (a submenu of Details, like Power). No confirm — non-destructive.
-      audio.play('button');
-      openSelectGame();
-    } else if (btn === menuClose || btn === errorClose || btn === powerClose || btn === menuSelectClose) {
+    } else if (btn === menuLibrary) {
+      // Non-destructive, so no confirm: close the popup and hand control back to the strip.
+      audio.play('back');
+      closePopup();
+      deps.carousel.leaveDetail();
+    } else if (btn === menuClose || btn === errorClose || btn === powerClose) {
       // back() dispatches by the current view: Details/Error → close the popup; Power → step back to
       // the Details menu (so "Close" in the Power submenu returns you one level up, like the B gesture).
       back();
@@ -852,13 +709,20 @@ export function createControls(deps: ControlsDeps): Controls {
   // stacks are vertical); up/down move the vertical popup stack (no-op on the bar); activate fires the
   // focused control (Play/More) or stack button; back steps out of the popup. Minimizing/closing lives in
   // the System menu, not a nav key.
+  // Which surface the six primitives drive. Three, in priority order: the popup stack (when open), the
+  // carousel strip (the top-level screen), then the bar. The primitives themselves are unchanged — the
+  // routing lives HERE, in one place, so the gamepad and the keyboard can never diverge.
+  const onCarousel = (): boolean => popupView === 'none' && deps.carousel.screen() === 'carousel';
+
   function navLeft(): void {
     noteGamepadActivity();
-    if (popupView === 'none') moveFocus(-1);
+    if (onCarousel()) deps.carousel.move(-1);
+    else if (popupView === 'none') moveFocus(-1);
   }
   function navRight(): void {
     noteGamepadActivity();
-    if (popupView === 'none') moveFocus(1);
+    if (onCarousel()) deps.carousel.move(1);
+    else if (popupView === 'none') moveFocus(1);
   }
   function navUp(): void {
     noteGamepadActivity();
@@ -871,12 +735,55 @@ export function createControls(deps: ControlsDeps): Controls {
   function navActivate(): void {
     noteGamepadActivity();
     if (popupView !== 'none') activateStack();
+    else if (onCarousel()) deps.carousel.activate();
     else activateFocused();
   }
   function navBack(): void {
     noteGamepadActivity();
-    if (popupView !== 'none') back();
+    // Deepest level first: a popup closes, then a detail screen steps back to the carousel. On the
+    // carousel itself B does nothing — it is the top level.
+    if (popupView !== 'none') {
+      back();
+      return;
+    }
+    if (deps.carousel.leaveDetail()) audio.play('back');
   }
+
+  // The wheel flips through the carousel. Throttled: one notch of a mouse wheel is one event, but a
+  // trackpad emits a stream of them, which would fly past a dozen cards per gesture.
+  const WHEEL_THROTTLE_MS = 120;
+  let lastWheelAt = 0;
+  window.addEventListener(
+    'wheel',
+    (event) => {
+      if (!onCarousel()) return;
+      noteMouseActivity();
+      const delta = event.deltaY !== 0 ? event.deltaY : event.deltaX;
+      if (delta === 0) return;
+      const now = performance.now();
+      if (now - lastWheelAt < WHEEL_THROTTLE_MS) return;
+      lastWheelAt = now;
+      deps.carousel.move(delta > 0 ? 1 : -1);
+    },
+    { passive: true },
+  );
+
+  // A right-click is the mouse's B button: the same "step back" as B / Esc / Tab / Backspace. The
+  // launcher has nothing to offer in a context menu, so the native one is suppressed either way — which
+  // is also why this listens on the window rather than per-element: the gesture means the same thing
+  // wherever the pointer is.
+  window.addEventListener('contextmenu', (event) => {
+    // …except over SELECTABLE text, where the right-click means "Copy". The whole UI is user-select:none
+    // save for the install path in the confirm popup, and main puts a Copy menu on it (window.ts) — but
+    // that menu only appears if the DOM event is left alone: preventDefault here kills the native
+    // context-menu event main listens for, which is exactly how this broke copying the path.
+    if (isOverSelectableText(event.target)) return;
+    event.preventDefault();
+    navBack();
+    // AFTER, not before: navBack() is written for the gamepad and hides the cursor as its first act.
+    // This click IS the mouse, so the cursor has to come back — and it is this call that restores it.
+    noteMouseActivity();
+  });
 
   const gamepad = createGamepadController({
     onLeft: navLeft,
@@ -908,11 +815,23 @@ export function createControls(deps: ControlsDeps): Controls {
     backspace: navBack,
     escape: navBack,
   };
+  // Left/right are the exception to the edge model: holding them flips through the carousel, matching the
+  // gamepad's hold-to-repeat. The OS auto-repeat supplies the events (its own initial delay is close
+  // enough to the pad's), but its rate is far too fast for a carousel, so it is throttled to the same
+  // NAV_REPEAT_MS cadence. Every other key stays one action per press.
+  const REPEATABLE_KEYS = new Set(['a', 'arrowleft', 'd', 'arrowright']);
+  let lastKeyRepeatAt = 0;
   window.addEventListener('keydown', (event) => {
-    const handler = KEY_NAV[event.key.toLowerCase()];
+    const key = event.key.toLowerCase();
+    const handler = KEY_NAV[key];
     if (handler === undefined) return;
     event.preventDefault(); // suppress the native default even on auto-repeat (e.g. Tab traversal)
-    if (event.repeat) return; // one action per press, like the gamepad edge model
+    if (event.repeat) {
+      if (!REPEATABLE_KEYS.has(key)) return;
+      const now = performance.now();
+      if (now - lastKeyRepeatAt < NAV_REPEAT_MS) return;
+      lastKeyRepeatAt = now;
+    }
     handler();
   });
 
@@ -922,15 +841,15 @@ export function createControls(deps: ControlsDeps): Controls {
     // running→syncing-out self-exit must drop Force close; a ready→ready update doesn't close the popup).
     applyMenuInstallToggle();
     applyMenuKill();
-    applyMenuSelectGame();
+    applyMenuLibrary();
   }
 
   function clearGameButtons(): void {
-    // No game → no Install/Uninstall item, no Force close, no Select game (the popup is force-closed off
-    // the ready screen anyway; no-game is never `running`).
+    // No game → no Install/Uninstall item and no Force close (the popup is force-closed off the ready
+    // screen anyway; no-game is never `running`).
     menuInstallToggle.classList.add('is-hidden');
     menuKill.classList.add('is-hidden');
-    menuSelectGame.classList.add('is-hidden');
+    applyMenuLibrary(); // the carousel can still be there with no game on screen (history only)
   }
 
   function refresh(): void {
@@ -941,13 +860,8 @@ export function createControls(deps: ControlsDeps): Controls {
     if (
       popupView === 'confirm' &&
       (confirmMode === 'install' || confirmMode === 'uninstall') &&
-      gameOf(state()) === undefined
+      screenGame() === undefined
     ) {
-      closePopup();
-    }
-    // The "Select game" list is void once there's no game on screen (card pulled / launch started) or the
-    // card no longer has ≥2 games — its buttons would point at games that aren't selectable → force-close.
-    if (popupView === 'select-game' && (gameOf(state()) === undefined || games.length < 2)) {
       closePopup();
     }
     // When an active state (install / launch / uninstall / steam) APPEARS, drop the bar highlight so it
@@ -961,25 +875,12 @@ export function createControls(deps: ControlsDeps): Controls {
     applyPlayAria();
   }
 
-  // Updates the card's game list. If the "Select game" list is open (e.g. a live reload via Configure
-  // added/removed a game), rebuild it from the fresh list so its buttons stay accurate. Selection is by
-  // id, so a reordering can't pick the wrong game.
-  function setGames(list: readonly LibraryEntry[]): void {
-    games = list;
-    if (popupView === 'select-game') {
-      buildSelectGameButtons();
-      applyStackFocus();
-    }
-    // Keep the Details "Select game" item's visibility in sync (its threshold is games.length ≥ 2).
-    applyMenuSelectGame();
-  }
 
   return {
     applyGameButtons,
     clearGameButtons,
     refresh,
     showError: openError,
-    setGames,
     setGameMode: (value: boolean) => {
       gameMode = value;
       applyPowerPrimary();

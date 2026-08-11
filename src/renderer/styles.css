@@ -28,6 +28,21 @@
   src: url('./fonts/MPLUSRounded1c-ExtraBold.ttf') format('truetype');
 }
 
+/* The two palette colors are declared as TYPED custom properties so they can be TRANSITIONED: a plain
+   `--d1` is just a token and jumps instantly, which made the bar, the buttons and the popup snap to the
+   new game's colors while the hero image was still cross-fading. With a `<color>` syntax the browser
+   interpolates them, and every surface built on var(--d1)/var(--d2) follows the background smoothly. */
+@property --d1 {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #2a3340;
+}
+@property --d2 {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: #4caf50;
+}
+
 :root {
   /* One design pixel (mockup is 1920x1080) expressed in vh, so the layout scales with the
      fullscreen height and keeps the mockup's proportions at 16:9. Write design px as calc(N*var(--px)). */
@@ -36,7 +51,8 @@
   /* Palette fallbacks; #app gets --d1/--d2 from the hero background's two dominant colors. */
   --d1: #2a3340;
   --d2: #4caf50;
-  --fg: #ffffff;
+  /* Text colour OUTSIDE the app shell (there is none in practice — see the #app override below). */
+  --fg: #f0f0f0;
 }
 
 * {
@@ -74,6 +90,14 @@ body {
   height: 100vh;
   background-color: var(--bg);
   overflow: hidden;
+  /* All UI text takes the hero's accent colour: the title, the stats, the popup copy and the errors read
+     as part of the current game rather than as a white overlay on top of it. Derived HERE, not in :root,
+     because --d2 is set on this element — resolving it one level up would freeze the fallback green.
+     Every text rule keeps using var(--fg), so this single line is also the whole way back. */
+  --fg: var(--d2);
+  /* Palette crossfade, matched to the hero layers' own 1s opacity fade (see .hero-layer) so the colors
+     and the image arrive together. hero.ts sets --d1/--d2 on this element. */
+  transition: --d1 1s ease, --d2 1s ease;
   /* Establish a stacking context so the z-index:-1 hero ::before paints ABOVE #app's own
      background-color (otherwise the opaque bg covers it → black screen) but below the UI. */
   isolation: isolate;
@@ -87,6 +111,23 @@ body {
   position: absolute;
   inset: 0;
   z-index: -1;
+  /* The screen-level zoom (see the data-screen rules below). Short on purpose: going back it has to be
+     DONE by the time the strip returns, which is 0.35s after the switch (see the reverse-morph delay). */
+  transform: scale(var(--hero-zoom, 1));
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Parallax: flipping through the carousel drags the background a little the same way (hero.ts sets
+   --hero-parallax). It is a SEPARATE element from the zoom above because the two need different tempos —
+   the drift is long and symmetric (ease-in-out), so it reads as the background lagging behind the strip
+   rather than as a nudge — and one element can only transition its transform at one speed. Each layer's
+   own transform is already spoken for by the bg-pan animation, hence the extra wrapper. The shift is
+   bounded in app.ts to what that animation's overscan leaves free, so it never pulls an edge into view. */
+#hero-pan {
+  position: absolute;
+  inset: 0;
+  transform: translateX(var(--hero-parallax, 0px));
+  transition: transform 1.1s cubic-bezier(0.45, 0, 0.35, 1);
 }
 
 /* Each hero layer paints one image (background-image set per-layer from JS) and slowly drifts to one
@@ -131,9 +172,254 @@ body {
 #app[data-phase='error'] #play-button {
   display: none;
 }
-#app[data-phase='idle'] .title,
-#app[data-phase='error'] .title {
+/* …but NOT while the carousel is up: there the title sits beside the selected card (--title-x), and
+   pulling it to x=50 as well would drop it straight on top of the cards. This is what broke the layout
+   the moment a card was removed (no card → phase idle → this rule). */
+#app[data-phase='idle']:not([data-screen='carousel']) .title,
+#app[data-phase='error']:not([data-screen='carousel']) .title {
   left: 0;
+}
+
+/* ── History carousel (the `carousel` screen) ──────────────────────────────
+   A strip of cards that slides under a FIXED anchor: the selected card's left edge always sits at
+   x=50 (the same left inset as .bar-content), and the row translates by -108 design px per index (see
+   carousel-geometry.ts). Cards left of the selection keep the normal width — that is what makes the
+   offset linear — and honestly travel off the LEFT EDGE OF THE SCREEN, so the clip is on #carousel
+   (full-width), not on the card row. */
+
+#carousel {
+  position: absolute;
+  left: 0;
+  right: 0;
+  /* Straight off the mockup ("Home"): the cards' bottom edge sits 50 design px from the screen bottom —
+     the same inset the bar content uses — so the selected 204-tall card's top lands at 254. The BOX
+     reaches 30 px lower (20) so the active dot hanging under a card stays inside the clip with a little
+     slack; the strip is inset by the same 30 (see #carousel-strip). The top has slack too: the selected
+     card's pulsing ring blooms ~10 px past its edge (inset -7 + a 3 border, scaled 1.09 by the pulse),
+     and this box CLIPS — too tight a height chops the ring's top arc off. */
+  bottom: calc(20 * var(--px));
+  height: calc(260 * var(--px));
+  overflow: hidden;
+  /* Above the bottom bar's gradient: the bar comes LATER in the DOM, so without this the overlay paints
+     over the cards and washes them out. The popup sits above both (see .popup). */
+  z-index: 1;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.3s ease;
+}
+
+/* Entering a game pushes the background slightly IN (you moved closer to that game), and stepping back
+   to the strip pulls it out again. Kept small: the hero is already scaled ≥1.06 by its pan, and this
+   multiplies on top of it. */
+#app[data-screen='detail'] #hero {
+  --hero-zoom: 1.05;
+}
+
+/* Only the carousel screen shows the strip; on the detail screen it fades out (the selected card has
+   already handed its geometry over to #play-button — see the morph block below). */
+#app[data-screen='carousel'] #carousel {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+#carousel-strip {
+  position: absolute;
+  /* The anchor: the same x=50 the bar content uses, so the selected card lines up with the title. */
+  left: calc(50 * var(--px));
+  /* Room for the dot below the cards (see #carousel's bottom/height). */
+  bottom: calc(30 * var(--px));
+  display: flex;
+  align-items: flex-end;
+  gap: calc(16 * var(--px));
+  transform: translateX(calc(var(--strip-offset, 0) * var(--px)));
+  transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* A card. The size transition MUST match the strip's curve and duration, or the card's growth and the
+   row's slide visibly drift apart mid-move. */
+.card {
+  position: relative;
+  flex: 0 0 auto;
+  width: calc(90 * var(--px));
+  height: calc(135 * var(--px));
+  border-radius: calc(10 * var(--px));
+  background-color: color-mix(in srgb, var(--d1) 70%, transparent);
+  background-size: cover;
+  background-position: center;
+  overflow: visible;
+  transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1), height 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 0.2s ease;
+  cursor: pointer;
+}
+
+.card.is-selected {
+  width: calc(136 * var(--px));
+  height: calc(204 * var(--px));
+}
+
+/* The selected card wears the SAME pulsing ring as a focused Play button: on the carousel the card IS
+   the focus, so it must read as focused. Reuses the play-button's @keyframes and proportions (a 3px d2
+   border 7px out, radius 17), and rides the size transition because it's anchored to the card's box. */
+.card.is-selected::after {
+  content: '';
+  position: absolute;
+  /* Half the Play button's ring (inset 7 / border 3 / radius 17): on a 204-tall card the full-size one
+     stands so far off the edge that its pulse reaches the active dot below. */
+  inset: calc(-4 * var(--px));
+  border: calc(2 * var(--px)) solid var(--d2);
+  border-radius: calc(14 * var(--px));
+  /* Its own, gentler pulse for the same reason — pulse-ring's 1.09 scale is 9 px of travel on a card
+     this tall, which would swallow the dot's 16 px of clearance. */
+  animation: card-ring-pulse 1.1s ease-in-out infinite;
+  pointer-events: none;
+}
+
+@keyframes card-ring-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.035);
+  }
+}
+/* On the detail screen the strip is fading out — a pulsing ring underneath it would be noise. */
+#app[data-screen='detail'] .card.is-selected::after {
+  animation: none;
+  opacity: 0;
+}
+
+/* The title placeholder shown until the artwork arrives (a card may have none at all). */
+.card-label {
+  position: absolute;
+  inset: calc(8 * var(--px));
+  display: flex;
+  align-items: flex-end;
+  overflow: hidden;
+  font-weight: 500;
+  font-size: calc(14 * var(--px));
+  line-height: calc(18 * var(--px));
+  color: color-mix(in srgb, var(--fg) 75%, transparent);
+}
+/* Once the artwork is in, the label would only fight the cover for attention. */
+.card.has-art .card-label {
+  display: none;
+}
+
+/* The 8x8 dot marking a game that is ON THE INSERTED CARD (launchable right now); history games have
+   none. It hangs below the card, clear of the artwork. */
+/* The dot marks "this game is on the inserted card". It is only shown when that MEANS something: when
+   the row also holds history entries (otherwise every card would carry one and it says nothing), or when
+   this game is busy — there the pulse is the only cue that an install/run is going on elsewhere in the
+   list. carousel.ts computes it and sets .shows-dot. */
+.card-dot {
+  position: absolute;
+  left: 50%;
+  /* 16 px of clearance under the card, then the 8 px dot — the mockup puts its bottom edge at 26. */
+  bottom: calc(-24 * var(--px));
+  width: calc(8 * var(--px));
+  height: calc(8 * var(--px));
+  margin-left: calc(-4 * var(--px));
+  border-radius: 50%;
+  background: var(--d2);
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+.card.shows-dot .card-dot {
+  opacity: 1;
+}
+
+/* The busy game keeps its dot pulsing wherever you are in the list — that is how "game A is installing"
+   stays visible while you browse game B (whose status line is deliberately blank; see app.ts). */
+.card.is-busy.shows-dot .card-dot {
+  animation: dot-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes dot-pulse {
+  0%,
+  100% {
+    opacity: 0.25;
+    transform: scale(0.85);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.15);
+  }
+}
+
+/* Entering the detail screen the selected card hands over to #play-button, which is pixel-identical at
+   that instant — so the swap is instantaneous and invisible, and only the button animates afterwards. */
+#app[data-screen='detail'] .card {
+  opacity: 0;
+}
+
+/* …unless there is no Play to hand over to (a history game, or one that still needs installing): then
+   nothing would take the card's place, so instead of blinking out it SHRINKS into its own bottom-left
+   corner — the same corner the title then slides into. */
+#app[data-screen='detail'][data-card-morph='off'] .card.is-selected {
+  width: 0;
+  height: 0;
+  transform-origin: bottom left;
+  transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1), height 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 0.35s ease;
+}
+#app[data-screen='detail'][data-card-morph='off'] #carousel {
+  /* The container has to outlast the shrink it is showing — the default 0.3s fade would take the card
+     with it halfway through. It goes in one frame once the card has reached zero, which is the same
+     moment the other branch hands over to the button. */
+  transition: opacity 0s linear 0.35s;
+}
+
+/* Going BACK is the entry played backwards, not a cross-fade, and it runs in the same two beats whether
+   or not there is a Play button: FIRST the selected card comes back to full size on its own (0.35s),
+   THEN the rest of the strip arrives. What differs is only WHO does the growing — the button when it
+   exists (morph on), the card itself when it does not (morph off) — and, with it, when the strip's
+   container may be shown: after the grow when the button is on top of it, before it otherwise (the card
+   growing inside it IS the animation). */
+#app[data-screen='carousel'][data-card-morph='on'] #carousel {
+  /* Switched on in ONE frame, not faded: the button disappears at exactly 0.35s, and a strip that is
+     still climbing out of opacity 0 at that instant leaves a hole where the artwork just was — read as
+     a blink at the end of the morph. The strip's own cards decide how they come in. */
+  transition: opacity 0s linear 0.35s;
+}
+#app[data-screen='carousel'][data-card-morph='off'] #carousel {
+  /* No button to wait for — the container must be up from frame one or the card would grow unseen. */
+  transition: opacity 0s linear;
+}
+#app[data-screen='carousel'] .card {
+  /* ONLY the fade-in waits for the grow. Delaying width/height here too would also delay every
+     grow/shrink WHILE flipping — the strip would slide first and the cards resize after.
+     The fan: each card comes in one stagger step later than its neighbour closer to the selection, so the
+     row opens outwards instead of appearing as one block. --fan is set per card by carousel.ts. The fade
+     is much LONGER than the step on purpose — the cards overlap heavily, which reads as one soft wave
+     travelling outwards rather than a row of separate blinks.
+     These three numbers (0.35s morph / 50ms step / 0.4s fade) are mirrored by RETURN_MS in
+     carousel-geometry.ts, which locks input out for exactly as long: edit them together. */
+  transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1), height 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 0.4s cubic-bezier(0.2, 0, 0.2, 1) calc(0.35s + var(--fan, 0) * 50ms);
+}
+#app[data-screen='carousel'] .card.is-selected {
+  /* The hand-back is a SWAP, same as the hand-over: this card is pixel-identical to the button it takes
+     over from, so it must be fully opaque in the very frame the button goes — anything softer shows the
+     background through it while the button is already gone. Its neighbours may fade in. */
+  transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1), height 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 0s linear 0.35s;
+}
+#app[data-screen='carousel'][data-card-morph='off'] .card.is-selected {
+  /* Here the card IS the button: it is opaque from frame one and grows out of the corner it shrank into,
+     which is exactly what the button does on the other branch. */
+  transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1), height 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 0s linear;
+}
+#app[data-screen='carousel'][data-card-morph='on'] .play-button {
+  /* Stays visible (and keeps its cover) for exactly that grow, then is swapped out in one frame. */
+  transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1), height 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 0s linear 0.35s;
+}
+/* The cover comes back in the SAME frame the screen flips, not over 0.3s: the button has to be the card
+   from the first pixel of the grow, or the first third of a second is a blank plate — the flash again. */
+#app[data-screen='carousel'][data-card-morph='on'] .play-button::before {
+  transition: none;
 }
 
 /* ── Bottom bar ──────────────────────────────────────────────────────────── */
@@ -143,18 +429,52 @@ body {
   left: 0;
   right: 0;
   bottom: 0;
-  height: calc(300 * var(--px));
-  /* Vertical gradient of d1: transparent at top → 0.75 → solid at bottom (mockup stops). */
-  background: linear-gradient(
-    to top,
+  /* 400 design px, straight off the mockup's "BackgroundBlur" — a shorter overlay ends mid-card and the
+     strip loses the dark base it is meant to sit on. */
+  height: calc(400 * var(--px));
+  /* The mockup's "BackgroundBlur" is no longer a full-width band but a POOL in the bottom-left corner
+     (Figma node 222:1484 — its linear fill is switched off there, the radial one is what is drawn). The
+     mockup's own centre is 439/1009 of the 1920x1080 grid with radii 711 x 290; we pin the centre to the
+     left EDGE instead, so the corner is at full strength rather than on the falling side of the curve,
+     and stretch it to 1350 wide so it reaches further across the bar. Vertically it is unchanged: 1009 is
+     329 from the top of this 400-tall element, and the pool's bottom half falls off the screen edge. */
+  --pool-x: 0px;
+  --pool-y: calc(329 * var(--px));
+  --pool-rx: calc(1350 * var(--px));
+  --pool-ry: calc(290 * var(--px));
+  /* d1 at the centre → 0.75 at 42% → gone at the rim (the mockup's three stops). NO mask on this element:
+     a mask multiplies the fill as well as the backdrop, which halved the corner the mockup deliberately
+     drags off-screen to keep filled. The blur wears its own mask instead — see ::before. */
+  background: radial-gradient(
+    var(--pool-rx) var(--pool-ry) at var(--pool-x) var(--pool-y),
     var(--d1) 0%,
-    color-mix(in srgb, var(--d1) 75%, transparent) 58%,
+    color-mix(in srgb, var(--d1) 75%, transparent) 42%,
     transparent 100%
   );
-  backdrop-filter: blur(6px);
-  -webkit-mask-image: linear-gradient(to top, #000 0%, #000 55%, transparent 100%);
-  mask-image: linear-gradient(to top, #000 0%, #000 55%, transparent 100%);
   transition: opacity 0.3s ease;
+}
+
+/* The blur, as its own layer so it can be masked to the pool's shape without touching the fill above.
+   Masking the bar itself would be simpler, but it would take the fill down with it; leaving the blur
+   unmasked would stand a blurred full-width band out to the right of the pool, where nothing is dimmed. */
+#bottom-bar::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  backdrop-filter: blur(6px);
+  -webkit-mask-image: radial-gradient(
+    var(--pool-rx) var(--pool-ry) at var(--pool-x) var(--pool-y),
+    #000 0%,
+    #000 45%,
+    transparent 100%
+  );
+  mask-image: radial-gradient(
+    var(--pool-rx) var(--pool-ry) at var(--pool-x) var(--pool-y),
+    #000 0%,
+    #000 45%,
+    transparent 100%
+  );
+  pointer-events: none;
 }
 
 .bar-content {
@@ -170,10 +490,14 @@ body {
    same visual model holds in every state — idle (triangle), game busy (spinner), system busy (gear):
    inactive = icon only, active = fill + icon. */
 
+/* The vertical anchor is the BOTTOM edge, not the top: in the carousel morph the button is 204 tall and
+   must grow UPWARDS out of the bar (it overflows .bar-content, which has no overflow:hidden). At the
+   default 92x92 — the same height as .bar-content — bottom:0 and top:0 are the same position, so the
+   ordinary screens are pixel-identical to before. */
 .play-button {
   position: absolute;
   left: 0;
-  top: 0;
+  bottom: 0;
   width: calc(92 * var(--px));
   height: calc(92 * var(--px));
   display: flex;
@@ -185,7 +509,53 @@ body {
   background: transparent;
   color: var(--d2);
   cursor: pointer;
-  transition: background 0.2s ease, color 0.2s ease, transform 0.12s ease;
+  /* width/height are part of the carousel→detail morph and share the strip's curve; `opacity` is
+     deliberately NOT transitioned — the carousel card and this button swap places instantaneously while
+     they are pixel-identical, and a fade there would show both at once. */
+  transition: background 0.2s ease, color 0.2s ease, transform 0.12s ease,
+    width 0.35s cubic-bezier(0.4, 0, 0.2, 1), height 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* The morph's cover layer: the selected card's artwork, painted behind the button's own content. It is
+   what makes the button pixel-identical to the card at the moment of the swap, and it fades out as the
+   button shrinks back into the play square. `--card-art` is set from JS (carousel.ts). */
+.play-button::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background-image: var(--card-art, none);
+  background-size: cover;
+  background-position: center;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  pointer-events: none;
+}
+
+/* On the carousel screen the button IS the selected card, geometrically — but invisible: the real card
+   in the strip is what the user sees. Entering detail flips the two and animates this one down to the
+   play square. */
+#app[data-screen='carousel'] .play-button {
+  width: calc(136 * var(--px));
+  height: calc(204 * var(--px));
+  opacity: 0;
+  pointer-events: none;
+  /* On this screen the button is not a button — it is the card's stand-in, so nothing that makes it read
+     as Play may survive the flip. Coming BACK it is focused (the d2 fill + the icon) and grows from 92 to
+     136x204: without this reset a bright plate flashes over the artwork for the whole grow. The focus fill
+     outranks .play-button's own transparent background, hence the explicit override. */
+  background: transparent;
+}
+#app[data-screen='carousel'] .play-button > * {
+  opacity: 0;
+}
+#app[data-screen='carousel'] .play-button::after {
+  opacity: 0;
+  animation: none;
+  transition: none;
+}
+#app[data-screen='carousel'] .play-button::before {
+  opacity: 1;
 }
 
 /* :hover gated on a live cursor — see the note on .text-button:hover (avoids a stale hover highlight
@@ -258,6 +628,13 @@ html:not(.cursor-hidden) .play-button:hover::after,
 }
 
 /* ── Rect (Info) button — normal: no background, content d2; fills with d2 on hover/focus ── */
+
+/* Carousel level: Play and More are hidden entirely (Р8) — the actions live one level deeper, on the
+   detail screen (A → detail → More → System/Close), so the carousel stays a pure browsing surface. */
+#app[data-screen='carousel'] #more-button {
+  opacity: 0;
+  pointer-events: none;
+}
 
 .rect-button {
   position: absolute;
@@ -369,15 +746,53 @@ html:not(.cursor-hidden) .rect-button:hover,
   font-size: calc(32 * var(--px));
   line-height: calc(48 * var(--px));
   color: var(--fg);
-  transition: transform 0.45s cubic-bezier(0.4, 0, 0.2, 1);
+  /* One transform, composed from two independent offsets: --title-y is the busy shift (below), --title-x
+     the carousel shift (see the carousel block). A second `transform` rule would silently override the
+     first, so every mover writes its own variable instead. */
+  transform: translate(var(--title-x, 0px), calc(var(--title-y, 0px) - var(--text-lift, 0px)));
+  /* `left` is animated too: it moves between the Play-less slot (x=50) and the normal one (x=174), and
+     an un-animated jump there is exactly what made the name "hop" when entering a game with no Play. */
+  transition: transform 0.45s cubic-bezier(0.4, 0, 0.2, 1), font-size 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+    left 0.35s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.3s ease;
 }
 
-/* Busy / steam-busy: the title lifts UP (instead of sliding right) so the status line fades in below
-   it — a two-line block that keeps a long title fully visible. The status sits pre-positioned below
-   center (see .status) and only its opacity animates. */
-#app[data-phase='busy'] .title,
-#app[data-steam-busy='true'] .title {
-  transform: translateY(calc(-18 * var(--px)));
+/* Flipping through the carousel: the OLD text must not linger over the new card while main is still
+   answering (the browse request is debounced). The renderer drops it the instant the selection moves —
+   `transition: none` makes that cut instant — and removing the class once the new text is in place
+   fades it back in through the opacity transition above. The status line behaves exactly like the title:
+   both are cut and revealed together, so the two-line block never half-changes. */
+.title.is-swapping {
+  opacity: 0;
+  transition: none;
+}
+/* The status needs the [data-status] in the selector to be heard at all: `#app[data-status='shown']
+   .status` below sets opacity:1 at the very same specificity, and being later in the file it would win. */
+#app[data-status] .status.is-swapping {
+  opacity: 0;
+  transition: none;
+}
+
+/* Carousel level: the text block moves NEXT TO the selected card, not under it — x=202 (the card's right
+   edge plus the 16 gap) with the title's centre 226 from the screen bottom, as in the mockup.
+   `--text-lift` is the single vertical knob (both lines share it) and `--title-x`/`--status-x` the
+   horizontal one — never a second `left`, which would collide with the rules that already own it (base,
+   idle/error, no-play). The busy shift stacks on top, reproducing the mockup's "Home - Installing". */
+#app[data-screen='carousel'] {
+  --text-lift: calc(130 * var(--px));
+  --title-x: calc(28 * var(--px));
+  --status-x: calc(28 * var(--px));
+}
+#app[data-screen='carousel'] .title {
+  font-size: calc(24 * var(--px));
+}
+
+/* A status line on screen: the title drops DOWN so the status can fade in ABOVE it — a two-line block
+   that keeps a long title fully visible. Keyed on the status TEXT actually being there (app.ts sets
+   data-status), not on the busy phase: while a game installs you can browse another card in the
+   carousel, and there the status line is deliberately blank — dropping that game's title would leave it
+   sitting low with nothing above it. */
+#app[data-status='shown'] .title {
+  --title-y: calc(18 * var(--px));
 }
 
 /* no-play layout (requiresInstall installer/steam game, not steam-busy): the left slot is empty (Play
@@ -403,19 +818,19 @@ html:not(.cursor-hidden) .rect-button:hover,
   font-size: calc(24 * var(--px));
   line-height: calc(36 * var(--px));
   color: var(--fg);
-  /* Pre-positioned below center so it forms the second line under the lifted title; only opacity
-     animates (it's invisible outside busy anyway). */
-  transform: translateY(calc(18 * var(--px)));
+  /* Pre-positioned ABOVE center so it forms the first line over the lowered title; only opacity
+     animates (it's invisible outside busy anyway). --status-x/--text-lift are the carousel's horizontal
+     and vertical shifts, exactly as on .title — the two lines move as ONE block. */
+  transform: translate(var(--status-x, 0px), calc(-18 * var(--px) - var(--text-lift, 0px)));
   opacity: 0;
-  transition: opacity 0.3s ease;
+  transition: opacity 0.3s ease, transform 0.45s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-/* Status fades in just after the title starts lifting (the delay sequences the two moves: title up,
-   then status in). Covers busy and the Steam non-blocking "Installing… X%" / "Uninstalling…" indicators. */
-#app[data-phase='busy'] .status,
-#app[data-steam-busy='true'] .status {
+/* The status fades in TOGETHER with the title's move — no delay: sequencing them made the line look
+   like it was lagging behind the state it reports. Covers busy and the Steam non-blocking
+   "Installing… X%" / "Uninstalling…" indicators. */
+#app[data-status='shown'] .status {
   opacity: 1;
-  transition-delay: 0.35s;
 }
 
 /* ── Popup (unified: Details / Power / Confirm / Error) ─────────────────────
@@ -427,6 +842,8 @@ html:not(.cursor-hidden) .rect-button:hover,
   position: absolute;
   inset: 0;
   pointer-events: none;
+  /* Above the carousel (which lifts itself over the bar) so the veil covers the whole screen. */
+  z-index: 2;
 }
 
 .popup-veil {
@@ -601,149 +1018,8 @@ html:not(.cursor-hidden) .rect-button:hover,
 #popup[data-view='details'] .actions-group[data-group='details'],
 #popup[data-view='power'] .actions-group[data-group='power'],
 #popup[data-view='confirm'] .actions-group[data-group='confirm'],
-#popup[data-view='error'] .actions-group[data-group='error'],
-#popup[data-view='select-game'] .actions-group[data-group='select-game'] {
+#popup[data-view='error'] .actions-group[data-group='error'] {
   display: flex;
-}
-
-/* ONLY the game list may claim the column's leftover height (the other stacks stay content-sized and
-   pinned to the bottom). `min-height:0` is what stops it from spilling — the scroll area is contained by
-   .select-game-scroll + the list's own overflow-y. Overflow stays VISIBLE here on purpose, so the
-   scrollbar thumb can sit outside the list's right edge. */
-#popup[data-view='select-game'] .actions-group[data-group='select-game'] {
-  flex: 1 1 auto;
-  min-height: 0;
-}
-
-/* Positioning context for the custom scrollbar thumb, which overlays the list's right edge. */
-.select-game-scroll {
-  position: relative;
-  flex: 1 1 auto;
-  min-height: 0;
-  width: 100%;
-}
-
-/* Select-game list: the game buttons SCROLL when a card carries many games (they never shrink — see
-   .text-button's flex:0 0 auto), while the Close button below stays fixed and reachable. The scroll area
-   takes whatever height the popup column has left, so it adapts to the window instead of a magic cap. */
-.select-game-list {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: calc(8 * var(--px));
-  width: 100%;
-  height: 100%;
-  overflow-y: auto;
-  /* Room so the last item isn't flush against the Close button below. */
-  padding-bottom: calc(8 * var(--px));
-  /* Hide the native scrollbar entirely — Chromium never animates ::-webkit-scrollbar, so a fade is
-     impossible there. The visible one is .select-game-thumb, a real element we can transition. */
-  scrollbar-width: none;
-}
-.select-game-list::-webkit-scrollbar {
-  display: none;
-}
-
-/* Custom scrollbar thumb: a hairline that barely reads against the frosted popup. Sized/positioned from
-   JS (height + translateY) and faded out when the focus leaves the game list or after a few idle seconds.
-   It sits OUTSIDE the list's right edge (a negative `right` pulls it out of the box), so the buttons keep
-   their full width — nothing shifts when it appears. The group's overflow is visible for this to show. */
-.select-game-thumb {
-  --thumb-width: calc(4 * var(--px));
-  --thumb-gap: calc(16 * var(--px)); /* clearance between the buttons and the scrollbar */
-  position: absolute;
-  top: 0;
-  right: calc(-1 * (var(--thumb-width) + var(--thumb-gap)));
-  width: var(--thumb-width);
-  /* Fixed height: a proportional thumb (clientHeight/scrollHeight) grows to nearly the full track when the
-     list only just overflows, which reads as a bug. JS only positions it (translateY). */
-  height: calc(32 * var(--px));
-  border-radius: calc(2 * var(--px));
-  /* Barely there at rest; it firms up under the cursor (and for the whole drag). */
-  background: color-mix(in srgb, var(--fg) 10%, transparent);
-  opacity: 0;
-  transition: opacity 0.35s ease, background 0.2s ease;
-  /* Not grabbable while faded out — an invisible 0-opacity element would still swallow clicks. */
-  pointer-events: none;
-}
-.select-game-thumb.is-visible {
-  opacity: 1;
-  pointer-events: auto;
-  cursor: pointer;
-}
-/* Hover is gated on a live cursor (like the buttons): once the gamepad takes over, the pointer still
-   physically sits wherever it was left, and a stale highlight would linger. `is-dragging` keeps the
-   emphasis while the pointer is captured and may wander off the thin bar. */
-html:not(.cursor-hidden) .select-game-thumb.is-visible:hover,
-.select-game-thumb.is-dragging {
-  background: color-mix(in srgb, var(--fg) 22%, transparent);
-}
-/* The 4px bar is far too thin to aim at: widen the HIT area on both sides without changing the visuals. */
-.select-game-thumb::before {
-  content: '';
-  position: absolute;
-  inset: 0 calc(-8 * var(--px));
-}
-
-/* Game buttons size to their title (like every other .text-button, right-aligned in the stack), but never
-   wider than the list — a long title is HARD-CLIPPED at that cap (no ellipsis). Only while the button is
-   focused (the active row) does the title marquee-scroll back and forth so the full name is readable —
-   the popup never widens. Non-overflowing titles never scroll. */
-.select-game-list .game-button {
-  width: auto;
-  max-width: 100%;
-  justify-content: flex-start;
-  overflow: hidden;
-}
-.game-label {
-  /* `0 1 auto`: sized by the text, but allowed to SHRINK once the button hits max-width — that shrink
-     (with min-width:0) is what produces the clip. `1 …` would instead stretch it on short titles. */
-  flex: 0 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  --fade: calc(8 * var(--px)); /* soft-fade width at a clipped edge (kept small so start/end stay legible) */
-}
-/* A clipped (overflowing) title fades out at the RIGHT edge so the cut looks soft, not chopped. JS adds
-   `is-clipped` to any overflowing button. */
-.game-button.is-clipped .game-label {
-  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - var(--fade)), transparent 100%);
-  mask-image: linear-gradient(to right, #000 calc(100% - var(--fade)), transparent 100%);
-}
-/* While the focused title marquee-scrolls, fade BOTH edges so the text softly enters/leaves on each side. */
-.game-button.is-scrolling .game-label {
-  -webkit-mask-image: linear-gradient(
-    to right,
-    transparent 0,
-    #000 var(--fade),
-    #000 calc(100% - var(--fade)),
-    transparent 100%
-  );
-  mask-image: linear-gradient(
-    to right,
-    transparent 0,
-    #000 var(--fade),
-    #000 calc(100% - var(--fade)),
-    transparent 100%
-  );
-}
-.game-label-inner {
-  display: inline-block;
-  white-space: nowrap;
-  will-change: transform;
-}
-/* Ping-pong marquee: shift + per-title duration are set from JS (measured overflow); `alternate` scrolls
-   to the end and back, `ease-in-out` dwells at each edge so the start/end are readable. */
-.game-button.is-scrolling .game-label-inner {
-  animation: game-marquee var(--marquee-duration, 6s) ease-in-out infinite alternate;
-}
-@keyframes game-marquee {
-  from {
-    transform: translateX(0);
-  }
-  to {
-    transform: translateX(var(--marquee-shift, 0));
-  }
 }
 
 /* ── TextButton — textual sibling of .rect-button ───────────────────────────
@@ -752,8 +1028,8 @@ html:not(.cursor-hidden) .select-game-thumb.is-visible:hover,
 
 .text-button {
   height: calc(92 * var(--px));
-  /* Never squeeze: these are flex items in a vertical stack, and the default flex-shrink:1 would compress
-     them instead of letting a long list scroll (see .select-game-list). */
+  /* Never squeeze: these are flex items in a vertical stack, and the default flex-shrink:1 would
+     compress them instead. */
   flex: 0 0 auto;
   min-width: calc(184 * var(--px));
   padding: 0 calc(32 * var(--px));

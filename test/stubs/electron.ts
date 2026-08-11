@@ -3,6 +3,7 @@
 // Node. vitest aliases the bare `electron` specifier to this file (see vitest.config.ts), so those
 // imports resolve to inert no-ops. It exposes only what the tested import graph touches; extend as
 // the test surface grows.
+import fsSync from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -28,6 +29,48 @@ export const Menu = {
   },
 };
 
+/**
+ * `nativeImage` stand-in for LibraryStore's lazy thumbnail path (test/library-store.test.ts). The real one
+ * decodes PNG/JPEG only, and the store's fallbacks hinge on that, so the stub keeps the same contract with
+ * a trivial "format": a file whose first bytes are `IMG <width>x<height>` decodes, anything else is empty.
+ * resize/toJPEG/toPNG produce recognizable byte strings so a test can tell which branch ran.
+ */
+export const nativeImage = {
+  createFromPath(filePath: string): NativeImageStub {
+    let text = '';
+    try {
+      text = fsSync.readFileSync(filePath, 'utf8');
+    } catch {
+      text = '';
+    }
+    const match = /^IMG (\d+)x(\d+)/.exec(text);
+    if (match === null) return makeImage(null);
+    return makeImage({ width: Number(match[1]), height: Number(match[2]) });
+  },
+  createEmpty(): NativeImageStub {
+    return makeImage(null);
+  },
+};
+
+interface NativeImageStub {
+  isEmpty(): boolean;
+  getSize(): { width: number; height: number };
+  resize(options: { height?: number; width?: number }): NativeImageStub;
+  toJPEG(quality: number): Buffer;
+  toPNG(): Buffer;
+}
+
+function makeImage(size: { width: number; height: number } | null): NativeImageStub {
+  const current = size ?? { width: 0, height: 0 };
+  return {
+    isEmpty: () => size === null,
+    getSize: () => current,
+    resize: ({ height }) => makeImage({ width: current.width, height: height ?? current.height }),
+    toJPEG: (quality) => Buffer.from(`JPEG ${current.width}x${current.height} q${quality}`),
+    toPNG: () => Buffer.from(`PNG ${current.width}x${current.height}`),
+  };
+}
+
 export const contextBridge = {
   exposeInMainWorld(): void {},
 };
@@ -40,4 +83,4 @@ export const ipcRenderer = {
   },
 };
 
-export default { app, Menu, contextBridge, ipcRenderer };
+export default { app, Menu, nativeImage, contextBridge, ipcRenderer };

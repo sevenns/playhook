@@ -34,7 +34,7 @@ The card can carry the game itself, an **installer** for heavy games
 
 <div align="center">
   <img src="assets/github/playhook-bloodborne-example.jpg" width="760" alt="Playhook game card — Bloodborne">
-  <p><em>The Playhook game card, running Bloodborne. Ready-made cards like this — <code>game.json</code>, hero art and sounds — live in the <a href="https://sevenns.github.io/playhook-collection/">Playhook Collection</a>, whose UI you can also try right in the browser.</em></p>
+  <p><em>The Playhook game card, running Bloodborne. Ready-made cards like this — <code>game.json</code>, hero art and music — live in the <a href="https://sevenns.github.io/playhook-collection/">Playhook Collection</a>, whose UI you can also try right in the browser.</em></p>
 </div>
 
 ---
@@ -80,9 +80,13 @@ the inserted card for you — see [Settings and the card editor](#settings-and-t
    bottom bar with the **Play** button on the left, the game title in the middle and the **More** (⋯)
    button on the right (state `ready`). If the manifest has no `heroImage`, a bundled wallpaper — or
    your own, set in Settings — is used.
-3. Press **A** on the gamepad (the window is force-focused) **or** click **Play**.
-4. Saves are synced card → PC and the game launches; it takes the foreground over the launcher.
-5. When the game closes, Playhook counts the play time, updates the statistics, and syncs the
+3. With more than one game to show, the launcher opens on the **history carousel** instead: a row of
+   game cards you flip through with **left/right**. The games on the inserted card come first (each
+   marked with a dot — those you can launch right now), followed by the games you have played on this
+   device before. **A** opens the selected game's screen, **B** goes back to the row.
+4. Press **A** on the gamepad (the window is force-focused) **or** click **Play**.
+5. Saves are synced card → PC and the game launches; it takes the foreground over the launcher.
+6. When the game closes, Playhook counts the play time, updates the statistics, and syncs the
    saves PC → card. The game card window returns.
 
 **The More (⋯) button** opens the **Details** menu — one right-side popup that carries everything
@@ -93,7 +97,6 @@ state, offers:
   [Steam-mode](#steam-mode-launch-and-install-steam-games) cards (an uninstalled game has no Play
   button at all — you start from here);
 - **Force close** — while a game is running, kills it and still records the session and syncs saves;
-- **Select game** — on a card that carries several games (see [`game.json`](#preparing-a-card-gamejson));
 - **System** — a submenu with Shutdown / Reboot / Sleep (each behind a confirmation) and
   **Minimize Playhook**, which sends the window back to the tray. In Game Mode that last item is
   **Close Playhook** (a full quit) instead, since there is no tray to minimize into.
@@ -101,7 +104,24 @@ state, offers:
 Every confirmation and every error uses that same popup; close it with **B** or a click on **Close**.
 If a launch fails, the reason appears there and you can simply retry.
 
-The empty screen (no card inserted) reuses the same layout over the wallpaper: "Insert a game card",
+### Launch history
+
+Every game inserted into this device leaves a copy of its art and music in
+`%APPDATA%/playhook/library/` (`~/.config/playhook/` on Linux), so the carousel still shows the games you
+have had once the card is out — pick one and you get its screen (title, stats, background and music),
+with no Play button: there is nothing to launch without the card.
+
+The row is ordered by how recently you **touched** a game — the later of "its card was inserted" and "you
+played it" — so a card you put in yesterday and never got around to starting still sits near the front.
+The games on the currently inserted card come first, ordered by when you last played them. The history
+keeps 40 games; beyond that the least recently touched are dropped, and the games on the inserted card
+are never evicted.
+
+Use `gridImage` in `game.json` to control how a game looks in that row. It expects a **600x900** portrait
+cover — the same format Steam uses, so [SteamGridDB](https://www.steamgriddb.com/) is the easiest place to
+find one. Without it the card is cropped from the first `heroImage`.
+
+The empty screen (no card inserted, no history) reuses the same layout over the wallpaper: "Insert a game card",
 no Play button, and **More** offering just the *System* submenu (where *Minimize Playhook* lives).
 
 When the launcher is hidden you can **hold Start + Back** on the gamepad to re-summon it (the hotkey
@@ -129,8 +149,9 @@ Both windows open from the tray, so they are **Desktop-Mode only** on the Steam 
   (see [Install mode](#install-mode-heavy-games-on-slow-media)), and, on the Steam Deck, the Game Mode
   auto-launch on card insertion.
 - **Audio** — the **navigation sound set** and the **background ambience** shipped with the app, a
-  volume slider for each, and an *only global* switch per category that makes the app's sound/ambience
-  win over whatever the card carries in `sounds` / `backgroundMusic`.
+  volume slider for each, and an *only global ambience* switch that makes the app's ambience win over
+  whatever the card carries in `backgroundMusic`. The navigation sounds always come from the chosen set:
+  a card cannot supply its own.
 - **Advanced** — *Open logs*, *Open games folder* (the install-mode directory), *Reset to defaults*.
 
 Settings live in `settings.json` next to the rest of the app state (`%APPDATA%\playhook\` on Windows,
@@ -142,9 +163,11 @@ Settings live in `settings.json` next to the rest of the app state (`%APPDATA%\p
 hand:
 
 - pick the card (any removable drive — a **blank** one can be initialized from scratch);
-- a **form** with sections *Basics / Launch / Hero images / Saves / Audio / Advanced*, with Browse
-  pickers for the executable, hero images, sounds and save folders (a picked PC save folder is
-  converted back into a `%APPDATA%`-style prefix automatically, and a file outside the card is rejected);
+- a **form** with sections *Basics / Launch / Images / Saves / Audio / Advanced*, with Browse pickers
+  for the executable, the hero backgrounds (up to 3), the 600x900 carousel card image, the background
+  music and the save folders
+  (a picked PC save folder is converted back into a `%APPDATA%`-style prefix automatically, and a file
+  outside the card is rejected);
 - a **JSON** tab with the raw manifest, live schema validation, error messages and a formatter — the
   form and the JSON tab are two views of the same document;
 - **Add game** / **Remove current** for a multi-game card;
@@ -156,16 +179,16 @@ hand:
 ## Preparing a card: `game.json`
 
 > **Don't want to write one by hand?** The [**Playhook Collection**](https://sevenns.github.io/playhook-collection/)
-> is a growing set of ready-made, verified manifests — sounds, hero art, save paths and all. Browse it,
+> is a growing set of ready-made, verified manifests — hero art, music, save paths and all. Browse it,
 > preview a game, and grab its `game.json` + assets for your card. Source and contribution guide:
 > [github.com/sevenns/playhook-collection](https://github.com/sevenns/playhook-collection).
 
 Place a `game.json` in the **root** of the card. The paths
-`executable` / `heroImage` / `saveOnCard` are **relative to the card root**; `pcSavePath` is
+`executable` / `heroImage` / `gridImage` / `saveOnCard` are **relative to the card root**; `pcSavePath` is
 absolute and must start with one of the allowed prefixes (see below).
 
 The file holds **either one game object** (below) **or an array of them** — a card can carry several
-games. The launcher opens on the first one and you switch with **More (⋯) → Select game**; each game
+games. The launcher opens on the history carousel and you switch by flipping through it; each game
 keeps its own stats, saves and install state (they are keyed by `id`). One bad entry doesn't sink the
 whole card — it is skipped (with a line in the log) and the rest still load; **duplicate `id`s are
 rejected**, since the id keys the PC-side storage. The Configure editor shows the issue per game.
@@ -178,18 +201,13 @@ rejected**, since the id keys the PC-side storage. The Configure editor shows th
   "executable": "game/hollow_knight.exe",   // relative path to the .exe from the card root
   "args": [],                               // launch arguments (optional)
   "runAsAdmin": false,                      // launch elevated via UAC for .exe requiring admin (optional, default false)
-  "heroImage": "assets/hero.jpg",           // window background: one path, or an array of paths that cross-fade every minute (optional; falls back to a bundled wallpaper)
+  "heroImage": "assets/hero.jpg",           // window background: one path, or an array of UP TO 3 paths that cross-fade every minute (optional; falls back to a bundled wallpaper)
+  "gridImage": "assets/grid.jpg",           // the game's card in the history carousel: a 600x900 portrait cover, as on SteamGridDB (optional; without it the card is cropped from the first heroImage)
   "saveOnCard": "saves",                    // copy folder for saves on the card (relative to the root)
   "pcSavePath": "%APPDATA%/Team Cherry/Hollow Knight", // where the game actually writes saves on the PC
   "launchTimeoutSec": 30,                   // how long to wait for the process to appear (optional, default 30)
   "killTimeoutSec": 60,                     // how long "Force close" waits for the game to die (optional, default 60)
   "watchProcesses": ["Game-Win64-Shipping.exe"], // for launcher/wrapper games: track THESE process names, not the spawned launcher (optional)
-  "sounds": {                               // per-game UI sounds (all optional; omitted slots use the sound set from Settings)
-    "play": "audio/play.ogg",               // pressing "Play"
-    "navigate": "audio/move.ogg",           // moving focus between controls
-    "button": "audio/button.ogg",           // pressing an ordinary button (e.g. an item in the More menu)
-    "back": "audio/back.ogg"                // gamepad B closing the info popup
-  },
   "backgroundMusic": "audio/theme.ogg"      // looping music while the window is visible (volume from Settings, optional)
 }
 ```
@@ -208,7 +226,7 @@ E:\
 
 ### Rules and security (the card is untrusted input)
 
-- After resolution, `executable` / `heroImage` / `saveOnCard` **must lie inside the card
+- After resolution, `executable` / `heroImage` / `gridImage` / `saveOnCard` **must lie inside the card
   root** — `..` and absolute paths are forbidden (otherwise the game won't launch and an error
   is shown). The `executable` must also **exist on the card**, or launch is rejected.
 - `pcSavePath` — only from an allowlist of prefixes, with no traversal (`..`). Otherwise rejected:
@@ -249,13 +267,12 @@ E:\
     matching would latch onto that pre-existing process.
 - `saveOnCard` and `pcSavePath` are set **together** or **both omitted**. If both are omitted,
   the game writes its saves next to its exe on the card and syncing is fully disabled.
-- `sounds.*` and `backgroundMusic` — card-relative like `heroImage`, **must lie inside the card
-  root**. Any omitted sound slot falls back to the **navigation sound set chosen in Settings**, so every
-  game has UI sounds out of the box; `backgroundMusic` is off unless set (unless a global ambience is
-  chosen in Settings), loops and pauses while a game is running or the window is hidden. Both can be
-  overridden globally — *only global navigation sounds* / *only global ambience* in Settings make the
-  app's choice win over the card's. Use a common web-playable audio format
-  (mp3, ogg/oga, opus, wav, m4a, aac, flac, webm).
+- `backgroundMusic` — card-relative like `heroImage`, **must lie inside the card root**. It is off
+  unless set (unless a global ambience is chosen in Settings), loops, and pauses while a game is running
+  or the window is hidden; *only global ambience* in Settings makes the app's choice win over the card's.
+  Use a common web-playable audio format (mp3, ogg/oga, opus, wav, m4a, aac, flac, webm).
+  UI sounds are **not** a card setting — they always come from the navigation sound set chosen in
+  Settings (a `sounds` block in an older `game.json` is ignored, not rejected).
 - `killTimeoutSec` — how long **Force close** (More ⋯ menu) waits for the game's processes to vanish
   before reporting a failure; the wait ends as soon as they're gone (optional, default 60).
 
@@ -385,7 +402,7 @@ local Steam client** (via `steam://` URIs) — the card only needs the manifest,
 ```
 
 There are **no game files on the card** — `executable` / `install` are not used (and are rejected if
-present). `heroImage`, `sounds`, `backgroundMusic`, and `saveOnCard` / `pcSavePath` work exactly as
+present). `heroImage`, `backgroundMusic`, and `saveOnCard` / `pcSavePath` work exactly as
 for a normal game.
 
 **Rules (enforced by the schema):**
@@ -768,7 +785,7 @@ CI runs all three, on Windows **and** Linux.
   when you do want to poke at it). Hand-write one only for a game the Collection doesn't cover yet
   (and consider [contributing it back](https://github.com/sevenns/playhook-collection)).
 - **Can one card hold several games?** Yes — put an **array** of game objects in `game.json` and switch
-  between them with **More (⋯) → Select game**.
+  between them in the history carousel (left/right, then **A**).
 - **Is the SmartScreen warning normal?** Yes. The builds aren't code-signed, so Windows warns on
   first run. Choose *More info → Run anyway*. Auto-update still works without signing.
 - **Does it run on the Steam Deck / Linux?** **Yes.** The same Windows game cards launch through Proton

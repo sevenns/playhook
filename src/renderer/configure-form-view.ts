@@ -18,6 +18,7 @@ import {
   type ManifestFormModel,
   type ParseFormResult,
 } from './configure-form-model.js';
+import { MAX_HERO_IMAGES } from '../shared/types.js';
 import type { ConfigPickKind, ConfigPickResult, ManifestValidationIssue } from '../shared/types';
 import type { Translator } from '../shared/i18n/index';
 import type { MessageKey } from '../shared/i18n/en';
@@ -34,6 +35,9 @@ function getChecked(el: CheckedEl): boolean {
 
 /** Where the SteamDB appid lookup opens (the #7 helper link). */
 const STEAMDB_URL = 'https://steamdb.info/';
+
+/** Where the card-image helper link opens — the 600x900 covers the carousel card expects. */
+const STEAMGRIDDB_URL = 'https://www.steamgriddb.com/';
 
 /** The form's section ids (each a tab / a panel shown one at a time). */
 export type SectionId = 'basics' | 'launch' | 'hero' | 'saves' | 'audio' | 'advanced';
@@ -75,6 +79,7 @@ type FieldKey =
   | 'runAsAdmin'
   | 'watchProcesses'
   | 'heroImage'
+  | 'gridImage'
   | 'saveOnCard'
   | 'pcSavePath'
   | 'backgroundMusic'
@@ -93,11 +98,7 @@ type FieldKey =
   | 'install.type'
   | 'install.runAsAdmin'
   | 'install.args'
-  | 'install.winetricks'
-  | 'sounds.play'
-  | 'sounds.navigate'
-  | 'sounds.button'
-  | 'sounds.back';
+  | 'install.winetricks';
 
 /** A dynamic string list (args / watchProcesses / heroImage / install.args): a stack of rows + Add. */
 interface DynamicList {
@@ -130,12 +131,9 @@ export class FormView {
   private readonly installType: ValueEl;
   private readonly installRunAsAdminSwitch: CheckedEl;
   private readonly appidInput: ValueEl;
+  private readonly gridImageInput: ValueEl;
   private readonly saveOnCardInput: ValueEl;
   private readonly pcSavePathInput: ValueEl;
-  private readonly soundPlay: AudioField;
-  private readonly soundNavigate: AudioField;
-  private readonly soundButton: AudioField;
-  private readonly soundBack: AudioField;
   private readonly music: AudioField;
   private readonly launchTimeoutInput: ValueEl;
   private readonly killTimeoutInput: ValueEl;
@@ -180,10 +178,9 @@ export class FormView {
   // card already carries an id.
   private idTouched = false;
   private rest: Readonly<Record<string, unknown>> = {};
-  // Unknown keys nested inside the sounds/install/steam blocks: the form has no field for them, so they
+  // Unknown keys nested inside the install/steam blocks: the form has no field for them, so they
   // must be remembered from load() and put back in readModel() (else serialize() drops them — the blocks'
   // zod is strip-mode, so the loss would be silent). Mirrors the top-level `rest` round-trip.
-  private soundsRest: Readonly<Record<string, unknown>> = {};
   private installRest: Readonly<Record<string, unknown>> = {};
   /** The copy slot's own unknown keys — kept apart from installRest, like the two slots themselves. */
   private copyInstallRest: Readonly<Record<string, unknown>> = {};
@@ -337,16 +334,44 @@ export class FormView {
       this.watchList.wrapper,
     ]);
 
-    // ── Hero images (with thumbnails) ────────────────────────────────────────
-    this.heroList = this.dynamicList('heroImage', 'configure.sectionHero', {
+    // ── Images: hero backgrounds (with thumbnails) + the carousel card ───────
+    this.heroList = this.dynamicList('heroImage', 'configure.fieldHeroImages', {
       browseKind: 'image',
       browseLabelKey: 'configure.addFile', // the bottom "Add…" button (multi-select adds rows)
       replaceKind: 'image', // each row gets a "Replace…" button to swap its file
       preview: true,
       reorder: true,
       noAdd: true,
+      // Card-format cap (MAX_HERO_IMAGES): the picker stops adding past it, so the form can't produce a
+      // manifest the editor's own validator would then reject.
+      maxItems: MAX_HERO_IMAGES,
     });
-    this.addSection('hero', [this.heroList.wrapper]);
+    const heroHint = document.createElement('div');
+    heroHint.className = 'field-hint';
+    this.labelRefs.push({ el: heroHint, key: 'configure.heroImagesHint' });
+    this.heroList.wrapper.append(heroHint);
+
+    // The carousel card: a single card-relative image, optional (see gridImageHint).
+    this.gridImageInput = this.textInput('gridImage');
+    const gridField = this.fieldWithBrowse(
+      'configure.fieldGridImage',
+      'gridImage',
+      this.gridImageInput,
+      'image',
+    );
+    const gridHint = document.createElement('div');
+    gridHint.className = 'field-hint';
+    this.labelRefs.push({ el: gridHint, key: 'configure.gridImageHint' });
+    const gridHelp = document.createElement('a');
+    gridHelp.className = 'help-link';
+    gridHelp.href = '#';
+    this.labelRefs.push({ el: gridHelp, key: 'configure.gridImageHelp' });
+    gridHelp.addEventListener('click', (event) => {
+      event.preventDefault();
+      this.deps.openExternal(STEAMGRIDDB_URL);
+    });
+    gridField.append(gridHint, gridHelp);
+    this.addSection('hero', [this.heroList.wrapper, gridField]);
 
     // ── Saves ───────────────────────────────────────────────────────────────
     this.saveOnCardInput = this.textInput('saveOnCard');
@@ -359,19 +384,10 @@ export class FormView {
       this.fieldWithBrowse('configure.fieldPcSavePath', 'pcSavePath', this.pcSavePathInput, 'pc-save'),
     ]);
 
-    // ── Audio (Default/Custom per slot) ──────────────────────────────────────
-    this.soundPlay = this.audioField('configure.fieldSoundPlay', 'sounds.play', 'sounds', 'configure.soundBuiltinHint');
-    this.soundNavigate = this.audioField('configure.fieldSoundNavigate', 'sounds.navigate', 'sounds', 'configure.soundBuiltinHint');
-    this.soundButton = this.audioField('configure.fieldSoundButton', 'sounds.button', 'sounds', 'configure.soundBuiltinHint');
-    this.soundBack = this.audioField('configure.fieldSoundBack', 'sounds.back', 'sounds', 'configure.soundBuiltinHint');
-    this.music = this.audioField('configure.fieldBackgroundMusic', 'backgroundMusic', 'backgroundMusic', 'configure.musicNoneHint');
-    this.addSection('audio', [
-      this.soundPlay.wrapper,
-      this.soundNavigate.wrapper,
-      this.soundButton.wrapper,
-      this.soundBack.wrapper,
-      this.music.wrapper,
-    ]);
+    // ── Audio (Default/Custom) — the card's own background music. UI sounds are NOT here: they always
+    // come from the bundled set chosen in Settings → Audio.
+    this.music = this.musicField('configure.fieldBackgroundMusic', 'backgroundMusic', 'backgroundMusic', 'configure.musicNoneHint');
+    this.addSection('audio', [this.music.wrapper]);
 
     // ── Advanced ──────────────────────────────────────────────────────────────
     this.launchTimeoutInput = this.numberInput('launchTimeoutSec');
@@ -427,7 +443,6 @@ export class FormView {
     mixed: boolean,
   ): void {
     this.rest = rest;
-    this.soundsRest = model.sounds.rest;
     this.installRest = model.install.rest;
     this.copyInstallRest = model.copyInstall.rest;
     this.steamRest = model.steam.rest;
@@ -442,6 +457,7 @@ export class FormView {
     this.idTouched = model.id !== '';
     this.setScalar('executable', this.executableInput, model.executable);
     this.setScalarChecked('runAsAdmin', this.runAsAdminSwitch, model.runAsAdmin);
+    this.setScalar('gridImage', this.gridImageInput, model.gridImage);
     this.setScalar('saveOnCard', this.saveOnCardInput, model.saveOnCard);
     this.setScalar('pcSavePath', this.pcSavePathInput, model.pcSavePath);
     this.setScalar('launchTimeoutSec', this.launchTimeoutInput, model.launchTimeoutSec);
@@ -471,12 +487,7 @@ export class FormView {
     // steam block (corrupt = whole block).
     this.setScalar('steam', this.appidInput, model.steam.appid);
 
-    // audio blocks (sounds corrupt = whole block; backgroundMusic is its own key).
-    const soundsCorrupt = 'sounds' in this.corrupt;
-    this.soundPlay.setValue(soundsCorrupt ? '' : model.sounds.play);
-    this.soundNavigate.setValue(soundsCorrupt ? '' : model.sounds.navigate);
-    this.soundButton.setValue(soundsCorrupt ? '' : model.sounds.button);
-    this.soundBack.setValue(soundsCorrupt ? '' : model.sounds.back);
+    // audio (backgroundMusic is its own key).
     this.music.setValue('backgroundMusic' in this.corrupt ? '' : model.backgroundMusic);
 
     this.mixed = mixed;
@@ -522,6 +533,7 @@ export class FormView {
       this.installType,
       this.installRunAsAdminSwitch,
       this.appidInput,
+      this.gridImageInput,
       this.saveOnCardInput,
       this.pcSavePathInput,
       this.umuGameIdInput,
@@ -540,7 +552,7 @@ export class FormView {
     ]) {
       list.setDisabled(disabled);
     }
-    for (const audio of [this.soundPlay, this.soundNavigate, this.soundButton, this.soundBack, this.music]) {
+    for (const audio of [this.music]) {
       audio.setDisabled(disabled);
     }
     // Keep the custom-installer rule even while enabling.
@@ -568,17 +580,11 @@ export class FormView {
       winetricks: this.gameWinetricksList.values(),
       umuGameId: getValue(this.umuGameIdInput),
       heroImage: this.heroList.values(),
+      gridImage: getValue(this.gridImageInput),
       saveOnCard: getValue(this.saveOnCardInput),
       pcSavePath: getValue(this.pcSavePathInput),
       launchTimeoutSec: getValue(this.launchTimeoutInput),
       killTimeoutSec: getValue(this.killTimeoutInput),
-      sounds: {
-        play: getValue(this.soundPlay.input),
-        navigate: getValue(this.soundNavigate.input),
-        button: getValue(this.soundButton.input),
-        back: getValue(this.soundBack.input),
-        rest: this.soundsRest,
-      },
       backgroundMusic: getValue(this.music.input),
       install: {
         installer: getValue(this.installInstallerInput),
@@ -831,10 +837,9 @@ export class FormView {
     return wrapper;
   }
 
-  // An audio field: a Default/Custom selector plus (in Custom) a text-input + Browse + clear. Default and
-  // Custom-empty both leave the value empty → the field is omitted from game.json (built-in sound / no
-  // music), and a hint says so. Value state IS the model (empty = default); the toggle is pure UI.
-  private audioField(
+  // The background-music field: a text-input + Browse + Clear. An empty value omits the key from
+  // game.json (the game plays no music of its own), and a hint says so.
+  private musicField(
     labelKey: MessageKey,
     errorKey: FieldKey,
     corruptKey: string,
@@ -843,13 +848,9 @@ export class FormView {
     const wrapper = document.createElement('div');
     wrapper.className = 'field';
 
-    // Default → the field is omitted from game.json (built-in sound / no music); Custom → a path field.
-    const modeSelect = this.dropdown([
-      ['default', 'configure.audioDefault'],
-      ['custom', 'configure.audioCustom'],
-    ]);
-    modeSelect.classList.add('audio-mode');
-
+    // The value IS the state: a path means "play this", empty means "no music of its own". There is no
+    // Default/Custom selector — an empty field says the same thing with one control fewer, and the trash
+    // button is how you get back to it.
     const row = document.createElement('div');
     row.className = 'field-row';
     const input = document.createElement('fluent-text-input') as ValueEl;
@@ -858,62 +859,58 @@ export class FormView {
       const result = await this.deps.pickPath('audio');
       if (result.ok) {
         input.value = result.paths[0] ?? getValue(input);
-        setMode('custom');
         this.clearCorrupt(corruptKey);
+        refresh();
         this.deps.onChange();
       } else if (!('cancelled' in result)) {
         this.deps.onPickError(result.message);
       }
     });
-    // No separate clear button: selecting "Default" in the dropdown clears the field and omits it.
-    row.append(input, browse);
+    // The same trash button the hero/args rows use — clearing a path is the same gesture, so it looks
+    // the same instead of inventing a second vocabulary for it. `icon-danger` is part of that button,
+    // not decoration: it carries the destructive hover/pressed tokens (see configure.css).
+    const clear = this.iconButton('configure.remove', trashIcon(), () => {
+      if (getValue(input) === '') return; // nothing to clear — not a change, don't mark the form dirty
+      input.value = '';
+      this.clearCorrupt(corruptKey);
+      refresh();
+      this.deps.onChange();
+    });
+    clear.classList.add('icon-danger');
+    row.append(input, browse, clear);
 
     const hint = document.createElement('div');
     hint.className = 'field-hint';
     this.labelRefs.push({ el: hint, key: hintKey });
 
-    wrapper.append(this.fieldLabel(labelKey), modeSelect, row, hint, this.errorSlot(errorKey));
+    wrapper.append(this.fieldLabel(labelKey), row, hint, this.errorSlot(errorKey));
     this.registerContainer(errorKey, wrapper);
 
-    let mode: 'default' | 'custom' = 'default';
+    let formDisabled = false;
     const refresh = (): void => {
       const empty = getValue(input) === '';
-      row.hidden = mode === 'default';
-      hint.hidden = !(mode === 'default' || empty);
-      modeSelect.value = mode;
+      hint.hidden = !empty;
+      // The trash button is dead while there is nothing to clear — the form-wide disable still wins.
+      setElDisabled(clear, formDisabled || empty);
     };
-    const setMode = (next: 'default' | 'custom'): void => {
-      mode = next;
-      if (next === 'default') input.value = '';
-      refresh();
-    };
-    modeSelect.addEventListener('change', () => {
-      const next = getValue(modeSelect) === 'custom' ? 'custom' : 'default';
-      const clearedValue = next === 'default' && getValue(input) !== '';
-      setMode(next);
-      // Only a real content change (clearing a set path) marks dirty/re-validates; merely revealing the
-      // empty Custom input does not.
-      if (clearedValue) {
-        this.clearCorrupt(corruptKey);
-        this.deps.onChange();
-      }
-    });
     input.addEventListener('input', () => {
       this.clearCorrupt(corruptKey);
       refresh();
       this.deps.onChange();
     });
+    refresh();
 
     return {
       wrapper,
       input,
       setValue: (value) => {
-        mode = value === '' ? 'default' : 'custom';
         input.value = value;
         refresh();
       },
       setDisabled: (disabled) => {
-        for (const el of [input, browse, modeSelect]) setElDisabled(el, disabled);
+        formDisabled = disabled;
+        for (const el of [input, browse]) setElDisabled(el, disabled);
+        refresh();
       },
     };
   }
@@ -928,6 +925,9 @@ export class FormView {
       readonly preview?: boolean;
       readonly reorder?: boolean;
       readonly noAdd?: boolean;
+      /** Hard cap on the number of rows (heroImage — see MAX_HERO_IMAGES). Adding past it is a no-op and
+       * the Add/Browse buttons go disabled, so the form can't build a manifest its own validator rejects. */
+      readonly maxItems?: number;
       /** Error slot / container key, when it must differ from `corruptKey` (e.g. a second list sharing the
        * `install` block's corrupt-clear but needing its own error slot). Defaults to the corruptKey rule. */
       readonly errorKey?: FieldKey;
@@ -960,7 +960,21 @@ export class FormView {
       rows.addEventListener('drop', (event) => event.preventDefault());
     }
 
-    const addRow = (value: string): void => {
+    // Row cap (opts.maxItems): the Add/Browse buttons go disabled once it is reached, and addRow itself
+    // refuses — a multi-select Browse can hand us more paths than there is room for.
+    const capReached = (): boolean =>
+      opts.maxItems !== undefined && rows.children.length >= opts.maxItems;
+    const refreshCap = (): void => {
+      if (opts.maxItems === undefined) return;
+      const full = capReached();
+      for (const el of buttonRow.querySelectorAll('fluent-button')) setElDisabled(el as HTMLElement, full);
+    };
+
+    // `fromSource` rows come from the manifest text and are ALWAYS shown, cap or not: hiding a 4th hero
+    // image would silently drop it on the next Save. The validator flags it instead (manifest.heroTooMany),
+    // Save stays blocked, and the user removes a row. Only a user-initiated add respects the cap.
+    const addRow = (value: string, fromSource = false): void => {
+      if (!fromSource && capReached()) return;
       const row = document.createElement('div');
       row.className = 'list-row';
       // Drag handle (grip) — the row is reordered by dragging this, not the whole row (so the text field
@@ -1051,6 +1065,7 @@ export class FormView {
       const remove = this.iconButton('configure.remove', trashIcon(), () => {
         row.remove();
         refreshHandles();
+        refreshCap();
         this.clearCorrupt(corruptKey);
         this.deps.onChange();
       });
@@ -1058,6 +1073,7 @@ export class FormView {
       row.append(remove);
       rows.append(row);
       refreshHandles();
+      refreshCap();
       refreshThumb();
       // Rows are built AFTER the constructor's applyLabels(), so label their fresh elements (the Replace…
       // text, drag-handle/remove aria) now — otherwise they stay blank until the next language change.
@@ -1097,7 +1113,8 @@ export class FormView {
       values: () => [...rows.querySelectorAll('fluent-text-input')].map((el) => getValue(el as ValueEl)),
       setValues: (values) => {
         rows.replaceChildren();
-        for (const value of values) addRow(value);
+        for (const value of values) addRow(value, true);
+        refreshCap();
       },
       setDisabled: (disabled) => {
         for (const el of buttonRow.querySelectorAll('fluent-button')) setElDisabled(el as HTMLElement, disabled);
@@ -1108,7 +1125,10 @@ export class FormView {
         for (const handle of rows.querySelectorAll<HTMLElement>('.drag-handle')) {
           handle.setAttribute('draggable', disabled ? 'false' : 'true');
         }
-        if (!disabled) refreshHandles();
+        if (!disabled) {
+          refreshHandles();
+          refreshCap(); // the cap outlives the block: a full list keeps its Add/Browse disabled
+        }
       },
     };
   }
@@ -1282,7 +1302,6 @@ function topLevelOf(key: FieldKey): string {
   // The copy fields live in the `install` block too — editing them must clear ITS corrupt state.
   if (key === 'copySource' || key === 'copyToPc') return 'install';
   if (key.startsWith('install.')) return 'install';
-  if (key.startsWith('sounds.')) return 'sounds';
   if (key === 'steam.appid') return 'steam';
   return key;
 }
@@ -1303,6 +1322,7 @@ function fieldKeyForPath(path: string, copyToPc: boolean): FieldKey | null {
     case 'args':
     case 'runAsAdmin':
     case 'watchProcesses':
+    case 'gridImage':
     case 'saveOnCard':
     case 'pcSavePath':
     case 'backgroundMusic':
@@ -1329,10 +1349,6 @@ function fieldKeyForPath(path: string, copyToPc: boolean): FieldKey | null {
     if (path.startsWith('install.winetricks')) return 'install.winetricks';
     if (path.startsWith('install.args')) return 'install.args';
   }
-  if (path === 'sounds' || path === 'sounds.play') return 'sounds.play';
-  if (path === 'sounds.navigate') return 'sounds.navigate';
-  if (path === 'sounds.button') return 'sounds.button';
-  if (path === 'sounds.back') return 'sounds.back';
   return null;
 }
 

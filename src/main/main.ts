@@ -10,6 +10,7 @@ import { GameWindow } from './window';
 import { PcStore } from './pc-store';
 import { AppSettingsStore } from './app-settings';
 import { StatsService } from './stats';
+import { LibraryStore } from './library-store';
 import { DriveWatcher } from './drive-watcher';
 import { GameController } from './ipc';
 import { GlobalGamepad } from './gamepad-global';
@@ -154,6 +155,12 @@ async function bootstrap(): Promise<void> {
   const window = new GameWindow(getTranslator);
   const stats = new StatsService(store);
 
+  // The launch history behind the carousel: copies of every inserted game's art/audio, so the launcher
+  // has something to show with no card in. init() re-syncs its cached stats and runs the GC; a failure
+  // there must not stop the app from starting (the carousel just falls back to the card's games).
+  const library = new LibraryStore({ baseDir: app.getPath('userData'), readStats: (id) => stats.read(id) });
+  await library.init().catch((cause: unknown) => log.warn('[library] init failed:', cause));
+
   // Platform services (process monitor / Steam locator / launcher / save-path resolver / power) selected
   // once for the running OS. Every OS-specific behaviour flows through this bundle (see platform/index.ts).
   // The bundled umu-run zipapp (extraResources, linux only): packaged it lives under resourcesPath; in dev
@@ -183,6 +190,7 @@ async function bootstrap(): Promise<void> {
     window,
     store,
     stats,
+    library,
     watcher,
     settings,
     platform,

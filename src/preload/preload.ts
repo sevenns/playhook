@@ -9,8 +9,9 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
 import type {
   AppState,
-  AudioAssets,
+  SfxSet,
   AudioVolumes,
+  BrowseInfo,
   GameLibrary,
   HeroAssets,
   RendererApi,
@@ -33,8 +34,8 @@ const CHANNELS = {
   actionSleep: 'action:sleep',
   actionKill: 'action:kill',
   errorShow: 'error:show',
-  audioUpdate: 'audio:update',
-  audioRequest: 'audio:request',
+  cardMusicUpdate: 'card-music:update',
+  cardMusicRequest: 'card-music:request',
   ambientUpdate: 'ambient:update',
   ambientRequest: 'ambient:request',
   sfxPlay: 'sfx:play',
@@ -43,6 +44,14 @@ const CHANNELS = {
   heroRequest: 'hero:request',
   libraryUpdate: 'library:update',
   libraryRequest: 'library:request',
+  libraryGridRequest: 'library:grid-request',
+  libraryBrowse: 'library:browse',
+  browseUpdate: 'browse:update',
+  browseRequest: 'browse:request',
+  browseHero: 'browse:hero',
+  browseMusic: 'browse:music',
+  sfxSetUpdate: 'sfx:set-update',
+  sfxSetRequest: 'sfx:set-request',
   actionSelect: 'action:select',
   wallpaperRequest: 'wallpaper:request',
   wallpaperUpdate: 'wallpaper:update',
@@ -101,13 +110,13 @@ const api: RendererApi = {
       callback(message);
     });
   },
-  onAudioUpdate(callback: (assets: AudioAssets | null) => void): void {
-    ipcRenderer.on(CHANNELS.audioUpdate, (_event: IpcRendererEvent, assets: AudioAssets | null) => {
+  onCardMusic(callback: (url: string | null) => void): void {
+    ipcRenderer.on(CHANNELS.cardMusicUpdate, (_event: IpcRendererEvent, assets: string | null) => {
       callback(assets);
     });
   },
-  requestAudio(): Promise<AudioAssets | null> {
-    return ipcRenderer.invoke(CHANNELS.audioRequest) as Promise<AudioAssets | null>;
+  requestCardMusic(): Promise<string | null> {
+    return ipcRenderer.invoke(CHANNELS.cardMusicRequest) as Promise<string | null>;
   },
   onAmbientUpdate(callback: (url: string | null) => void): void {
     ipcRenderer.on(CHANNELS.ambientUpdate, (_event: IpcRendererEvent, url: string | null) => {
@@ -137,6 +146,38 @@ const api: RendererApi = {
   },
   requestLibrary(): Promise<GameLibrary | null> {
     return ipcRenderer.invoke(CHANNELS.libraryRequest) as Promise<GameLibrary | null>;
+  },
+  requestGrid(id: string): Promise<string | null> {
+    return ipcRenderer.invoke(CHANNELS.libraryGridRequest, id) as Promise<string | null>;
+  },
+  browseGame(id: string): void {
+    ipcRenderer.send(CHANNELS.libraryBrowse, id);
+  },
+  onBrowseUpdate(callback: (browse: BrowseInfo | null) => void): void {
+    ipcRenderer.on(CHANNELS.browseUpdate, (_event: IpcRendererEvent, browse: BrowseInfo | null) => {
+      callback(browse);
+    });
+  },
+  requestBrowse(): Promise<BrowseInfo | null> {
+    return ipcRenderer.invoke(CHANNELS.browseRequest) as Promise<BrowseInfo | null>;
+  },
+  onBrowseHero(callback: (assets: HeroAssets | null) => void): void {
+    ipcRenderer.on(CHANNELS.browseHero, (_event: IpcRendererEvent, assets: HeroAssets | null) => {
+      callback(assets);
+    });
+  },
+  onBrowseMusic(callback: (url: string | null) => void): void {
+    ipcRenderer.on(CHANNELS.browseMusic, (_event: IpcRendererEvent, url: string | null) => {
+      callback(url);
+    });
+  },
+  onSfxSet(callback: (set: SfxSet | null) => void): void {
+    ipcRenderer.on(CHANNELS.sfxSetUpdate, (_event: IpcRendererEvent, assets: SfxSet | null) => {
+      callback(assets);
+    });
+  },
+  requestSfxSet(): Promise<SfxSet | null> {
+    return ipcRenderer.invoke(CHANNELS.sfxSetRequest) as Promise<SfxSet | null>;
   },
   selectGame(id: string): void {
     ipcRenderer.send(CHANNELS.actionSelect, id);

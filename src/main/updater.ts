@@ -73,7 +73,7 @@ export interface UpdaterDeps {
   readonly onVolumesChanged: (volumes: AudioVolumes) => void;
   /** Applies a navigation-sound-set change (re-reads + re-pushes the current sfx to the game window). */
   readonly onSoundSetChanged: (set: string) => void;
-  /** Applies an "only global sounds"/"only global ambience" toggle (recomputes + re-pushes card audio). */
+  /** Applies an "only global ambience" toggle (recomputes + re-pushes the card's music). */
   readonly onAudioScopeChanged: () => void;
   /** Applies a default-ambience change (re-reads the track + pushes it to the game window). */
   readonly onAmbientChanged: (track: string | null) => void;
@@ -234,12 +234,6 @@ export class UpdaterService {
         .patch({ soundSet: set })
         .then(() => this.deps.onSoundSetChanged(set))
         .catch((cause: unknown) => log.error('[updater] failed to persist sound set:', cause));
-    });
-    ipcMain.on(IPC.settingsSetOnlyGlobalSounds, (_event, on: boolean) => {
-      void this.deps.settings
-        .patch({ onlyGlobalSounds: on })
-        .then(() => this.deps.onAudioScopeChanged())
-        .catch((cause: unknown) => log.error('[updater] failed to persist only-global-sounds:', cause));
     });
     ipcMain.on(IPC.settingsSetAmbientTrack, (_event, track: string | null) => {
       void this.deps.settings

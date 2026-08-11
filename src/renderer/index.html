@@ -16,8 +16,21 @@
            styles.css). JS writes the image + pan into the idle layer and cross-fades it in, GTA-5-style,
            rotating through multiple hero images (and the idle wallpaper) — see app.ts. -->
       <div id="hero">
-        <div class="hero-layer"></div>
-        <div class="hero-layer"></div>
+        <!-- Two nested transforms with DIFFERENT tempos: #hero zooms (fast, must finish before the
+             carousel is back), #hero-pan drifts with the strip (slow). One element could only carry one
+             duration for both. -->
+        <div id="hero-pan">
+          <div class="hero-layer"></div>
+          <div class="hero-layer"></div>
+        </div>
+      </div>
+
+      <!-- History carousel (the `carousel` screen): a horizontal strip of game cards sliding under a
+           fixed anchor — the selected card stays put, the row moves. The inserted card's games come first
+           (marked with a dot: they can be launched right now), then the games played on this device
+           before. Cards are built from JS (carousel.ts); artwork is fetched per card, on demand. -->
+      <div id="carousel" aria-hidden="true">
+        <div id="carousel-strip"></div>
       </div>
 
       <!-- Bottom bar (same layout for every screen): play / title / status + the More button on the
@@ -116,23 +129,10 @@
               <!-- Force-close the running game — its text + visibility come from JS (shown only while a
                    game is running), so no data-i18n (mirrors the install toggle, keeps the i18n HTML test happy). -->
               <button id="menu-kill" class="text-button" type="button"></button>
-              <!-- Opens the "Select game" list — shown only for a multi-game card on the ready screen (JS
-                   toggles visibility); no data-i18n so a language change relabels it at render time. -->
-              <button id="menu-select-game" class="text-button" type="button"></button>
+              <!-- Back to the history carousel — the mouse counterpart of the B button (shown only on a
+                   detail screen that HAS a carousel to return to). Text from JS, like its neighbours. -->
+              <button id="menu-library" class="text-button" type="button"></button>
               <button id="menu-close" class="text-button" type="button" data-i18n="launcher.menu.close">Close</button>
-            </div>
-            <!-- Select-game list: the card's OTHER games (built from JS, each a .text-button carrying
-                 data-game-id) inside a scrollable list, with a fixed Close below it (stays reachable when
-                 the list scrolls). Picking a game closes the whole popup and switches. -->
-            <div class="actions-group" data-group="select-game">
-              <!-- The native scrollbar is hidden and replaced by #select-game-thumb: a real element, so it
-                   can fade in/out (Chromium never animates ::-webkit-scrollbar). controls.ts sizes and
-                   positions it from the list's scroll geometry. -->
-              <div class="select-game-scroll">
-                <div id="select-game-list" class="select-game-list"></div>
-                <div id="select-game-thumb" class="select-game-thumb" aria-hidden="true"></div>
-              </div>
-              <button id="menu-select-close" class="text-button" type="button" data-i18n="launcher.menu.close">Close</button>
             </div>
             <div class="actions-group" data-group="power">
               <button id="power-shutdown" class="text-button" type="button" data-i18n="launcher.menu.shutdown">Shutdown</button>

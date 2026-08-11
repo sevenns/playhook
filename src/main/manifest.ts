@@ -10,11 +10,11 @@ import fse from 'fs-extra';
 import { z } from 'zod';
 import {
   MANIFEST_FILENAME,
+  MAX_HERO_IMAGES,
   type GameManifest,
   type ManifestValidationIssue,
   type ConfigValidationResult,
   type ResolvedManifest,
-  type SfxName,
 } from '../shared/types';
 import { translateIssueMessage, type Translator } from '../shared/i18n/index';
 import { log } from './logger';
@@ -110,20 +110,15 @@ const manifestSchema = z
     // A single card-relative path, or a non-empty array of them (multi-hero rotation). Normalized to an
     // array of resolved paths in readManifest. Backwards compatible: a lone string still works.
     heroImage: z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]).optional(),
+    // Card-relative GRID image (the carousel card). Optional and deliberately NOT an array — a game has one
+    // card. Absent → the carousel crops the first heroImage instead (see LibraryStore).
+    gridImage: z.string().min(1).optional(),
     saveOnCard: z.string().min(1).optional(),
     pcSavePath: z.string().min(1).optional(),
     launchTimeoutSec: z.number().int().positive().default(30),
     // Max seconds a force-close waits for the game's processes to vanish before reporting a failure (the
     // wait ends early once they're gone). `.default(60)` so an older/partial file stays valid.
     killTimeoutSec: z.number().int().positive().default(60),
-    sounds: z
-      .object({
-        play: z.string().min(1).optional(),
-        navigate: z.string().min(1).optional(),
-        button: z.string().min(1).optional(),
-        back: z.string().min(1).optional(),
-      })
-      .optional(),
     backgroundMusic: z.string().min(1).optional(),
     // Linux-only (Р7b): extra winetricks verbs/settings provisioned into the game's Wine prefix BEFORE the
     // game launches, on top of the app's baseline set — a runtime a game needs on a bare Proton prefix
@@ -185,8 +180,9 @@ const manifestSchema = z
     }
   });
 
-/** The sound slots resolved inside the card root (order is stable for iteration). */
-const SFX_NAMES: readonly SfxName[] = ['play', 'navigate', 'button', 'back'];
+// MAX_HERO_IMAGES (the card-format cap on hero backgrounds) lives in shared/types.ts: the Configure form
+// caps its picker by the same number, and the renderer cannot import this module (fs/zod). Enforced here
+// leniently — resolveOne truncates with a warn — and strictly in pushGameSemanticIssues (which gates Save).
 
 export type ManifestResult =
   | { readonly ok: true; readonly manifest: ResolvedManifest }
@@ -549,7 +545,7 @@ async function resolveOne(
   if (raw.steam !== undefined) {
     // Steam mode: there is no card executable to resolve. executablePath/cwd are placeholders ('')
     // that are NEVER read — every consumer branches on `steam` first (see ResolvedManifest). The
-    // card-relative assets (heroImage/sounds/music/saveOnCard) are resolved below as usual.
+    // card-relative assets (heroImage/music/saveOnCard) are resolved below as usual.
     executablePath = '';
     cwd = '';
     steamResolved = { appid: raw.steam.appid };
@@ -609,8 +605,25 @@ async function resolveOne(
       }
       resolvedHeroImages.push(resolved);
     }
+    // Runtime side of the MAX_HERO_IMAGES policy: keep the first three (manifest order is load-bearing —
+    // the renderer keys its palette cache by position) and leave a breadcrumb. The card still loads.
+    if (resolvedHeroImages.length > MAX_HERO_IMAGES) {
+      log.warn(
+        `[manifest] id=${raw.id} declares ${resolvedHeroImages.length} heroImage entries — using the first ${MAX_HERO_IMAGES}, dropping ${resolvedHeroImages.length - MAX_HERO_IMAGES}`,
+      );
+      resolvedHeroImages.length = MAX_HERO_IMAGES;
+    }
     // The schema guarantees a non-empty array, but guard so an empty result stays undefined (as before).
     if (resolvedHeroImages.length > 0) heroImagePaths = resolvedHeroImages;
+  }
+
+  let gridImagePath: string | undefined;
+  if (raw.gridImage !== undefined) {
+    const resolved = resolveInside(root, raw.gridImage);
+    if (resolved === null) {
+      return { ok: false, message: t('manifest.gridEscapes', { path: raw.gridImage }) };
+    }
+    gridImagePath = resolved;
   }
 
   let saveOnCardPath: string | undefined;
@@ -633,21 +646,6 @@ async function resolveOne(
       return { ok: false, message: problem };
     }
     pcSavePath = raw.pcSavePath;
-  }
-
-  let soundPaths: Record<string, string> | undefined;
-  if (raw.sounds !== undefined) {
-    const resolvedSounds: Record<string, string> = {};
-    for (const name of SFX_NAMES) {
-      const rel = raw.sounds[name];
-      if (rel === undefined) continue;
-      const resolved = resolveInside(root, rel);
-      if (resolved === null) {
-        return { ok: false, message: t('manifest.soundEscapes', { name, path: rel }) };
-      }
-      resolvedSounds[name] = resolved;
-    }
-    if (Object.keys(resolvedSounds).length > 0) soundPaths = resolvedSounds;
   }
 
   let backgroundMusicPath: string | undefined;
@@ -677,9 +675,9 @@ async function resolveOne(
     executablePath,
     cwd,
     ...(heroImagePaths !== undefined ? { heroImagePaths } : {}),
+    ...(gridImagePath !== undefined ? { gridImagePath } : {}),
     ...(saveOnCardPath !== undefined ? { saveOnCardPath } : {}),
     ...(pcSavePath !== undefined ? { pcSavePath } : {}),
-    ...(soundPaths !== undefined ? { soundPaths } : {}),
     ...(backgroundMusicPath !== undefined ? { backgroundMusicPath } : {}),
     ...(installResolved !== undefined ? { install: installResolved } : {}),
     ...(steamResolved !== undefined ? { steam: steamResolved } : {}),
@@ -761,20 +759,28 @@ function pushGameSemanticIssues(
       const name = typeof raw.heroImage === 'string' ? 'heroImage' : `heroImage.${index}`;
       pushIfEscapes(issues, field(name), rel, t, 'heroImage');
     }
+    // Card-format cap (editor-only, like the ≥1 policy above): the runtime truncates with a warn instead
+    // of rejecting the game — see MAX_HERO_IMAGES.
+    if (heroes.length > MAX_HERO_IMAGES) {
+      issues.push({
+        path: field('heroImage'),
+        message: t('manifest.heroTooMany', { max: MAX_HERO_IMAGES, count: heroes.length }),
+      });
+    }
   } else {
     // Multi-game policy: a hero image is required for every game (editor-only gate — see above).
     issues.push({ path: field('heroImage'), message: t('manifest.heroRequired') });
+  }
+  // gridImage stays OPTIONAL (Р12): only its traversal is checked. The "without it the carousel card is
+  // cropped from hero" advice is a static hint under the field in Configure — an issue here would gate
+  // Save and turn every existing card invalid, which is exactly what the optionality is for.
+  if (raw.gridImage !== undefined) {
+    pushIfEscapes(issues, field('gridImage'), raw.gridImage, t, 'gridImage');
   }
   if (raw.saveOnCard !== undefined)
     pushIfEscapes(issues, field('saveOnCard'), raw.saveOnCard, t, 'saveOnCard');
   if (raw.backgroundMusic !== undefined) {
     pushIfEscapes(issues, field('backgroundMusic'), raw.backgroundMusic, t, 'backgroundMusic');
-  }
-  if (raw.sounds !== undefined) {
-    for (const name of SFX_NAMES) {
-      const rel = raw.sounds[name];
-      if (rel !== undefined) pushIfEscapes(issues, field(`sounds.${name}`), rel, t, `sound "${name}"`);
-    }
   }
   if (raw.pcSavePath !== undefined) {
     const message = validatePcSavePathStatic(raw.pcSavePath, t);

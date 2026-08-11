@@ -10,7 +10,7 @@
 //                make the error vanish (→ green status, silent loss on Save). Instead the raw value is kept
 //                and written back verbatim until the user edits that field — so the server validator sees
 //                the original error, Save stays blocked, and nothing is lost. Granularity is the top-level
-//                key (a bad `sounds.play` marks the whole `sounds` block corrupt).
+//                key (a bad `install.type` marks the whole `install` block corrupt).
 
 /** The three mutually-exclusive launch methods (mirrors the manifest superRefine). */
 export type LaunchMode = 'executable' | 'installer' | 'steam';
@@ -40,15 +40,6 @@ export type InstallType = 'nsis' | 'inno' | 'custom' | 'copy';
 
 /** The installer families the type dropdown offers — everything but `copy` (see InstallType). */
 export type InstallerFamily = Exclude<InstallType, 'copy'>;
-
-/** The `sounds` block as form state: one string per slot ('' = empty) plus this block's unknown keys. */
-export interface SoundsModel {
-  readonly play: string;
-  readonly navigate: string;
-  readonly button: string;
-  readonly back: string;
-  readonly rest: Readonly<Record<string, unknown>>;
-}
 
 /** The `install` block as form state (numbers/booleans typed; args as a list) plus its unknown keys. */
 export interface InstallModel {
@@ -82,11 +73,12 @@ export interface ManifestFormModel {
   readonly runAsAdmin: boolean;
   readonly watchProcesses: readonly string[];
   readonly heroImage: readonly string[];
+  /** The carousel card image (one path, '' = omitted → cropped from the first hero image). */
+  readonly gridImage: string;
   readonly saveOnCard: string;
   readonly pcSavePath: string;
   readonly launchTimeoutSec: string;
   readonly killTimeoutSec: string;
-  readonly sounds: SoundsModel;
   readonly backgroundMusic: string;
   /** Extra winetricks verbs provisioned into the prefix before the GAME launches (Linux; Р7b). */
   readonly winetricks: readonly string[];
@@ -136,11 +128,11 @@ export const KNOWN_MANIFEST_KEYS: readonly string[] = [
   'runAsAdmin',
   'watchProcesses',
   'heroImage',
+  'gridImage',
   'saveOnCard',
   'pcSavePath',
   'launchTimeoutSec',
   'killTimeoutSec',
-  'sounds',
   'backgroundMusic',
   'winetricks',
   'umuGameId',
@@ -156,10 +148,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isStringArray(value: unknown): value is readonly string[] {
   return Array.isArray(value) && value.every((item) => typeof item === 'string');
-}
-
-function emptySounds(): SoundsModel {
-  return { play: '', navigate: '', button: '', back: '', rest: {} };
 }
 
 function emptyInstall(): InstallModel {
@@ -187,11 +175,11 @@ export function emptyFormModel(): ManifestFormModel {
     runAsAdmin: false,
     watchProcesses: [],
     heroImage: [],
+    gridImage: '',
     saveOnCard: '',
     pcSavePath: '',
     launchTimeoutSec: '',
     killTimeoutSec: '',
-    sounds: emptySounds(),
     backgroundMusic: '',
     winetricks: [],
     umuGameId: '',
@@ -200,26 +188,6 @@ export function emptyFormModel(): ManifestFormModel {
     copyInstall: emptyCopyInstall(),
     steam: emptySteam(),
   };
-}
-
-/** Parses a `sounds` object; null = a known slot had the wrong type (→ the whole block is corrupt). */
-function parseSounds(source: Record<string, unknown>): SoundsModel | null {
-  const slots: { play: string; navigate: string; button: string; back: string } = {
-    play: '',
-    navigate: '',
-    button: '',
-    back: '',
-  };
-  const rest: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(source)) {
-    if (key === 'play' || key === 'navigate' || key === 'button' || key === 'back') {
-      if (typeof value !== 'string') return null;
-      slots[key] = value;
-    } else {
-      rest[key] = value;
-    }
-  }
-  return { ...slots, rest };
 }
 
 /** Parses an `install` object; null = a known field had the wrong type/enum (→ the block is corrupt). */
@@ -328,6 +296,7 @@ function valueToFormResult(parsed: unknown): ParseFormResult {
   const pcSavePath = readString('pcSavePath');
   const backgroundMusic = readString('backgroundMusic');
   const umuGameId = readString('umuGameId');
+  const gridImage = readString('gridImage');
 
   let runAsAdmin = false;
   if (has('runAsAdmin')) {
@@ -371,14 +340,6 @@ function valueToFormResult(parsed: unknown): ParseFormResult {
   if (has('killTimeoutSec')) {
     if (typeof source['killTimeoutSec'] === 'number') killTimeoutSec = String(source['killTimeoutSec']);
     else corrupt['killTimeoutSec'] = source['killTimeoutSec'];
-  }
-
-  let sounds = emptySounds();
-  if (has('sounds')) {
-    const value = source['sounds'];
-    const parsedSounds = isRecord(value) ? parseSounds(value) : null;
-    if (parsedSounds !== null) sounds = parsedSounds;
-    else corrupt['sounds'] = value;
   }
 
   // One `install` block in the file feeds one of TWO slots, picked by its type: `copy` belongs to the
@@ -425,11 +386,11 @@ function valueToFormResult(parsed: unknown): ParseFormResult {
     runAsAdmin,
     watchProcesses,
     heroImage,
+    gridImage,
     saveOnCard,
     pcSavePath,
     launchTimeoutSec,
     killTimeoutSec,
-    sounds,
     backgroundMusic,
     winetricks,
     umuGameId,
@@ -491,16 +452,6 @@ function buildSteam(steam: SteamModel): Record<string, unknown> {
   return out;
 }
 
-function buildSounds(sounds: SoundsModel): Record<string, unknown> | undefined {
-  const out: Record<string, unknown> = {};
-  if (sounds.play !== '') out.play = sounds.play;
-  if (sounds.navigate !== '') out.navigate = sounds.navigate;
-  if (sounds.button !== '') out.button = sounds.button;
-  if (sounds.back !== '') out.back = sounds.back;
-  for (const [key, value] of Object.entries(sounds.rest)) out[key] = value;
-  return Object.keys(out).length > 0 ? out : undefined;
-}
-
 /**
  * Serializes a form model back to manifest TEXT (2-space indent, trailing newline). Only the ACTIVE launch
  * mode's fields are written (writing hidden modes would trip the superRefine exclusivity). Fields equal to
@@ -557,11 +508,11 @@ function buildManifestObject(
   if (hero.length === 1) out.heroImage = hero[0];
   else if (hero.length > 1) out.heroImage = hero;
 
+  if (model.gridImage !== '') out.gridImage = model.gridImage;
+
   if (model.saveOnCard !== '') out.saveOnCard = model.saveOnCard;
   if (model.pcSavePath !== '') out.pcSavePath = model.pcSavePath;
 
-  const sounds = buildSounds(model.sounds);
-  if (sounds !== undefined) out.sounds = sounds;
   if (model.backgroundMusic !== '') out.backgroundMusic = model.backgroundMusic;
 
   const timeout = timeoutValue(model.launchTimeoutSec, DEFAULT_LAUNCH_TIMEOUT);

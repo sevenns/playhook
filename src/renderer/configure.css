@@ -119,12 +119,6 @@ fluent-dropdown {
   gap: 16px;
 }
 
-/* Audio Default/Custom selector — a compact dropdown above the (optional) input row (narrower than the
-   default dropdown width). */
-.audio-mode {
-  min-inline-size: 160px;
-}
-
 /* Compact icon buttons in list rows (remove). */
 .icon-button {
   flex: none;

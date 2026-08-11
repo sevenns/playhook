@@ -14,6 +14,16 @@ export const MANIFEST_FILENAME = 'game.json' as const;
 export const CARD_STATS_FILENAME = 'stats.json' as const;
 
 /**
+ * How many hero backgrounds one game may carry — a CARD-FORMAT limit (not a library budget), so it lives
+ * in the shared contract: main enforces it (manifest.ts) and the Configure form caps its picker by it.
+ *
+ * Enforced with the same split as the "≥1 heroImage" policy: the EDITOR rejects a 4th image (it gates
+ * Save), the runtime stays lenient — readManifests keeps the first three and logs a warn. A hard cap in
+ * the schema would turn an existing card with four backgrounds into an unreadable one.
+ */
+export const MAX_HERO_IMAGES = 3;
+
+/**
  * Optional `install` block in `game.json` (install mode).
  * When present, the card carries an INSTALLER (not the game itself): the app runs it silently,
  * feeding it the install directory through the installer's own dir-key, and only afterwards does
@@ -145,6 +155,12 @@ export interface GameManifest {
    * Normalized to an array of resolved paths in ResolvedManifest.heroImagePaths.
    */
   readonly heroImage?: string | readonly string[];
+  /**
+   * Card-relative GRID image — the game's card in the launcher's history carousel (a portrait cover, not a
+   * background). Optional: when absent the carousel falls back to the first heroImage, cropped to the card
+   * (object-fit: cover), so existing cards keep working unchanged.
+   */
+  readonly gridImage?: string;
   readonly saveOnCard?: string;
   readonly pcSavePath?: string;
   readonly launchTimeoutSec: number;
@@ -166,8 +182,6 @@ export interface GameManifest {
    * `install`/`executable` and requires `watchProcesses` (enforced by the schema). See SteamManifest.
    */
   readonly steam?: SteamManifest;
-  /** Optional per-game UI sound effects (card-relative paths). Missing slots are silent. */
-  readonly sounds?: SoundManifest;
   /** Optional looping background music (card-relative path), played while the window is visible. */
   readonly backgroundMusic?: string;
   /**
@@ -184,20 +198,9 @@ export interface GameManifest {
   readonly umuGameId?: string;
 }
 
-/** UI sound-effect slots. Each maps to a file in game.json (all optional). */
+/** UI sound-effect slots. Each maps to a file in the bundled set chosen in Settings → Audio; a card
+ *  cannot supply its own (the `sounds` block in an old game.json is ignored, not rejected). */
 export type SfxName = 'play' | 'navigate' | 'button' | 'back';
-
-/** The `sounds` block in game.json — a file per UI sound slot. */
-export interface SoundManifest {
-  /** Pressing the "Play" button. */
-  readonly play?: string;
-  /** Moving focus between UI controls. */
-  readonly navigate?: string;
-  /** Pressing an ordinary button (e.g. "Info"). */
-  readonly button?: string;
-  /** Hiding something — gamepad B closing the info popup. */
-  readonly back?: string;
-}
 
 /**
  * Manifest with already-resolved and security-checked paths.
@@ -221,6 +224,8 @@ export interface ResolvedManifest {
   readonly cwd: string;
   /** Resolved, card-relative hero image paths (normalized to an array when at least one is set). */
   readonly heroImagePaths?: readonly string[];
+  /** Resolved, card-relative grid (carousel card) image path. Absent → the carousel falls back to hero. */
+  readonly gridImagePath?: string;
   readonly saveOnCardPath?: string;
   /**
    * The Windows-dictionary save location (`%APPDATA%\…`), stored VERBATIM — a DEFERRED field (Р5/Э6).
@@ -230,8 +235,6 @@ export interface ResolvedManifest {
    * launch — resolving it eagerly (and rejecting the card when absent) would break install/steam modes.
    */
   readonly pcSavePath?: string;
-  /** Resolved, card-relative sound-effect file paths (any subset present). */
-  readonly soundPaths?: Partial<Record<SfxName, string>>;
   /** Resolved background-music file path. */
   readonly backgroundMusicPath?: string;
   /** Resolved install descriptor (install mode only). */
@@ -255,20 +258,19 @@ export interface LaunchTarget {
 }
 
 /**
- * Per-game audio for the renderer, delivered as data URLs.
- * Kept OUT of GameInfo/AppState on purpose: AppState is re-sent on every transition, and these
- * payloads (especially music) can be large — so audio is delivered once per card on its own channel.
+ * The bundled UI sound set for the renderer, delivered as data URLs. One set for the whole app — the
+ * card has no say in it — rebuilt and re-sent whenever Settings → Audio changes the chosen set.
+ * Kept OUT of GameInfo/AppState on purpose: AppState is re-sent on every transition and these payloads
+ * are large, so they travel once, on their own channel.
  */
-export interface AudioAssets {
+export interface SfxSet {
   /** UI sound effects (data URLs); any subset of slots present. */
   readonly sounds: Partial<Record<SfxName, string>>;
-  /** Looping background music (data URL), if the manifest provides it. */
-  readonly music?: string;
 }
 
 /**
  * Per-game hero background image(s) for the renderer, delivered as data URLs.
- * Kept OUT of GameInfo/AppState on purpose (like AudioAssets): AppState is re-sent on every
+ * Kept OUT of GameInfo/AppState on purpose (like SfxSet): AppState is re-sent on every
  * transition, and an array of encoded images is a large payload — so hero images are delivered
  * once per card on their own channel and the renderer rotates through them locally.
  */
@@ -278,19 +280,47 @@ export interface HeroAssets {
 }
 
 /**
- * One game's identity for the "Select game" popup list. A card can carry several games; the light list
- * of {id, title} is delivered once per card on the `library:update` channel so the renderer can render
- * the picker without a round-trip. The SELECTED game's heavy assets (hero/audio/GameInfo) still travel
- * on the existing hero:update / audio:update / state:update channels — only for the one game on screen.
+ * One card in the launcher's history carousel: a game on the inserted card (`active` — launchable right
+ * now) or one that was played on this device before. Deliberately LIGHT ({id,title,active}) so main can
+ * re-push the whole list on every insert/removal/play; the artwork travels one card at a time, on demand,
+ * over `library:grid-request` (see Р5).
  */
 export interface LibraryEntry {
   readonly id: string;
   readonly title: string;
+  /** The game is on the card currently inserted: it can be launched/installed right now. */
+  readonly active: boolean;
+  /**
+   * Revision of this game's stored artwork — it changes whenever main re-copies the card's images. The
+   * renderer caches decoded covers by `id + artRev`, so editing `gridImage` in Configure and hitting
+   * Save & Apply shows the new cover immediately, instead of serving the cached one until a restart.
+   * Absent while the background copy hasn't produced a record yet.
+   */
+  readonly artRev?: string;
 }
 
-/** The list of games on the current card (empty only transiently; a card with 0 valid games errors). */
+/** The carousel list, already in display order — the renderer never sorts it (see orderForCarousel). */
 export interface GameLibrary {
   readonly games: readonly LibraryEntry[];
+}
+
+/**
+ * What is currently ON SCREEN — the source of truth for the title, the stats, the background and the
+ * music, whether that game is on the inserted card or only in the history.
+ *
+ * It exists BECAUSE AppState cannot answer that question: AppState is the state machine of ONE game's
+ * process (idle/ready/installing/running…), so browsing game B while game A installs, or showing a
+ * history game with no card in (`kind: 'idle'`), has no representation there. AppState stays the truth
+ * for the PHASE and the STATUS text; BrowseInfo is the truth for what you are looking at.
+ */
+export interface BrowseInfo {
+  readonly id: string;
+  readonly title: string;
+  /** The browsed game is on the inserted card (so Play/Install apply to it). */
+  readonly active: boolean;
+  readonly stats: Stats;
+  /** Only for an active game: everything the ready screen needs (requiresInstall, canUninstall, …). */
+  readonly game?: GameInfo;
 }
 
 /** Game statistics. The source of truth is on the PC; the card copy is best-effort. */
@@ -485,17 +515,12 @@ export interface AppSettings {
    */
   readonly steamAutoLaunch: boolean;
   /**
-   * Name of the UI sound set used for navigation (the folder under `audio/ui/<set>/`), applied per slot
-   * when a game.json omits a sound. A plain string (not an enum): sets are enumerated dynamically from
-   * what ships in the bundle, and a missing/incomplete folder falls back at read time (see AssetReader).
+   * Name of the UI sound set used for navigation (the folder under `audio/ui/<set>/`) — the only source
+   * of UI sounds there is. A plain string (not an enum): sets are enumerated dynamically from what ships
+   * in the bundle, and a missing/incomplete folder falls back at read time (see AssetReader).
    * Default 'winhanced'. `.default('winhanced')` migrates an older settings.json without the field.
    */
   readonly soundSet: string;
-  /**
-   * When true, every game uses the global navigation sound set — a card's own `sounds` are ignored. When
-   * false (default), a card's own sound overrides the set per slot. Default false.
-   */
-  readonly onlyGlobalSounds: boolean;
   /**
    * Default background ambience track (a file name under `audio/ambience/`, extension included), played
    * only when the current card has no music of its own — the game's music always wins. `null` = no
@@ -570,10 +595,11 @@ export const IPC = {
   actionKill: 'action:kill',
   /** main → renderer: a transient error to surface in the error popup (e.g. a failed launch). */
   errorShow: 'error:show',
-  /** main → renderer: audio assets for the current game (or null when no card). */
-  audioUpdate: 'audio:update',
-  /** renderer → main: request the current audio assets (on window startup). */
-  audioRequest: 'audio:request',
+  /** main → renderer: the inserted card's background music as a data URL (or null when no card / muted
+   * by the "only global ambience" setting). */
+  cardMusicUpdate: 'card-music:update',
+  /** renderer → main: request the current card's music (on window startup). */
+  cardMusicRequest: 'card-music:request',
   /** main → game-renderer: the default ambience track as a data URL (or null when none / on card music). */
   ambientUpdate: 'ambient:update',
   /** game-renderer → main (invoke): request the current ambience data URL (on window startup). */
@@ -584,12 +610,33 @@ export const IPC = {
   heroUpdate: 'hero:update',
   /** renderer → main: request the current hero images (on window startup). */
   heroRequest: 'hero:request',
-  /** main → renderer: the light list of games ({id,title}) on the current card (or null when no card).
-   * Delivered once per card so the renderer can render the "Select game" popup without a round-trip. */
+  /** main → renderer: the light carousel list ({id,title,active}) — the inserted card's games plus the
+   * play history, already in display order (or null when there is nothing to show at all). */
   libraryUpdate: 'library:update',
-  /** renderer → main (invoke): request the current game list (on window startup / back-fill). */
+  /** renderer → main (invoke): request the current carousel list (on window startup / back-fill). */
   libraryRequest: 'library:request',
-  /** renderer → main: pick a game by id from the "Select game" popup. Switches to it on the ready screen. */
+  /** renderer → main (invoke): the carousel card artwork of one game as a data URL (null when it has
+   * none). Requested per visible card and cached in the renderer — the list channel stays light. */
+  libraryGridRequest: 'library:grid-request',
+  /** renderer → main: "the user is looking at this id" — main answers with browse:update + browse:hero
+   * (+ browse:music). Does NOT change the selected game or the AppState. */
+  libraryBrowse: 'library:browse',
+  /** main → renderer: what is on screen (title/stats/active/GameInfo) — see BrowseInfo. */
+  browseUpdate: 'browse:update',
+  /** renderer → main (invoke): the current BrowseInfo (seed on window startup, like state:request). */
+  browseRequest: 'browse:request',
+  /** main → renderer: hero backgrounds of the BROWSED game. Separate from hero:update, which keeps
+   * carrying the inserted card's selected game — so browsing never overwrites the card's assets. */
+  browseHero: 'browse:hero',
+  /** main → renderer: background music of the browsed game (or null). Music only: the SFX set is left
+   * alone, so flipping through the carousel never rebuilds the sound elements. */
+  browseMusic: 'browse:music',
+  /** main → renderer: the bundled UI sound set chosen in Settings → Audio — the only source of UI
+   * sounds there is. Re-sent when the setting changes. */
+  sfxSetUpdate: 'sfx:set-update',
+  /** renderer → main (invoke): that same set (seed on window startup). */
+  sfxSetRequest: 'sfx:set-request',
+  /** renderer → main: pick a game by id (entering its detail screen). Switches to it on the ready screen. */
   actionSelect: 'action:select',
   /** renderer → main: request the fallback wallpaper data URL (for the idle / empty screen). */
   wallpaperRequest: 'wallpaper:request',
@@ -655,8 +702,6 @@ export const IPC = {
   moveSoundRequest: 'app:move-sound',
   /** settings-renderer → main: change the navigation sound set (payload set name string). */
   settingsSetSoundSet: 'settings:set-sound-set',
-  /** settings-renderer → main: toggle using only the global navigation sounds (payload boolean). */
-  settingsSetOnlyGlobalSounds: 'settings:set-only-global-sounds',
   /** settings-renderer → main: change the default ambience track (payload file name string or null). */
   settingsSetAmbientTrack: 'settings:set-ambient-track',
   /** settings-renderer → main: toggle using only the global ambience (payload boolean). */
@@ -825,8 +870,9 @@ export interface RendererApi {
   /** Force-close the running game (after the in-launcher confirm). */
   requestKill(): void;
   onError(callback: (message: string) => void): void;
-  onAudioUpdate(callback: (assets: AudioAssets | null) => void): void;
-  requestAudio(): Promise<AudioAssets | null>;
+  /** The inserted card's background music (data URL), or null when there is none. */
+  onCardMusic(callback: (url: string | null) => void): void;
+  requestCardMusic(): Promise<string | null>;
   /** Live default-ambience updates (data URL or null), pushed when the track changes in settings. */
   onAmbientUpdate(callback: (url: string | null) => void): void;
   /** The current default-ambience data URL (on window startup); null when no ambience is set. */
@@ -835,11 +881,27 @@ export interface RendererApi {
   onSfxPlay(callback: (name: SfxName) => void): void;
   onHeroUpdate(callback: (assets: HeroAssets | null) => void): void;
   requestHero(): Promise<HeroAssets | null>;
-  /** Live game-list updates (the card's games as {id,title}), pushed once per card (null when no card). */
+  /** Live carousel-list updates (card games + history, in display order; null when there is nothing). */
   onLibraryUpdate(callback: (library: GameLibrary | null) => void): void;
-  /** Current game list (on window startup / back-fill after a reload). */
+  /** Current carousel list (on window startup / back-fill after a reload). */
   requestLibrary(): Promise<GameLibrary | null>;
-  /** Pick a game by id (from the "Select game" popup) — switches to it on the ready screen. */
+  /** The carousel card artwork of one game as a data URL (null when it has none). Cached per id. */
+  requestGrid(id: string): Promise<string | null>;
+  /** Tell main which game the carousel is on — it answers with browse:update/hero/music. */
+  browseGame(id: string): void;
+  /** Live updates of what is on screen (title/stats/active/GameInfo). */
+  onBrowseUpdate(callback: (browse: BrowseInfo | null) => void): void;
+  /** What is on screen right now (on window startup). */
+  requestBrowse(): Promise<BrowseInfo | null>;
+  /** Hero backgrounds of the browsed game (independent of the inserted card's hero:update). */
+  onBrowseHero(callback: (assets: HeroAssets | null) => void): void;
+  /** Background music of the browsed game (music only — the SFX set is untouched). */
+  onBrowseMusic(callback: (url: string | null) => void): void;
+  /** Live updates of the bundled UI sound set (the chosen set changed in Settings). */
+  onSfxSet(callback: (set: SfxSet | null) => void): void;
+  /** The bundled UI sound set (on window startup). */
+  requestSfxSet(): Promise<SfxSet | null>;
+  /** Pick a game by id (entering its detail screen) — switches to it on the ready screen. */
   selectGame(id: string): void;
   requestWallpaper(): Promise<string | null>;
   /** Live Empty-screen wallpaper updates, pushed when the custom wallpaper changes in the settings window. */
@@ -868,8 +930,6 @@ export interface SettingsApi {
   getAudioOptions(): Promise<AudioOptions>;
   /** Change the navigation sound set (applied live to the game window by main). */
   setSoundSet(set: string): void;
-  /** Toggle using only the global navigation sounds (a card's own sounds ignored when on). */
-  setOnlyGlobalSounds(on: boolean): void;
   /** Change the default ambience track (null = no ambience; applied live to the game window by main). */
   setAmbientTrack(track: string | null): void;
   /** Toggle using only the global ambience (a card's own music ignored when on). */

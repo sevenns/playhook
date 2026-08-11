@@ -28,11 +28,22 @@ const STICK_X_AXIS = 0;
 const STICK_Y_AXIS = 1;
 const STICK_DEADZONE = 0.5;
 
+/** How long left/right must be HELD before the auto-repeat kicks in (a normal press stays one move). */
+const HOLD_DELAY_MS = 350;
+/** The auto-repeat's own cadence once it has kicked in. Shared with the keyboard, whose OS repeat rate is
+ *  far faster than anything usable here — see controls.ts. */
+export const NAV_REPEAT_MS = 110;
+
 export function createGamepadController(handlers: GamepadHandlers): GamepadController {
   let rafId = 0;
   let running = false;
   let paused = false;
   const prev = { left: false, right: false, up: false, down: false, a: false, b: false };
+  // Auto-repeat bookkeeping for the horizontal pair only: holding left/right flips through the carousel,
+  // where running down a 40-game history one press at a time is the thing to avoid. Up/down live in the
+  // popup stacks, which are short — a repeat there would just overshoot.
+  const heldSince = { left: 0, right: 0 };
+  const lastFire = { left: 0, right: 0 };
 
   const isDown = (index: number): boolean => {
     for (const pad of navigator.getGamepads()) {
@@ -52,6 +63,31 @@ export function createGamepadController(handlers: GamepadHandlers): GamepadContr
     return 0;
   };
 
+  /**
+   * One horizontal direction, with hold-to-repeat: fires on the press edge as before, then — once the
+   * direction has been held for HOLD_DELAY_MS — again every NAV_REPEAT_MS for as long as it stays down.
+   * Releasing resets the clock, so a quick tap is still exactly one move.
+   *
+   * `heldSince === 0` means "not counting yet": that is the released state, and also what a pause leaves
+   * behind, so a direction held across a resume starts its delay from scratch and doesn't burst.
+   */
+  const stepHeld = (dir: 'left' | 'right', down: boolean, fire: () => void): void => {
+    if (!down) {
+      heldSince[dir] = 0;
+      return;
+    }
+    const now = performance.now();
+    if (!prev[dir] || heldSince[dir] === 0) {
+      heldSince[dir] = now;
+      lastFire[dir] = now;
+      if (!prev[dir]) fire(); // an edge; resuming onto a held direction is not one
+      return;
+    }
+    if (now - heldSince[dir] < HOLD_DELAY_MS || now - lastFire[dir] < NAV_REPEAT_MS) return;
+    lastFire[dir] = now;
+    fire();
+  };
+
   const poll = (): void => {
     if (!running) return;
     const x = axis(STICK_X_AXIS);
@@ -67,12 +103,16 @@ export function createGamepadController(handlers: GamepadHandlers): GamepadContr
     // While paused (launcher backgrounded), read inputs but don't act — prev is still updated below, so a
     // button held across resume won't fire a phantom edge.
     if (!paused) {
-      if (left && !prev.left) handlers.onLeft();
-      if (right && !prev.right) handlers.onRight();
+      stepHeld('left', left, handlers.onLeft);
+      stepHeld('right', right, handlers.onRight);
       if (up && !prev.up) handlers.onUp();
       if (down && !prev.down) handlers.onDown();
       if (a && !prev.a) handlers.onA();
       if (b && !prev.b) handlers.onB();
+    } else {
+      // Paused: forget any hold in progress, so resuming can't drop straight into a repeat burst.
+      heldSince.left = 0;
+      heldSince.right = 0;
     }
 
     prev.left = left;

@@ -25,16 +25,23 @@ export interface HeroController {
   repaint(): void;
   /** (Re)evaluates the rotation timer for the current state (idempotent). */
   startRotation(): void;
-  /** New hero payload for the current card: reset cursor, paint first image, restart rotation. */
+  /** New hero payload for the current CARD: reset cursor, paint first image, restart rotation. An empty
+   *  payload here means "no card", and leaves whatever is on screen alone. */
   applyAssets(assets: HeroAssets | null): void;
+  /** New hero payload for the BROWSED game. Same thing, except an empty payload REPLACES the background
+   *  (with the wallpaper) instead of leaving the previous game's image up. */
+  applyBrowseAssets(assets: HeroAssets | null): void;
   /** The empty / idle screen: fallback wallpaper background, its palette, "Insert a game card" title. */
   applyEmptyScreen(): void;
   /** Stores the fallback wallpaper data URL (delivered by main); does not repaint on its own. */
   setWallpaper(url: string | null): void;
+  /** Parallax offset in DESIGN px: the background drifts with the carousel (see #hero in styles.css). */
+  setParallax(designPx: number): void;
 }
 
 export function createHeroController(deps: HeroDeps): HeroController {
   const app = req('app');
+  const heroPanEl = req('hero-pan');
   const titleEl = req('title');
 
   // Fallback wallpaper (data URL from main) for the empty / idle screen, and its cached palette.
@@ -189,9 +196,10 @@ export function createHeroController(deps: HeroDeps): HeroController {
     heroTimer = null;
   }
 
-  // New hero payload for the current card: reset the cursor, paint the first image if a game is already on
-  // screen (channels are independent — render may have landed first), and restart the rotation from fresh.
-  function applyAssets(assets: HeroAssets | null): void {
+  // New hero payload: reset the cursor, paint the first image if a game is already on screen (channels are
+  // independent — render may have landed first), and restart the rotation from fresh. `replaceWhenEmpty`
+  // decides what an EMPTY payload means — see the branch below.
+  function applyAssets(assets: HeroAssets | null, replaceWhenEmpty = false): void {
     heroImages = assets?.images ?? [];
     heroIndex = 0;
     // A fresh payload can carry the same per-game key `${id}#${index}` mapped to a DIFFERENT image — e.g.
@@ -200,8 +208,20 @@ export function createHeroController(deps: HeroDeps): HeroController {
     // reuse the previous image's colors. (Intra-card rotation still fills and reuses the cache.)
     paletteCache.clear();
     stopRotation();
-    if (deps.hasGameOnScreen() && heroImages.length > 0) {
-      showHeroAt(0);
+    if (deps.hasGameOnScreen()) {
+      if (heroImages.length > 0) showHeroAt(0);
+      // An empty payload on the BROWSE channel is a statement — "the game now on screen has no background
+      // of its own" — and must replace what is there, not leave it: keeping the previous image is how one
+      // game's artwork ended up sitting under another game's name. Main normally substitutes the wallpaper
+      // before it gets here; this is the last line of that same rule. On the CARD channel an empty payload
+      // means something else entirely ("no card any more"), and there the old image may stay until the
+      // browse cursor lands somewhere — hence the flag rather than one rule for both.
+      else if (replaceWhenEmpty) {
+        if (wallpaperUrl !== null) {
+          showImage(wallpaperUrl);
+          applyWallpaperPalette();
+        } else showImage(null);
+      }
     }
     startRotation();
   }
@@ -217,5 +237,18 @@ export function createHeroController(deps: HeroDeps): HeroController {
     wallpaperPalette = undefined;
   }
 
-  return { repaint, startRotation, applyAssets, applyEmptyScreen, setWallpaper };
+  function setParallax(designPx: number): void {
+    // On the pan wrapper, not on #hero: that one carries the (much faster) screen zoom — see styles.css.
+    heroPanEl.style.setProperty('--hero-parallax', `calc(${designPx} * var(--px))`);
+  }
+
+  return {
+    repaint,
+    startRotation,
+    applyAssets,
+    applyBrowseAssets: (assets) => applyAssets(assets, true),
+    applyEmptyScreen,
+    setWallpaper,
+    setParallax,
+  };
 }
