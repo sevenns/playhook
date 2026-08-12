@@ -534,6 +534,8 @@ export function createControls(deps: ControlsDeps): Controls {
     // nothing to launch, and while you browse game B, "Play" must not start game A behind your back.
     if (!screenIsActionable()) return;
     const game = screenGame();
+    // A local game whose files are gone: there is nothing to start, and the status line already says so.
+    if (game?.unavailable === true) return;
     // Steam download in progress: the gear opens Steam's Downloads page, where the user can
     // pause/resume (we can't control that programmatically).
     if (game?.steamInstalling === true) {

@@ -103,6 +103,7 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'launcher.installChatter8': 'Ещё чуть-чуть, честное пиратское...',
   'launcher.installChatter9': 'Уговариваем прогрессбар не врать...',
   'launcher.installChatter10': 'Прогреваем SSD для важного дела...',
+  'launcher.state.gameFilesMissing': 'Файлы игры не найдены',
   'launcher.state.running': 'Игра запущена...',
   'launcher.state.killing': 'Принудительное закрытие...',
   'launcher.state.syncingOut': 'Сохранение прогресса...',
@@ -180,6 +181,8 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'configure.addGame': 'Добавить игру',
   'configure.removeGame': 'Удалить текущую',
   'configure.confirmRemoveGame': 'Удалить текущую игру с этой карты?',
+  'configure.confirmRemoveLocalGame':
+    'Удалить эту локальную игру из Playhook? Сама игра останется на диске.',
   'configure.gameOption': '{index} / {count} · {title}',
   'configure.otherGameIssue': 'Игра {index} ({title}): {message}',
   'configure.untitledGame': 'без названия',
@@ -190,6 +193,8 @@ export const ru: Partial<Record<MessageKey, string>> = {
     'Внимание: id изменён ({from} → {to}). Статистика времени в игре привязана к id и обнулится для нового id.',
   'configure.cardGone': 'Выбранная карта больше недоступна. Ваш текст сохранён.',
   'configure.blankDrive': 'Пустой диск — заполните игру и сохраните.',
+  'configure.thisPc': 'Этот ПК — локальные игры',
+  'configure.blankPcLibrary': 'Локальных игр пока нет — заполните игру и сохраните.',
   'configure.couldNotRead': 'Не удалось прочитать game.json: {message}',
   'configure.confirmSwitch': 'Отменить несохранённые изменения и переключить карту?',
   'configure.confirmReset': 'Отменить несохранённые изменения и перечитать с карты?',
@@ -218,6 +223,11 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'configure.schemaVersion': 'Версия схемы: 1',
   'configure.launchType': 'Тип запуска',
   'configure.launchExecutable': 'Исполняемый файл',
+  'configure.launchPc': 'Локальная игра на этом ПК',
+  'configure.fieldPcExecutable': 'Исполняемый файл игры (полный путь)',
+  'configure.pcExecutablePlaceholder': 'C:\\Games\\My Game\\game.exe',
+  'configure.pcExecutableHint':
+    'Полный путь к игре на этом ПК. Если игру потом удалить, её карточка, оформление и статистика останутся — заблокируется только запуск.',
   'configure.launchInstaller': 'Установщик',
   'configure.fieldExecutable': 'Путь к исполняемому файлу',
   'configure.executableNote': 'Относительно корня карты.',
@@ -260,6 +270,8 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'configure.gridImageHelp': 'Найти обложку 600x900 на SteamGridDB',
   'configure.fieldSaveOnCard': 'Папка сохранений на карте',
   'configure.fieldPcSavePath': 'Путь сохранений на ПК',
+  'configure.pcSaveBackupHint':
+    'Playhook хранит резервную копию этих сохранений. При установке карты с этой игрой прогресс скопируется на неё.',
   'configure.fieldBackgroundMusic': 'Фоновая музыка',
   'configure.fieldLaunchTimeout': 'Таймаут запуска (секунды)',
   'configure.fieldKillTimeout': 'Таймаут принудительного закрытия (секунды)',
@@ -280,6 +292,7 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'configure.pickChooseSubfolder': 'Выберите подпапку карты, а не её корень.',
   'configure.pickPcSaveOutside':
     'Эта папка не находится в известном месте сохранений (%DOCUMENTS%, %APPDATA%, %LOCALAPPDATA%, %LOCALLOW% или %USERPROFILE%). Выберите папку внутри одного из них.',
+  'configure.pickImportFailed': 'Не удалось скопировать выбранный файл в локальную библиотеку.',
 
   // ── User-facing errors from main ─────────────────────────────────────────────
   'errors.finishBeforeApply': 'Завершите текущие операции перед применением конфигурации',
@@ -329,7 +342,16 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'manifest.runAsAdminWithSteam': 'runAsAdmin недопустим в режиме steam',
   'manifest.watchProcessesRequired': 'watchProcesses обязателен в режиме steam',
   'manifest.executableRequired': 'executable обязателен',
+  'manifest.pcWithSteam': 'pc нельзя указывать вместе со steam',
+  'manifest.pcWithInstall': 'pc нельзя указывать вместе с install',
+  'manifest.pcWithExecutable': 'executable недопустим в режиме pc (используйте pc.executable)',
+  'manifest.pcWithSaveOnCard': 'saveOnCard недопустим в режиме pc (резервную копию хранит Playhook)',
+  'manifest.pcOnCard': 'блок pc допустим только для локальных игр, но не на карте',
+  'manifest.pcRequired': 'для локальной игры обязателен блок pc',
+  'manifest.pcExecutableAbsolute': 'pc.executable должен быть абсолютным путём: {path}',
   'manifest.pcSavePathPrefix': 'pcSavePath должен начинаться с {prefixes}',
+  'manifest.pcSavePathPrefixOrAbsolute':
+    'pcSavePath должен быть абсолютным путём или начинаться с {prefixes}',
   'manifest.pcSavePathNotAllowed':
     'префикс pcSavePath %{prefix}% недопустим (используйте {prefixes})',
   'manifest.pcSavePathUnavailable': 'префикс pcSavePath %{prefix}% недоступен в этой системе',

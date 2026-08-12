@@ -57,8 +57,11 @@ const api: ConfigureApi = {
   readConfig(root: string): Promise<ConfigReadResult> {
     return ipcRenderer.invoke(CHANNELS.configRead, root) as Promise<ConfigReadResult>;
   },
-  validateConfig(text: string): Promise<ConfigValidationResult> {
-    return ipcRenderer.invoke(CHANNELS.configValidate, text) as Promise<ConfigValidationResult>;
+  validateConfig(root: string, text: string): Promise<ConfigValidationResult> {
+    return ipcRenderer.invoke(CHANNELS.configValidate, {
+      root,
+      text,
+    }) as Promise<ConfigValidationResult>;
   },
   saveConfig(root: string, text: string): Promise<ConfigSaveResult> {
     return ipcRenderer.invoke(CHANNELS.configSave, { root, text }) as Promise<ConfigSaveResult>;

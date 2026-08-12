@@ -11,6 +11,7 @@ import { PcStore } from './pc-store';
 import { AppSettingsStore } from './app-settings';
 import { StatsService } from './stats';
 import { LibraryStore } from './library-store';
+import { PcLibraryStore } from './pc-library';
 import { DriveWatcher } from './drive-watcher';
 import { GameController } from './ipc';
 import { GlobalGamepad } from './gamepad-global';
@@ -161,6 +162,12 @@ async function bootstrap(): Promise<void> {
   const library = new LibraryStore({ baseDir: app.getPath('userData'), readStats: (id) => stats.read(id) });
   await library.init().catch((cause: unknown) => log.warn('[library] init failed:', cause));
 
+  // The PC library: local games added from this machine's own disk, kept in `<userData>/pc-games` and
+  // read as a card that is always inserted (see pc-library.ts). Its skeleton is created up front so the
+  // Configure window can offer "This PC" even before the first game exists.
+  const pcLibrary = new PcLibraryStore({ baseDir: app.getPath('userData') });
+  await pcLibrary.init().catch((cause: unknown) => log.warn('[pc-library] init failed:', cause));
+
   // Platform services (process monitor / Steam locator / launcher / save-path resolver / power) selected
   // once for the running OS. Every OS-specific behaviour flows through this bundle (see platform/index.ts).
   // The bundled umu-run zipapp (extraResources, linux only): packaged it lives under resourcesPath; in dev
@@ -191,6 +198,7 @@ async function bootstrap(): Promise<void> {
     store,
     stats,
     library,
+    pcLibrary,
     watcher,
     settings,
     platform,
@@ -282,6 +290,8 @@ async function bootstrap(): Promise<void> {
     settings,
     getActiveRoot: () => watcher.getActiveRoot(),
     reloadManifest: (root) => controller.reloadManifest(root),
+    pcLibrary,
+    reloadPcLibrary: () => controller.reloadPcLibrary(),
     getTranslator,
     toManifestPcSavePath: (absolute) => platform.savePathResolver.toManifestPcSavePath(absolute),
   });

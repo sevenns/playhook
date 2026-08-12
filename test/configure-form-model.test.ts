@@ -1,5 +1,7 @@
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
+  emptyFormModel,
   formModelToText,
   slugifyId,
   textToFormModel,
@@ -362,6 +364,78 @@ describe('launch mode', () => {
     const parsed = JSON.parse(formModelToText(model, {}, {})) as Record<string, unknown>;
     expect(parsed).not.toHaveProperty('executable');
     expect(parsed).toHaveProperty('steam');
+  });
+});
+
+describe('pc mode (a local game on this PC)', () => {
+  // Native, absolute path: the PC library never travels, and CI runs this suite on Windows too.
+  const exe = path.join(path.resolve(path.sep), 'Games', 'Hades', 'Hades.exe');
+  const pcText = JSON.stringify({
+    schemaVersion: 1,
+    id: 'hades',
+    title: 'Hades',
+    pc: { executable: exe },
+    heroImage: 'assets/hero.jpg',
+    watchProcesses: ['Hades.exe'],
+  });
+
+  it('parses into pc mode without spilling the block into `rest`', () => {
+    const result = parseOk(pcText);
+    expect(launchModeOf(result.model)).toBe('pc');
+    expect(result.model.pc.executable).toBe(exe);
+    expect(result.rest).toEqual({});
+    expect(result.corrupt).toEqual({});
+  });
+
+  it('round-trips into a manifest the PC-source validator accepts', () => {
+    const text = serialize(pcText);
+    expect(validateManifestText(text, t, 'pc').ok).toBe(true);
+    expect(serialize(text)).toBe(text); // idempotent
+  });
+
+  it('does not emit the card-relative executable or an install block', () => {
+    const base = parseOk(pcText);
+    const model: ManifestFormModel = {
+      ...base.model,
+      executable: 'ghost.exe',
+      copyToPc: true,
+    };
+    const parsed = JSON.parse(formModelToText(model, {}, {})) as Record<string, unknown>;
+    expect(parsed).toHaveProperty('pc');
+    expect(parsed).not.toHaveProperty('executable');
+    expect(parsed).not.toHaveProperty('install');
+  });
+
+  it('keeps args/runAsAdmin/watchProcesses, which a local game may use like any other', () => {
+    const model: ManifestFormModel = {
+      ...parseOk(pcText).model,
+      args: ['-windowed'],
+      runAsAdmin: true,
+    };
+    const parsed = JSON.parse(formModelToText(model, {}, {})) as Record<string, unknown>;
+    expect(parsed['args']).toEqual(['-windowed']);
+    expect(parsed['runAsAdmin']).toBe(true);
+    expect(parsed['watchProcesses']).toEqual(['Hades.exe']);
+  });
+
+  it('switching a parsed pc game to another mode drops the block (modes are exclusive)', () => {
+    const model: ManifestFormModel = {
+      ...parseOk(pcText).model,
+      launchMode: 'executable',
+      executable: 'g/g.exe',
+    };
+    const parsed = JSON.parse(formModelToText(model, {}, {})) as Record<string, unknown>;
+    expect(parsed).not.toHaveProperty('pc');
+    expect(parsed['executable']).toBe('g/g.exe');
+  });
+
+  it('emptyFormModel("pc") starts a blank library in pc mode', () => {
+    expect(launchModeOf(emptyFormModel('pc'))).toBe('pc');
+    expect(launchModeOf(emptyFormModel())).toBe('executable');
+  });
+
+  it('serializes an EMPTY game list as [] (the PC library was emptied)', () => {
+    expect(gamesToText([])).toBe('[]\n');
   });
 });
 

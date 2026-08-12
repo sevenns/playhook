@@ -346,9 +346,13 @@ function render(state: AppState): void {
   // below this holds on BOTH screens, because it decides how the card TRANSITIONS: with a Play it hands
   // its geometry to the button (a swap, then a morph); without one it has nothing to hand over and
   // shrinks away instead — and coming back, only the morph case waits for the button to grow (styles.css).
+  // (c) a LOCAL game whose executable is no longer on disk: it is active (it is in the library and keeps
+  // its art and stats) but there is nothing to start, so it gets the same title + More layout, with the
+  // status line saying why.
   const hasPlay =
     browse !== null &&
     browse.active &&
+    browse.game?.unavailable !== true &&
     !(phase === 'ready' && browse.game?.requiresInstall === true && !busySteam);
   app.dataset['cardMorph'] = hasPlay ? 'on' : 'off';
 

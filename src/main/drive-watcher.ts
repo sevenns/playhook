@@ -70,6 +70,7 @@ export async function listDriveCandidates(
       const { label, signature } = await describeManifest(root, manifestPath, hasManifest, t);
       candidates.push({
         root,
+        kind: 'card',
         label,
         signature,
         hasManifest,

@@ -125,6 +125,8 @@ export const en = {
   'launcher.installChatter8': "Almost done, pirate's honour...",
   'launcher.installChatter9': 'Begging the progress bar to stop lying...',
   'launcher.installChatter10': 'Warming up the SSD for the big moment...',
+  // A local (PC) game whose executable is no longer on disk — the card stays, only Play is disabled.
+  'launcher.state.gameFilesMissing': 'Game files not found',
   'launcher.state.running': 'Running...',
   'launcher.state.killing': 'Force closing...',
   'launcher.state.syncingOut': 'Saving progress...',
@@ -206,6 +208,9 @@ export const en = {
   'configure.addGame': 'Add game',
   'configure.removeGame': 'Remove current',
   'configure.confirmRemoveGame': 'Remove the current game from this card?',
+  // The local twin: nothing is deleted from disk, only the entry Playhook keeps.
+  'configure.confirmRemoveLocalGame':
+    'Remove this local game from Playhook? The game itself stays on your disk.',
   // Dropdown option label: "1 / 3 · Hollow Knight".
   'configure.gameOption': '{index} / {count} · {title}',
   // An issue on another game (not the one being edited) shown in the panel: "Game 3 (Celeste): …".
@@ -218,6 +223,9 @@ export const en = {
     'Warning: id changed ({from} → {to}). Playtime stats are keyed by id and will reset for the new id.',
   'configure.cardGone': 'The selected card is no longer available. Your text is kept.',
   'configure.blankDrive': 'Blank drive — fill in the game and save.',
+  // The PC library, offered in the drive picker as one more "drive" (see game-config.ts candidates()).
+  'configure.thisPc': 'This PC — local games',
+  'configure.blankPcLibrary': 'No local games yet — fill in the game and save.',
   'configure.couldNotRead': 'Could not read game.json: {message}',
   'configure.confirmSwitch': 'Discard unsaved changes and switch cards?',
   'configure.confirmReset': 'Discard unsaved changes and reset from the card?',
@@ -250,6 +258,12 @@ export const en = {
   'configure.launchType': 'Launch type',
   'configure.launchExecutable': 'Executable',
   'configure.launchInstaller': 'Installer',
+  // PC mode — a game already installed on this machine (the PC library's only launch type).
+  'configure.launchPc': 'Local game on this PC',
+  'configure.fieldPcExecutable': 'Game executable (full path)',
+  'configure.pcExecutablePlaceholder': 'C:\\Games\\My Game\\game.exe',
+  'configure.pcExecutableHint':
+    'Full path to the game on this PC. If the game is later deleted, its card, artwork and stats stay — only Play is disabled.',
   'configure.fieldExecutable': 'Executable path',
   'configure.executableNote': 'Relative to the card root.',
   'configure.fieldArgs': 'Arguments',
@@ -294,6 +308,8 @@ export const en = {
   'configure.fieldSaveOnCard': 'Save folder on the card',
   'configure.fieldPcSavePath': 'PC save path',
   'configure.pcSavePathPlaceholder': '%APPDATA%/My Game',
+  'configure.pcSaveBackupHint':
+    'Playhook backs these saves up for you. When you insert a card carrying this game, the progress is copied onto it.',
   'configure.fieldBackgroundMusic': 'Background music',
   'configure.fieldLaunchTimeout': 'Launch timeout (seconds)',
   'configure.fieldKillTimeout': 'Force-close timeout (seconds)',
@@ -318,6 +334,7 @@ export const en = {
   'configure.pickChooseSubfolder': 'Choose a subfolder of the card, not the card root.',
   'configure.pickPcSaveOutside':
     'That folder is not under a known save location (%DOCUMENTS%, %APPDATA%, %LOCALAPPDATA%, %LOCALLOW% or %USERPROFILE%). Pick a folder inside one of those.',
+  'configure.pickImportFailed': 'Could not copy the selected file into the local library.',
 
   // ── User-facing errors from main (ipc.ts / game-config.ts / updater.ts) ─────
   // The wrapper is translated; the technical cause ({cause}) is inserted as-is (system messages, nested
@@ -372,9 +389,19 @@ export const en = {
   'manifest.runAsAdminWithSteam': 'runAsAdmin is not allowed in steam mode',
   'manifest.watchProcessesRequired': 'watchProcesses is required in steam mode',
   'manifest.executableRequired': 'executable is required',
+  // PC mode (a game on this machine's own disk — see PcManifest).
+  'manifest.pcWithSteam': 'pc is not allowed together with steam',
+  'manifest.pcWithInstall': 'pc is not allowed together with install',
+  'manifest.pcWithExecutable': 'executable is not allowed in pc mode (use pc.executable)',
+  'manifest.pcWithSaveOnCard': 'saveOnCard is not allowed in pc mode (Playhook keeps the backup)',
+  'manifest.pcOnCard': 'the pc block is only allowed for local games, not on a card',
+  'manifest.pcRequired': 'a local game requires the pc block',
+  'manifest.pcExecutableAbsolute': 'pc.executable must be an absolute path: {path}',
   // Pure-function messages (expandPcSavePath / resolveInstall / readManifest / validateManifestText):
   // the functions receive the translator and interpolate directly.
   'manifest.pcSavePathPrefix': 'pcSavePath must start with {prefixes}',
+  'manifest.pcSavePathPrefixOrAbsolute':
+    'pcSavePath must be an absolute path or start with {prefixes}',
   'manifest.pcSavePathNotAllowed': 'pcSavePath prefix %{prefix}% is not allowed (use {prefixes})',
   'manifest.pcSavePathUnavailable': 'pcSavePath prefix %{prefix}% is not available on this system',
   'manifest.pcSavePathNoTraversal': 'pcSavePath must not contain ".."',

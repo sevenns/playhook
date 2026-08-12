@@ -158,7 +158,10 @@ export class LibraryStore {
    * Best-effort throughout: the card can be yanked mid-copy, so a failed game is logged and skipped, and
    * the index is written only AFTER that game's files are in place (never a half-copied catalogue).
    */
-  async saveFromCard(manifests: readonly ResolvedManifest[]): Promise<void> {
+  async saveFromCard(
+    manifests: readonly ResolvedManifest[],
+    protectedIds?: readonly string[],
+  ): Promise<void> {
     for (const manifest of manifests) {
       try {
         await this.saveOne(manifest);
@@ -166,7 +169,10 @@ export class LibraryStore {
         log.warn(`[library] failed to copy assets for id=${manifest.raw.id}:`, describe(cause));
       }
     }
-    await this.gc(manifests.map((m) => m.raw.id));
+    // The eviction must spare every game that is available RIGHT NOW, not just the ones copied here:
+    // with two sources (the inserted card and the PC library) each call would otherwise leave the other
+    // source's games unprotected, and a full history could evict the very game on screen.
+    await this.gc(protectedIds ?? manifests.map((m) => m.raw.id));
   }
 
   private async saveOne(manifest: ResolvedManifest): Promise<void> {

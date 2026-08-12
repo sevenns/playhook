@@ -126,6 +126,50 @@ Use `gridImage` in `game.json` to control how a game looks in that row. It expec
 cover — the same format Steam uses, so [SteamGridDB](https://www.steamgriddb.com/) is the easiest place to
 find one. Without it the card is cropped from the first `heroImage`.
 
+### Local games (already installed on this PC)
+
+Not every game lives on a card. A game that is already installed on this machine can be added to the
+launcher through **Configure game → This PC**, and from then on it behaves like any other: its own hero
+art, carousel card, music, stats, save sync and Play button — with or without a card inserted.
+
+Local games are stored in `%APPDATA%/playhook/pc-games/` (`~/.config/playhook/pc-games/` on Linux),
+which is laid out exactly like a card: a `game.json`, an `assets/` folder for the art and music you
+pick (they are **copied in**, so moving or deleting the originals doesn't break anything), and a
+`saves/` folder for the save backups. The manifest is the same format, with one extra block and one
+rule of its own:
+
+```jsonc
+{
+  "schemaVersion": 1,
+  "id": "hades",
+  "title": "Hades",
+  // The FULL path to the game on this PC. Only valid here — a card may never name an absolute path.
+  "pc": { "executable": "C:\\Games\\Hades\\Hades.exe" },
+  "heroImage": ["assets/hades-hero.jpg"],
+  "gridImage": "assets/hades-grid.jpg",
+  // For a local game the save path may be absolute too (a card is limited to the %PREFIX% list).
+  "pcSavePath": "C:\\Games\\Hades\\Saves",
+  "watchProcesses": ["Hades.exe"]
+}
+```
+
+- `pc` replaces `executable` and is mutually exclusive with `install` and `steam`; everything else
+  (`args`, `runAsAdmin`, `watchProcesses`, the timeouts, `winetricks`, `umuGameId`, the art and the
+  music) works exactly as it does for a card game.
+- **Saves are backed up by Playhook itself** — there is no card to keep them on, so `saveOnCard` is not
+  allowed and the backup goes to `pc-games/saves/<id>/`. If you later insert a card carrying the same
+  game, the progress you made without it is copied onto the card on insertion.
+- **Deleting the game from your disk doesn't delete it from Playhook.** The card stays in the carousel
+  with its art and stats, the status line reads *Game files not found*, and Play is hidden. Put the game
+  back at the same path and it is playable again, saves included.
+- If a card carries a game with the **same `id`** as a local one, the card wins while it is inserted;
+  the local entry is hidden until the card is removed.
+- Paths here are **not portable**: they are written in this machine's native form, since this library
+  never travels (a card's `game.json`, by contrast, must work on both Windows and the Deck).
+
+On the Steam Deck in **Game Mode** the launcher is started by a card being inserted, so local games are
+reachable there only if you open Playhook's tile yourself.
+
 The empty screen (no card inserted, no history) reuses the same layout over the wallpaper: "Insert a game card",
 no Play button, and **More** offering just the *System* submenu (where *Minimize Playhook* lives).
 
@@ -167,7 +211,9 @@ Settings live in `settings.json` next to the rest of the app state (`%APPDATA%\p
 **Configure game** writes the `game.json` onto the inserted card, so you never have to edit JSON by
 hand:
 
-- pick the card (any removable drive — a **blank** one can be initialized from scratch);
+- pick the card (any removable drive — a **blank** one can be initialized from scratch) — or
+  **This PC**, the library of [local games](#local-games-already-installed-on-this-pc) that are already
+  installed on this machine;
 - a **form** with sections *Basics / Launch / Images / Saves / Audio / Advanced*, with Browse pickers
   for the executable, the hero backgrounds (up to 3), the 600x900 carousel card image, the background
   music and the save folders

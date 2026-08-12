@@ -1,4 +1,7 @@
-// Reading and validating the `game.json` manifest from the card.
+// Reading and validating the `game.json` manifest from the card — and from the PC library, the second
+// root that looks like an always-inserted card (see ManifestSource / readManifests `source`). The two
+// differ in exactly one way: only a PC manifest may name an ABSOLUTE path, and only through its own `pc`
+// block, so the card's "never leave the root" invariant below is untouched.
 // The card is UNTRUSTED input: beyond the zod schema we validate path SEMANTICS —
 // executable/heroImage/saveOnCard must live inside the card root (forbidding `..`
 // and absolute paths), pcSavePath — only from an allowlist of prefixes:
@@ -12,6 +15,7 @@ import {
   MANIFEST_FILENAME,
   MAX_HERO_IMAGES,
   type GameManifest,
+  type ManifestSource,
   type ManifestValidationIssue,
   type ConfigValidationResult,
   type ResolvedManifest,
@@ -136,11 +140,45 @@ const manifestSchema = z
     // Steam mode: a pointer to a Steam app by appid (no game files on the card). Mutually exclusive with
     // install/executable and requires watchProcesses — enforced by the superRefine below.
     steam: z.object({ appid: z.number().int().positive() }).optional(),
+    // PC mode: the game already lives on this machine's disk, so `executable` is ABSOLUTE and lives in its
+    // own block — the only manifest field allowed to leave a root. Accepted solely for the PC library
+    // (readManifests `source: 'pc'`); a card carrying it is rejected. Mutually exclusive with
+    // steam/install/executable/saveOnCard (superRefine below).
+    pc: z.object({ executable: z.string().min(1) }).strict().optional(),
   })
   // Exactly one launch method, with its invariants. Steam mode is a separate backend from install
   // mode, so we forbid the card installer/executable/elevation there and require watchProcesses
   // (steam:// returns instantly with no pid of its own — the game can only be tracked by process name).
+  // PC mode is the fourth launch method and the same exclusivity applies: it brings its own (absolute)
+  // executable, so a card `executable`, an installer, a Steam pointer or a card-side `saveOnCard` all
+  // contradict it. Whether the manifest is ALLOWED to be in PC mode at all is a question of where it was
+  // read from, not of its shape — readManifests decides that (see `source`).
   .superRefine((v, ctx) => {
+    if (v.pc !== undefined) {
+      if (v.steam !== undefined) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['steam'], message: 'manifest.pcWithSteam' });
+      }
+      if (v.install !== undefined) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['install'], message: 'manifest.pcWithInstall' });
+      }
+      if (v.executable !== undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['executable'],
+          message: 'manifest.pcWithExecutable',
+        });
+      }
+      if (v.saveOnCard !== undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['saveOnCard'],
+          message: 'manifest.pcWithSaveOnCard',
+        });
+      }
+      // The launch method is `pc.executable`, so the "non-steam ⇒ executable required" rule below must
+      // not fire — return instead of falling through to it.
+      return;
+    }
     if (v.steam !== undefined) {
       if (v.install !== undefined) {
         ctx.addIssue({
@@ -460,6 +498,25 @@ async function resolveInstall(
   };
 }
 
+/** Options for readManifests. Optional as a whole so every existing card call site stays unchanged. */
+export interface ManifestReadOptions {
+  /**
+   * Which root is being read (default `'card'`). It decides both what the manifest MAY contain (only a
+   * PC-library manifest may carry the `pc` block — and must) and how a failure is graded: a card that
+   * yields no game is fatal, a PC library that yields none is simply empty. See ManifestSource.
+   */
+  readonly source?: ManifestSource;
+}
+
+/** True for an "the file isn't there" fs error — the one read failure that is a normal state, not damage. */
+function isNotFound(cause: unknown): boolean {
+  return (
+    typeof cause === 'object' &&
+    cause !== null &&
+    (cause as { code?: unknown }).code === 'ENOENT'
+  );
+}
+
 /**
  * Reads and fully validates ALL games on the card. `game.json` may hold a single object (legacy
  * single-game — behaves exactly as before) or a non-empty array of game objects (multi-game). Reads the
@@ -475,27 +532,38 @@ export async function readManifests(
   root: string,
   env: ManifestEnv,
   resolveInstallDir: InstallDirResolver,
+  opts: ManifestReadOptions = {},
 ): Promise<ManifestsResult> {
   const { t } = env;
+  const source = opts.source ?? 'card';
   const manifestPath = path.join(root, MANIFEST_FILENAME);
 
   let parsedJson: unknown;
   try {
     parsedJson = await fse.readJson(manifestPath);
   } catch (cause) {
+    // No PC library file yet is the normal first run — an empty library, not a failure. Every OTHER read
+    // problem (unparsable JSON, EACCES) stays an error for both sources: silently swallowing corrupted
+    // user data is exactly what the error-handling convention forbids.
+    if (source === 'pc' && isNotFound(cause)) return { ok: true, manifests: [] };
     return {
       ok: false,
       message: t('errors.cannotReadManifest', { file: MANIFEST_FILENAME, cause: describe(cause) }),
     };
   }
 
+  // An empty `[]` means "the library has no games" — a valid state you reach by deleting the last local
+  // game in Configure. On a card the same value is still fatal (a card exists to carry games).
+  if (source === 'pc' && Array.isArray(parsedJson) && parsedJson.length === 0) {
+    return { ok: true, manifests: [] };
+  }
   const normalized = normalizeManifestInput(parsedJson, t);
   if (!normalized.ok) return { ok: false, message: normalized.message };
 
   const manifests: ResolvedManifest[] = [];
   let firstError: string | null = null;
   for (const [index, item] of normalized.items.entries()) {
-    const resolved = await resolveOne(item, root, env, resolveInstallDir);
+    const resolved = await resolveOne(item, root, env, resolveInstallDir, source);
     if (!resolved.ok) {
       if (firstError === null) firstError = resolved.message;
       log.warn(`[manifest] skipping game #${index}: ${resolved.message}`);
@@ -504,8 +572,14 @@ export async function readManifests(
     manifests.push(resolved.manifest);
   }
   if (manifests.length === 0) {
-    // No game resolved → fatal, like a missing manifest. Keep the first (usually only) reason so a
-    // single-game card surfaces its precise error ("executable not found: …") exactly as before.
+    // No game resolved → fatal for a card, like a missing manifest. Keep the first (usually only) reason
+    // so a single-game card surfaces its precise error ("executable not found: …") exactly as before.
+    // The PC library is not fatal: it is app state, not removable media — a broken entry must not take
+    // the launcher's whole local library (and its history) down with it, so it warns and stays empty.
+    if (source === 'pc') {
+      if (firstError !== null) log.warn(`[manifest] PC library resolved no games: ${firstError}`);
+      return { ok: true, manifests: [] };
+    }
     return { ok: false, message: firstError ?? t('manifest.invalid') };
   }
   const seen = new Set<string>();
@@ -528,6 +602,7 @@ async function resolveOne(
   root: string,
   env: ManifestEnv,
   resolveInstallDir: InstallDirResolver,
+  source: ManifestSource,
 ): Promise<ManifestResult> {
   const { t } = env;
   const parsed = manifestSchema.safeParse(rawParsed);
@@ -536,13 +611,33 @@ async function resolveOne(
   }
   const raw: GameManifest = parsed.data;
 
-  // Critical branch: the meaning of `executable` depends on the mode. Keep the three paths
+  // The `pc` block and the root it was read from must agree. This is THE check that keeps the card's
+  // security invariant intact — a card can never name an absolute path, whatever its game.json says.
+  if (source === 'card' && raw.pc !== undefined) {
+    return { ok: false, message: t('manifest.pcOnCard') };
+  }
+  if (source === 'pc' && raw.pc === undefined) {
+    return { ok: false, message: t('manifest.pcRequired') };
+  }
+
+  // Critical branch: the meaning of `executable` depends on the mode. Keep the four paths
   // explicit so the normal flow is provably untouched.
   let executablePath: string;
   let cwd: string;
   let installResolved: ResolvedManifest['install'];
   let steamResolved: ResolvedManifest['steam'];
-  if (raw.steam !== undefined) {
+  if (raw.pc !== undefined) {
+    // PC mode: the executable is an ABSOLUTE path on this machine, stored in the native form of the OS
+    // that wrote it (the PC library never travels — see ManifestSource). Its existence is deliberately
+    // NOT checked: a deleted game keeps its library card and is reported `unavailable` instead, exactly
+    // as an install-mode game that isn't installed yet.
+    const normalized = path.normalize(raw.pc.executable);
+    if (!path.isAbsolute(normalized)) {
+      return { ok: false, message: t('manifest.pcExecutableAbsolute', { path: raw.pc.executable }) };
+    }
+    executablePath = normalized;
+    cwd = path.dirname(normalized);
+  } else if (raw.steam !== undefined) {
     // Steam mode: there is no card executable to resolve. executablePath/cwd are placeholders ('')
     // that are NEVER read — every consumer branches on `steam` first (see ResolvedManifest). The
     // card-relative assets (heroImage/music/saveOnCard) are resolved below as usual.
@@ -641,11 +736,16 @@ async function resolveOne(
     // physical folder is resolved per-game at sync time via the platform SavePathResolver — on Linux a
     // location inside the game's Wine prefix / Steam compatdata that may not exist until first launch,
     // which must NOT reject the card at read time. The stored value is the Windows-dictionary string.
-    const problem = validatePcSavePathStatic(raw.pcSavePath, t);
+    const problem = validatePcSavePathStatic(raw.pcSavePath, t, source);
     if (problem !== null) {
       return { ok: false, message: problem };
     }
     pcSavePath = raw.pcSavePath;
+    // A local game has no card to keep its saves on, so Playhook keeps them itself: the PC library's own
+    // `saves/<id>` plays the part of `saveOnCardPath`, which is what makes the ENTIRE existing save-sync
+    // (baseline, LWW, pending flush) work for it unchanged. Created on the first sync, not here — the
+    // resolver stays side-effect-free.
+    if (source === 'pc') saveOnCardPath = path.join(root, 'saves', raw.id);
   }
 
   let backgroundMusicPath: string | undefined;
@@ -662,7 +762,9 @@ async function resolveOne(
 
   // Sync only makes sense if BOTH sides are set: the copy on the card and
   // the write location on the PC. If only one is set, the card was prepared incorrectly.
-  if ((pcSavePath === undefined) !== (saveOnCardPath === undefined)) {
+  // PC mode is exempt: `saveOnCard` is forbidden there and the backup side is supplied above, so a lone
+  // `pcSavePath` is the normal (and only) spelling.
+  if (source === 'card' && (pcSavePath === undefined) !== (saveOnCardPath === undefined)) {
     return {
       ok: false,
       message: t('manifest.savePairing'),
@@ -672,6 +774,7 @@ async function resolveOne(
   const manifest: ResolvedManifest = {
     raw,
     root,
+    source,
     executablePath,
     cwd,
     ...(heroImagePaths !== undefined ? { heroImagePaths } : {}),
@@ -703,10 +806,25 @@ const PCSAVE_PREFIXES = ['DOCUMENTS', 'LOCALLOW', ...ENV_PREFIXES] as const;
  * Validates the pcSavePath PREFIX and traversal WITHOUT resolving it against the real system (env-var
  * availability is a runtime/FS concern → left to readManifest's expandPcSavePath). Returns an error
  * message or null when statically fine.
+ *
+ * For `source: 'pc'` an ABSOLUTE native path is additionally accepted: a local game's saves typically sit
+ * next to its .exe (`C:\Games\Hades\Saves`) or on another drive, which no `%PREFIX%` can express. The
+ * `%PREFIX%` form keeps working there too (on Linux it still means "inside the game's Wine prefix"), and
+ * a card manifest is unaffected — its allowlist is what stops it naming an arbitrary folder.
  */
-function validatePcSavePathStatic(input: string, t: Translator): string | null {
+function validatePcSavePathStatic(
+  input: string,
+  t: Translator,
+  source: ManifestSource = 'card',
+): string | null {
   const match = /^%([A-Za-z]+)%[\\/]?(.*)$/.exec(input);
-  if (match === null) return t('manifest.pcSavePathPrefix', { prefixes: ALLOWED_PREFIXES_HELP });
+  if (match === null) {
+    if (source === 'pc' && path.isAbsolute(path.normalize(input))) return null;
+    return t(
+      source === 'pc' ? 'manifest.pcSavePathPrefixOrAbsolute' : 'manifest.pcSavePathPrefix',
+      { prefixes: ALLOWED_PREFIXES_HELP },
+    );
+  }
   const prefix = (match[1] ?? '').toUpperCase();
   if (!(PCSAVE_PREFIXES as readonly string[]).includes(prefix)) {
     return t('manifest.pcSavePathNotAllowed', { prefix, prefixes: ALLOWED_PREFIXES_HELP });
@@ -746,8 +864,23 @@ function pushGameSemanticIssues(
   raw: GameManifest,
   t: Translator,
   prefix: string,
+  source: ManifestSource,
 ): void {
   const field = (name: string): string => `${prefix}${name}`;
+  // The `pc` block and the edited root must agree — the editor's half of the check resolveOne makes.
+  if (source === 'card' && raw.pc !== undefined) {
+    issues.push({ path: field('pc'), message: t('manifest.pcOnCard') });
+  }
+  if (source === 'pc') {
+    if (raw.pc === undefined) {
+      issues.push({ path: field('pc'), message: t('manifest.pcRequired') });
+    } else if (!path.isAbsolute(path.normalize(raw.pc.executable))) {
+      issues.push({
+        path: field('pc.executable'),
+        message: t('manifest.pcExecutableAbsolute', { path: raw.pc.executable }),
+      });
+    }
+  }
   if (raw.executable !== undefined)
     pushIfEscapes(issues, field('executable'), raw.executable, t, 'executable');
   if (raw.install !== undefined) {
@@ -783,11 +916,12 @@ function pushGameSemanticIssues(
     pushIfEscapes(issues, field('backgroundMusic'), raw.backgroundMusic, t, 'backgroundMusic');
   }
   if (raw.pcSavePath !== undefined) {
-    const message = validatePcSavePathStatic(raw.pcSavePath, t);
+    const message = validatePcSavePathStatic(raw.pcSavePath, t, source);
     if (message !== null) issues.push({ path: field('pcSavePath'), message });
   }
   // Sync needs BOTH sides (mirrors readManifest): a lone side means the card was prepared incorrectly.
-  if ((raw.pcSavePath === undefined) !== (raw.saveOnCard === undefined)) {
+  // Not in PC mode, where `saveOnCard` is forbidden and the backup side is supplied by the app.
+  if (source === 'card' && (raw.pcSavePath === undefined) !== (raw.saveOnCard === undefined)) {
     issues.push({
       path: field(raw.pcSavePath === undefined ? 'pcSavePath' : 'saveOnCard'),
       message: t('manifest.savePairing'),
@@ -802,7 +936,11 @@ function pushGameSemanticIssues(
  * semantic checks (zod's superRefine issues only appear after the base schema passes). The schema stays
  * module-private — only this pure function is exported, so there is a single source of truth.
  */
-export function validateManifestText(text: string, t: Translator): ConfigValidationResult {
+export function validateManifestText(
+  text: string,
+  t: Translator,
+  source: ManifestSource = 'card',
+): ConfigValidationResult {
   let parsed: unknown;
   try {
     parsed = JSON.parse(text) as unknown;
@@ -814,7 +952,10 @@ export function validateManifestText(text: string, t: Translator): ConfigValidat
   }
 
   if (Array.isArray(parsed)) {
+    // `[]` is how the PC library says "no local games left" (deleting the last one) — a valid save that
+    // makes main drop the file. A card still needs at least one game.
     if (parsed.length === 0) {
+      if (source === 'pc') return { ok: true };
       return { ok: false, issues: [{ path: '(root)', message: t('manifest.emptyArray') }] };
     }
   } else if (typeof parsed !== 'object' || parsed === null) {
@@ -841,7 +982,7 @@ export function validateManifestText(text: string, t: Translator): ConfigValidat
       return; // can't run semantic checks without parsed data
     }
     const raw = result.data;
-    pushGameSemanticIssues(issues, raw, t, prefix);
+    pushGameSemanticIssues(issues, raw, t, prefix, source);
     // Duplicate id across games (array only; a single object is trivially unique). ids key PC storage.
     if (isArray) {
       if (idIndex.has(raw.id)) {

@@ -45,6 +45,9 @@ export function statusOf(state: AppState, t: Translator): string {
     case 'syncing-out':
       return t('launcher.state.syncingOut');
     case 'ready': {
+      // A local (PC) game whose files are gone: the card stays in the library, but there is nothing to
+      // launch, so say so instead of leaving an empty status under a dead Play button.
+      if (state.game.unavailable === true) return t('launcher.state.gameFilesMissing');
       // Steam non-blocking install/uninstall indicators on the ready screen (the window stays usable).
       // No install percent: Steam exposes no reliable live progress in the files we read (see main).
       if (state.game.steamUninstalling === true) return t('launcher.state.uninstalling');

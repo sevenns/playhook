@@ -19,7 +19,12 @@ import {
   type ParseFormResult,
 } from './configure-form-model.js';
 import { MAX_HERO_IMAGES } from '../shared/types.js';
-import type { ConfigPickKind, ConfigPickResult, ManifestValidationIssue } from '../shared/types';
+import type {
+  ConfigPickKind,
+  ConfigPickResult,
+  ManifestSource,
+  ManifestValidationIssue,
+} from '../shared/types';
 import type { Translator } from '../shared/i18n/index';
 import type { MessageKey } from '../shared/i18n/en';
 
@@ -88,6 +93,7 @@ type FieldKey =
   | 'launchTimeoutSec'
   | 'killTimeoutSec'
   | 'steam.appid'
+  | 'pc.executable'
   // The "move game to PC" switch and its source-directory field. They emit the same `install.installer`
   // path as Installer mode does, but need slots of their OWN: sharing 'install.installer' would make the
   // two modes' error slots overwrite each other in `errorEls`, and an error routed to the hidden
@@ -131,6 +137,7 @@ export class FormView {
   private readonly installType: ValueEl;
   private readonly installRunAsAdminSwitch: CheckedEl;
   private readonly appidInput: ValueEl;
+  private readonly pcExecutableInput: ValueEl;
   private readonly gridImageInput: ValueEl;
   private readonly saveOnCardInput: ValueEl;
   private readonly pcSavePathInput: ValueEl;
@@ -150,6 +157,18 @@ export class FormView {
   private readonly execSection: HTMLElement;
   private readonly installSection: HTMLElement;
   private readonly steamSection: HTMLElement;
+  /** The `pc` block's field (absolute executable) — PC-library mode only. */
+  private readonly pcSection: HTMLElement;
+  /** The card-relative `executable` field — hidden in PC mode, which has its own absolute path. */
+  private readonly execField: HTMLElement;
+  /** The launch-type row itself: hidden in the PC library, where `pc` is the only mode there is. */
+  private readonly launchTypeField: HTMLElement;
+  /** The PC option in the launch-type dropdown — offered only while editing the PC library. */
+  private readonly pcModeOption: HTMLElement;
+  /** Note under `pcSavePath`: in PC mode it explains where the backup lives. */
+  private readonly pcSaveNote: HTMLElement;
+  /** The `saveOnCard` field — meaningless (and schema-forbidden) for a local game, so hidden in PC mode. */
+  private readonly saveOnCardField: HTMLElement;
   /** The "move game to PC" switch field — Executable mode only (installer mode shares execSection for the
    *  executable/args/runAsAdmin fields, but "move to PC" is an Executable-only concept — `install.type:
    *  copy`), so it is hidden outside Executable mode. */
@@ -173,6 +192,8 @@ export class FormView {
 
   // View state.
   private launchMode: LaunchMode = 'executable';
+  /** Which root is being edited — a card, or the PC library (see setSource). */
+  private source: ManifestSource = 'card';
   // Whether the user has taken manual control of the `id` field. While false, the title auto-fills the id
   // (slugified). Set on a manual id edit, re-armed when the id is cleared, seeded on load from whether the
   // card already carries an id.
@@ -188,6 +209,8 @@ export class FormView {
    * own — the form only offers the source directory. Remembered so a hand-written value survives Save. */
   private copyInstallWinetricks: readonly string[] = [];
   private steamRest: Readonly<Record<string, unknown>> = {};
+  /** The `pc` block's unknown keys — same round-trip contract as installRest/steamRest. */
+  private pcRest: Readonly<Record<string, unknown>> = {};
   private corrupt: Record<string, unknown> = {};
   private mixed = false;
 
@@ -222,11 +245,19 @@ export class FormView {
     ]);
 
     // ── Launch ──────────────────────────────────────────────────────────────
-    this.launchType = this.dropdown([
-      ['executable', 'configure.launchExecutable'],
-      ['installer', 'configure.launchInstaller'],
-      ['steam', 'Steam'], // brand — literal, not a dictionary key
-    ]);
+    const launchOptions = new Map<string, HTMLElement>();
+    this.launchType = this.dropdown(
+      [
+        ['executable', 'configure.launchExecutable'],
+        ['installer', 'configure.launchInstaller'],
+        ['steam', 'Steam'], // brand — literal, not a dictionary key
+        // Only reachable while editing the PC library — setSource hides it for a card, where the manifest
+        // schema rejects a `pc` block anyway.
+        ['pc', 'configure.launchPc'],
+      ],
+      launchOptions,
+    );
+    this.pcModeOption = launchOptions.get('pc') ?? document.createElement('fluent-option');
     this.launchType.addEventListener('change', () => this.onLaunchTypeChange());
 
     this.executableInput = this.textInput('executable');
@@ -254,6 +285,7 @@ export class FormView {
       'executable',
       (picked) => this.executableFromPick(picked),
     );
+    this.execField = execField;
     this.executableNote = document.createElement('div');
     this.executableNote.className = 'field-hint';
     execField.append(this.executableNote);
@@ -319,15 +351,33 @@ export class FormView {
     appidField.append(appidHelp);
     this.steamSection = this.group([appidField]);
 
+    // PC mode: the game's FULL path on this machine. Its Browse has no card root to stay inside, so it
+    // returns the absolute path as picked (see the `pc-executable` pick kind).
+    this.pcExecutableInput = this.textInput('pc.executable');
+    this.placeholderRefs.push({ el: this.pcExecutableInput, key: 'configure.pcExecutablePlaceholder' });
+    const pcExecField = this.fieldWithBrowse(
+      'configure.fieldPcExecutable',
+      'pc.executable',
+      this.pcExecutableInput,
+      'pc-executable',
+    );
+    const pcExecHint = document.createElement('div');
+    pcExecHint.className = 'field-hint';
+    this.labelRefs.push({ el: pcExecHint, key: 'configure.pcExecutableHint' });
+    pcExecField.append(pcExecHint);
+    this.pcSection = this.group([pcExecField]);
+
     this.watchList = this.dynamicList('watchProcesses', 'configure.fieldWatchProcesses');
     const watchHint = document.createElement('div');
     watchHint.className = 'field-hint';
     this.labelRefs.push({ el: watchHint, key: 'configure.watchProcessesHint' });
     this.watchList.wrapper.append(watchHint);
 
+    this.launchTypeField = this.field('configure.launchType', null, this.launchType);
     this.addSection('launch', [
-      this.field('configure.launchType', null, this.launchType),
+      this.launchTypeField,
       this.installerExperimental,
+      this.pcSection,
       this.execSection,
       this.installSection,
       this.steamSection,
@@ -377,12 +427,28 @@ export class FormView {
     this.saveOnCardInput = this.textInput('saveOnCard');
     this.pcSavePathInput = this.textInput('pcSavePath');
     this.placeholderRefs.push({ el: this.pcSavePathInput, key: 'configure.pcSavePathPlaceholder' });
-    this.addSection('saves', [
-      this.fieldWithBrowse('configure.fieldSaveOnCard', 'saveOnCard', this.saveOnCardInput, 'directory'),
-      // pcSavePath is an env-prefixed template (%APPDATA%\…). Its Browse picks a PC folder and main
-      // converts it back to a %PREFIX%/… value (plan R6 was reversed per user request #3).
-      this.fieldWithBrowse('configure.fieldPcSavePath', 'pcSavePath', this.pcSavePathInput, 'pc-save'),
-    ]);
+    this.saveOnCardField = this.fieldWithBrowse(
+      'configure.fieldSaveOnCard',
+      'saveOnCard',
+      this.saveOnCardInput,
+      'directory',
+    );
+    // pcSavePath is an env-prefixed template (%APPDATA%\…). Its Browse picks a PC folder and main
+    // converts it back to a %PREFIX%/… value (plan R6 was reversed per user request #3). For a LOCAL
+    // game the picked folder is kept absolute instead, and there is no card side to pair it with — the
+    // note below says where the backup goes.
+    const pcSaveField = this.fieldWithBrowse(
+      'configure.fieldPcSavePath',
+      'pcSavePath',
+      this.pcSavePathInput,
+      'pc-save',
+    );
+    this.pcSaveNote = document.createElement('div');
+    this.pcSaveNote.className = 'field-hint';
+    this.pcSaveNote.hidden = true;
+    this.labelRefs.push({ el: this.pcSaveNote, key: 'configure.pcSaveBackupHint' });
+    pcSaveField.append(this.pcSaveNote);
+    this.addSection('saves', [this.saveOnCardField, pcSaveField]);
 
     // ── Audio (Default/Custom) — the card's own background music. UI sounds are NOT here: they always
     // come from the bundled set chosen in Settings → Audio.
@@ -486,6 +552,10 @@ export class FormView {
 
     // steam block (corrupt = whole block).
     this.setScalar('steam', this.appidInput, model.steam.appid);
+
+    // pc block (corrupt = whole block, like steam/install).
+    this.pcRest = model.pc.rest;
+    this.setScalar('pc', this.pcExecutableInput, model.pc.executable);
 
     // audio (backgroundMusic is its own key).
     this.music.setValue('backgroundMusic' in this.corrupt ? '' : model.backgroundMusic);
@@ -606,6 +676,7 @@ export class FormView {
         rest: this.copyInstallRest,
       },
       steam: { appid: getValue(this.appidInput), rest: this.steamRest },
+      pc: { executable: getValue(this.pcExecutableInput), rest: this.pcRest },
     };
   }
 
@@ -663,6 +734,7 @@ export class FormView {
   // The active mode's display label ("Steam" is a brand literal, the other two are translated).
   private launchModeLabel(mode: LaunchMode): string {
     if (mode === 'steam') return 'Steam';
+    if (mode === 'pc') return this.deps.translator()('configure.launchPc');
     return this.deps.translator()(mode === 'installer' ? 'configure.launchInstaller' : 'configure.launchExecutable');
   }
 
@@ -670,7 +742,11 @@ export class FormView {
 
   private onLaunchTypeChange(): void {
     const value = getValue(this.launchType);
-    if (value === 'executable' || value === 'installer' || value === 'steam') {
+    // `pc` is only selectable while the PC library is being edited (setSource) — and there it is the only
+    // mode, so a change away from it is refused rather than silently producing an invalid manifest.
+    if (value === 'pc' && this.source !== 'pc') return;
+    if (this.source === 'pc' && value !== 'pc') return;
+    if (value === 'executable' || value === 'installer' || value === 'steam' || value === 'pc') {
       this.launchMode = value;
       this.updateSectionVisibility();
       this.deps.onChange();
@@ -745,13 +821,37 @@ export class FormView {
 
   private updateSectionVisibility(): void {
     // execSection carries the executable/args/runAsAdmin fields shared by Executable AND Installer modes,
-    // so it's hidden only in Steam mode. "Move game to PC" inside it is Executable-only, hidden otherwise.
+    // so it's hidden only in Steam mode. PC mode keeps it for args/runAsAdmin but hides the CARD-relative
+    // executable — its own absolute path lives in pcSection. "Move game to PC" is Executable-only.
     this.execSection.hidden = this.launchMode === 'steam';
+    this.execField.hidden = this.launchMode === 'pc';
     this.copyToPcField.hidden = this.launchMode !== 'executable';
     this.installSection.hidden = this.launchMode !== 'installer';
     this.installerExperimental.hidden = this.launchMode !== 'installer';
     this.steamSection.hidden = this.launchMode !== 'steam';
+    this.pcSection.hidden = this.launchMode !== 'pc';
+    // A local game has no card side to sync with: Playhook keeps the backup itself (the note says so).
+    this.saveOnCardField.hidden = this.launchMode === 'pc';
+    this.pcSaveNote.hidden = this.launchMode !== 'pc';
     this.updateCopyToPcState();
+  }
+
+  /**
+   * Tells the form WHICH root it is editing. The PC library accepts only `pc` manifests and a card
+   * accepts anything but, so the mode is not a free choice: in the library the selector is hidden and the
+   * mode forced, on a card the PC option is not offered at all. Called on every drive load.
+   */
+  setSource(source: ManifestSource): void {
+    this.source = source;
+    const isPc = source === 'pc';
+    this.launchTypeField.hidden = isPc;
+    this.pcModeOption.hidden = !isPc;
+    setElDisabled(this.pcModeOption, !isPc);
+    if (isPc && this.launchMode !== 'pc') {
+      this.launchMode = 'pc';
+      this.launchType.value = 'pc';
+    }
+    this.updateSectionVisibility();
   }
 
   // ── DOM builders ────────────────────────────────────────────────────────────
@@ -1162,7 +1262,12 @@ export class FormView {
     return control;
   }
 
-  private dropdown(options: ReadonlyArray<readonly [string, string]>): ValueEl {
+  // `collect` (optional) receives each option element by value, for the callers that have to reach one
+  // afterwards — the PC launch mode is only offered while the PC library is being edited.
+  private dropdown(
+    options: ReadonlyArray<readonly [string, string]>,
+    collect?: Map<string, HTMLElement>,
+  ): ValueEl {
     const dropdown = document.createElement('fluent-dropdown') as ValueEl;
     const listbox = document.createElement('fluent-listbox');
     for (const [value, label] of options) {
@@ -1171,6 +1276,7 @@ export class FormView {
       if (isMessageKey(label)) this.optionRefs.push({ el: option, key: label });
       else option.textContent = label; // literal (brand) label
       listbox.append(option);
+      collect?.set(value, option);
     }
     dropdown.append(listbox);
     return dropdown;
@@ -1303,6 +1409,7 @@ function topLevelOf(key: FieldKey): string {
   if (key === 'copySource' || key === 'copyToPc') return 'install';
   if (key.startsWith('install.')) return 'install';
   if (key === 'steam.appid') return 'steam';
+  if (key === 'pc.executable') return 'pc';
   return key;
 }
 
@@ -1336,6 +1443,7 @@ function fieldKeyForPath(path: string, copyToPc: boolean): FieldKey | null {
   if (path === 'heroImage' || path.startsWith('heroImage.')) return 'heroImage';
   if (path === 'winetricks' || path.startsWith('winetricks.')) return 'winetricks';
   if (path === 'steam' || path.startsWith('steam.')) return 'steam.appid';
+  if (path === 'pc' || path.startsWith('pc.')) return 'pc.executable';
   if (path === 'install' || path === 'install.installer') {
     return copyToPc ? 'copySource' : 'install.installer';
   }

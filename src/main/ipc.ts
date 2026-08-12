@@ -25,9 +25,10 @@ import {
 import { type Translator } from '../shared/i18n/index';
 import { type StateManager } from './state';
 import { type GameWindow } from './window';
-import { type PcStore } from './pc-store';
+import { acceptsPendingFlush, type PcStore, type SyncSlot } from './pc-store';
 import { type StatsService } from './stats';
 import { type LibraryStore } from './library-store';
+import { type PcLibraryStore } from './pc-library';
 import { byRecentlyPlayed } from './library-index';
 import { type DriveWatcher } from './drive-watcher';
 import { readManifests, findCaseInsensitiveName, type ManifestEnv } from './manifest';
@@ -62,6 +63,8 @@ export interface ControllerDeps {
   readonly stats: StatsService;
   /** The play history behind the carousel: copied art/audio of every game inserted on this device. */
   readonly library: LibraryStore;
+  /** The local games added from this PC's own disk — a second, always-present manifest source. */
+  readonly pcLibrary: PcLibraryStore;
   readonly watcher: DriveWatcher;
   /** App-wide settings store — read/patched by the custom-wallpaper handlers (they own AssetReader). */
   readonly settings: AppSettingsStore;
@@ -274,13 +277,28 @@ async function removeWithRetry(dir: string, signal?: AbortSignal): Promise<void>
   throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
+/**
+ * The root-relative asset paths one manifest references (art + music), as written in game.json. Used to
+ * tell the PC library which files in its `assets/` are still in use — see PcLibraryStore.gcOrphans.
+ */
+function referencedAssets(manifest: ResolvedManifest): readonly string[] {
+  const { heroImage, gridImage, backgroundMusic } = manifest.raw;
+  const heroes = heroImage === undefined ? [] : typeof heroImage === 'string' ? [heroImage] : heroImage;
+  return [...heroes, ...(gridImage !== undefined ? [gridImage] : []), ...(backgroundMusic !== undefined ? [backgroundMusic] : [])];
+}
+
 export class GameController {
-  // A card carries one OR MANY games (game.json is an object or an array). `games` holds every resolved
-  // game; `selectedIndex` is the one currently selected/browsed. `current()` (below) derives the single
-  // "active" manifest that all the existing launch/kill/uninstall/save-sync/stats code reads, so those
-  // bodies stay untouched. Empty (`games=[]`) whenever no card / rejected.
-  private games: ResolvedManifest[] = [];
-  private selectedIndex = 0;
+  // A card carries one OR MANY games (game.json is an object or an array). `cardGames` holds every game
+  // resolved from the inserted card; `pcGames` the local ones from the PC library, which are available
+  // whether or not a card is in. `games` (below) is their union — the list every consumer reads — and
+  // `selectedId` names the one currently selected. `current()` derives the single "active" manifest that
+  // all the existing launch/kill/uninstall/save-sync/stats code reads, so those bodies stay untouched.
+  // Empty (`cardGames=[]`) whenever no card / rejected.
+  private cardGames: ResolvedManifest[] = [];
+  private pcGames: ResolvedManifest[] = [];
+  // The SELECTION is by id, not by index: with two sources the list is rebuilt from both (a card comes and
+  // goes underneath it), and an index would silently point at a different game every time it changed.
+  private selectedId: string | null = null;
   // True while a game is launching/running: main is "locked" on that game — a game switch is refused and
   // the carousel cannot enter another game's detail as actionable (its guard is `kind==='ready'`).
   private locked = false;
@@ -407,22 +425,77 @@ export class GameController {
   }
 
   /**
+   * Every game that can be acted on right now: the inserted card's, then the PC library's. A local game
+   * whose id is ALSO on the card is dropped here — the card wins (it is the removable, user-visible
+   * medium, and `id` keys every piece of PC state, so the two cannot coexist). Recomputed on read: both
+   * lists are tiny, and a cached union would be one more thing to invalidate on every insert/removal.
+   */
+  private get games(): readonly ResolvedManifest[] {
+    const cardIds = new Set(this.cardGames.map((manifest) => manifest.raw.id));
+    return [...this.cardGames, ...this.pcGames.filter((m) => !cardIds.has(m.raw.id))];
+  }
+
+  /**
+   * Ids that must survive a history eviction: everything on the card AND everything in the PC library —
+   * including a local game currently shadowed by the card (its record is the same one). Passing only one
+   * source's ids would let a full history evict the other source's games (see LibraryStore.gc).
+   */
+  private protectedIds(): readonly string[] {
+    return [...this.cardGames, ...this.pcGames].map((manifest) => manifest.raw.id);
+  }
+
+  /**
    * The single "active" manifest — the selected game — that every existing consumer reads
-   * (launch/kill/uninstall/save-sync/stats). Read-only: the card's games live in `games`, the choice in
-   * `selectedIndex`. Null when there is no card / it was rejected.
+   * (launch/kill/uninstall/save-sync/stats). Read-only: the games live in `cardGames`/`pcGames`, the
+   * choice in `selectedId`. Falls back to the first available game when the selection is gone (the card
+   * carrying it was pulled), and is null only when there is nothing at all.
    */
   private current(): ResolvedManifest | null {
-    return this.games[this.selectedIndex] ?? null;
+    const games = this.games;
+    return games.find((manifest) => manifest.raw.id === this.selectedId) ?? games[0] ?? null;
+  }
+
+  /**
+   * Whether this game's source is available right now. A card game needs its card in; a local game is on
+   * this machine's disk, so it always is. Everything that used to read `cardPresent` for a SPECIFIC
+   * manifest goes through here — with two sources, "no card" no longer means "this game is gone".
+   */
+  private sourceAvailable(manifest: ResolvedManifest): boolean {
+    return manifest.source === 'pc' || this.cardPresent;
+  }
+
+  /** sourceAvailable for the selected game; false when there is no game at all (nothing to show). */
+  private currentSourceAvailable(): boolean {
+    const manifest = this.current();
+    return manifest !== null && this.sourceAvailable(manifest);
+  }
+
+  /**
+   * The "the card went away while we were busy" landing, shared by the sequences that target the PC and
+   * therefore finish anyway (uninstall, prefix cleanup, an abandoned watched launch). With a local game
+   * left it stays on screen with that game selected; with nothing left it is the previous behaviour
+   * exactly — idle and out of the way.
+   */
+  private cardGoneAfterSequence(): void {
+    this.clearCard();
+    const remaining = this.current();
+    if (remaining !== null) {
+      void this.enterReadyForLocal(remaining);
+      return;
+    }
+    this.deps.state.set({ kind: 'idle' });
+    this.hideToTrayOrKeepEmpty();
   }
 
   /** Clears all card-scoped state (games, selection, lock, audio/hero/library channels). The caller sets
    * the follow-up AppState (idle/error) and window visibility, exactly as before. */
   private clearCard(): void {
-    this.games = [];
-    this.selectedIndex = 0;
+    this.cardGames = [];
+    // The selection falls back to whatever is still there (a local game), or to nothing — see current().
+    this.selectedId = null;
     this.locked = false;
     this.steamBusyId = null; // the card is gone; whatever Steam is doing is no longer ours to guard
-    this.statsById.clear();
+    this.forgetCardStats();
     // Music is card-only, so there is none on the empty screen. UI sounds are unaffected: they come from
     // the bundled set on its own channel, which no card ever touched.
     this.setCardMusic(null);
@@ -433,6 +506,18 @@ export class GameController {
     // games, and the browse cursor moves onto whatever is left (a history entry, or nothing).
     this.refreshLibrary();
     void this.reseedBrowse();
+  }
+
+  /**
+   * Drops the CARD games' cached stats, keeping the local library's. The cache is per-id and shared by
+   * both sources, so a blanket clear on card removal would strip the local games of their reconciled
+   * values (they'd fall back to a disk read — correct, but needlessly).
+   */
+  private forgetCardStats(): void {
+    const localIds = new Set(this.pcGames.map((manifest) => manifest.raw.id));
+    for (const id of [...this.statsById.keys()]) {
+      if (!localIds.has(id)) this.statsById.delete(id);
+    }
   }
 
   /**
@@ -497,7 +582,11 @@ export class GameController {
 
     void this.warmSfxSet();
     void this.warmAmbient();
-    void this.warmLibrary();
+    // Chained, not fired in parallel: both seed the carousel and the browse cursor, and warmLibrary's
+    // "no card → show the history" would otherwise race the local games onto the same screen.
+    void this.warmLibrary()
+      .then(() => this.loadPcLibrary())
+      .catch((cause: unknown) => log.warn('[pc-library] initial load failed:', describe(cause)));
   }
 
   /** Reads the bundled UI sound set once and delivers it to the window. It is screen-independent — the
@@ -612,9 +701,13 @@ export class GameController {
       return { ok: false, message: result.message };
     }
     const manifests = result.manifests;
-    // Keep the selection on a reload if it still points at a game; a real insert starts at the first.
-    this.selectedIndex = opts.focus || this.selectedIndex >= manifests.length ? 0 : this.selectedIndex;
-    this.games = manifests;
+    // Keep the selection on a reload if it still points at one of this card's games; a real insert starts
+    // at the first (an inserted card is what you are meant to be looking at, even mid-browse).
+    const keepSelection =
+      !opts.focus && manifests.some((manifest) => manifest.raw.id === this.selectedId);
+    this.cardGames = manifests;
+    if (!keepSelection) this.selectedId = manifests[0]?.raw.id ?? null;
+    this.warnShadowedLocalGames();
     this.locked = false;
     log.info(`[insert] manifest ok games=${manifests.length} ids=[${manifests.map((m) => m.raw.id).join(',')}] root="${root}"`);
 
@@ -631,7 +724,7 @@ export class GameController {
     // Reconcile + copy card stats for EVERY game FIRST (so each PC mirror holds the merged value before
     // anything writes the card), caching the merged Stats per id so onSelectRequested can rebuild the
     // switched-to game's GameInfo without re-reading. Order matters vs the flush below.
-    this.statsById.clear();
+    this.forgetCardStats();
     for (const manifest of manifests) {
       const stats = await this.deps.stats.reconcileWithCard(manifest.raw.id, root, legacyForSingle);
       await this.deps.stats.copyToCard(root, manifest.raw.id, stats);
@@ -655,7 +748,7 @@ export class GameController {
 
     // Always enter `ready` for the selected game (single- or multi-game card). Its hero/audio go out on the
     // existing per-game channels; the carousel handles switching between the card's games.
-    const selected = manifests[this.selectedIndex] ?? manifests[0];
+    const selected = manifests.find((manifest) => manifest.raw.id === this.selectedId) ?? manifests[0];
     if (selected !== undefined) {
       const stats = this.statsById.get(selected.raw.id) ?? (await this.deps.stats.read(selected.raw.id));
       this.setCardMusic(await this.assets.readMusicDataUrl(selected));
@@ -671,10 +764,115 @@ export class GameController {
     // is already on screen. One sequential task for the whole card (index.json is a single file — see
     // LibraryStore.saveFromCard), then a list refresh so the freshly-copied games get their artwork.
     void this.deps.library
-      .saveFromCard(manifests)
+      .saveFromCard(manifests, this.protectedIds())
       .then(() => this.refreshLibrary())
       .catch((cause: unknown) => log.warn('[library] copying the card assets failed:', describe(cause)));
     return { ok: true };
+  }
+
+  /**
+   * Reads the PC library and folds it into the launcher, the way loadCard does for a card — minus the two
+   * things that belong to removable media: the card's traveling stats (a local game's mirror is the only
+   * copy there is) and, deliberately, the pending flush.
+   *
+   * NOT flushing is load-bearing, not an omission: a local game HAS a `saveOnCardPath` (its backup in the
+   * library), so a symmetrical copy of loadCard would pour a snapshot meant for the real card into that
+   * backup and then clear the queue — silently losing the progress the next card insertion was supposed
+   * to receive. Pending snapshots are for cards only; see performSyncOut.
+   */
+  private async loadPcLibrary(): Promise<void> {
+    const env: ManifestEnv = { documents: app.getPath('documents'), t: this.t };
+    const read = await this.deps.pcLibrary.read(env, this.deps.platform.resolveInstallDir);
+    this.pcGames = [...read.manifests];
+    log.info(`[pc-library] ${read.manifests.length} local game(s) ids=[${read.manifests.map((m) => m.raw.id).join(',')}]`);
+    this.warnShadowedLocalGames();
+    for (const manifest of read.manifests) {
+      this.statsById.set(manifest.raw.id, await this.deps.stats.read(manifest.raw.id));
+    }
+    this.refreshLibrary();
+    // With no card in, the local games are what the launcher has to show: leave `idle` for the first of
+    // them instead of the empty screen. A card (or any activity) present → don't touch the state machine.
+    if (!this.cardPresent && this.deps.state.get().kind === 'idle' && !this.launchInFlight) {
+      const selected = this.current();
+      if (selected !== null) {
+        this.selectedId = selected.raw.id;
+        this.setHero(await this.assets.readHeroAssets(selected));
+        this.setCardMusic(await this.assets.readMusicDataUrl(selected));
+        this.enterReady(await this.buildGameInfo(selected, this.statsById.get(selected.raw.id) ?? (await this.deps.stats.read(selected.raw.id))));
+        await this.browseTo(selected.raw.id);
+      }
+    } else if (!this.cardPresent) {
+      await this.reseedBrowse();
+    }
+
+    // Same background copy a card gets: the artwork already lives in the library root, but the history is
+    // what the carousel draws from, and it is also what keeps a local game's card on screen after the
+    // game itself is deleted from disk. A local game SHADOWED by the card is skipped — both would write
+    // the same history record, and re-inserting the card would then flip its artwork back and forth.
+    const visibleLocal = this.games.filter((manifest) => manifest.source === 'pc');
+    void this.deps.library
+      .saveFromCard(visibleLocal, this.protectedIds())
+      .then(() => this.refreshLibrary())
+      .catch((cause: unknown) => log.warn('[library] copying the local games\' assets failed:', describe(cause)));
+
+    // Assets of games the user removed are only orphans when the manifest is TRUSTWORTHY — a library that
+    // merely failed to parse reports zero games, and sweeping on that would delete every picture in it.
+    if (read.intact) {
+      void this.deps.pcLibrary
+        .gcOrphans(read.manifests.flatMap(referencedAssets))
+        .catch((cause: unknown) => log.warn('[pc-library] asset cleanup failed:', describe(cause)));
+    }
+  }
+
+  /**
+   * Re-reads the PC library after the Configure window saved it (the local twin of reloadManifest). Same
+   * busy guards: a reload during a launch/install would swap the manifest under the running sequence.
+   */
+  async reloadPcLibrary(): Promise<{ ok: true } | { ok: false; message: string }> {
+    const kind = this.deps.state.get().kind;
+    if ((kind !== 'ready' && kind !== 'error' && kind !== 'idle') || this.launchInFlight) {
+      return { ok: false, message: this.t('errors.finishBeforeApply') };
+    }
+    if (this.reloadInFlight) return { ok: false, message: this.t('errors.reloadInProgress') };
+    this.reloadInFlight = true;
+    try {
+      await this.loadPcLibrary();
+      // A local game may have just been edited or removed: rebuild what is on screen so the detail screen
+      // (title, "Game files not found", Play/Uninstall) matches the manifest that was saved.
+      const selected = this.current();
+      if (selected !== null && !this.cardPresent && this.deps.state.get().kind === 'ready') {
+        const stats = this.statsById.get(selected.raw.id) ?? (await this.deps.stats.read(selected.raw.id));
+        this.enterReady(await this.buildGameInfo(selected, stats));
+        await this.browseTo(selected.raw.id);
+      }
+      return { ok: true };
+    } finally {
+      this.reloadInFlight = false;
+    }
+  }
+
+  /**
+   * Enters `ready` on a local game with its assets, without touching the window's visibility: this runs
+   * when a card was pulled, and a launcher the user had hidden must stay hidden (the same intent
+   * onRemove's hide/show branch respects).
+   */
+  private async enterReadyForLocal(manifest: ResolvedManifest): Promise<void> {
+    this.selectedId = manifest.raw.id;
+    const stats = this.statsById.get(manifest.raw.id) ?? (await this.deps.stats.read(manifest.raw.id));
+    this.setHero(await this.assets.readHeroAssets(manifest));
+    this.setCardMusic(await this.assets.readMusicDataUrl(manifest));
+    this.enterReady(await this.buildGameInfo(manifest, stats));
+    await this.browseTo(manifest.raw.id);
+  }
+
+  /** Logs the local games the inserted card currently shadows (same id — the card wins, see `games`). */
+  private warnShadowedLocalGames(): void {
+    const cardIds = new Set(this.cardGames.map((manifest) => manifest.raw.id));
+    for (const manifest of this.pcGames) {
+      if (cardIds.has(manifest.raw.id)) {
+        log.warn(`[pc-library] local game id=${manifest.raw.id} is hidden while a card carries the same id`);
+      }
+    }
   }
 
   /**
@@ -703,14 +901,18 @@ export class GameController {
   }
 
   private async flushPendingIfAny(manifest: ResolvedManifest): Promise<void> {
-    if (manifest.saveOnCardPath === undefined) return;
+    // Enforced by the predicate rather than by "we only call this from loadCard": a local game HAS a
+    // saveOnCardPath (its own backup), so a future symmetrical call from the PC-library path would
+    // otherwise empty the queue into that backup and lose the progress meant for the card.
+    const cardPath = manifest.saveOnCardPath;
+    if (!acceptsPendingFlush(manifest) || cardPath === undefined) return;
     const pending = await this.deps.store.getPending(manifest.raw.id);
     if (pending === null) return;
     // Direct, NOT change-based (deliberate — see the plan, part B): the snapshot exists precisely because
     // the card was yanked mid-game and we are OBLIGED to top up the promised PC progress onto the card.
     // LWW here would silently drop that flush if the card looked "unchanged"/newer, so keep it a plain
     // snapshot→card replace.
-    await syncDir(pending.savesSnapshotDir, manifest.saveOnCardPath);
+    await syncDir(pending.savesSnapshotDir, cardPath);
     const stats = await this.deps.stats.read(manifest.raw.id);
     await this.deps.stats.copyToCard(manifest.root, manifest.raw.id, stats);
     await this.deps.store.clearPending(manifest.raw.id);
@@ -773,6 +975,14 @@ export class GameController {
     this.steamWatch.stop();
     this.steamWatch.clearUninstallRequest();
     this.clearCard();
+    // A local game is still playable with no card in, so pulling one must not collapse the launcher to the
+    // empty screen: stay `ready` on whatever the cursor fell onto (see current()). Only a truly empty
+    // launcher goes idle + hides, exactly as before.
+    const remaining = this.current();
+    if (remaining !== null) {
+      void this.enterReadyForLocal(remaining);
+      return;
+    }
     this.deps.state.set({ kind: 'idle' });
     // Normally the background app hides to the tray when no card is present. With "always show the no-card
     // screen" on, keep the launcher up on the empty screen instead — BUT only if it's currently on screen.
@@ -795,7 +1005,10 @@ export class GameController {
    */
   setAlwaysShowEmptyScreen(on: boolean): void {
     this.alwaysShowEmptyScreen = on;
-    if (this.cardPresent || this.deps.state.get().kind !== 'idle') return;
+    const kind = this.deps.state.get().kind;
+    // `ready` counts too when no card is in: that is a LOCAL game on screen, and the setting is about
+    // whether the launcher sits there with no card — not about which screen it happens to show.
+    if (this.cardPresent || (kind !== 'idle' && kind !== 'ready')) return;
     // Game Mode (gamescope): there is no tray to hide into, and a HIDDEN window leaves gamescope with no
     // surface to present — Steam's launch spinner then hangs forever. So the window is ALWAYS shown there
     // (the empty "insert a card" screen), regardless of the setting. Desktop/Windows honour the flag.
@@ -819,6 +1032,13 @@ export class GameController {
     if (snapshot.kind !== 'ready' || this.launchInFlight || this.reloadInFlight) return;
     const manifest = this.current();
     if (manifest === null) return;
+    // A local game whose .exe is gone (deleted, or an external drive unplugged). The renderer already
+    // disables Play, but a gamepad press must not slip past it into a launch that can only fail.
+    if (snapshot.game.unavailable === true) {
+      log.info(`[launch] refused id=${manifest.raw.id}: "${manifest.executablePath}" is not on disk`);
+      this.sendError(this.t('launcher.state.gameFilesMissing'));
+      return;
+    }
     // A Steam download/removal of ANOTHER game is in flight. Every other kind of activity moves the state
     // out of `ready` and is caught by the guard above; a Steam operation deliberately does not (it can run
     // for hours and the window stays usable), so it needs this explicit check — otherwise a second game
@@ -871,14 +1091,12 @@ export class GameController {
     if (typeof idRaw !== 'string') return;
     const snapshot = this.deps.state.get();
     if (snapshot.kind !== 'ready' || this.locked || this.launchInFlight || this.reloadInFlight) return;
-    const index = this.games.findIndex((m) => m.raw.id === idRaw);
-    if (index === -1) {
-      log.warn(`[select] no game with id="${idRaw}" on the current card — ignoring`);
+    const manifest = this.games.find((m) => m.raw.id === idRaw);
+    if (manifest === undefined) {
+      log.warn(`[select] no game with id="${idRaw}" on the current card or in the PC library — ignoring`);
       return;
     }
-    const manifest = this.games[index];
-    if (manifest === undefined) return;
-    this.selectedIndex = index;
+    this.selectedId = manifest.raw.id;
     // Build the switched-to game's assets on demand (mirrors loadCard). Stats come from the loadCard cache
     // (buildGameInfo still re-reads a steam game's .acf); fall back to a fresh read if somehow absent.
     const stats = this.statsById.get(manifest.raw.id) ?? (await this.deps.stats.read(manifest.raw.id));
@@ -1066,10 +1284,9 @@ export class GameController {
       await removeWithRetry(dir, abort.signal);
       if (abort.signal.aborted) return;
       // Card yanked mid-cleanup (this targets the PC, so it completed): idle + hide, like runUninstall.
-      if (!this.cardPresent) {
-        this.clearCard();
-        state.set({ kind: 'idle' });
-        this.hideToTrayOrKeepEmpty();
+      // A local game's source cannot go away, so it always continues to the rebuild below.
+      if (!this.sourceAvailable(manifest)) {
+        this.cardGoneAfterSequence();
         return;
       }
       // Prefix gone → prefixCleanupDir now returns null → canUninstall recomputes false → "Uninstall"
@@ -1322,7 +1539,7 @@ export class GameController {
       // the carousel (an inserted-but-never-played game is not listed until now). The GC runs here too:
       // recordPlay is the one moment the ordering that decides eviction actually changes.
       await this.deps.library.noteLaunch(manifest.raw.id, updatedStats);
-      await this.deps.library.gc(this.games.map((m) => m.raw.id));
+      await this.deps.library.gc(this.protectedIds());
       // Before the refresh, not after: the card's own games are ordered by these very dates, and this
       // game has just become the most recently played one.
       this.statsById.set(manifest.raw.id, updatedStats);
@@ -1563,10 +1780,8 @@ export class GameController {
 
       // The card may have been yanked during the uninstall (it targets the PC, so it completed): no card
       // → idle + hide, mirroring abandonWatchedLaunch / onRemove's cleanup.
-      if (!this.cardPresent) {
-        this.clearCard();
-        state.set({ kind: 'idle' });
-        this.hideToTrayOrKeepEmpty();
+      if (!this.sourceAvailable(manifest)) {
+        this.cardGoneAfterSequence();
         return;
       }
 
@@ -1618,11 +1833,9 @@ export class GameController {
    */
   private abandonWatchedLaunch(game: GameInfo): void {
     log.info('[launch] watched game never appeared — returning without recording a session');
-    if (!this.cardPresent) {
+    if (!this.currentSourceAvailable()) {
       this.steamWatch.stop();
-      this.clearCard();
-      this.deps.state.set({ kind: 'idle' });
-      this.hideToTrayOrKeepEmpty();
+      this.cardGoneAfterSequence();
       return;
     }
     this.enterReady(game);
@@ -1654,7 +1867,11 @@ export class GameController {
     containerExists: boolean,
   ): Promise<void> {
     const id = manifest.raw.id;
-    const baseline = containerExists ? await this.deps.store.readSyncState(id) : null;
+    // A local game syncs against its own backup, not against a card, so it keeps its baseline in its own
+    // slot: one shared baseline for both pairings would make each sync see the other's changes as a
+    // conflict (see PcStore.syncStatePath).
+    const slot: SyncSlot = manifest.source === 'pc' ? 'pc' : 'card';
+    const baseline = containerExists ? await this.deps.store.readSyncState(id, slot) : null;
     if (!containerExists) {
       log.info(`[save-sync] id=${id} PC container absent → baseline discarded, card is authoritative`);
     }
@@ -1669,7 +1886,7 @@ export class GameController {
     log.info(
       `[save-sync] id=${id} direction=${result.direction}${result.usedFallback ? ' (fallback: no baseline)' : ''}`,
     );
-    await this.deps.store.writeSyncState(id, result.state);
+    await this.deps.store.writeSyncState(id, result.state, slot);
   }
 
   private async performSyncOut(manifest: ResolvedManifest, stats: Stats): Promise<void> {
@@ -1683,8 +1900,9 @@ export class GameController {
     if (resolved !== null && !resolved.containerExists) {
       log.warn(`[sync-out] the Wine prefix for id=${id} is gone — nothing to copy back to the card`);
     }
-    // The card is already removed (the expected scenario) → defer PC→SD into pending-flush.
-    if (!this.cardPresent) {
+    // The card is already removed (the expected scenario) → defer PC→SD into pending-flush. A local game
+    // is never "removed", so it always takes the sync path below (its backup is always reachable).
+    if (!this.sourceAvailable(manifest)) {
       if (pcPath !== null) {
         await this.deps.store.enqueuePcToSd(id, pcPath);
       }
@@ -1708,6 +1926,7 @@ export class GameController {
           // containerExists is true here by construction (pcPath is null otherwise), so the baseline is
           // honoured exactly as before — sync-out semantics are unchanged.
           await this.runSaveSync(manifest, manifest.saveOnCardPath, pcPath, 'pc-to-card', true);
+          if (manifest.source === 'pc') await this.queueLocalProgressForCard(manifest, pcPath);
         } catch (cause) {
           // The card may have been yanked during the sync → saves.bak is intact, we'll finish on insertion.
           log.warn('[sync-out] failed, deferring to pending-flush:', describe(cause));
@@ -1716,7 +1935,27 @@ export class GameController {
         }
       }
     }
-    await this.deps.stats.copyToCard(manifest.root, manifest.raw.id, stats);
+    // A local game's stats mirror lives on the PC and is the only copy there is — there is no card to
+    // write a travelling stats.json to, and writing one into userData would mean nothing.
+    if (manifest.source === 'card') {
+      await this.deps.stats.copyToCard(manifest.root, manifest.raw.id, stats);
+    }
+  }
+
+  /**
+   * "The saves move to the card": after a local game's session, ALSO queue a PC→SD flush, so inserting a
+   * card that carries the same game tops it up with the progress made without it (the existing
+   * flushPendingIfAny on insert does the actual copy).
+   *
+   * Only when a CARD baseline exists for this id — i.e. that card has been seen on this machine before.
+   * Without that condition every local session would leave a third full copy of the saves behind, growing
+   * on disk forever, for a card that may never exist.
+   */
+  private async queueLocalProgressForCard(manifest: ResolvedManifest, pcPath: string): Promise<void> {
+    const id = manifest.raw.id;
+    if (!(await this.deps.store.hasCardSyncState(id))) return;
+    await this.deps.store.enqueuePcToSd(id, pcPath);
+    log.info(`[sync-out] id=${id} local session queued for the card it was last synced with`);
   }
 
   // ── Building GameInfo for the UI ─────────────────────────────────────────
@@ -1760,12 +1999,18 @@ export class GameController {
       // Normal card game: always ready to play. On Linux it still creates a per-game Wine prefix on first
       // launch — offer to clear that prefix (the game stays on the card). win32 has no prefix → null → no
       // Uninstall button (unchanged). "Uninstall" here means prefix cleanup, not removing an install.
+      // A LOCAL game shares this branch: it is an ordinary executable, only one that lives on the PC.
       requiresInstall = false;
       const cleanupDir = await this.deps.platform.gameLauncher.prefixCleanupDir(manifest.raw.id);
       canUninstall = cleanupDir !== null;
       prefixCleanupOnly = canUninstall;
       installVia = undefined;
     }
+    // A local game's executable is checked HERE, not at read time (a card game's is the other way round):
+    // its absence must not drop the game from the library — the card, its art and its save backup stay,
+    // and only Play is disabled. See ManifestSource / the pc block.
+    const unavailable =
+      manifest.source === 'pc' && !(await fse.pathExists(manifest.executablePath));
     return {
       id: manifest.raw.id,
       title: manifest.raw.title,
@@ -1782,6 +2027,7 @@ export class GameController {
       ...(steamInstalling ? { steamInstalling: true } : {}),
       ...(steamPaused ? { steamPaused: true } : {}),
       ...(steamPausedProgress !== undefined ? { steamPausedProgress } : {}),
+      ...(unavailable ? { unavailable: true } : {}),
     };
   }
 
@@ -1959,18 +2205,15 @@ export class GameController {
   private refreshLibrary(): void {
     const activeIds = this.games.map((manifest) => manifest.raw.id);
     const active = new Set(activeIds);
-    const cardGames = byRecentlyPlayed(
-      this.games.map((manifest) => ({
-        id: manifest.raw.id,
-        title: manifest.raw.title,
-        lastPlayedAt:
-          this.statsById.get(manifest.raw.id)?.lastPlayedAt ??
-          this.deps.library.entry(manifest.raw.id)?.lastPlayedAt ??
-          null,
-      })),
-    );
+    // TWO groups, each sorted on its own: the card's games first, then the local ones. Sorting the union
+    // in one pass would interleave them by date, and the card you just inserted would land behind a local
+    // game played more recently — the card is the thing the user physically acted on.
+    const activeGames = [
+      ...this.orderedForCarousel(this.cardGames),
+      ...this.orderedForCarousel(this.games.filter((manifest) => manifest.source === 'pc')),
+    ];
     const games = [
-      ...cardGames.map((game) => {
+      ...activeGames.map((game) => {
         // `artRev` (the record's savedAt) changes only when the assets were actually re-copied, which is
         // what lets the renderer keep its decoded covers cached and still pick up an edited gridImage.
         const stored = this.deps.library.entry(game.id);
@@ -1992,6 +2235,22 @@ export class GameController {
         })),
     ];
     this.setLibrary(games.length > 0 ? { games } : null);
+  }
+
+  /** One source's games, most recently played first — the per-group ordering refreshLibrary applies. */
+  private orderedForCarousel(
+    manifests: readonly ResolvedManifest[],
+  ): readonly { readonly id: string; readonly title: string }[] {
+    return byRecentlyPlayed(
+      manifests.map((manifest) => ({
+        id: manifest.raw.id,
+        title: manifest.raw.title,
+        lastPlayedAt:
+          this.statsById.get(manifest.raw.id)?.lastPlayedAt ??
+          this.deps.library.entry(manifest.raw.id)?.lastPlayedAt ??
+          null,
+      })),
+    );
   }
 
   // ── Browse (what is on screen) ─────────────────────────────────────────────

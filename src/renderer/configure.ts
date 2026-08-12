@@ -24,6 +24,7 @@ import { jsonSchema } from 'codemirror-json-schema';
 import type {
   ConfigPickKind,
   DriveCandidate,
+  ManifestSource,
   ManifestValidationIssue,
   ThemeMode,
 } from '../shared/types';
@@ -35,6 +36,7 @@ import {
   textToFormModel,
   textToGames,
   gamesToText,
+  type LaunchMode,
   type ManifestFormModel,
 } from './configure-form-model.js';
 
@@ -209,6 +211,10 @@ function setEditable(editable: boolean): void {
 // ── App state ─────────────────────────────────────────────────────────────────
 let drives: readonly DriveCandidate[] = [];
 let selectedRoot: string | null = null;
+// Which manifest dialect the selected root speaks. It decides the only launch mode the form offers, how
+// the text is validated, and whether removing the LAST game is allowed (a card must keep one; the PC
+// library may end up empty). Kept in step with selectedRoot by selectedKindOf.
+let selectedKind: ManifestSource = 'card';
 let dirty = false;
 let loadedId: string | null = null; // id of the last loaded/saved manifest (for the id-change warning)
 // Descriptor (root|label|hasManifest) of the drive whose config is currently loaded. The label carries the
@@ -265,7 +271,10 @@ function jsonActive(): boolean {
 function activeText(): string {
   if (jsonActive()) return getEditorText();
   commitActiveGame();
-  if (games.length === 0) return formView.serialize(); // blank drive: a single empty object
+  // No slots at all: in the PC library that is a real, savable state — the user deleted the last local
+  // game, and `[]` is what tells main to drop game.json. For a card it is the unreadable-manifest case,
+  // where the form's own (empty) object is the best text there is.
+  if (games.length === 0) return selectedKind === 'pc' ? gamesToText([]) : formView.serialize();
   return gamesToText(games);
 }
 
@@ -289,9 +298,14 @@ function parseId(text: string): string | null {
   return null;
 }
 
+/** The launch mode a NEW game starts in: `pc` is the only one the PC library accepts (see setSource). */
+function defaultLaunchMode(): LaunchMode {
+  return selectedKind === 'pc' ? 'pc' : 'executable';
+}
+
 async function runValidate(): Promise<void> {
   const text = activeText();
-  const result = await window.configureApi.validateConfig(text);
+  const result = await window.configureApi.validateConfig(selectedRoot ?? '', text);
   lastValidOk = result.ok;
   if (result.ok) {
     formView.setFieldErrors(null);
@@ -563,20 +577,26 @@ async function loadDrive(root: string): Promise<void> {
   // Record the descriptor we're loading up front (synchronously), so the next poll tick sees an unchanged
   // key and doesn't re-trigger this load while readConfig is still in flight.
   loadedDriveKey = driveKey(candidate);
+  // The form's mode set, the validation dialect and the delete-the-last-game rule all follow the ROOT,
+  // so this must be applied before anything is loaded into the form.
+  selectedKind = candidate.kind;
+  formView.setSource(candidate.kind);
   if (!candidate.hasManifest) {
-    // Blank drive: start with ONE empty, editable game the user fills in (there are no templates any more —
-    // the form itself is the authoring surface). Save stays blocked by validation until the required fields
-    // are present. loadedId null → no id-change warning.
+    // Blank drive (or an empty PC library): start with ONE empty, editable game the user fills in (there
+    // are no templates any more — the form itself is the authoring surface). Save stays blocked by
+    // validation until the required fields are present. loadedId null → no id-change warning.
     loadedId = null;
     dirty = false;
-    games = [{ model: emptyFormModel(), rest: {}, corrupt: {}, mixed: false, loadedId: null }];
+    games = [
+      { model: emptyFormModel(defaultLaunchMode()), rest: {}, corrupt: {}, mixed: false, loadedId: null },
+    ];
     activeGameIndex = 0;
     dispatchText(gamesToText(games));
     rebuildGameSelector();
     loadActiveIntoForm();
     applyFormDisabled();
     showTab('basics'); // straight into the form — the first fields to fill are there
-    setStatus(translator('configure.blankDrive'));
+    setStatus(translator(selectedKind === 'pc' ? 'configure.blankPcLibrary' : 'configure.blankDrive'));
     void runValidate();
     return;
   }
@@ -698,12 +718,13 @@ function rebuildGameSelector(): void {
 }
 
 /** Enables/disables the Game controls: disabled when blocked or on the JSON tab; Remove also needs
- * ≥2 games (a card must keep at least one). */
+ * ≥2 games on a CARD (which must keep at least one) — the PC library may be emptied down to zero. */
 function applyGameControlsDisabled(): void {
   const disabled = blocked || jsonActive();
+  const minGames = selectedKind === 'pc' ? 1 : 2;
   setDisabled(gameGroup, disabled);
   setDisabled(gameAddBtn, disabled);
-  setDisabled(gameRemoveBtn, disabled || games.length <= 1);
+  setDisabled(gameRemoveBtn, disabled || games.length < minGames);
 }
 
 /** Switches the active game (dropdown): flush the current one, load the picked one, keep the section tab. */
@@ -732,7 +753,7 @@ function uniqueDefaultId(): string {
 function onAddGame(): void {
   if (blocked || jsonActive()) return;
   commitActiveGame();
-  const model: ManifestFormModel = { ...emptyFormModel(), id: uniqueDefaultId() };
+  const model: ManifestFormModel = { ...emptyFormModel(defaultLaunchMode()), id: uniqueDefaultId() };
   games.push({ model, rest: {}, corrupt: {}, mixed: false, loadedId: null });
   activeGameIndex = games.length - 1;
   rebuildGameSelector();
@@ -743,17 +764,24 @@ function onAddGame(): void {
   void runValidate();
 }
 
-/** Removes the current game (confirm) and switches to a neighbour. Refused for the last game (a card can't
- * be empty). */
+/**
+ * Removes the current game (confirm) and switches to a neighbour. On a CARD the last game cannot be
+ * removed (a card exists to carry games); in the PC library it can — removing it leaves an empty library,
+ * which Save writes as `[]` and main turns into deleting game.json.
+ */
 async function onRemoveGame(): Promise<void> {
-  if (blocked || jsonActive() || games.length <= 1) return;
-  const ok = await confirmDialog(translator('configure.confirmRemoveGame'));
+  const isPc = selectedKind === 'pc';
+  if (blocked || jsonActive() || games.length < (isPc ? 1 : 2)) return;
+  const ok = await confirmDialog(
+    translator(isPc ? 'configure.confirmRemoveLocalGame' : 'configure.confirmRemoveGame'),
+  );
   if (!ok) return;
   games.splice(activeGameIndex, 1);
-  activeGameIndex = Math.min(activeGameIndex, games.length - 1);
+  activeGameIndex = Math.max(0, Math.min(activeGameIndex, games.length - 1));
   rebuildGameSelector();
   loadActiveIntoForm();
   applyFormDisabled();
+  applyGameControlsDisabled();
   dirty = true;
   void runValidate();
 }

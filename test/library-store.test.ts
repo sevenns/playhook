@@ -48,6 +48,7 @@ function manifest(id: string, overrides: Partial<ResolvedManifest> = {}): Resolv
       winetricks: [],
     },
     root: cardRoot,
+    source: 'card',
     executablePath: path.join(cardRoot, 'g.exe'),
     cwd: cardRoot,
     ...overrides,
