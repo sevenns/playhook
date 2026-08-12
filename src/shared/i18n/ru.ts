@@ -117,6 +117,7 @@ export const ru: Partial<Record<MessageKey, string>> = {
 
   // ── Drive candidate labels ───────────────────────────────────────────────────
   'drive.blank': 'пустой диск',
+  'drive.noGames': 'игр пока нет',
   'drive.invalid': 'некорректный game.json',
 
   // ── Settings window ──────────────────────────────────────────────────────────
@@ -193,7 +194,7 @@ export const ru: Partial<Record<MessageKey, string>> = {
     'Внимание: id изменён ({from} → {to}). Статистика времени в игре привязана к id и обнулится для нового id.',
   'configure.cardGone': 'Выбранная карта больше недоступна. Ваш текст сохранён.',
   'configure.blankDrive': 'Пустой диск — заполните игру и сохраните.',
-  'configure.thisPc': 'Этот ПК — локальные игры',
+  'configure.thisPc': 'Этот ПК',
   'configure.blankPcLibrary': 'Локальных игр пока нет — заполните игру и сохраните.',
   'configure.couldNotRead': 'Не удалось прочитать game.json: {message}',
   'configure.confirmSwitch': 'Отменить несохранённые изменения и переключить карту?',

@@ -140,6 +140,8 @@ export const en = {
 
   // ── Drive candidate labels (drive-watcher.ts) ───────────────────────────────
   'drive.blank': 'blank drive',
+  // The PC library's counterpart of "blank drive": there is no library file yet, only this machine.
+  'drive.noGames': 'no games yet',
   'drive.invalid': 'invalid game.json',
 
   // ── Settings window (settings.html + settings.ts) ───────────────────────────
@@ -224,7 +226,7 @@ export const en = {
   'configure.cardGone': 'The selected card is no longer available. Your text is kept.',
   'configure.blankDrive': 'Blank drive — fill in the game and save.',
   // The PC library, offered in the drive picker as one more "drive" (see game-config.ts candidates()).
-  'configure.thisPc': 'This PC — local games',
+  'configure.thisPc': 'This PC',
   'configure.blankPcLibrary': 'No local games yet — fill in the game and save.',
   'configure.couldNotRead': 'Could not read game.json: {message}',
   'configure.confirmSwitch': 'Discard unsaved changes and switch cards?',

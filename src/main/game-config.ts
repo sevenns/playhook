@@ -36,7 +36,7 @@ import {
 import { type Translator } from '../shared/i18n/index';
 import { type AppSettingsStore } from './app-settings';
 import { AUDIO_EXTENSIONS, IMAGE_EXTENSIONS, readImageDataUrl } from './asset-reader';
-import { listDriveCandidates } from './drive-watcher';
+import { describeManifestContent, listDriveCandidates } from './drive-watcher';
 import { type PcLibraryStore } from './pc-library';
 import { resolveInside, validateManifestText, manifestJsonSchema } from './manifest';
 import { writeFileAtomic } from './save-sync';
@@ -208,14 +208,22 @@ export class GameConfigService {
   private async candidates(): Promise<readonly DriveCandidate[]> {
     const t = this.deps.getTranslator();
     const drives = await listDriveCandidates(this.deps.getActiveRoot(), t);
+    const root = this.deps.pcLibrary.root;
     const hasManifest = await this.deps.pcLibrary.hasManifest();
+    // Described exactly like a card ("— Hades" / "— 3 games" / "— invalid game.json"), only prefixed with
+    // the library's name instead of a mountpoint: the count is as useful here as it is there. The
+    // signature comes from the same read, so an edit made elsewhere reloads the picker like a card swap.
+    const { suffix, signature } = await describeManifestContent(
+      path.join(root, MANIFEST_FILENAME),
+      hasManifest,
+      t,
+      t('drive.noGames'),
+    );
     const pc: DriveCandidate = {
-      root: this.deps.pcLibrary.root,
+      root,
       kind: 'pc',
-      label: t('configure.thisPc'),
-      // The signature identifies the MEDIA a root currently holds, so that a swapped card is detected.
-      // The PC library is never swapped, so a constant is exactly right here.
-      signature: 'pc',
+      label: `${t('configure.thisPc')} — ${suffix}`,
+      signature,
       hasManifest,
       isActive: true,
     };

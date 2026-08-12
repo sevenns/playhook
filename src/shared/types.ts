@@ -833,7 +833,11 @@ export interface DriveCandidate {
    * manifest source the editor validates and saves against. See ManifestSource.
    */
   readonly kind: ManifestSource;
-  /** Display label: "E:\\ — Hollow Knight" | "E:\\ — 3 games" | "E:\\ — invalid game.json" | "E:\\ — blank drive". */
+  /**
+   * Display label: "E:\\ — Hollow Knight" | "E:\\ — 3 games" | "E:\\ — invalid game.json" |
+   * "E:\\ — blank drive". The PC library uses the same shape with its own name in front:
+   * "This PC — Hades" | "This PC — 3 games" | "This PC — no games yet".
+   */
   readonly label: string;
   /**
    * Content signature of this card's game.json — the sorted game ids (`''` blank, `'invalid'` unreadable).
