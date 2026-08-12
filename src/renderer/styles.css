@@ -387,16 +387,32 @@ body {
   transition: opacity 0s linear;
 }
 #app[data-screen='carousel'] .card {
-  /* ONLY the fade-in waits for the grow. Delaying width/height here too would also delay every
-     grow/shrink WHILE flipping — the strip would slide first and the cards resize after.
+  /* Flipping through the row: the only cards whose opacity moves are the ones crossing the window's edge
+     (.is-beyond below), and they must do it WITH the slide — no delay, or the row would arrive first and
+     the newcomer blink in afterwards. The staggered hand-back fade lives in the [data-returning] rule. */
+  transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1), height 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 0.35s cubic-bezier(0.2, 0, 0.2, 1);
+}
+#app[data-screen='carousel'][data-returning] .card {
+  /* Coming back from the detail screen. ONLY the fade-in waits for the grow. Delaying width/height here
+     too would also delay every grow/shrink WHILE flipping — the strip would slide first and the cards
+     resize after.
      The fan: each card comes in one stagger step later than its neighbour closer to the selection, so the
      row opens outwards instead of appearing as one block. --fan is set per card by carousel.ts. The fade
      is much LONGER than the step on purpose — the cards overlap heavily, which reads as one soft wave
      travelling outwards rather than a row of separate blinks.
-     These three numbers (0.35s morph / 50ms step / 0.4s fade) are mirrored by RETURN_MS in
-     carousel-geometry.ts, which locks input out for exactly as long: edit them together. */
+     These three numbers (0.35s morph / 50ms step / 0.4s fade) are mirrored by RETURN_LOCK_MS and
+     RETURN_FAN_MS in carousel-geometry.ts — the first locks input out for the morph, the second is how
+     long the renderer keeps `data-returning` on: edit them together. */
   transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1), height 0.35s cubic-bezier(0.4, 0, 0.2, 1),
     opacity 0.4s cubic-bezier(0.2, 0, 0.2, 1) calc(0.35s + var(--fan, 0) * 50ms);
+}
+/* Past the end of the shown window (VISIBLE_CARDS = 9 in carousel-geometry.ts): laid out as usual — the
+   strip's offset is positional, so removing the node would shift the whole row — but invisible and
+   unclickable until the selection walks far enough right for it to fade in. */
+#app[data-screen='carousel'] .card.is-beyond {
+  opacity: 0;
+  pointer-events: none;
 }
 #app[data-screen='carousel'] .card.is-selected {
   /* The hand-back is a SWAP, same as the hand-over: this card is pixel-identical to the button it takes

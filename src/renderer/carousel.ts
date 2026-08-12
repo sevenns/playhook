@@ -8,10 +8,12 @@
 // `browseGame(id)` — this module never derives it. The geometry lives in carousel-geometry.ts (pure).
 import type { LibraryEntry } from '../shared/types';
 import {
+  RETURN_FAN_MS,
   RETURN_LOCK_MS,
   clampIndex,
   fanIndex,
   isNearViewport,
+  isWithinWindow,
   stripOffset,
 } from './carousel-geometry.js';
 import { req } from './dom.js';
@@ -70,6 +72,8 @@ export function createCarousel(deps: CarouselDeps): Carousel {
   // play square. Moving the selection through that resizes and reorders a card mid-morph, which shows.
   // Timestamp (performance.now) until which a move is refused; 0 = the card stands at full size.
   let lockedUntil = 0;
+  // Pending clear of `data-returning` (see markReturning); null when the strip is not returning.
+  let returnTimer: number | null = null;
   // Artwork, keyed by game id AND artwork revision. Decoded data URLs are heavy, so each is fetched at
   // most once; a game with no art at all is remembered as null so we don't ask again on every re-render.
   // The revision is what keeps that cache honest: editing gridImage in Configure re-copies the assets,
@@ -107,6 +111,10 @@ export function createCarousel(deps: CarouselDeps): Carousel {
       card.classList.toggle('is-selected', game.id === current?.id);
       card.classList.toggle('is-busy', game.id === busyId);
       card.classList.toggle('shows-dot', showsDot(game, hasHistory));
+      // Past the shown window (see VISIBLE_CARDS): still laid out — the strip's offset is positional and
+      // a removed node would shift every card after it — but faded out, so it slides in softly when the
+      // selection reaches it instead of popping into existence at the row's end.
+      card.classList.toggle('is-beyond', !isWithinWindow(position, index));
       // Its place in the fan the strip returns in (styles.css turns this into a transition-delay).
       card.style.setProperty('--fan', String(fanIndex(position, index)));
     });
@@ -200,7 +208,29 @@ export function createCarousel(deps: CarouselDeps): Carousel {
     // Coming back, the strip is unusable until the selected card is back at full size (RETURN_LOCK_MS);
     // leaving, nothing is locked — the detail screen has its own focus model.
     lockedUntil = effective === 'carousel' ? performance.now() + RETURN_LOCK_MS : 0;
+    markReturning(effective === 'carousel');
     deps.onScreenChange(effective);
+  }
+
+  /**
+   * Flags the staggered hand-back fade for as long as it runs (see RETURN_FAN_MS). CSS keys the fan's
+   * transition-delay on it, so a card that scrolls into the window while merely FLIPPING fades in
+   * immediately — the stagger belongs to the return, not to every appearance.
+   */
+  function markReturning(returning: boolean): void {
+    if (returnTimer !== null) {
+      window.clearTimeout(returnTimer);
+      returnTimer = null;
+    }
+    if (!returning) {
+      delete app.dataset['returning'];
+      return;
+    }
+    app.dataset['returning'] = 'true';
+    returnTimer = window.setTimeout(() => {
+      returnTimer = null;
+      delete app.dataset['returning'];
+    }, RETURN_FAN_MS);
   }
 
   /** Whether the selected card is still growing back to full size, i.e. must not be flipped through yet. */

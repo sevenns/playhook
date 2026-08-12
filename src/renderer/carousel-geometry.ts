@@ -43,6 +43,25 @@ export function clampIndex(index: number, count: number): number {
   return Math.min(count - 1, Math.max(0, index));
 }
 
+/**
+ * How many cards the strip shows at once, counting the selected one. The row is anchored at the LEFT of
+ * the screen and grows rightwards, so a long history would otherwise run all the way to the right edge —
+ * a wall of covers with no shape. The window keeps the row short: the ones past it wait off-view and fade
+ * in as the selection moves onto them (isWithinWindow + `.is-beyond` in styles.css).
+ *
+ * Cards BEHIND the selection need no such rule: the strip slides left, so they leave the screen on their
+ * own (the one directly behind stays as a sliver — the hint that the row continues that way).
+ */
+export const VISIBLE_CARDS = 9;
+
+/**
+ * Whether card `index` is inside the shown window when `selected` is on the anchor — the selected card
+ * and the `size - 1` cards after it. Everything before the selection is left alone (see VISIBLE_CARDS).
+ */
+export function isWithinWindow(index: number, selected: number, size = VISIBLE_CARDS): boolean {
+  return index < selected + size;
+}
+
 /** How many places of stagger the returning strip is allowed to spread over (see fanIndex). */
 export const FAN_MAX = 4;
 
@@ -57,6 +76,14 @@ const MORPH_MS = 350;
  * last card had finished would only feel sticky.
  */
 export const RETURN_LOCK_MS = MORPH_MS;
+
+/**
+ * How long the return's staggered fade-in runs in total: the morph, plus the last card's stagger, plus
+ * the fade itself. The renderer keeps `data-returning` on for exactly this long, which is what scopes the
+ * fan's transition-delay to the return — a card scrolling INTO the window while flipping must fade in at
+ * once, not wait out a delay meant for the hand-back. Mirrors styles.css (0.35s + 4 * 50ms + 0.4s).
+ */
+export const RETURN_FAN_MS = MORPH_MS + FAN_MAX * 50 + 400;
 
 /**
  * The card's place in the "fan": how many steps from the selection it comes in, once the selected card is
