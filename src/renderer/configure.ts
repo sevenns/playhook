@@ -571,7 +571,24 @@ async function selectDrive(root: string, confirmDirty: boolean): Promise<void> {
   }
 }
 
+/**
+ * Loads a drive's config, and — should that fail for ANY reason — makes sure the failure is visible and
+ * RECOVERABLE. `loadedDriveKey` is claimed before the first await (so the 2s poll doesn't re-enter a load
+ * still in flight), which means a throw halfway through would otherwise leave the editor bound to a drive
+ * it never read: every later tick sees an unchanged key, skips the load, and the form stays blank until
+ * the user switches drives by hand. Clearing the key makes the next tick retry.
+ */
 async function loadDrive(root: string): Promise<void> {
+  try {
+    await loadDriveInto(root);
+  } catch (cause) {
+    loadedDriveKey = '';
+    const message = cause instanceof Error ? cause.message : String(cause);
+    setStatus(translator('configure.couldNotRead', { message }));
+  }
+}
+
+async function loadDriveInto(root: string): Promise<void> {
   const candidate = drives.find((d) => d.root === root);
   if (candidate === undefined) return;
   // Record the descriptor we're loading up front (synchronously), so the next poll tick sees an unchanged
@@ -1009,10 +1026,9 @@ function applyLocale(locale: Locale): void {
 }
 
 async function init(): Promise<void> {
-  window.configureApi.onDrivesUpdate(renderDrives);
-  window.configureApi.onLanguageUpdate(applyLocale);
   // Live theme push from main (the theme changed in the settings window): applyTheme is idempotent, so
-  // this coexists with the visibilitychange re-fetch below (which stays as a cheap fallback).
+  // this coexists with the visibilitychange re-fetch below (which stays as a cheap fallback). Safe to
+  // subscribe now — unlike the two below, it touches nothing that init() has yet to build.
   window.configureApi.onThemeUpdate(applyTheme);
   const [settings, schema, drivesList, icon, version, locale] = await Promise.all([
     window.configureApi.getSettings(),
@@ -1050,6 +1066,14 @@ async function init(): Promise<void> {
   });
   buildEditTabs();
   showTab('basics');
+  // Only NOW may the pushed updates be handled: both reach into the form (a drive load fills it, a
+  // language change relabels it), and main starts polling drives BEFORE the window even loads its HTML —
+  // so a push can land mid-await, while `formView` is still unassigned. Handling one there used to throw
+  // and, worse, leave `selectedRoot`/`loadedDriveKey` pointing at a drive nothing was ever loaded from:
+  // the render below then saw an unchanged key and skipped the load, leaving the editor blank until the
+  // user switched drives by hand. Anything pushed before this line is superseded by `drivesList` anyway.
+  window.configureApi.onDrivesUpdate(renderDrives);
+  window.configureApi.onLanguageUpdate(applyLocale);
   renderDrives(drivesList);
   // Seed the locale last so it localizes the freshly-populated DOM and title-bar suffix in one pass.
   applyLocale(locale);
