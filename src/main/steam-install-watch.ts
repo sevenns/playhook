@@ -29,8 +29,8 @@ export interface SteamWatchDeps {
   isLaunchInFlight(): boolean;
   /** The current AppState snapshot. */
   getState(): AppState;
-  /** Whether a card is currently present. */
-  isCardPresent(): boolean;
+  /** Whether the current game's source is available: its card is in, or it is a local game (always). */
+  isSourceAvailable(): boolean;
   /** Transition to `ready` with the given info (also re-arms/stops the poller, exactly as before). */
   enterReady(info: GameInfo): void;
   /** Fired once when a Steam download completes (requiresInstall flips true→false) — plays the "install
@@ -41,7 +41,8 @@ export interface SteamWatchDeps {
 }
 
 export class SteamInstallWatch {
-  // Recursive setTimeout (no overlap). Non-null only while a Steam game is on the ready screen with a card.
+  // Recursive setTimeout (no overlap). Non-null only while a Steam game whose source is available is on
+  // the ready screen.
   private timer: ReturnType<typeof setTimeout> | null = null;
   // True while a tick is mid-flight (between nulling the timer and finishing). Prevents a concurrent
   // start() (e.g. an Install/Uninstall action landing during the tick's await) from spinning up a SECOND
@@ -167,9 +168,9 @@ export class SteamInstallWatch {
       }
     } finally {
       this.tickInFlight = false;
-      // Re-arm iff we should still be watching this steam card (mirrors enterReady's start condition).
+      // Re-arm iff we should still be watching this steam game (mirrors enterReady's start condition).
       const s = this.deps.getState();
-      if (s.kind === 'ready' && s.game.installVia === 'steam' && this.deps.isCardPresent()) {
+      if (s.kind === 'ready' && s.game.installVia === 'steam' && this.deps.isSourceAvailable()) {
         this.start();
       }
     }

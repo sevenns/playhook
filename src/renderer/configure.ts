@@ -298,7 +298,8 @@ function parseId(text: string): string | null {
   return null;
 }
 
-/** The launch mode a NEW game starts in: `pc` is the only one the PC library accepts (see setSource). */
+/** The launch mode a NEW game starts in. The PC library also accepts `steam`, but the common local game
+ *  is an installed executable, so that stays the default there (the selector offers both — see setSource). */
 function defaultLaunchMode(): LaunchMode {
   return selectedKind === 'pc' ? 'pc' : 'executable';
 }

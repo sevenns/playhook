@@ -605,6 +605,50 @@ describe('validateManifestText — pc mode', () => {
   });
 });
 
+describe('validateManifestText — a STEAM game in the PC library', () => {
+  const steamGame = (extra: Record<string, unknown> = {}): string =>
+    JSON.stringify({
+      schemaVersion: 1,
+      id: 'hades',
+      title: 'Hades',
+      steam: { appid: 1145360 },
+      watchProcesses: ['Hades.exe'],
+      heroImage: 'assets/hero.jpg',
+      ...extra,
+    });
+
+  it('accepts a steam game as the second mode the library allows', () => {
+    expect(validateManifestText(steamGame(), t, 'pc').ok).toBe(true);
+  });
+
+  it('still rejects a library manifest that is neither pc nor steam', () => {
+    const text = JSON.stringify({
+      schemaVersion: 1,
+      id: 'x',
+      title: 'X',
+      executable: 'g/g.exe',
+      heroImage: 'assets/hero.jpg',
+    });
+    const result = validateManifestText(text, t, 'pc');
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.issues.some((i) => i.path === 'pc')).toBe(true);
+  });
+
+  it('rejects saveOnCard for a LOCAL steam game (the library keeps the backup itself)', () => {
+    const result = validateManifestText(steamGame({ saveOnCard: 'saves' }), t, 'pc');
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.issues.some((i) => i.path === 'saveOnCard')).toBe(true);
+    // …while the very same manifest is the normal spelling on a card.
+    expect(
+      validateManifestText(steamGame({ saveOnCard: 'saves', pcSavePath: '%APPDATA%/Hades' }), t, 'card').ok,
+    ).toBe(true);
+  });
+
+  it('accepts a %PREFIX% pcSavePath (a Proton game keeps its saves inside the prefix)', () => {
+    expect(validateManifestText(steamGame({ pcSavePath: '%APPDATA%/Hades' }), t, 'pc').ok).toBe(true);
+  });
+});
+
 describe('readManifests — pc source', () => {
   const env = { documents: path.resolve('documents'), t };
   const resolveInstallDir = (): null => null;
@@ -705,6 +749,54 @@ describe('readManifests — pc source', () => {
     expect(pcResult.ok).toBe(true);
     if (pcResult.ok) expect(pcResult.manifests).toEqual([]);
     expect((await readManifests(pcRoot, env, resolveInstallDir)).ok).toBe(false);
+  });
+
+  it('resolves a local STEAM game (no executable of its own — steam:// does the launching)', async () => {
+    await write({
+      schemaVersion: 1,
+      id: 'hades',
+      title: 'Hades',
+      steam: { appid: 1145360 },
+      watchProcesses: ['Hades.exe'],
+    });
+    const result = await readManifests(pcRoot, env, resolveInstallDir, { source: 'pc' });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const manifest = result.manifests[0];
+    expect(manifest?.source).toBe('pc');
+    expect(manifest?.steam).toEqual({ appid: 1145360 });
+    expect(manifest?.executablePath).toBe('');
+  });
+
+  it('gives a local steam game the same library-side save backup as a pc game', async () => {
+    await write({
+      schemaVersion: 1,
+      id: 'hades',
+      title: 'Hades',
+      steam: { appid: 1145360 },
+      watchProcesses: ['Hades.exe'],
+      pcSavePath: '%APPDATA%/Hades',
+    });
+    const result = await readManifests(pcRoot, env, resolveInstallDir, { source: 'pc' });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.manifests[0]?.saveOnCardPath).toBe(path.join(pcRoot, 'saves', 'hades'));
+    }
+  });
+
+  it('drops a local steam game that names a saveOnCard', async () => {
+    await write({
+      schemaVersion: 1,
+      id: 'hades',
+      title: 'Hades',
+      steam: { appid: 1145360 },
+      watchProcesses: ['Hades.exe'],
+      saveOnCard: 'saves',
+      pcSavePath: '%APPDATA%/Hades',
+    });
+    const result = await readManifests(pcRoot, env, resolveInstallDir, { source: 'pc' });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.manifests).toEqual([]);
   });
 
   it('reads several local games from an array', async () => {

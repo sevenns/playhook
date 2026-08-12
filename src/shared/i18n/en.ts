@@ -395,9 +395,9 @@ export const en = {
   'manifest.pcWithSteam': 'pc is not allowed together with steam',
   'manifest.pcWithInstall': 'pc is not allowed together with install',
   'manifest.pcWithExecutable': 'executable is not allowed in pc mode (use pc.executable)',
-  'manifest.pcWithSaveOnCard': 'saveOnCard is not allowed in pc mode (Playhook keeps the backup)',
+  'manifest.pcWithSaveOnCard': 'saveOnCard is not allowed for a local game (Playhook keeps the backup)',
   'manifest.pcOnCard': 'the pc block is only allowed for local games, not on a card',
-  'manifest.pcRequired': 'a local game requires the pc block',
+  'manifest.pcOrSteamRequired': 'a local game requires either the pc block or the steam block',
   'manifest.pcExecutableAbsolute': 'pc.executable must be an absolute path: {path}',
   // Pure-function messages (expandPcSavePath / resolveInstall / readManifest / validateManifestText):
   // the functions receive the translator and interpolate directly.

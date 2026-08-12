@@ -1,8 +1,13 @@
-import { describe, expect, it } from 'vitest';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  createLinuxSavePathResolver,
   resolveInsideWinePrefix,
   winePrefixToManifestPcSavePath,
 } from '../src/main/platform/save-path.linux';
+import type { GameManifest, ResolvedManifest } from '../src/shared/types';
 
 const PFX = '/home/deck/.config/playhook/prefixes/mygame';
 const HOME = `${PFX}/drive_c/users/steamuser`;
@@ -98,5 +103,72 @@ describe('winePrefixToManifestPcSavePath — Configure Browse reverse mapping (�
       expect(forward).not.toBeNull();
       expect(winePrefixToManifestPcSavePath(forward as string)).toBe(manifestPath);
     }
+  });
+});
+
+// The two ways a LOCAL game (source: 'pc') can name its saves, and why the resolver must keep them apart:
+// an ordinary local game browses to a host folder and gets an absolute path, a local STEAM game's saves
+// live inside Steam's compatdata prefix and can only be named with a %PREFIX% token.
+describe('createLinuxSavePathResolver — a local game vs a local Steam game', () => {
+  const appid = 1145360;
+  let base: string;
+  let steamPath: string;
+  let compat: string;
+
+  const deps = (): Parameters<typeof createLinuxSavePathResolver>[0] => ({
+    userData: path.join(base, 'userData'),
+    steamLocator: {
+      locateSteam: async (): Promise<string | null> => steamPath,
+      steamExecutable: async (): Promise<string | null> => null,
+    },
+  });
+
+  const raw: GameManifest = { schemaVersion: 1, id: 'hades', title: 'Hades' };
+  const manifest = (over: Partial<ResolvedManifest>): ResolvedManifest => ({
+    raw,
+    root: path.join(base, 'pc-games'),
+    source: 'pc',
+    executablePath: '',
+    cwd: '',
+    ...over,
+  });
+
+  beforeEach(async () => {
+    base = await fs.mkdtemp(path.join(os.tmpdir(), 'playhook-savepath-'));
+    steamPath = path.join(base, 'Steam');
+    compat = path.join(steamPath, 'steamapps', 'compatdata', String(appid), 'pfx');
+    await fs.mkdir(compat, { recursive: true });
+  });
+
+  afterEach(async () => {
+    await fs.rm(base, { recursive: true, force: true });
+  });
+
+  it('resolves a local STEAM game into compatdata — not the host fs, not our own prefix', async () => {
+    const resolver = createLinuxSavePathResolver(deps());
+    const location = await resolver.resolvePcSavePath(
+      manifest({ steam: { appid } }),
+      '%APPDATA%\\Hades\\Saves',
+    );
+    expect(location).not.toBeNull();
+    // Asserted as "under compatdata + the Windows-profile tail" rather than one literal, because the
+    // compatdata root is a real temp dir whose separators follow the OS the suite runs on (CI runs it on
+    // Windows too) — the tail below drive_c is the part this mapping owns.
+    expect(location?.path.startsWith(compat)).toBe(true);
+    expect(location?.path.endsWith('drive_c/users/steamuser/AppData/Roaming/Hades/Saves')).toBe(true);
+    expect(location?.containerExists).toBe(true);
+  });
+
+  it('keeps an ordinary local game`s absolute path verbatim (the host fs IS its container)', async () => {
+    const resolver = createLinuxSavePathResolver(deps());
+    const location = await resolver.resolvePcSavePath(manifest({}), '/home/deck/Games/Hades/Saves');
+    expect(location).toEqual({ path: '/home/deck/Games/Hades/Saves', containerExists: true });
+  });
+
+  it('is a no-op while Steam has made no compatdata for the game yet', async () => {
+    await fs.rm(path.join(steamPath, 'steamapps'), { recursive: true, force: true });
+    const resolver = createLinuxSavePathResolver(deps());
+    const location = await resolver.resolvePcSavePath(manifest({ steam: { appid } }), '%APPDATA%\\Hades');
+    expect(location).toBeNull();
   });
 });

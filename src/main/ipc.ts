@@ -378,7 +378,7 @@ export class GameController {
     getManifest: () => this.current(),
     isLaunchInFlight: () => this.launchInFlight,
     getState: () => this.deps.state.get(),
-    isCardPresent: () => this.cardPresent,
+    isSourceAvailable: () => this.currentSourceAvailable(),
     enterReady: (info) => this.enterReady(info),
     onInstallCompleted: () => this.playSfx('play'),
     steamLocator: () => this.deps.platform.steamLocator,
@@ -471,6 +471,16 @@ export class GameController {
   }
 
   /**
+   * sourceAvailable for a game named by id — for the callers that hold a GameInfo, not a manifest. An
+   * unknown id is `false` on purpose: `games` hides a local game shadowed by the card (see the getter),
+   * and there is nothing to poll about a game that cannot be acted on right now.
+   */
+  private sourceAvailableFor(id: string): boolean {
+    const manifest = this.games.find((m) => m.raw.id === id);
+    return manifest !== undefined && this.sourceAvailable(manifest);
+  }
+
+  /**
    * The "the card went away while we were busy" landing, shared by the sequences that target the PC and
    * therefore finish anyway (uninstall, prefix cleanup, an abandoned watched launch). With a local game
    * left it stays on screen with that game selected; with nothing left it is the previous behaviour
@@ -490,11 +500,16 @@ export class GameController {
   /** Clears all card-scoped state (games, selection, lock, audio/hero/library channels). The caller sets
    * the follow-up AppState (idle/error) and window visibility, exactly as before. */
   private clearCard(): void {
+    // Only a CARD game's Steam operation stops being ours to guard when the card goes: a local game's
+    // download keeps running and must keep refusing a second launch/install on top of it. Read before the
+    // list is emptied — afterwards there is no way to tell whose id it was.
+    if (this.steamBusyId !== null && this.cardGames.some((m) => m.raw.id === this.steamBusyId)) {
+      this.steamBusyId = null;
+    }
     this.cardGames = [];
     // The selection falls back to whatever is still there (a local game), or to nothing — see current().
     this.selectedId = null;
     this.locked = false;
-    this.steamBusyId = null; // the card is gone; whatever Steam is doing is no longer ours to guard
     this.forgetCardStats();
     // Music is card-only, so there is none on the empty screen. UI sounds are unaffected: they come from
     // the bundled set on its own channel, which no card ever touched.
@@ -644,10 +659,12 @@ export class GameController {
     if (info.steamInstalling === true || info.steamUninstalling === true) this.steamBusyId = info.id;
     else if (this.steamBusyId === info.id) this.steamBusyId = null;
     this.deps.state.set({ kind: 'ready', game: info });
-    // Poll for ANY steam game while the card is present: it catches install completion (Install→Play),
+    // Poll for ANY steam game whose source is available: it catches install completion (Install→Play),
     // uninstall completion (Play→Install) — incl. an uninstall the user triggers in Steam directly — and
-    // download progress. The .acf read is cheap, so a perpetual 5s poll for an inserted steam card is fine.
-    if (info.installVia === 'steam' && this.cardPresent) {
+    // download progress. A LOCAL steam game's source is always available, so this poll is no longer bounded
+    // by how long a card stays in: the launcher sitting on such a game polls it for as long as it is shown.
+    // The .acf read is cheap enough for that to be an acceptable price (see the plan, §9.3).
+    if (info.installVia === 'steam' && this.sourceAvailableFor(info.id)) {
       this.steamWatch.start();
     } else {
       this.steamWatch.stop();
@@ -1330,7 +1347,7 @@ export class GameController {
     }
     // Ensure the re-detect poller is running so the button flips to "Play" when the download completes
     // (no-op if already running; info confirms this is a steam game still requiring install).
-    if (info.installVia === 'steam' && info.requiresInstall && this.cardPresent) {
+    if (info.installVia === 'steam' && info.requiresInstall && this.sourceAvailableFor(info.id)) {
       this.steamWatch.start();
     }
   }
@@ -2009,8 +2026,11 @@ export class GameController {
     // A local game's executable is checked HERE, not at read time (a card game's is the other way round):
     // its absence must not drop the game from the library — the card, its art and its save backup stay,
     // and only Play is disabled. See ManifestSource / the pc block.
+    // Stated POSITIVELY — "this game carries its own executable, and it is gone" — so it stays right for a
+    // local STEAM game, whose executablePath is the '' placeholder: `pathExists('')` is false, and a
+    // by-source check would strip its Play button. Steam's own "not installed" is `requiresInstall`.
     const unavailable =
-      manifest.source === 'pc' && !(await fse.pathExists(manifest.executablePath));
+      manifest.raw.pc !== undefined && !(await fse.pathExists(manifest.executablePath));
     return {
       id: manifest.raw.id,
       title: manifest.raw.title,

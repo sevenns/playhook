@@ -439,6 +439,52 @@ describe('pc mode (a local game on this PC)', () => {
   });
 });
 
+describe('steam mode in the PC library (a Steam game installed on this PC)', () => {
+  const steamText = JSON.stringify({
+    schemaVersion: 1,
+    id: 'hades',
+    title: 'Hades',
+    steam: { appid: 1145360 },
+    watchProcesses: ['Hades.exe'],
+    heroImage: 'assets/hero.jpg',
+    pcSavePath: '%APPDATA%/Hades',
+  });
+
+  it('round-trips into a manifest the PC-source validator accepts', () => {
+    const result = parseOk(steamText);
+    expect(launchModeOf(result.model)).toBe('steam');
+    const text = serialize(steamText);
+    expect(validateManifestText(text, t, 'pc').ok).toBe(true);
+    expect(serialize(text)).toBe(text); // idempotent
+  });
+
+  it('keeps pcSavePath — the save backup a local Steam game gets from the library', () => {
+    const parsed = JSON.parse(serialize(steamText)) as Record<string, unknown>;
+    expect(parsed['pcSavePath']).toBe('%APPDATA%/Hades');
+    expect(parsed).not.toHaveProperty('saveOnCard');
+  });
+
+  // The counterpart of the rule above, and the reason `saveOnCard` may NOT be gated by launch mode: on a
+  // CARD a Steam game's save sync is exactly `saveOnCard` + `pcSavePath`. Suppressing it for steam mode
+  // would silently break every existing Steam card. The PC library is kept clean by the form instead (it
+  // hides the field and clears the slot when the edited root is the library — see FormView.setSource).
+  it('still emits saveOnCard for a CARD steam game', () => {
+    const cardSteam = JSON.stringify({
+      schemaVersion: 1,
+      id: 'hades',
+      title: 'Hades',
+      steam: { appid: 1145360 },
+      watchProcesses: ['Hades.exe'],
+      heroImage: 'assets/hero.jpg',
+      saveOnCard: 'saves/hades',
+      pcSavePath: '%APPDATA%/Hades',
+    });
+    const parsed = JSON.parse(serialize(cardSteam)) as Record<string, unknown>;
+    expect(parsed['saveOnCard']).toBe('saves/hades');
+    expect(validateManifestText(serialize(cardSteam), t, 'card').ok).toBe(true);
+  });
+});
+
 describe('multi-game wrapper (textToGames / gamesToText)', () => {
   const gameText = (id: string): string =>
     `{"schemaVersion":1,"id":"${id}","title":"${id}","executable":"g.exe","heroImage":"h.jpg"}`;

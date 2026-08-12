@@ -156,6 +156,33 @@ rule of its own:
 - `pc` replaces `executable` and is mutually exclusive with `install` and `steam`; everything else
   (`args`, `runAsAdmin`, `watchProcesses`, the timeouts, `winetricks`, `umuGameId`, the art and the
   music) works exactly as it does for a card game.
+
+A local game can also be a **Steam game installed on this PC** — the second launch mode the library
+accepts. Instead of `pc`, give it a `steam` block:
+
+```jsonc
+{
+  "schemaVersion": 1,
+  "id": "hades-steam",
+  "title": "Hades",
+  "steam": { "appid": 1145360 },
+  // Required in steam mode: Playhook cannot see Steam's own process tree, so it watches for these
+  // image names to know the game is running. Take the name from steamapps/common/<game>/ (or the
+  // game's SteamDB page) — it is the .exe even on the Deck, where the game runs under Proton.
+  "watchProcesses": ["Hades.exe"],
+  "heroImage": ["assets/hades-hero.jpg"],
+  // Optional. Under Proton the saves live inside Steam's own prefix, so use the %PREFIX% form here —
+  // Browse fills it in for you after the game has been run once.
+  "pcSavePath": "%APPDATA%/Hades"
+}
+```
+
+- The button follows Steam: **Install** while the game isn't installed (it opens Steam's download),
+  **Play** once it is, and **Uninstall** hands the removal back to Steam. Installing or removing the
+  game in Steam directly is picked up on its own, card or no card.
+- Everything Steam owns stays Steam's: there is no `install` block, no `runAsAdmin`, and no Wine prefix
+  of ours (the game runs in Steam's compatdata).
+- `pc` and `steam` are mutually exclusive — a local game is one or the other.
 - **Saves are backed up by Playhook itself** — there is no card to keep them on, so `saveOnCard` is not
   allowed and the backup goes to `pc-games/saves/<id>/`. If you later insert a card carrying the same
   game, the progress you made without it is copied onto the card on insertion.

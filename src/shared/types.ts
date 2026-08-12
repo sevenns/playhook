@@ -887,9 +887,20 @@ export type ConfigSaveResult =
  * file pickers for exe/installer/image/audio (image is multi-select), a folder picker for `directory`
  * (card-relative), `pc-save` (a PC folder OUTSIDE the card, converted to a %PREFIX%\… save path) and
  * `pc-executable` (PC library only: any executable anywhere on this machine, kept ABSOLUTE).
+ * `pc-save-local` is `pc-save` WITHOUT that conversion — the picked folder is kept absolute. It is for a
+ * local game that runs from this machine's disk (its saves are an ordinary host folder); a local STEAM
+ * game keeps `pc-save`, because its saves live inside Steam's Proton prefix, which only the %PREFIX%
+ * form can name.
  */
 export type ConfigPickKind =
-  'executable' | 'installer' | 'image' | 'audio' | 'directory' | 'pc-save' | 'pc-executable';
+  | 'executable'
+  | 'installer'
+  | 'image'
+  | 'audio'
+  | 'directory'
+  | 'pc-save'
+  | 'pc-save-local'
+  | 'pc-executable';
 
 /** Request payload for config:pick-path: the card root (re-checked in main) and the pick kind. */
 export interface ConfigPickRequest {

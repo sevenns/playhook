@@ -45,7 +45,7 @@ import { log } from './logger';
 
 /** OS-dialog `properties` for a pick kind: a folder picker for `directory`/`pc-save`, multi-file for images. */
 function pickProperties(kind: ConfigPickKind): Electron.OpenDialogOptions['properties'] {
-  if (kind === 'directory' || kind === 'pc-save') return ['openDirectory'];
+  if (kind === 'directory' || kind === 'pc-save' || kind === 'pc-save-local') return ['openDirectory'];
   if (kind === 'image') return ['openFile', 'multiSelections'];
   return ['openFile'];
 }
@@ -73,6 +73,7 @@ function pickFilters(kind: ConfigPickKind): Electron.FileFilter[] {
         : [];
     case 'directory':
     case 'pc-save':
+    case 'pc-save-local':
       return [];
   }
 }
@@ -340,17 +341,29 @@ export class GameConfigService {
     const isPcLibrary = this.sourceOf(root) === 'pc';
     // pcSavePath points at a PC folder OUTSIDE the card (env-prefixed), so it has its own dialog: no card
     // root restriction, and the absolute result is converted back to a %PREFIX%/… form the validator accepts.
+    // A local game running from this machine's own disk keeps the absolute path VERBATIM (`pc-save-local`).
+    // Converting it would be actively wrong there: on Linux the reverse mapping only knows folders inside a
+    // Wine prefix and rejects everything else, so the typical local save folder (`~/Games/Hades/Saves`)
+    // could not be picked at all — and pc mode accepts an absolute path precisely because a %PREFIX% cannot
+    // express it. It is the form that decides which of the two kinds applies, by launch mode: a local STEAM
+    // game keeps `pc-save`, because ITS saves sit inside Steam's Proton prefix and only the %PREFIX% form
+    // maps onto compatdata (an absolute path there would also be read with containerExists: true, which
+    // would let a deleted prefix be mistaken for deleted saves).
+    if (kind === 'pc-save-local') {
+      if (!isPcLibrary) return { ok: false, message: t('errors.driveUnavailable') };
+      const options: Electron.OpenDialogOptions = { properties: ['openDirectory'] };
+      const picked =
+        parent !== null ? await dialog.showOpenDialog(parent, options) : await dialog.showOpenDialog(options);
+      const chosen = picked.filePaths[0];
+      if (picked.canceled || chosen === undefined) return { ok: false, cancelled: true };
+      return { ok: true, paths: [chosen] };
+    }
     if (kind === 'pc-save') {
       const options: Electron.OpenDialogOptions = { properties: ['openDirectory'] };
       const picked =
         parent !== null ? await dialog.showOpenDialog(parent, options) : await dialog.showOpenDialog(options);
       const chosen = picked.filePaths[0];
       if (picked.canceled || chosen === undefined) return { ok: false, cancelled: true };
-      // A local game keeps the absolute path VERBATIM. Converting it would be actively wrong here: on
-      // Linux the reverse mapping only knows folders inside a Wine prefix and rejects everything else, so
-      // the typical local save folder (`~/Games/Hades/Saves`) could not be picked at all — and pc mode
-      // accepts an absolute path precisely because a %PREFIX% cannot express it.
-      if (isPcLibrary) return { ok: true, paths: [chosen] };
       const pcSavePath = this.deps.toManifestPcSavePath(chosen);
       if (pcSavePath === null) return { ok: false, message: t('configure.pickPcSaveOutside') };
       return { ok: true, paths: [pcSavePath] };

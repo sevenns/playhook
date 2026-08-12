@@ -346,9 +346,9 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'manifest.pcWithSteam': 'pc нельзя указывать вместе со steam',
   'manifest.pcWithInstall': 'pc нельзя указывать вместе с install',
   'manifest.pcWithExecutable': 'executable недопустим в режиме pc (используйте pc.executable)',
-  'manifest.pcWithSaveOnCard': 'saveOnCard недопустим в режиме pc (резервную копию хранит Playhook)',
+  'manifest.pcWithSaveOnCard': 'saveOnCard недопустим для локальной игры (резервную копию хранит Playhook)',
   'manifest.pcOnCard': 'блок pc допустим только для локальных игр, но не на карте',
-  'manifest.pcRequired': 'для локальной игры обязателен блок pc',
+  'manifest.pcOrSteamRequired': 'для локальной игры обязателен блок pc или блок steam',
   'manifest.pcExecutableAbsolute': 'pc.executable должен быть абсолютным путём: {path}',
   'manifest.pcSavePathPrefix': 'pcSavePath должен начинаться с {prefixes}',
   'manifest.pcSavePathPrefixOrAbsolute':

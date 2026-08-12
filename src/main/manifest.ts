@@ -616,8 +616,14 @@ async function resolveOne(
   if (source === 'card' && raw.pc !== undefined) {
     return { ok: false, message: t('manifest.pcOnCard') };
   }
-  if (source === 'pc' && raw.pc === undefined) {
-    return { ok: false, message: t('manifest.pcRequired') };
+  if (source === 'pc' && raw.pc === undefined && raw.steam === undefined) {
+    return { ok: false, message: t('manifest.pcOrSteamRequired') };
+  }
+  // The PC library keeps its OWN save backup (`saves/<id>`, substituted below), so a `saveOnCard` there
+  // names a folder that would be silently overwritten by that substitution. The schema catches it next to
+  // a `pc` block; this catches it next to a `steam` one, where the schema has no reason to.
+  if (source === 'pc' && raw.saveOnCard !== undefined) {
+    return { ok: false, message: t('manifest.pcWithSaveOnCard') };
   }
 
   // Critical branch: the meaning of `executable` depends on the mode. Keep the four paths
@@ -872,13 +878,17 @@ function pushGameSemanticIssues(
     issues.push({ path: field('pc'), message: t('manifest.pcOnCard') });
   }
   if (source === 'pc') {
-    if (raw.pc === undefined) {
-      issues.push({ path: field('pc'), message: t('manifest.pcRequired') });
-    } else if (!path.isAbsolute(path.normalize(raw.pc.executable))) {
+    if (raw.pc === undefined && raw.steam === undefined) {
+      issues.push({ path: field('pc'), message: t('manifest.pcOrSteamRequired') });
+    } else if (raw.pc !== undefined && !path.isAbsolute(path.normalize(raw.pc.executable))) {
       issues.push({
         path: field('pc.executable'),
         message: t('manifest.pcExecutableAbsolute', { path: raw.pc.executable }),
       });
+    }
+    // Mirrors resolveOne: the library supplies the backup side itself, so naming one is always an error.
+    if (raw.saveOnCard !== undefined) {
+      issues.push({ path: field('saveOnCard'), message: t('manifest.pcWithSaveOnCard') });
     }
   }
   if (raw.executable !== undefined)

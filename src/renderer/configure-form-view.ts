@@ -114,6 +114,21 @@ interface DynamicList {
   setDisabled(disabled: boolean): void;
 }
 
+/**
+ * Which launch modes each manifest root accepts — the form's half of the schema's source rules. A card
+ * takes anything but `pc` (an absolute path is exactly what a card may never name); the PC library takes a
+ * local executable OR a Steam game, both being "already installed on this machine". The order matters:
+ * the first entry is what a source falls back to when the current mode is not in its set.
+ */
+const MODES_BY_SOURCE: Readonly<Record<ManifestSource, readonly LaunchMode[]>> = {
+  card: ['executable', 'installer', 'steam'],
+  pc: ['pc', 'steam'],
+};
+
+function isLaunchMode(value: string): value is LaunchMode {
+  return value === 'executable' || value === 'installer' || value === 'steam' || value === 'pc';
+}
+
 /** An audio field with a Default/Custom selector (Default → empty → omitted from game.json). */
 interface AudioField {
   readonly wrapper: HTMLElement;
@@ -161,10 +176,10 @@ export class FormView {
   private readonly pcSection: HTMLElement;
   /** The card-relative `executable` field — hidden in PC mode, which has its own absolute path. */
   private readonly execField: HTMLElement;
-  /** The launch-type row itself: hidden in the PC library, where `pc` is the only mode there is. */
+  /** The launch-type row itself. */
   private readonly launchTypeField: HTMLElement;
-  /** The PC option in the launch-type dropdown — offered only while editing the PC library. */
-  private readonly pcModeOption: HTMLElement;
+  /** Every option of the launch-type dropdown, by value — the modes a source does not allow are hidden. */
+  private readonly launchModeOptions: ReadonlyMap<string, HTMLElement>;
   /** Note under `pcSavePath`: in PC mode it explains where the backup lives. */
   private readonly pcSaveNote: HTMLElement;
   /** The `saveOnCard` field — meaningless (and schema-forbidden) for a local game, so hidden in PC mode. */
@@ -257,7 +272,7 @@ export class FormView {
       ],
       launchOptions,
     );
-    this.pcModeOption = launchOptions.get('pc') ?? document.createElement('fluent-option');
+    this.launchModeOptions = launchOptions;
     this.launchType.addEventListener('change', () => this.onLaunchTypeChange());
 
     this.executableInput = this.textInput('executable');
@@ -434,14 +449,15 @@ export class FormView {
       'directory',
     );
     // pcSavePath is an env-prefixed template (%APPDATA%\…). Its Browse picks a PC folder and main
-    // converts it back to a %PREFIX%/… value (plan R6 was reversed per user request #3). For a LOCAL
-    // game the picked folder is kept absolute instead, and there is no card side to pair it with — the
-    // note below says where the backup goes.
+    // converts it back to a %PREFIX%/… value (plan R6 was reversed per user request #3). For a local game
+    // running from this machine's disk the picked folder is kept absolute instead (`pc-save-local`), and
+    // there is no card side to pair it with — the note below says where the backup goes. A local STEAM game
+    // keeps the converting pick: its saves sit inside Steam's own Proton prefix, which only %PREFIX% names.
     const pcSaveField = this.fieldWithBrowse(
       'configure.fieldPcSavePath',
       'pcSavePath',
       this.pcSavePathInput,
-      'pc-save',
+      () => (this.launchMode === 'pc' ? 'pc-save-local' : 'pc-save'),
     );
     this.pcSaveNote = document.createElement('div');
     this.pcSaveNote.className = 'field-hint';
@@ -742,15 +758,12 @@ export class FormView {
 
   private onLaunchTypeChange(): void {
     const value = getValue(this.launchType);
-    // `pc` is only selectable while the PC library is being edited (setSource) — and there it is the only
-    // mode, so a change away from it is refused rather than silently producing an invalid manifest.
-    if (value === 'pc' && this.source !== 'pc') return;
-    if (this.source === 'pc' && value !== 'pc') return;
-    if (value === 'executable' || value === 'installer' || value === 'steam' || value === 'pc') {
-      this.launchMode = value;
-      this.updateSectionVisibility();
-      this.deps.onChange();
-    }
+    // A mode the edited root does not accept is refused rather than silently producing a manifest the
+    // schema rejects. The options for those modes are hidden anyway (setSource) — this is the backstop.
+    if (!isLaunchMode(value) || !MODES_BY_SOURCE[this.source].includes(value)) return;
+    this.launchMode = value;
+    this.updateSectionVisibility();
+    this.deps.onChange();
   }
 
   private onInstallTypeChange(): void {
@@ -831,26 +844,37 @@ export class FormView {
     this.steamSection.hidden = this.launchMode !== 'steam';
     this.pcSection.hidden = this.launchMode !== 'pc';
     // A local game has no card side to sync with: Playhook keeps the backup itself (the note says so).
-    this.saveOnCardField.hidden = this.launchMode === 'pc';
-    this.pcSaveNote.hidden = this.launchMode !== 'pc';
+    // By SOURCE, not by mode — a local Steam game is just as local, and the manifest forbids `saveOnCard`
+    // for the whole PC library, so offering the field there would be offering a guaranteed Save error.
+    this.saveOnCardField.hidden = this.source === 'pc';
+    this.pcSaveNote.hidden = this.source !== 'pc';
     this.updateCopyToPcState();
   }
 
   /**
-   * Tells the form WHICH root it is editing. The PC library accepts only `pc` manifests and a card
-   * accepts anything but, so the mode is not a free choice: in the library the selector is hidden and the
-   * mode forced, on a card the PC option is not offered at all. Called on every drive load.
+   * Tells the form WHICH root it is editing. The mode is not a free choice — each root accepts its own set
+   * (MODES_BY_SOURCE) — so the options outside that set are hidden and disabled, and a mode left over from
+   * the previously edited root is replaced by the set's first entry. That forcing only decides what a NEW
+   * game starts as: load() overwrites launchMode from the manifest right after, which is what an existing
+   * game wants. Called on every drive load.
    */
   setSource(source: ManifestSource): void {
     this.source = source;
-    const isPc = source === 'pc';
-    this.launchTypeField.hidden = isPc;
-    this.pcModeOption.hidden = !isPc;
-    setElDisabled(this.pcModeOption, !isPc);
-    if (isPc && this.launchMode !== 'pc') {
-      this.launchMode = 'pc';
-      this.launchType.value = 'pc';
+    const allowed = MODES_BY_SOURCE[source];
+    for (const [value, option] of this.launchModeOptions) {
+      const offered = isLaunchMode(value) && allowed.includes(value);
+      option.hidden = !offered;
+      setElDisabled(option, !offered);
     }
+    if (!allowed.includes(this.launchMode)) {
+      const fallback = allowed[0] ?? 'executable';
+      this.launchMode = fallback;
+      this.launchType.value = fallback;
+    }
+    // The library keeps the save backup itself, so `saveOnCard` is forbidden across the whole PC root and
+    // the field is hidden there — but serialization emits the slot regardless of mode, so a value left in
+    // it by a previously edited card would leak into the JSON invisibly. Clear it, don't just hide it.
+    if (source === 'pc') this.saveOnCardInput.value = '';
     this.updateSectionVisibility();
   }
 
@@ -907,11 +931,13 @@ export class FormView {
   // A labelled control with a trailing Browse… button that fills it from a picked path.
   // `transform` post-processes the picked path before it lands in the control; returning null rejects the
   // pick (the transform having reported why) and leaves the current value alone.
+  // `kind` may be a function when the pick depends on the form's current state (the save folder: a local
+  // game's is an ordinary host folder, a local Steam game's lives inside a Proton prefix — see D9).
   private fieldWithBrowse(
     labelKey: MessageKey,
     errorKey: FieldKey,
     control: ValueEl,
-    kind: ConfigPickKind,
+    kind: ConfigPickKind | (() => ConfigPickKind),
     transform?: (picked: string) => string | null,
   ): HTMLElement {
     const wrapper = document.createElement('div');
@@ -919,7 +945,7 @@ export class FormView {
     const row = document.createElement('div');
     row.className = 'field-row';
     const browse = this.textButton('configure.browse', async () => {
-      const result = await this.deps.pickPath(kind);
+      const result = await this.deps.pickPath(typeof kind === 'function' ? kind() : kind);
       if (result.ok) {
         const picked = result.paths[0] ?? getValue(control);
         const next = transform === undefined ? picked : transform(picked);
