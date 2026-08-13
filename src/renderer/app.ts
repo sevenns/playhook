@@ -27,10 +27,8 @@ let currentState: AppState = { kind: 'idle' };
 // stays the truth for the PHASE (busy/ready/error) and the status text. null = neither card nor history,
 // i.e. the genuine "Insert a game card" screen. See BrowseInfo in shared/types.
 let currentBrowse: BrowseInfo | null = null;
-// The carousel hid the title + status for a pending selection change; the new BACKGROUND reveals them
-// (see revealSwappedText), and this fallback timer does it if that background never arrives.
+// The carousel hid the title + status for a pending selection change; the next render reveals the new one.
 let textSwapPending = false;
-let textRevealTimer: number | null = null;
 // UI locale + translator (both refreshed on a language push). The HTML ships English fallback text, so
 // until the invoke-seed lands there is no blank flash — the seed then localizes and re-renders.
 let currentLocale: Locale = 'en';
@@ -95,40 +93,6 @@ let requestedBrowseId: string | null = null;
 // finished session, an eviction — from bouncing them back to the carousel mid-install.
 let userChoseDetail = false;
 
-// The title/status fade-in, in the two numbers it needs. TEXT_REVEAL_MS must stay equal to the CSS
-// `--hero-fade` the reveal borrows (see .is-revealing): it is only how long the class is worn, so the
-// quick default is back for the busy transitions afterwards. The fallback is the answer to "what if the
-// background never comes" — main answers every browse, but a browse for an id it does not know is
-// dropped with a warning, and text stuck invisible until the next step would be a far worse bug than a
-// reveal that fires a beat early on a very slow disk.
-const TEXT_REVEAL_MS = 1000;
-const TEXT_REVEAL_FALLBACK_MS = 2000;
-
-/**
- * Fades the title + status back in, timed to the background: called when the browsed game's hero payload
- * lands, which is the same moment the hero layers start cross-fading — so the name, the status line and
- * the artwork all finish arriving together instead of the text snapping in a beat ahead of the picture.
- */
-function revealSwappedText(): void {
-  if (textRevealTimer !== null) {
-    window.clearTimeout(textRevealTimer);
-    textRevealTimer = null;
-  }
-  if (!textSwapPending) return;
-  textSwapPending = false;
-  // Next frame, so the browser sees the hidden state first and actually animates the fade back in
-  // (dropping the class in the same frame as the text would be coalesced into no transition at all).
-  requestAnimationFrame(() => {
-    for (const el of [titleEl, statusEl]) {
-      el.classList.add('is-revealing');
-      el.classList.remove('is-swapping');
-    }
-    window.setTimeout(() => {
-      for (const el of [titleEl, statusEl]) el.classList.remove('is-revealing');
-    }, TEXT_REVEAL_MS);
-  });
-}
-
 const carousel = createCarousel({
   requestGrid: (id) => window.api.requestGrid(id),
   // Sent on every step, undebounced: main answers the LIGHT part (title/stats/status) immediately and
@@ -160,18 +124,13 @@ const carousel = createCarousel({
       Math.min(HERO_PARALLAX_MAX, heroParallax - delta * HERO_PARALLAX_STEP),
     );
     hero.setParallax(heroParallax);
-    // Cut the outgoing text immediately: a stale name sitting next to the new card even for a moment
-    // reads as a bug. The replacement is NOT faded back in when it arrives (the info answer is instant,
-    // the background is debounced) but when the new background does — see revealSwappedText. The status
-    // line goes with it: the two are one block, and a lingering "Installing…" over the next card is the
-    // same lie the stale title would be.
+    // Cut the outgoing text immediately: the new one arrives with the (debounced) browse answer, and a
+    // stale name sitting next to the new card for a third of a second reads as a bug. render() fades the
+    // replacement back in — see textSwapPending. The status line goes with it: the two are one block, and
+    // a lingering "Installing…" over the next card is the same lie the stale title would be.
     titleEl.classList.add('is-swapping');
-    titleEl.classList.remove('is-revealing');
     statusEl.classList.add('is-swapping');
-    statusEl.classList.remove('is-revealing');
     textSwapPending = true;
-    if (textRevealTimer !== null) window.clearTimeout(textRevealTimer);
-    textRevealTimer = window.setTimeout(revealSwappedText, TEXT_REVEAL_FALLBACK_MS);
   },
 });
 
@@ -342,11 +301,18 @@ function render(state: AppState): void {
     // on a window reconnect render can arrive before the payload. Only paint when we already have images;
     // an empty list means "wait for the push" (it back-fills), rather than blanking the background.
     hero.repaint();
-    // The text is put in place here but stays HIDDEN while a swap is pending: the reveal belongs to the
-    // background's arrival, not to this answer, which comes ~a quarter of a second earlier (see
-    // revealSwappedText). applyStatus (below) fills the status line in the same render, so the two-line
-    // block is complete before either of them is shown.
     titleEl.textContent = browse.title;
+    if (textSwapPending) {
+      textSwapPending = false;
+      // Next frame, so the browser sees the hidden state first and actually animates the fade back in
+      // (dropping the class in the same frame as the text would be coalesced into no transition at all).
+      // The status is revealed together with the title — applyStatus (below) has already put the new
+      // line in, or emptied it, by the time this frame runs.
+      requestAnimationFrame(() => {
+        titleEl.classList.remove('is-swapping');
+        statusEl.classList.remove('is-swapping');
+      });
+    }
     buildInfoPanel(browse.stats);
     controls.applyGameButtons();
   } else {
@@ -458,13 +424,7 @@ void window.api.requestBrowse().then((browse) => {
 
 // The browsed game's background: a channel of its own, so a history game can be shown without touching
 // the inserted card's hero:update payload (which stays valid for the card's selected game).
-// Revealing the text from HERE, and not from the payload actually changing the picture, is deliberate:
-// two games can share a background (both falling back to the wallpaper, or the same artwork), and the
-// cross-fade is then a no-op — the name still has to come back.
-window.api.onBrowseHero((assets) => {
-  hero.applyBrowseAssets(assets);
-  revealSwappedText();
-});
+window.api.onBrowseHero((assets) => hero.applyBrowseAssets(assets));
 
 // The browsed game's music. Music ONLY — the SFX set is never rebuilt by browsing, so flipping through
 // the carousel doesn't re-create the sound elements on every step.
