@@ -672,6 +672,11 @@ export const IPC = {
   /** renderer → main: "the user is looking at this id" — main answers with browse:update + browse:hero
    * (+ browse:music). Does NOT change the selected game or the AppState. */
   libraryBrowse: 'library:browse',
+  /** renderer → main: drop this game from the play history (its record + the copied artwork). Only ever
+   * accepted for a game that is NOT available right now — main re-checks that, the menu item is the
+   * renderer's half of the same rule. Saves and playtime survive: this forgets the catalogue entry, not
+   * the game. */
+  libraryForget: 'library:forget',
   /** main → renderer: what is on screen (title/stats/active/GameInfo) — see BrowseInfo. */
   browseUpdate: 'browse:update',
   /** renderer → main (invoke): the current BrowseInfo (seed on window startup, like state:request). */
@@ -962,6 +967,9 @@ export interface RendererApi {
   requestGrid(id: string): Promise<string | null>;
   /** Tell main which game the carousel is on — it answers with browse:update/hero/music. */
   browseGame(id: string): void;
+  /** Drop a game from the play history. Refused by main for a game that is available right now (on the
+   *  card or in the PC library) — that one is not history, it is a game you can play. */
+  forgetGame(id: string): void;
   /** Live updates of what is on screen (title/stats/active/GameInfo). */
   onBrowseUpdate(callback: (browse: BrowseInfo | null) => void): void;
   /** What is on screen right now (on window startup). */

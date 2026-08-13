@@ -75,6 +75,7 @@ export const en = {
   // Force-close the running game (Details menu item, visible only while a game is running).
   'launcher.menu.forceClose': 'Force close',
   'launcher.menu.library': 'Library',
+  'launcher.menu.forget': 'Remove from history',
   // Confirmation popup copy (controls.ts). The Yes/No buttons use the shared common.* keys.
   'launcher.confirm.install': 'Do you want to install game?',
   'launcher.confirm.uninstall': 'Do you want to uninstall game from your PC?',
@@ -86,6 +87,8 @@ export const en = {
   // Force-close confirmation — warns that unsaved in-game progress may be lost (the game is killed, so it
   // may not get to write its save before syncing-out runs).
   'launcher.confirm.kill': 'Force close the game? Unsaved progress may be lost.',
+  'launcher.confirm.forget':
+    'Remove "{title}" from the history? Its saves and playtime are kept — insert the card again and the game comes back.',
   // Power-action confirmations — single-question form, matching the installer confirm convention.
   'launcher.confirm.shutdown': 'Shut down the PC?',
   'launcher.confirm.reboot': 'Reboot the PC?',

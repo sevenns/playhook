@@ -97,6 +97,10 @@ state, offers:
   [Steam-mode](#steam-mode-launch-and-install-steam-games) cards (an uninstalled game has no Play
   button at all — you start from here);
 - **Force close** — while a game is running, kills it and still records the session and syncs saves;
+- **Remove from history** — for a game you no longer have (its card is out and it is not a local game),
+  drops it from the carousel along with the art copied for it. Saves and playtime stay: put the card
+  back in and the game returns with its stats. Games you *can* play right now don't offer this item —
+  they are rebuilt from their card / library every time it is read;
 - **System** — a submenu with Shutdown / Reboot / Sleep (each behind a confirmation) and
   **Minimize Playhook**, which sends the window back to the tray. In Game Mode that last item is
   **Close Playhook** (a full quit) instead, since there is no tray to minimize into.
@@ -120,7 +124,7 @@ The row is ordered by how recently you **touched** a game — the later of "its 
 played it" — so a card you put in yesterday and never got around to starting still sits near the front.
 The games on the currently inserted card come first, ordered by when you last played them. The history
 keeps 40 games; beyond that the least recently touched are dropped, and the games on the inserted card
-are never evicted.
+are never evicted. To drop one yourself, open it and use **Remove from history** in the More ⋯ menu.
 
 Use `gridImage` in `game.json` to control how a game looks in that row. It expects a **600x900** portrait
 cover — the same format Steam uses, so [SteamGridDB](https://www.steamgriddb.com/) is the easiest place to

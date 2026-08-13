@@ -20,7 +20,7 @@ import { req, reqQuery } from './dom.js';
 // The current popup view (mutually exclusive; 'none' = closed). Mirrors the data-view on #popup.
 type PopupView = 'none' | 'details' | 'power' | 'confirm' | 'error';
 // Which action the confirm view is asking about (only meaningful while popupView === 'confirm').
-type ConfirmMode = 'install' | 'uninstall' | 'kill' | 'shutdown' | 'reboot' | 'sleep';
+type ConfirmMode = 'install' | 'uninstall' | 'kill' | 'forget' | 'shutdown' | 'reboot' | 'sleep';
 // Gamepad A doesn't trigger :active, so flash a press class to play the scale-down animation.
 const PRESS_MS = 130;
 
@@ -134,6 +134,7 @@ export function createControls(deps: ControlsDeps): Controls {
   const menuInstallToggle = req<HTMLButtonElement>('menu-install-toggle');
   const menuKill = req<HTMLButtonElement>('menu-kill');
   const menuLibrary = req<HTMLButtonElement>('menu-library');
+  const menuForget = req<HTMLButtonElement>('menu-forget');
   const menuClose = req<HTMLButtonElement>('menu-close');
   const powerShutdown = req<HTMLButtonElement>('power-shutdown');
   const powerReboot = req<HTMLButtonElement>('power-reboot');
@@ -149,6 +150,8 @@ export function createControls(deps: ControlsDeps): Controls {
   // Where B/Esc/veil returns FROM the confirm view: install/uninstall come from Details, the power
   // actions come from Power.
   let confirmReturnTo: 'details' | 'power' = 'details';
+  /** The game the open remove-from-history confirm is about — captured when it opens (see openConfirm). */
+  let forgetId: string | null = null;
 
   // ── Popup machine ────────────────────────────────────────────────────────────
   // One #popup element; opening = add .is-open + set data-view; switching views keeps .is-open (so the
@@ -177,6 +180,7 @@ export function createControls(deps: ControlsDeps): Controls {
     applyMenuInstallToggle(); // keep the toggle's text/visibility fresh for the current game
     applyMenuKill(); // keep the force-close item's visibility fresh (running-only)
     applyMenuLibrary(); // keep the "Library" item fresh (only when there is a carousel to go back to)
+    applyMenuForget(); // keep the "Remove from history" item fresh (history-only games)
     setView('details');
     focusStackBottom(); // default focus: Close
     applyFocus(); // main highlight clears (focusActive false with a popup open)
@@ -230,6 +234,17 @@ export function createControls(deps: ControlsDeps): Controls {
       if (mode === 'install') {
         confirmPath.textContent = isSteamInstall || isCopy ? '' : (game.installDir ?? '');
       }
+    } else if (mode === 'forget') {
+      // Remove-from-history confirm (from Details). The id is captured HERE, not read again on Yes: main
+      // can move the screen onto another game while the popup is open (a card is inserted), and the one
+      // the question was asked about is the only one it may answer for.
+      const browse = deps.getBrowse();
+      if (browse === null || browse.active) return; // gone or now playable — the item no longer applies
+      forgetId = browse.id;
+      confirmReturnTo = 'details';
+      popup.dataset['mode'] = mode;
+      delete popup.dataset['installVia'];
+      confirmMessage.textContent = t()('launcher.confirm.forget', { title: browse.title });
     } else if (mode === 'kill') {
       // Force-close confirm (from Details): no path note; returns to Details. The message warns about
       // unsaved progress. data-mode ≠ 'install' hides the path note (styles.css).
@@ -327,6 +342,17 @@ export function createControls(deps: ControlsDeps): Controls {
     const show = deps.carousel.exists() && deps.carousel.screen() === 'detail';
     menuLibrary.classList.toggle('is-hidden', !show);
     if (show) menuLibrary.textContent = t()('launcher.menu.library');
+  }
+
+  // ── Menu item: Remove from history (history-only games) ──────────────────────
+  // Offered ONLY for a game that is not available right now — `active` is main's word for "on the card or
+  // in the PC library". Those games are rebuilt from their manifests on every insert, so removing one
+  // would be a lie the next refresh undoes; what CAN be removed is the record of a game you no longer have.
+  function applyMenuForget(): void {
+    const browse = deps.getBrowse();
+    const show = browse !== null && !browse.active;
+    menuForget.classList.toggle('is-hidden', !show);
+    if (show) menuForget.textContent = t()('launcher.menu.forget');
   }
 
   // The power menu's primary item. Desktop/Windows: "Minimize Playhook" (hide to tray). Game Mode: "Close
@@ -458,6 +484,7 @@ export function createControls(deps: ControlsDeps): Controls {
     menuInstallToggle,
     menuKill,
     menuLibrary,
+    menuForget,
     menuClose,
     powerShutdown,
     powerReboot,
@@ -477,6 +504,7 @@ export function createControls(deps: ControlsDeps): Controls {
         if (!menuInstallToggle.classList.contains('is-hidden')) items.push(menuInstallToggle);
         if (!menuKill.classList.contains('is-hidden')) items.push(menuKill);
         if (!menuLibrary.classList.contains('is-hidden')) items.push(menuLibrary);
+        if (!menuForget.classList.contains('is-hidden')) items.push(menuForget);
         items.push(menuClose);
         return items;
       }
@@ -582,6 +610,9 @@ export function createControls(deps: ControlsDeps): Controls {
     } else if (btn === menuKill) {
       audio.play('button');
       openConfirm('kill');
+    } else if (btn === menuForget) {
+      audio.play('button');
+      openConfirm('forget');
     } else if (btn === menuLibrary) {
       // Non-destructive, so no confirm: close the popup and hand control back to the strip.
       audio.play('back');
@@ -641,6 +672,11 @@ export function createControls(deps: ControlsDeps): Controls {
       case 'kill':
         audio.play('button'); // neutral sound for the destructive confirm
         window.api.requestKill();
+        break;
+      case 'forget':
+        audio.play('button'); // neutral sound for the destructive confirm
+        if (forgetId !== null) window.api.forgetGame(forgetId);
+        forgetId = null;
         break;
       case 'shutdown':
         audio.play('button');
@@ -844,6 +880,7 @@ export function createControls(deps: ControlsDeps): Controls {
     applyMenuInstallToggle();
     applyMenuKill();
     applyMenuLibrary();
+    applyMenuForget();
   }
 
   function clearGameButtons(): void {
@@ -851,6 +888,7 @@ export function createControls(deps: ControlsDeps): Controls {
     // screen anyway; no-game is never `running`).
     menuInstallToggle.classList.add('is-hidden');
     menuKill.classList.add('is-hidden');
+    menuForget.classList.add('is-hidden'); // no game on screen → nothing to remove from the history
     applyMenuLibrary(); // the carousel can still be there with no game on screen (history only)
   }
 

@@ -337,6 +337,32 @@ export class LibraryStore {
     });
   }
 
+  /**
+   * Drops ONE game from the history on the user's request: its record and the artwork copied for it. The
+   * same deletion the GC performs, minus the choosing — so a game the user is done with can go before the
+   * limit would have evicted it.
+   *
+   * Deliberately NOT touched: `stats/<id>.json` and the save backups. Those belong to the game, not to
+   * the catalogue — putting the card back in must bring the playtime and the saves back with it, and a
+   * menu item that quietly destroyed them would be a different (and far more dangerous) feature.
+   *
+   * Returns false when there was no such record — the caller has nothing to re-push then.
+   */
+  async forget(id: string): Promise<boolean> {
+    if (this.entry(id) === null) return false;
+    this.index = removeEntry(this.index, id);
+    await this.writeIndex();
+    try {
+      await fse.remove(this.gameDir(id));
+      log.info(`[library] forgot id=${id} (removed from the history by the user)`);
+    } catch (cause) {
+      // As in the GC: the record is already gone, a leftover directory is cosmetic. The next copy of this
+      // game overwrites it anyway (saveOne removes the directory before re-filling it).
+      log.warn(`[library] failed to remove the directory of forgotten id=${id}:`, describe(cause));
+    }
+    return true;
+  }
+
   /** Trims the history to MAX_LIBRARY_ENTRIES, deleting the evicted games' directories. */
   async gc(protectedIds: readonly string[] = []): Promise<void> {
     const { index, evicted } = evictBeyond(this.index, MAX_LIBRARY_ENTRIES, protectedIds);

@@ -60,6 +60,7 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'launcher.menu.quit': 'Закрыть Playhook',
   'launcher.menu.forceClose': 'Закрыть принудительно',
   'launcher.menu.library': 'Библиотека',
+  'launcher.menu.forget': 'Убрать из истории',
   'launcher.confirm.install': 'Установить игру?',
   'launcher.confirm.uninstall': 'Удалить игру с компьютера?',
   'launcher.confirm.uninstallPrefix': 'Очистить Proton-префикс?',
@@ -70,6 +71,8 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'launcher.confirm.shutdown': 'Выключить компьютер?',
   'launcher.confirm.reboot': 'Перезагрузить компьютер?',
   'launcher.confirm.kill': 'Закрыть игру принудительно? Несохранённый прогресс может быть потерян.',
+  'launcher.confirm.forget':
+    'Убрать «{title}» из истории? Сейвы и статистика останутся — вставьте карту, и игра вернётся.',
   'launcher.confirm.sleep': 'Перевести компьютер в спящий режим?',
   'launcher.installPathNote':
     'Не все установщики поддерживают тихий режим, поэтому при установке нужно указать следующий путь:',

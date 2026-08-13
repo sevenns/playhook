@@ -576,6 +576,7 @@ export class GameController {
       return this.deps.library.readGridThumb(id);
     });
     ipcMain.on(IPC.libraryBrowse, (_event, id: unknown) => void this.onBrowseRequested(id));
+    ipcMain.on(IPC.libraryForget, (_event, id: unknown) => void this.onForgetRequested(id));
     ipcMain.handle(IPC.wallpaperRequest, (): Promise<string | null> => this.assets.readWallpaperDataUrl());
     // Custom Empty-screen wallpaper (invoked from the settings window; the handlers live here because they
     // own the AssetReader + the game window — see plan F2.2 p.6). preview-request feeds the settings preview.
@@ -2317,6 +2318,26 @@ export class GameController {
   private async onBrowseRequested(idRaw: unknown): Promise<void> {
     if (typeof idRaw !== 'string') return;
     await this.browseTo(idRaw);
+  }
+
+  /**
+   * `library:forget` — the user dropped a game from the history. REFUSED for a game that is available
+   * right now: the card's and the PC library's games are rebuilt from their manifests on every insert /
+   * library load, so forgetting one would achieve nothing but throwing its artwork away until the next
+   * refresh copies it back. The menu hides the item for those games; this is the same rule on the side
+   * that owns the data (the renderer's list is a view, not an authority).
+   */
+  private async onForgetRequested(idRaw: unknown): Promise<void> {
+    if (typeof idRaw !== 'string') return;
+    if (this.games.some((manifest) => manifest.raw.id === idRaw)) {
+      log.warn(`[library] refused to forget id=${idRaw}: the game is available right now`);
+      return;
+    }
+    if (!(await this.deps.library.forget(idRaw))) return;
+    this.refreshLibrary();
+    // Only when it was the game ON SCREEN: reseeding otherwise would drag the cursor off whatever the
+    // user is looking at. With it gone the cursor lands on the next game, or on the empty screen.
+    if (this.currentBrowse?.id === idRaw) await this.reseedBrowse();
   }
 
   /**
