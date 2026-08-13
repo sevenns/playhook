@@ -53,6 +53,10 @@
   --d2: #4caf50;
   /* Text colour OUTSIDE the app shell (there is none in practice — see the #app override below). */
   --fg: #f0f0f0;
+  /* How long a background change takes: the hero layers' cross-fade, the palette interpolation and the
+     title/status reveal all read this ONE value, because they are meant to finish together — a game's
+     name arriving ahead of its artwork is exactly what this token exists to prevent. */
+  --hero-fade: 1s;
 }
 
 * {
@@ -95,9 +99,9 @@ body {
      because --d2 is set on this element — resolving it one level up would freeze the fallback green.
      Every text rule keeps using var(--fg), so this single line is also the whole way back. */
   --fg: var(--d2);
-  /* Palette crossfade, matched to the hero layers' own 1s opacity fade (see .hero-layer) so the colors
+  /* Palette crossfade, matched to the hero layers' own opacity fade (see .hero-layer) so the colors
      and the image arrive together. hero.ts sets --d1/--d2 on this element. */
-  transition: --d1 1s ease, --d2 1s ease;
+  transition: --d1 var(--hero-fade) ease, --d2 var(--hero-fade) ease;
   /* Establish a stacking context so the z-index:-1 hero ::before paints ABOVE #app's own
      background-color (otherwise the opaque bg covers it → black screen) but below the UI. */
   isolation: isolate;
@@ -141,7 +145,7 @@ body {
   background-size: cover;
   background-position: center;
   opacity: 0;
-  transition: opacity 1s ease;
+  transition: opacity var(--hero-fade) ease;
   transform-origin: center;
   will-change: transform, opacity;
   animation: bg-pan 30s ease-in-out infinite alternate;
@@ -769,14 +773,14 @@ html:not(.cursor-hidden) .rect-button:hover,
   /* `left` is animated too: it moves between the Play-less slot (x=50) and the normal one (x=174), and
      an un-animated jump there is exactly what made the name "hop" when entering a game with no Play. */
   transition: transform 0.45s cubic-bezier(0.4, 0, 0.2, 1), font-size 0.35s cubic-bezier(0.4, 0, 0.2, 1),
-    left 0.35s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.3s ease;
+    left 0.35s cubic-bezier(0.4, 0, 0.2, 1), opacity var(--text-fade, 0.3s) ease;
 }
 
 /* Flipping through the carousel: the OLD text must not linger over the new card while main is still
    answering (the browse request is debounced). The renderer drops it the instant the selection moves —
-   `transition: none` makes that cut instant — and removing the class once the new text is in place
-   fades it back in through the opacity transition above. The status line behaves exactly like the title:
-   both are cut and revealed together, so the two-line block never half-changes. */
+   `transition: none` makes that cut instant — and removes the class when the new BACKGROUND arrives,
+   which fades it back in through the opacity transition above. The status line behaves exactly like the
+   title: both are cut and revealed together, so the two-line block never half-changes. */
 .title.is-swapping {
   opacity: 0;
   transition: none;
@@ -786,6 +790,15 @@ html:not(.cursor-hidden) .rect-button:hover,
 #app[data-status] .status.is-swapping {
   opacity: 0;
   transition: none;
+}
+
+/* …and the reveal itself runs at the BACKGROUND's tempo, not the text's own: the renderer only drops
+   `is-swapping` once the new hero payload is in, so with the same duration the name, the status line and
+   the artwork all settle on the same frame. The renderer takes the class off again when the fade is over,
+   handing opacity back to the quick default the busy transitions use. */
+.title.is-revealing,
+.status.is-revealing {
+  --text-fade: var(--hero-fade);
 }
 
 /* Carousel level: the text block moves NEXT TO the selected card, not under it — x=202 (the card's right
@@ -839,7 +852,7 @@ html:not(.cursor-hidden) .rect-button:hover,
      and vertical shifts, exactly as on .title — the two lines move as ONE block. */
   transform: translate(var(--status-x, 0px), calc(-18 * var(--px) - var(--text-lift, 0px)));
   opacity: 0;
-  transition: opacity 0.3s ease, transform 0.45s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: opacity var(--text-fade, 0.3s) ease, transform 0.45s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 /* The status fades in TOGETHER with the title's move — no delay: sequencing them made the line look
