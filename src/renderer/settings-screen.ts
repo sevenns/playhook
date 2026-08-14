@@ -46,6 +46,21 @@ const VOLUME_STEP = 5;
 const DRAG_PERSIST_MS = 150;
 /** The SFX preview plays at most this often while a volume is being dragged. */
 const PREVIEW_THROTTLE_MS = 220;
+/**
+ * How long the list takes to reach a new scroll target. The scroll is animated here rather than left to
+ * `scrollIntoView({behavior:'smooth'})`: the native one picks its own duration per distance, so a held
+ * direction produced a different (and visibly uneven) glide on every step. One fixed duration with one
+ * easing, re-aimed from wherever the current animation is, reads as a single continuous movement.
+ */
+const SCROLL_MS = 220;
+/** Standard ease-in-out — the same shape as the CSS transitions the focus highlight uses. */
+function easeInOut(t: number): number {
+  return t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2;
+}
+/** How much of the list is kept visible past the focused row, so the next one is always already in view. */
+const SCROLL_MARGIN_PX = 90;
+/** The mask's fade height at each edge (mirrors --fade-size in styles.css). */
+const EDGE_FADE_PX = 28;
 
 /** What the screen sends to main. A seam, so app.ts owns the window.api wiring (and tests can fake it). */
 export interface SettingsScreenApi {
@@ -204,14 +219,87 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
     window.setTimeout(() => el.classList.remove('is-pressed'), PRESS_MS);
   }
 
+  // The running scroll animation (rAF). A new target re-aims the SAME animation from wherever the list
+  // currently is, so a burst of steps is one continuous movement rather than a queue of competing ones.
+  let scrollTarget = 0;
+  let scrollFrom = 0;
+  let scrollStartedAt = 0;
+  let scrollFrame = 0;
+
+  /** Clamps a desired scrollTop to what the list can actually show. */
+  function clampScroll(top: number): number {
+    return Math.min(Math.max(0, top), Math.max(0, listEl.scrollHeight - listEl.clientHeight));
+  }
+
+  function scrollStep(): void {
+    const progress = Math.min(1, (performance.now() - scrollStartedAt) / SCROLL_MS);
+    listEl.scrollTop = scrollFrom + (scrollTarget - scrollFrom) * easeInOut(progress);
+    applyEdgeFades();
+    if (progress >= 1) {
+      listEl.scrollTop = scrollTarget;
+      scrollFrame = 0;
+      applyEdgeFades();
+      return;
+    }
+    scrollFrame = requestAnimationFrame(scrollStep);
+  }
+
+  /** Animates scrollTop to `top` over SCROLL_MS, starting from the list's current position. */
+  function scrollTo(top: number, instant = false): void {
+    const goal = clampScroll(top);
+    if (instant) {
+      if (scrollFrame !== 0) cancelAnimationFrame(scrollFrame);
+      scrollFrame = 0;
+      scrollTarget = goal;
+      listEl.scrollTop = goal;
+      applyEdgeFades();
+      return;
+    }
+    if (scrollFrame !== 0 && Math.abs(goal - scrollTarget) < 0.5) return; // already heading there
+    scrollTarget = goal;
+    scrollFrom = listEl.scrollTop;
+    scrollStartedAt = performance.now();
+    if (scrollFrame === 0) scrollFrame = requestAnimationFrame(scrollStep);
+  }
+
   /**
-   * Paints the focus and keeps it on screen. The scroll stays SMOOTH even under a held direction:
-   * each scrollIntoView re-targets the running animation from wherever it is, so a burst reads as one
-   * continuous glide — where jumping per step (the obvious answer for a repeat) made it stutter.
+   * The edge fades exist to soften a row CUT BY the clip — so they must not sit over content that has
+   * nothing behind it: at the very top and the very bottom the corresponding fade is switched off, or
+   * the first and last rows read as dimmed for no reason (they are exactly where the focus starts).
    */
-  function applyRowFocus(): void {
+  function applyEdgeFades(): void {
+    const top = listEl.scrollTop > 1 ? EDGE_FADE_PX : 0;
+    const bottom =
+      listEl.scrollTop < listEl.scrollHeight - listEl.clientHeight - 1 ? EDGE_FADE_PX : 0;
+    listEl.style.setProperty('--fade-top', `calc(${top} * var(--px))`);
+    listEl.style.setProperty('--fade-bottom', `calc(${bottom} * var(--px))`);
+  }
+
+  /**
+   * Paints the focus and keeps it on screen, with a margin: the list starts moving BEFORE the focused
+   * row reaches the edge, so there is always a row of context ahead of it and the movement is continuous
+   * rather than a jump per step at the boundary.
+   */
+  function applyRowFocus(instant = false): void {
     rendered.forEach((row, index) => row.el.classList.toggle('is-focused', index === focusIndex));
-    focusedRow()?.el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    const target = focusedRow();
+    if (target === undefined) return;
+    const margin = SCROLL_MARGIN_PX * pxUnit();
+    const rowTop = target.el.offsetTop - listEl.offsetTop;
+    const rowBottom = rowTop + target.el.offsetHeight;
+    const viewTop = listEl.scrollTop;
+    const viewBottom = viewTop + listEl.clientHeight;
+    if (rowTop - margin < viewTop) scrollTo(rowTop - margin, instant);
+    else if (rowBottom + margin > viewBottom)
+      scrollTo(rowBottom + margin - listEl.clientHeight, instant);
+    else applyEdgeFades();
+  }
+
+  /** One design pixel in real px (--px is a vh unit, so it changes with the window). */
+  function pxUnit(): number {
+    const value = getComputedStyle(document.documentElement).getPropertyValue('--px');
+    const parsed = Number.parseFloat(value);
+    return Number.isFinite(parsed) ? (parsed * window.innerHeight) / 100 : 1;
   }
 
   /** The loading line, shown until the first snapshot lands (the settings window did the same). */
@@ -272,7 +360,10 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
     model = next;
     rendered = renderSettings(listEl, next, t()).rows;
     focusIndex = Math.min(Math.max(focusIndex, 0), Math.max(0, rendered.length - 1));
-    applyRowFocus();
+    applyRowFocus(true);
+    // The rows were inserted THIS tick, so scrollHeight is still the pre-layout value — the fades would
+    // be computed against a list that "doesn't scroll yet". Re-run them once the layout has settled.
+    requestAnimationFrame(() => applyEdgeFades());
   }
 
   // ── Value changes ──────────────────────────────────────────────────────────
@@ -674,6 +765,9 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
   listEl.addEventListener('pointerup', endDrag);
   listEl.addEventListener('pointercancel', endDrag);
 
+  // The wheel scrolls the list natively (nothing routes it), so the fades follow that too.
+  listEl.addEventListener('scroll', () => applyEdgeFades(), { passive: true });
+
   veil?.addEventListener('click', () => {
     deps.audio.play('back');
     close();
@@ -692,11 +786,11 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
       focusIndex = 0;
       app.dataset['overlay'] = 'settings';
       screen.setAttribute('aria-hidden', 'false');
-      // Instant, not smooth: a re-open must START at the top rather than glide there from wherever the
-      // previous visit left the list (which showed as a half-cropped first row).
-      listEl.scrollTo({ top: 0, behavior: 'instant' });
+      // Instant, not animated: a re-open must START at the top rather than glide there from wherever
+      // the previous visit left the list (which showed as a half-cropped first row).
+      scrollTo(0, true);
       render();
-      applyRowFocus();
+      applyRowFocus(true);
     },
     close,
     navUp,

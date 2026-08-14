@@ -1163,20 +1163,31 @@ html:not(.cursor-hidden) .text-button:hover,
   pointer-events: auto;
 }
 
-/* Veil in the popup's own language, but full-width: this screen is not a right-hand column. Deliberately
-   thin — the game's hero stays readable behind it, which is what makes this a launcher screen and not a
-   settings dialog. The blur carries the contrast the missing opacity would have. */
+/* Veil in the popup's own language, but full-width: this screen is not a right-hand column.
+   NO backdrop-filter here, deliberately. A blur samples everything under it EVERY frame, and what is
+   under it is a full-screen hero running a perpetual pan animation — on a Deck that is enough to cost
+   frames, and dropped frames are what made the focus stutter as it moved. Instead the hero itself fades
+   out (see below) and the veil fills with flat --d1: one composited layer, no per-frame sampling. */
 .settings-veil {
   position: absolute;
   inset: 0;
-  background: linear-gradient(
-    to right,
-    color-mix(in srgb, var(--d1) 78%, transparent) 0%,
-    color-mix(in srgb, var(--d1) 90%, transparent) 100%
-  );
-  backdrop-filter: blur(12px);
+  background: var(--d1);
   opacity: 0;
   transition: opacity 0.35s ease;
+}
+
+/* The hero goes with it — faded out, and its pan animation PAUSED so nothing keeps painting behind a
+   screen that no longer shows it. Both come back on the way out, in the same beat as everything else. */
+#app[data-overlay='settings'] #hero {
+  opacity: 0;
+}
+
+#app[data-overlay='settings'] .hero-layer {
+  animation-play-state: paused;
+}
+
+#hero {
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.35s ease;
 }
 
 #app[data-overlay='settings'] .settings-veil {
@@ -1231,21 +1242,25 @@ html:not(.cursor-hidden) .text-button:hover,
   min-height: 0;
   overflow-y: auto;
   scrollbar-width: none;
-  scroll-behavior: smooth;
-  /* Both edges fade rather than cut: a row crossing the clip is half-transparent instead of sliced, so
-     the list reads as continuing past the screen instead of being eaten by it. */
+  /* NOT scroll-behavior: smooth — the screen animates scrollTop itself (settings-screen.ts) with one
+     fixed duration and easing; leaving the native smoothing on would fight it frame for frame. */
+  /* Each edge fades rather than cuts, so a row crossing the clip is half-transparent instead of sliced.
+     The sizes are driven from JS: an edge with nothing beyond it (the very top, the very bottom) has NO
+     fade, or the first and last rows would sit dimmed under a gradient that hides nothing. */
+  --fade-top: 0px;
+  --fade-bottom: 0px;
   -webkit-mask-image: linear-gradient(
     to bottom,
     transparent 0,
-    #000 calc(28 * var(--px)),
-    #000 calc(100% - calc(28 * var(--px))),
+    #000 var(--fade-top),
+    #000 calc(100% - var(--fade-bottom)),
     transparent 100%
   );
   mask-image: linear-gradient(
     to bottom,
     transparent 0,
-    #000 calc(28 * var(--px)),
-    #000 calc(100% - calc(28 * var(--px))),
+    #000 var(--fade-top),
+    #000 calc(100% - var(--fade-bottom)),
     transparent 100%
   );
 }
@@ -1559,8 +1574,8 @@ html:not(.cursor-hidden) .setting-row[data-kind='update-status']:hover {
 .settings-options-veil {
   position: absolute;
   inset: 0;
-  background: color-mix(in srgb, var(--d1) 88%, transparent);
-  backdrop-filter: blur(12px);
+  /* Flat fill, no blur — for the same frame-cost reason as .settings-veil above. */
+  background: color-mix(in srgb, var(--d1) 92%, transparent);
 }
 
 .settings-options-list {

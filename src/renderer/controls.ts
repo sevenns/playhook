@@ -220,6 +220,7 @@ export function createControls(deps: ControlsDeps): Controls {
     applyMenuHome(); // keep the "Home" item fresh (only when there is a carousel to go back to)
     applyMenuForget(); // keep the "Remove from history" item fresh (history-only games)
     applyMenuSystem(); // …and System, which belongs to the carousel level, not to a game
+    applyMenuSettings(); // …and Settings, which belongs to that level too
     setView('details');
     focusStackBottom(); // default focus: Close
     applyFocus(); // main highlight clears (focusActive false with a popup open)
@@ -392,6 +393,15 @@ export function createControls(deps: ControlsDeps): Controls {
    */
   function applyMenuSystem(): void {
     menuShutdown.classList.toggle('is-hidden', onGameScreen() && deps.carousel.exists());
+  }
+
+  /**
+   * Settings live at the launcher level (Home), not inside one game's menu — the same rule System
+   * follows, and the same exception: with NO carousel to go up to (a single-game card, the empty screen)
+   * the detail menu is the only menu there is, and hiding Settings there would put them out of reach.
+   */
+  function applyMenuSettings(): void {
+    menuSettings.classList.toggle('is-hidden', onGameScreen() && deps.carousel.exists());
   }
 
   function applyMenuInstallToggle(): void {
@@ -595,9 +605,9 @@ export function createControls(deps: ControlsDeps): Controls {
   // Details, whether the Install/Uninstall item is present). Default focus is the BOTTOM button.
   const ALL_STACK_BUTTONS: readonly HTMLButtonElement[] = [
     menuShutdown,
+    menuHome,
     menuInstallToggle,
     menuKill,
-    menuHome,
     menuForget,
     menuSettings,
     menuClose,
@@ -617,11 +627,11 @@ export function createControls(deps: ControlsDeps): Controls {
       case 'details': {
         const items: HTMLButtonElement[] = [];
         if (!menuShutdown.classList.contains('is-hidden')) items.push(menuShutdown);
+        if (!menuHome.classList.contains('is-hidden')) items.push(menuHome);
         if (!menuInstallToggle.classList.contains('is-hidden')) items.push(menuInstallToggle);
         if (!menuKill.classList.contains('is-hidden')) items.push(menuKill);
-        if (!menuHome.classList.contains('is-hidden')) items.push(menuHome);
         if (!menuForget.classList.contains('is-hidden')) items.push(menuForget);
-        items.push(menuSettings);
+        if (!menuSettings.classList.contains('is-hidden')) items.push(menuSettings);
         items.push(menuClose);
         return items;
       }
@@ -1098,6 +1108,7 @@ export function createControls(deps: ControlsDeps): Controls {
     applyMenuHome();
     applyMenuForget();
     applyMenuSystem();
+    applyMenuSettings();
   }
 
   function clearGameButtons(): void {
@@ -1108,6 +1119,7 @@ export function createControls(deps: ControlsDeps): Controls {
     menuForget.classList.add('is-hidden'); // no game on screen → nothing to remove from the history
     applyMenuHome(); // the carousel can still be there with no game on screen (history only)
     applyMenuSystem();
+    applyMenuSettings();
   }
 
   function refresh(): void {
