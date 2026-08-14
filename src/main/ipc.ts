@@ -456,6 +456,20 @@ export class GameController {
   }
 
   /**
+   * The game the CAROUSEL shows first, as a manifest — where a cursor with no opinion of its own belongs.
+   * `games` is in source order (the card's manifest as authored, then the library's `game.json`), while
+   * the row is sorted by how recently each game was touched: "the first game" means two different things,
+   * and the one the user can point at is the row's. Falls back to source order before the row exists, and
+   * to `current()` for a head that has no manifest (a history entry — only reachable with no game at all,
+   * since refreshLibrary puts every available game ahead of the history).
+   */
+  private firstCarouselGame(): ResolvedManifest | null {
+    const headId = this.currentLibrary?.games[0]?.id;
+    if (headId === undefined) return this.current();
+    return this.games.find((manifest) => manifest.raw.id === headId) ?? this.current();
+  }
+
+  /**
    * Whether this game's source is available right now. A card game needs its card in; a local game is on
    * this machine's disk, so it always is. Everything that used to read `cardPresent` for a SPECIFIC
    * manifest goes through here — with two sources, "no card" no longer means "this game is gone".
@@ -811,7 +825,9 @@ export class GameController {
     // With no card in, the local games are what the launcher has to show: leave `idle` for the first of
     // them instead of the empty screen. A card (or any activity) present → don't touch the state machine.
     if (!this.cardPresent && this.deps.state.get().kind === 'idle' && !this.launchInFlight) {
-      const selected = this.current();
+      // The row's first card, not the library file's first entry — see firstCarouselGame. refreshLibrary
+      // above has already built the row this reads, so the two can't disagree.
+      const selected = this.firstCarouselGame();
       if (selected !== null) {
         this.selectedId = selected.raw.id;
         this.setHero(await this.assets.readHeroAssets(selected));
