@@ -1617,11 +1617,9 @@ html:not(.cursor-hidden) .setting-row[data-kind='update-status']:hover {
   flex: 0 0 auto;
   min-width: calc(184 * var(--px));
   max-width: 100%;
-  display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  line-height: calc(92 * var(--px));
-  text-align: right;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
   padding: 0 calc(32 * var(--px));
   border: none;
   border-radius: calc(10 * var(--px));
@@ -1630,9 +1628,68 @@ html:not(.cursor-hidden) .setting-row[data-kind='update-status']:hover {
   font-family: inherit;
   font-weight: 500;
   font-size: calc(28 * var(--px));
-  white-space: nowrap;
   cursor: pointer;
   transition: background 0.2s ease, color 0.2s ease, transform 0.12s ease;
+}
+
+/* The label's window + a moving inner span — the same mechanism the 0.6 "Select game" picker used for
+   long titles (.game-label / .game-label-inner), brought back here. A label too long for the column is
+   hard-clipped with a soft fade at the cut, and only the FOCUSED option scrolls, so the list doesn't
+   crawl. No ellipsis anywhere: the bundled font draws it as three mid-height dots. */
+.settings-option-clip {
+  /* `0 1 auto` + min-width:0 — sized by the text, but allowed to shrink once the button hits its cap;
+     that shrink is what produces the clip. */
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  --fade: calc(8 * var(--px));
+}
+
+/* Clipped but not scrolling: an overflowing label is laid out from its start, so the cut is on the
+   RIGHT — that edge fades, exactly as the 0.6 picker did it. */
+.settings-option.is-clipped .settings-option-clip {
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - var(--fade)), transparent 100%);
+  mask-image: linear-gradient(to right, #000 calc(100% - var(--fade)), transparent 100%);
+}
+
+/* While it scrolls, both edges fade so the text enters and leaves softly on either side. */
+.settings-option.is-scrolling .settings-option-clip {
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    #000 var(--fade),
+    #000 calc(100% - var(--fade)),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    #000 var(--fade),
+    #000 calc(100% - var(--fade)),
+    transparent 100%
+  );
+}
+
+.settings-option-text {
+  display: inline-block;
+  white-space: nowrap;
+  will-change: transform;
+}
+
+/* Ping-pong marquee: shift + per-label duration come from JS (measured overflow at a constant speed);
+   `alternate` runs to the end and back, `ease-in-out` dwells at each edge so both ends are readable. */
+.settings-option.is-scrolling .settings-option-text {
+  animation: option-marquee var(--marquee-duration, 6s) ease-in-out infinite alternate;
+}
+
+@keyframes option-marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(var(--marquee-shift, 0));
+  }
 }
 
 html:not(.cursor-hidden) .settings-option:hover,

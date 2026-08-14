@@ -30,6 +30,7 @@ import {
 } from './settings-form-model.js';
 import {
   optionLabel,
+  optionLabelNode,
   patchRow,
   relocalizeRow,
   relocalizeSections,
@@ -57,6 +58,8 @@ const SCROLL_MS = 220;
 function easeInOut(t: number): number {
   return t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2;
 }
+/** Marquee speed for a clipped option label, in DESIGN px per second (the 0.6 picker's own constant). */
+const MARQUEE_SPEED_PX_PER_S = 60;
 /** How much of the list is kept visible past the focused row, so the next one is always already in view. */
 const SCROLL_MARGIN_PX = 90;
 /** The mask's fade height at each edge (mirrors --fade-size in styles.css). */
@@ -507,6 +510,7 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
       button.classList.toggle('is-focused', index === optionIndex),
     );
     openSelect?.buttons[optionIndex]?.scrollIntoView({ block: 'nearest' });
+    updateOptionMarquee(); // the marquee follows the focus — only the focused label moves
   }
 
   function chooseOption(rowIndex: number, option: SettingsOption): void {
@@ -521,7 +525,7 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
       const button = document.createElement('button');
       button.type = 'button';
       button.className = 'settings-option';
-      button.textContent = optionLabel(option, t());
+      button.append(optionLabelNode(optionLabel(option, t())));
       button.classList.toggle('is-current', option.value === row.value);
       button.addEventListener('click', () => {
         pressFlash(button);
@@ -535,11 +539,54 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
     });
     optionsListEl.replaceChildren(...buttons);
     optionsEl.classList.add('is-open');
+    // Measured synchronously: reading clientWidth flushes the layout for the nodes just inserted, which
+    // a requestAnimationFrame callback would only get around to on the next frame — and never at all in
+    // a window that isn't painting. A label that doesn't fit gets the distance it must travel to show
+    // its start, and the marquee (CSS, focused option only) runs off that.
+    updateOptionMarquee();
     optionsEl.setAttribute('aria-hidden', 'false');
     const current = row.options.findIndex((option) => option.value === row.value);
     optionIndex = current === -1 ? 0 : current;
     openSelect = { rowIndex, buttons };
     applyOptionFocus();
+  }
+
+  /**
+   * Marks every option whose label doesn't fit as clipped (→ a soft fade at the cut) and starts the
+   * marquee on the FOCUSED one (→ both edges fade + it scrolls). Lifted from the 0.6 "Select game"
+   * picker's updateSelectGameMarquee: same measurement, same constant speed, so a long label reads at
+   * one pace whatever its length. An overflowing label is laid out from its start (flex alignment gives
+   * way to overflow), so it slides LEFT to reveal its end — hence the negative shift.
+   */
+  function updateOptionMarquee(): void {
+    if (openSelect === null) return;
+    // A window that hasn't laid out yet (or isn't painting) reports zero widths — measuring against that
+    // would mark every label as fitting. Try again on the next frame instead of guessing.
+    const first = openSelect.buttons[0]?.querySelector<HTMLElement>('.settings-option-clip');
+    if (first !== null && first !== undefined && first.clientWidth === 0) {
+      requestAnimationFrame(() => updateOptionMarquee());
+      return;
+    }
+    for (const button of openSelect.buttons) {
+      const clip = button.querySelector<HTMLElement>('.settings-option-clip');
+      const text = button.querySelector<HTMLElement>('.settings-option-text');
+      if (clip === null || text === null) continue;
+      const overflow = text.scrollWidth - clip.clientWidth;
+      const clipped = overflow > 1;
+      button.classList.toggle('is-clipped', clipped);
+      if (clipped && button.classList.contains('is-focused')) {
+        text.style.setProperty('--marquee-shift', `${-overflow}px`);
+        text.style.setProperty(
+          '--marquee-duration',
+          `${Math.max(2, overflow / (MARQUEE_SPEED_PX_PER_S * pxUnit()))}s`,
+        );
+        button.classList.add('is-scrolling');
+      } else {
+        button.classList.remove('is-scrolling');
+        text.style.removeProperty('--marquee-shift');
+        text.style.removeProperty('--marquee-duration');
+      }
+    }
   }
 
   // ── The six primitives ─────────────────────────────────────────────────────
@@ -827,8 +874,10 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
         if (row !== undefined && row.kind === 'select') {
           openSelect.buttons.forEach((button, index) => {
             const option = row.options[index];
-            if (option !== undefined) button.textContent = optionLabel(option, t());
+            const text = button.querySelector<HTMLElement>('.settings-option-text');
+            if (option !== undefined && text !== null) text.textContent = optionLabel(option, t());
           });
+          updateOptionMarquee();
         }
       }
     },

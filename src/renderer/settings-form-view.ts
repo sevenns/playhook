@@ -31,6 +31,22 @@ export interface RenderedScreen {
   readonly rows: readonly RenderedRow[];
 }
 
+/**
+ * Builds an option's label as a clipped, scrollable line: `button > .settings-option-clip >
+ * .settings-option-text`. A label wider than the column is NOT ellipsized — the bundled font renders the
+ * ellipsis as three vertically-centred dots, and a cut-off word is worse than a moving one anyway. The
+ * clip fades at both edges and the focused option's text slides to reveal its start (styles.css).
+ */
+export function optionLabelNode(text: string): HTMLElement {
+  const clip = document.createElement('span');
+  clip.className = 'settings-option-clip';
+  const inner = document.createElement('span');
+  inner.className = 'settings-option-text';
+  inner.textContent = text;
+  clip.append(inner);
+  return clip;
+}
+
 /** The label of an option: a translation key for our own words, a literal for bundled proper names. */
 export function optionLabel(option: SettingsOption, t: Translator): string {
   return 'labelKey' in option ? t(option.labelKey) : option.label;
