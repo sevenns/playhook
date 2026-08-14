@@ -929,19 +929,28 @@ html:not(.cursor-hidden) .rect-button:hover,
  * The frosted layer, SEPARATE from the tint above and deliberately NOT animated.
  *
  * A backdrop-filter re-samples everything beneath it, and Chromium rasterizes that region afresh the
- * first time a given popup shows it — one costly frame, once per popup, landing exactly at the end of
- * the fade. A focus move on that frame was dropped and then caught up, which read as the highlight
- * jumping and snapping back (and never repeated for the same popup, because the raster was cached by
- * then). Switching the blur on in ONE frame moves that cost to the press itself, where the user is not
- * yet navigating and where there is no animation for it to collide with.
+ * first time a given popup shows it — one costly frame, once per popup (after that the raster is
+ * cached, which is why the stutter never repeated on the same popup). Two things keep that frame away
+ * from the moment the user is navigating:
+ *  • the blur is switched on in ONE frame, never faded, so the cost lands on the press itself;
+ *  • `will-change: transform` pins it to its own composited layer for good, so the layer is neither
+ *    created nor thrown away as the animations ABOVE it (the tint, the column) start and finish — that
+ *    hand-off was itself a repaint of the whole blurred region.
  */
 .popup-blur {
   position: absolute;
-  inset: 0;
+  /* Only the RIGHT part of the screen, not inset:0. The mask hid the left half anyway, so a full-width
+     layer was sampling — and re-sampling — twice the pixels it ever showed. The mask keeps the soft
+     start, now measured against this narrower box (0.58 of the screen ≈ 0.36 of a box starting at 35%). */
+  left: 35%;
+  right: 0;
+  top: 0;
+  bottom: 0;
   backdrop-filter: blur(12px);
-  -webkit-mask-image: linear-gradient(to right, transparent 0%, #000 58%);
-  mask-image: linear-gradient(to right, transparent 0%, #000 58%);
+  -webkit-mask-image: linear-gradient(to right, transparent 0%, #000 36%);
+  mask-image: linear-gradient(to right, transparent 0%, #000 36%);
   opacity: 0;
+  will-change: transform;
 }
 
 .popup.is-open .popup-blur {
@@ -962,6 +971,9 @@ html:not(.cursor-hidden) .rect-button:hover,
   transform: translateX(calc(40 * var(--px)));
   opacity: 0;
   transition: transform 0.35s ease, opacity 0.35s ease;
+  /* Its own layer, permanently: promoting it when the slide starts and dropping it when the slide ends
+     repaints what is under it — including the blurred region (see .popup-blur). */
+  will-change: transform, opacity;
 }
 
 .popup.is-open {
@@ -1613,12 +1625,17 @@ html:not(.cursor-hidden) .setting-row[data-kind='update-status']:hover {
    dropdown rather than inside it, because that container fades as a whole. */
 .settings-options-blur {
   position: absolute;
-  inset: 0;
+  /* Same narrowing as .popup-blur — half the pixels to sample, identical result on screen. */
+  left: 35%;
+  right: 0;
+  top: 0;
+  bottom: 0;
   backdrop-filter: blur(12px);
-  -webkit-mask-image: linear-gradient(to right, transparent 0%, #000 58%);
-  mask-image: linear-gradient(to right, transparent 0%, #000 58%);
+  -webkit-mask-image: linear-gradient(to right, transparent 0%, #000 36%);
+  mask-image: linear-gradient(to right, transparent 0%, #000 36%);
   opacity: 0;
   pointer-events: none;
+  will-change: transform; /* same layer pinning as .popup-blur */
 }
 
 #settings.is-options-open .settings-options-blur {
@@ -1641,6 +1658,7 @@ html:not(.cursor-hidden) .setting-row[data-kind='update-status']:hover {
   scrollbar-width: none;
   transform: translateX(calc(40 * var(--px)));
   transition: transform 0.35s ease;
+  will-change: transform;
 }
 
 .settings-options-list::-webkit-scrollbar {
