@@ -74,7 +74,7 @@ export const en = {
   'launcher.menu.quit': 'Close Playhook',
   // Force-close the running game (Details menu item, visible only while a game is running).
   'launcher.menu.forceClose': 'Force close',
-  'launcher.menu.library': 'Library',
+  'launcher.menu.home': 'Home',
   'launcher.menu.forget': 'Remove from history',
   // Confirmation popup copy (controls.ts). The Yes/No buttons use the shared common.* keys.
   'launcher.confirm.install': 'Do you want to install game?',

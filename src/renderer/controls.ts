@@ -13,6 +13,7 @@
 import type { AppState, BrowseInfo, GameInfo } from '../shared/types';
 import type { Translator } from '../shared/i18n/index.js';
 import { NAV_REPEAT_MS, createGamepadController } from './gamepad.js';
+import type { MoveResult } from './carousel.js';
 import { type AudioController } from './audio.js';
 import { gameOf, phaseOf, steamBusy } from './state-view.js';
 import { req, reqQuery } from './dom.js';
@@ -49,13 +50,13 @@ export interface ControlsDeps {
 export interface CarouselNav {
   /** 'carousel' (the strip) or 'detail' (the bar screen). */
   screen(): 'carousel' | 'detail';
-  /** Moves the selection by `delta` cards. */
-  move(delta: number): void;
+  /** Moves the selection by `delta` cards; says whether it moved, hit an end, or was locked mid-morph. */
+  move(delta: number): MoveResult;
   /** Enters the selected card's detail screen. */
   activate(): void;
   /** Steps back from a detail screen to the strip; false when there is no carousel to return to. */
   leaveDetail(): boolean;
-  /** Whether a carousel exists at all (>1 game) — gates the Details menu's "Library" item. */
+  /** Whether a carousel exists at all (>1 game) — gates the Details menu's "Home" item. */
   exists(): boolean;
 }
 
@@ -133,7 +134,7 @@ export function createControls(deps: ControlsDeps): Controls {
   const menuShutdown = req<HTMLButtonElement>('menu-shutdown');
   const menuInstallToggle = req<HTMLButtonElement>('menu-install-toggle');
   const menuKill = req<HTMLButtonElement>('menu-kill');
-  const menuLibrary = req<HTMLButtonElement>('menu-library');
+  const menuHome = req<HTMLButtonElement>('menu-home');
   const menuForget = req<HTMLButtonElement>('menu-forget');
   const menuClose = req<HTMLButtonElement>('menu-close');
   const powerShutdown = req<HTMLButtonElement>('power-shutdown');
@@ -179,8 +180,9 @@ export function createControls(deps: ControlsDeps): Controls {
   function openDetails(): void {
     applyMenuInstallToggle(); // keep the toggle's text/visibility fresh for the current game
     applyMenuKill(); // keep the force-close item's visibility fresh (running-only)
-    applyMenuLibrary(); // keep the "Library" item fresh (only when there is a carousel to go back to)
+    applyMenuHome(); // keep the "Home" item fresh (only when there is a carousel to go back to)
     applyMenuForget(); // keep the "Remove from history" item fresh (history-only games)
+    applyMenuSystem(); // …and System, which belongs to the carousel level, not to a game
     setView('details');
     focusStackBottom(); // default focus: Close
     applyFocus(); // main highlight clears (focusActive false with a popup open)
@@ -306,7 +308,29 @@ export function createControls(deps: ControlsDeps): Controls {
   // ── Menu item: Install / Uninstall (game-dependent) ──────────────────────────
   // One button whose text + visibility follow the current game: "Install" when it needs installing,
   // "Uninstall" when installed & removable, hidden entirely for a plain executable (no install block).
+  /**
+   * Whether the Details menu currently belongs to ONE game. On the carousel it does not: the strip is a
+   * browsing surface, and its More is the launcher-level menu (System + Close). Every game-specific item
+   * is gated on this, so none of them can appear over a row of cards.
+   */
+  function onGameScreen(): boolean {
+    return deps.carousel.screen() === 'detail';
+  }
+
+  /**
+   * System lives at the top level — the carousel — so the game's own menu is only about the game. With NO
+   * carousel to go up to (a single-game card, the empty screen) the detail menu is the only menu there
+   * is, and dropping System there would strand Shutdown / Minimize Playhook with no way to reach them.
+   */
+  function applyMenuSystem(): void {
+    menuShutdown.classList.toggle('is-hidden', onGameScreen() && deps.carousel.exists());
+  }
+
   function applyMenuInstallToggle(): void {
+    if (!onGameScreen()) {
+      menuInstallToggle.classList.add('is-hidden');
+      return;
+    }
     const game = screenIsActionable() ? screenGame() : undefined;
     // While an install/uninstall (card or Steam) is in flight, the Install/Uninstall item is hidden —
     // acting on it mid-operation makes no sense (Details still opens for the stats + power actions).
@@ -330,18 +354,18 @@ export function createControls(deps: ControlsDeps): Controls {
     // Shown only while a game is running AND a force-close isn't already in flight (during killing the
     // status reads "Force closing…" and the button would be a no-op — main guards a repeat anyway).
     const s = state();
-    const running = s.kind === 'running' && s.killing !== true;
+    const running = onGameScreen() && s.kind === 'running' && s.killing !== true;
     menuKill.classList.toggle('is-hidden', !running);
     if (running) menuKill.textContent = t()('launcher.menu.forceClose');
   }
 
-  // ── Menu item: Library (back to the history carousel) ────────────────────────
+  // ── Menu item: Home (back to the history carousel) ───────────────────────────
   // The MOUSE route out of a detail screen — the gamepad/keyboard have B for it, but a mouse user had no
   // way back to the strip. Shown only on a detail screen that has a carousel behind it.
-  function applyMenuLibrary(): void {
+  function applyMenuHome(): void {
     const show = deps.carousel.exists() && deps.carousel.screen() === 'detail';
-    menuLibrary.classList.toggle('is-hidden', !show);
-    if (show) menuLibrary.textContent = t()('launcher.menu.library');
+    menuHome.classList.toggle('is-hidden', !show);
+    if (show) menuHome.textContent = t()('launcher.menu.home');
   }
 
   // ── Menu item: Remove from history (history-only games) ──────────────────────
@@ -350,7 +374,7 @@ export function createControls(deps: ControlsDeps): Controls {
   // would be a lie the next refresh undoes; what CAN be removed is the record of a game you no longer have.
   function applyMenuForget(): void {
     const browse = deps.getBrowse();
-    const show = browse !== null && !browse.active;
+    const show = onGameScreen() && browse !== null && !browse.active;
     menuForget.classList.toggle('is-hidden', !show);
     if (show) menuForget.textContent = t()('launcher.menu.forget');
   }
@@ -368,6 +392,10 @@ export function createControls(deps: ControlsDeps): Controls {
 
   const ALL_MAIN_BUTTONS: readonly HTMLButtonElement[] = [playButton, moreButton];
   let focusIndex = 0;
+  // Which SURFACE holds the focus on the carousel screen: the strip (false, the default) or the bar's
+  // More button (true). Y flips it — see navToggleBar. Meaningless on the detail screen, where the bar
+  // always has it, and reset whenever the carousel is left so returning to it starts on the strip.
+  let carouselBarFocus = false;
   // Whether the bar's focus highlight is "awake". It goes dormant when an active state (install / launch
   // / uninstall / steam) appears, so the highlight doesn't auto-jump onto a button the user didn't pick;
   // it wakes again only on an explicit gamepad move or a mouse hover. `wasActive` tracks the edge.
@@ -381,6 +409,9 @@ export function createControls(deps: ControlsDeps): Controls {
   let cursorHidden = false;
 
   function mainFocusables(): readonly HTMLButtonElement[] {
+    // On the carousel screen Play is not a button at all — it is the selected card's invisible stand-in
+    // for the morph (see styles.css) — so More is the whole bar there.
+    if (deps.carousel.screen() === 'carousel') return [moreButton];
     // Steam install/uninstall indicator up (phase stays 'ready'): the gear opens Steam's Downloads page
     // and More opens Details — both focusable.
     if (steamBusy(state())) return [playButton, moreButton];
@@ -399,10 +430,11 @@ export function createControls(deps: ControlsDeps): Controls {
   }
 
   // Main focus is meaningful on every DETAIL screen (the More button is always present there) with the
-  // popup closed. On the carousel the bar buttons are hidden, so the highlight has nothing to sit on —
-  // the selection lives in the strip instead.
+  // popup closed. On the carousel the strip owns the selection instead — until Y hands the focus to the
+  // bar, which is the only way More is reachable there.
   function focusActive(): boolean {
-    return popupView === 'none' && deps.carousel.screen() === 'detail';
+    if (popupView !== 'none') return false;
+    return deps.carousel.screen() === 'detail' || carouselBarFocus;
   }
 
   function applyFocus(): void {
@@ -483,7 +515,7 @@ export function createControls(deps: ControlsDeps): Controls {
     menuShutdown,
     menuInstallToggle,
     menuKill,
-    menuLibrary,
+    menuHome,
     menuForget,
     menuClose,
     powerShutdown,
@@ -500,10 +532,11 @@ export function createControls(deps: ControlsDeps): Controls {
   function stackFocusables(): readonly HTMLButtonElement[] {
     switch (popupView) {
       case 'details': {
-        const items: HTMLButtonElement[] = [menuShutdown];
+        const items: HTMLButtonElement[] = [];
+        if (!menuShutdown.classList.contains('is-hidden')) items.push(menuShutdown);
         if (!menuInstallToggle.classList.contains('is-hidden')) items.push(menuInstallToggle);
         if (!menuKill.classList.contains('is-hidden')) items.push(menuKill);
-        if (!menuLibrary.classList.contains('is-hidden')) items.push(menuLibrary);
+        if (!menuHome.classList.contains('is-hidden')) items.push(menuHome);
         if (!menuForget.classList.contains('is-hidden')) items.push(menuForget);
         items.push(menuClose);
         return items;
@@ -613,7 +646,7 @@ export function createControls(deps: ControlsDeps): Controls {
     } else if (btn === menuForget) {
       audio.play('button');
       openConfirm('forget');
-    } else if (btn === menuLibrary) {
+    } else if (btn === menuHome) {
       // Non-destructive, so no confirm: close the popup and hand control back to the strip.
       audio.play('back');
       closePopup();
@@ -751,16 +784,38 @@ export function createControls(deps: ControlsDeps): Controls {
   // carousel strip (the top-level screen), then the bar. The primitives themselves are unchanged — the
   // routing lives HERE, in one place, so the gamepad and the keyboard can never diverge.
   const onCarousel = (): boolean => popupView === 'none' && deps.carousel.screen() === 'carousel';
+  /** Whether the STRIP is the surface the nav keys drive — the carousel screen, minus the spell in which
+   *  Y has handed the focus to the bar (then left/right/A belong to More, like on any other screen). */
+  const stripActive = (): boolean => onCarousel() && !carouselBarFocus;
 
   function navLeft(): void {
     noteGamepadActivity();
-    if (onCarousel()) deps.carousel.move(-1);
-    else if (popupView === 'none') moveFocus(-1);
+    if (stripActive()) {
+      deps.carousel.move(-1);
+      return;
+    }
+    // More sits to the RIGHT of the strip, so left is the way back to the cards — the exit the layout
+    // itself suggests, and the one a user will try before finding Y or B.
+    if (onCarousel() && carouselBarFocus) {
+      audio.play('navigate');
+      setCarouselBarFocus(false);
+      return;
+    }
+    if (popupView === 'none') moveFocus(-1);
   }
-  function navRight(): void {
+  function navRight(repeat = false): void {
     noteGamepadActivity();
-    if (onCarousel()) deps.carousel.move(1);
-    else if (popupView === 'none') moveFocus(1);
+    if (stripActive()) {
+      // Past the last card there is one thing left to the right: the More button. A HELD right stays
+      // pinned at the end instead — running down a long history is one gesture, and it must not end with
+      // the focus flung off the strip (and one A away from a menu nobody asked for). Release, press
+      // again, and the stop becomes the step. `locked` is the return-morph, where nothing happens at all.
+      if (deps.carousel.move(1) !== 'at-end' || repeat) return;
+      audio.play('navigate');
+      setCarouselBarFocus(true);
+      return;
+    }
+    if (popupView === 'none') moveFocus(1);
   }
   function navUp(): void {
     noteGamepadActivity();
@@ -773,18 +828,47 @@ export function createControls(deps: ControlsDeps): Controls {
   function navActivate(): void {
     noteGamepadActivity();
     if (popupView !== 'none') activateStack();
-    else if (onCarousel()) deps.carousel.activate();
+    else if (stripActive()) deps.carousel.activate();
     else activateFocused();
   }
   function navBack(): void {
     noteGamepadActivity();
-    // Deepest level first: a popup closes, then a detail screen steps back to the carousel. On the
-    // carousel itself B does nothing — it is the top level.
+    // Deepest level first: a popup closes, then the bar hands the focus back to the strip, then a detail
+    // screen steps back to the carousel. On the strip itself B does nothing — it is the top level.
     if (popupView !== 'none') {
       back();
       return;
     }
+    if (carouselBarFocus && deps.carousel.screen() === 'carousel') {
+      // B means "back" everywhere else; leaving the bar only by the same key that entered it would be a
+      // corner a gamepad user can get stuck in.
+      audio.play('back');
+      setCarouselBarFocus(false);
+      return;
+    }
     if (deps.carousel.leaveDetail()) audio.play('back');
+  }
+
+  /**
+   * Y: hands the focus between the strip and the bar's More button, and only on the carousel screen —
+   * everywhere else the bar already has it, and there is nothing to swap with. The highlight is woken
+   * along with it: the press IS the user pointing at where it should be. Coming BACK there are two more
+   * ways out, both meaning what they usually mean: B (back) and left (More is right of the strip).
+   */
+  function navToggleBar(): void {
+    noteGamepadActivity();
+    if (popupView !== 'none' || deps.carousel.screen() !== 'carousel') return;
+    audio.play('navigate');
+    setCarouselBarFocus(!carouselBarFocus);
+  }
+
+  function setCarouselBarFocus(onBar: boolean): void {
+    carouselBarFocus = onBar;
+    if (onBar) {
+      focusRevealed = true;
+      focusIndex = 0; // More is the whole bar on this screen — see mainFocusables
+    }
+    applyFocus();
   }
 
   // The wheel flips through the carousel. Throttled: one notch of a mouse wheel is one event, but a
@@ -830,6 +914,7 @@ export function createControls(deps: ControlsDeps): Controls {
     onDown: navDown,
     onA: navActivate,
     onB: navBack,
+    onY: navToggleBar,
   });
 
   // Keyboard navigation (Desktop Mode / no gamepad): WASD + arrows move, Space/Enter activate, Tab/Backspace
@@ -838,7 +923,7 @@ export function createControls(deps: ControlsDeps): Controls {
   // the browser default (Tab focus traversal, Space scroll / native button press, arrow scroll) from firing
   // alongside our custom navigation. A backgrounded launcher doesn't receive keydown (the OS routes keys to
   // the focused window), so — unlike the Gamepad API — no explicit pause is needed here.
-  const KEY_NAV: Readonly<Record<string, () => void>> = {
+  const KEY_NAV: Readonly<Record<string, (repeat: boolean) => void>> = {
     a: navLeft,
     arrowleft: navLeft,
     d: navRight,
@@ -870,7 +955,7 @@ export function createControls(deps: ControlsDeps): Controls {
       if (now - lastKeyRepeatAt < NAV_REPEAT_MS) return;
       lastKeyRepeatAt = now;
     }
-    handler();
+    handler(event.repeat);
   });
 
   function applyGameButtons(): void {
@@ -879,8 +964,9 @@ export function createControls(deps: ControlsDeps): Controls {
     // running→syncing-out self-exit must drop Force close; a ready→ready update doesn't close the popup).
     applyMenuInstallToggle();
     applyMenuKill();
-    applyMenuLibrary();
+    applyMenuHome();
     applyMenuForget();
+    applyMenuSystem();
   }
 
   function clearGameButtons(): void {
@@ -889,10 +975,14 @@ export function createControls(deps: ControlsDeps): Controls {
     menuInstallToggle.classList.add('is-hidden');
     menuKill.classList.add('is-hidden');
     menuForget.classList.add('is-hidden'); // no game on screen → nothing to remove from the history
-    applyMenuLibrary(); // the carousel can still be there with no game on screen (history only)
+    applyMenuHome(); // the carousel can still be there with no game on screen (history only)
+    applyMenuSystem();
   }
 
   function refresh(): void {
+    // The bar-focus spell belongs to the carousel: off that screen the bar has the focus anyway, and a
+    // stale true would send B to a strip that is no longer under it.
+    if (deps.carousel.screen() !== 'carousel') carouselBarFocus = false;
     // The popup lives on every screen now (empty included — More there offers System + Close). Only a
     // game-specific install/uninstall Confirm is void once the card is pulled (no game), so close that
     // one; Details/Power/power-Confirm/Error all remain valid with or without a card. A failed launch

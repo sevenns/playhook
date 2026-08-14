@@ -21,6 +21,14 @@ import { req } from './dom.js';
 /** The two levels of the launcher screen (mirrors `#app[data-screen]`). */
 export type Screen = 'carousel' | 'detail';
 
+/**
+ * What a `move` did. `at-end` is the one the caller acts on: the strip is against a hard stop, so the
+ * press is free for whatever lies beyond the row (the bar's More button — see controls.ts). It must stay
+ * distinct from `locked`, which is the return-morph still running and means "this press does nothing at
+ * all" — treating the two alike would fling the focus off the strip on any press right after coming back.
+ */
+export type MoveResult = 'moved' | 'at-end' | 'locked';
+
 export interface CarouselDeps {
   /** Fetches one card's artwork as a data URL (main caches nothing; we cache by id here). */
   requestGrid(id: string): Promise<string | null>;
@@ -38,7 +46,7 @@ export interface Carousel {
   /** New list from main (insert / removal / a finished session / an eviction). Keeps the selection BY ID. */
   setGames(games: readonly LibraryEntry[]): void;
   /** Moves the selection by `delta` cards (no wrap-around — the ends are hard stops). */
-  move(delta: number): void;
+  move(delta: number): MoveResult;
   /**
    * Puts the selection on `id` WITHOUT telling main about it — for the reverse direction, where main
    * decided what is on screen (a card was inserted, a game was picked) and the strip has to follow.
@@ -244,16 +252,17 @@ export function createCarousel(deps: CarouselDeps): Carousel {
     deps.onActivate(current);
   }
 
-  function move(delta: number): void {
-    if (isLocked()) return;
+  function move(delta: number): MoveResult {
+    if (isLocked()) return 'locked';
     const next = clampIndex(index + delta, games.length);
-    if (next === index) return; // at an end — no move, no sound
+    if (next === index) return 'at-end'; // no move, no sound — the caller decides what a stop means
     const moved = next - index;
     index = next;
     deps.onNavigate(moved);
     applyLayout();
     loadNearbyArt();
     announceSelection();
+    return 'moved';
   }
 
   // The launcher starts on the plain bar screen; the first list with more than one game promotes it.

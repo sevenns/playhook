@@ -103,7 +103,10 @@ state, offers:
   they are rebuilt from their card / library every time it is read;
 - **System** — a submenu with Shutdown / Reboot / Sleep (each behind a confirmation) and
   **Minimize Playhook**, which sends the window back to the tray. In Game Mode that last item is
-  **Close Playhook** (a full quit) instead, since there is no tray to minimize into.
+  **Close Playhook** (a full quit) instead, since there is no tray to minimize into. It belongs to the
+  launcher rather than to any one game, so it lives in the **carousel's** own More menu (System + Close),
+  and a game's menu is only about that game. With no carousel to go up to — a single-game card, or the
+  empty screen — it stays where it was: that menu is then the only one there is.
 
 Every confirmation and every error uses that same popup; close it with **B** or a click on **Close**.
 If a launch fails, the reason appears there and you can simply retry.
@@ -116,7 +119,11 @@ have had once the card is out — pick one and you get its screen (title, stats,
 with no Play button: there is nothing to launch without the card.
 
 Flip through the row with **left/right** (hold to run through it), open a game with **A**, and step back
-to the row with **B**. With a mouse: the wheel scrolls the row, a click selects a card, a second click
+to the row with **B**. **Y** hands the highlight over to the **More** button beside the row and back
+again — the row's own menu is the launcher's (System + Close) — and so does **right** on the last card,
+though only as a separate press: holding right runs to the end of the row and stops there. From the
+button, **left** and **B** both return to the cards. With a mouse: the wheel scrolls the row, a click
+selects a card, a second click
 opens it, and a right-click steps back. The row is the top level — the game's screen sits one step
 inside it, which is where **More** ⋯ and its actions live.
 

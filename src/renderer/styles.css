@@ -645,12 +645,10 @@ html:not(.cursor-hidden) .play-button:hover::after,
 
 /* ── Rect (Info) button — normal: no background, content d2; fills with d2 on hover/focus ── */
 
-/* Carousel level: Play and More are hidden entirely (Р8) — the actions live one level deeper, on the
-   detail screen (A → detail → More → System/Close), so the carousel stays a pure browsing surface. */
-#app[data-screen='carousel'] #more-button {
-  opacity: 0;
-  pointer-events: none;
-}
+/* Carousel level: Play is hidden (it is the selected card's stand-in for the morph — see below), but
+   More stays. It is the launcher-level menu here — System + Close — while the game's own actions live one
+   level deeper, on the detail screen. Reached with the mouse, or with Y, which hands the focus between
+   the strip and this button (see controls.ts). */
 
 .rect-button {
   position: absolute;
