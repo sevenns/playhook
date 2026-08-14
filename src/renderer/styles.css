@@ -915,12 +915,37 @@ html:not(.cursor-hidden) .rect-button:hover,
   inset: 0;
   /* Horizontal gradient: transparent on the left (hero visible) → solid d1 on the right. */
   background: linear-gradient(to right, transparent 0%, var(--d1) 100%);
-  backdrop-filter: blur(12px);
-  /* Mask so the frosted blur only appears on the right, fading in from the center. */
+  /* Mask so the tint only builds up on the right, fading in from the center. */
   -webkit-mask-image: linear-gradient(to right, transparent 0%, #000 58%);
   mask-image: linear-gradient(to right, transparent 0%, #000 58%);
   opacity: 0;
   transition: opacity 0.35s ease;
+  /* Keep this on its own composited layer: promoting it mid-animation is a frame the launcher can't
+     spare, and that frame is exactly when the focus tends to move (see .popup-blur). */
+  will-change: opacity;
+}
+
+/**
+ * The frosted layer, SEPARATE from the tint above and deliberately NOT animated.
+ *
+ * A backdrop-filter re-samples everything beneath it, and Chromium rasterizes that region afresh the
+ * first time a given popup shows it — one costly frame, once per popup, landing exactly at the end of
+ * the fade. A focus move on that frame was dropped and then caught up, which read as the highlight
+ * jumping and snapping back (and never repeated for the same popup, because the raster was cached by
+ * then). Switching the blur on in ONE frame moves that cost to the press itself, where the user is not
+ * yet navigating and where there is no animation for it to collide with.
+ */
+.popup-blur {
+  position: absolute;
+  inset: 0;
+  backdrop-filter: blur(12px);
+  -webkit-mask-image: linear-gradient(to right, transparent 0%, #000 58%);
+  mask-image: linear-gradient(to right, transparent 0%, #000 58%);
+  opacity: 0;
+}
+
+.popup.is-open .popup-blur {
+  opacity: 1;
 }
 
 /* Right column: 550px wide, inset 50px on right/top/bottom. Content sits at the top; the action stack
@@ -1579,9 +1604,25 @@ html:not(.cursor-hidden) .setting-row[data-kind='update-status']:hover {
   position: absolute;
   inset: 0;
   background: linear-gradient(to right, transparent 0%, var(--d1) 100%);
+  -webkit-mask-image: linear-gradient(to right, transparent 0%, #000 58%);
+  mask-image: linear-gradient(to right, transparent 0%, #000 58%);
+  will-change: opacity;
+}
+
+/* Same split as the popup's: the blur is switched on in one frame, never faded. It sits beside the
+   dropdown rather than inside it, because that container fades as a whole. */
+.settings-options-blur {
+  position: absolute;
+  inset: 0;
   backdrop-filter: blur(12px);
   -webkit-mask-image: linear-gradient(to right, transparent 0%, #000 58%);
   mask-image: linear-gradient(to right, transparent 0%, #000 58%);
+  opacity: 0;
+  pointer-events: none;
+}
+
+#settings.is-options-open .settings-options-blur {
+  opacity: 1;
 }
 
 /* The column mirrors .popup-column: 550 wide, inset 50, right-aligned, stack pinned to the bottom. */

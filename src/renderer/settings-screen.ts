@@ -500,6 +500,7 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
   function closeOptions(): void {
     if (openSelect === null) return;
     openSelect = null;
+    screen.classList.remove('is-options-open');
     optionsEl.classList.remove('is-open');
     optionsEl.setAttribute('aria-hidden', 'true');
     optionsListEl.replaceChildren();
@@ -538,6 +539,7 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
       return button;
     });
     optionsListEl.replaceChildren(...buttons);
+    screen.classList.add('is-options-open'); // switches the frost on (no fade — see styles.css)
     optionsEl.classList.add('is-open');
     // Measured synchronously: reading clientWidth flushes the layout for the nodes just inserted, which
     // a requestAnimationFrame callback would only get around to on the next frame — and never at all in

@@ -84,6 +84,8 @@
            blur veils when moving Details ↔ Power: the veil stays, only the content changes.
            Default focus in every stack is the BOTTOM button (Close / No) — see controls.ts. -->
       <section id="popup" class="popup" aria-hidden="true" data-view="details">
+        <!-- Two layers, on purpose: the tint fades, the frost switches on in one frame (styles.css). -->
+        <div class="popup-blur"></div>
         <div class="popup-veil"></div>
         <div class="popup-column">
           <!-- Top content — only the block for the active view shows (CSS). -->
@@ -179,6 +181,9 @@
           </div>
           <div class="settings-list" id="settings-list"></div>
         </div>
+        <!-- The dropdown's frost lives OUTSIDE the fading container: its own opacity animation would
+             otherwise fade the blur along with everything else, which is the cost we are avoiding. -->
+        <div class="settings-options-blur"></div>
         <!-- Expanded dropdown: a list of the focused select's options, on top of the screen. -->
         <div class="settings-options" id="settings-options" aria-hidden="true">
           <div class="settings-options-veil"></div>
