@@ -1612,8 +1612,17 @@ html:not(.cursor-hidden) .settings-option:hover,
   transition: opacity 0.3s ease, transform 0.3s ease;
 }
 
-#app[data-overlay='settings'] #carousel {
+/* The STRIP is what fades, not its #carousel container: the container's opacity transition belongs to
+   the card morph, which pins it to `0s linear` at a higher specificity than anything written here (see
+   the [data-card-morph] rules above) — hiding it through that made the carousel snap back into place on
+   the way out, as if it had been display:none. The strip's own `opacity 0.25s` is untouched by the morph
+   and runs in BOTH directions, which is exactly what the return needs. The [data-bar-focus] pair beats
+   that state's dim (0.45), which is on by definition here: this screen is entered from the More button. */
+#app[data-overlay='settings'] #carousel-strip,
+#app[data-overlay='settings'][data-bar-focus] #carousel-strip {
   opacity: 0;
+}
+
+#app[data-overlay='settings'] #carousel {
   pointer-events: none;
-  transition: opacity 0.3s ease;
 }
