@@ -420,6 +420,51 @@ function render(state: AppState): void {
   }
 }
 
+// ── Boot reveal ─────────────────────────────────────────────────────────────
+// index.html ships #app[data-boot='loading'], which hides the bar and the carousel strip (styles.css):
+// the launcher opens on the background alone. The order is deliberate — wallpaper, then the game's own
+// hero, then the UI:
+//   1. the bundled wallpaper is the fastest image main can hand over, so it paints as the opening
+//      backdrop even when a card IS inserted (hero.showWallpaperBackdrop);
+//   2. the card's hero cross-fades over it as soon as it arrives, carrying its palette;
+//   3. only then does the UI fade in — so it is never seen assembling itself, and never changes colour
+//      under the user's eyes a beat after appearing.
+// The UI waits for BOTH seeds (state + a settled background) and never appears before BOOT_MIN_MS, so
+// the reveal reads as an intro rather than as a stutter. The deadline covers a seed that never arrives
+// (unreadable wallpaper, no hero at all): the UI must not stay hidden forever.
+const BOOT_MIN_MS = 1000;
+const BOOT_DEADLINE_MS = 3000;
+const bootStart = performance.now();
+let bootStateReady = false;
+let bootHeroReady = false;
+let bootRevealed = false;
+
+function revealUi(): void {
+  if (bootRevealed) return;
+  bootRevealed = true;
+  delete app.dataset['boot'];
+}
+
+/** Reveals once both seeds are in, waiting out the remainder of BOOT_MIN_MS if it is still running. */
+function noteBootSeed(seed: 'state' | 'hero'): void {
+  if (seed === 'state') bootStateReady = true;
+  else bootHeroReady = true;
+  if (bootRevealed || !bootStateReady || !bootHeroReady) return;
+  window.setTimeout(revealUi, Math.max(0, BOOT_MIN_MS - (performance.now() - bootStart)));
+}
+
+window.setTimeout(revealUi, BOOT_DEADLINE_MS);
+
+// Whether the background that will STAY is up: the card's hero when it has one, the wallpaper when it
+// does not. The wallpaper alone is not enough while a hero is still expected — that is the cross-fade
+// the reveal is supposed to happen after, not during.
+let heroPayload: 'pending' | 'none' | 'present' = 'pending';
+let wallpaperPainted = false;
+
+function noteBackgroundSettled(): void {
+  if (heroPayload === 'present' || (heroPayload === 'none' && wallpaperPainted)) noteBootSeed('hero');
+}
+
 // ── Wiring ──────────────────────────────────────────────────────────────────
 
 // UI locale: subscribe BEFORE the invoke-seed so a push arriving in between isn't lost (seed pattern).
@@ -439,7 +484,10 @@ window.api.onLanguageUpdate(applyLocale);
 void window.api.getLanguage().then(applyLocale);
 
 window.api.onStateUpdate(render);
-void window.api.requestState().then(render);
+void window.api.requestState().then((state) => {
+  render(state);
+  noteBootSeed('state');
+});
 
 // What is on screen (title / stats / active / GameInfo). Subscribe BEFORE the seed, like every other
 // channel here, so a push arriving in between isn't lost.
@@ -492,10 +540,15 @@ void Promise.all([
   settingsScreen.applyEnv({ steamAvailable, audioOptions, appVersion });
 });
 
-// Fallback wallpaper for the empty screen (data URL from main); apply if we're on it already.
+// Fallback wallpaper for the empty screen (data URL from main). It doubles as the session's OPENING
+// backdrop: with a card inserted the hero data URL is still on its way, and the wallpaper is what the
+// window shows until it lands (see the boot reveal above).
 void window.api.requestWallpaper().then((url) => {
   hero.setWallpaper(url);
   if (gameOf(currentState) === undefined) hero.applyEmptyScreen();
+  else hero.showWallpaperBackdrop();
+  wallpaperPainted = url !== null;
+  noteBackgroundSettled();
 });
 
 // The card's music is delivered on its own channel (not in AppState); load it and keep music in sync.
@@ -544,8 +597,18 @@ window.api.onWindowFocus((focused) => controls.setGamepadPaused(!focused));
 
 // Hero images are delivered on their own channel (not in AppState): the renderer rotates through them
 // locally, so we never re-send this large payload on every state transition. See hero.applyAssets.
-window.api.onHeroUpdate((assets) => hero.applyAssets(assets));
-void window.api.requestHero().then((assets) => hero.applyAssets(assets));
+window.api.onHeroUpdate((assets) => {
+  hero.applyAssets(assets);
+  if (assets !== null) {
+    heroPayload = 'present';
+    noteBackgroundSettled();
+  }
+});
+void window.api.requestHero().then((assets) => {
+  hero.applyAssets(assets);
+  heroPayload = assets === null ? 'none' : 'present';
+  noteBackgroundSettled();
+});
 
 // The carousel list (the inserted card's games + the play history, already ordered) arrives on its own
 // channel. Seed on startup (back-fill after a window reconnect), then live updates.

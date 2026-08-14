@@ -11,7 +11,10 @@
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
-    <main id="app" data-phase="idle">
+    <!-- data-boot: the launcher opens on the background alone and reveals its UI once the first state +
+         hero (and the palette computed from it) have landed — see the boot reveal in app.ts. Set here,
+         not from JS, so there is never a frame of a fully-drawn UI before the script runs. -->
+    <main id="app" data-phase="idle" data-boot="loading">
       <!-- Hero background: two stacked layers behind all UI (z-index only on the container, see
            styles.css). JS writes the image + pan into the idle layer and cross-fades it in, GTA-5-style,
            rotating through multiple hero images (and the idle wallpaper) — see app.ts. -->

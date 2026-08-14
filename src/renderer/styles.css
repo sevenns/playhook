@@ -32,25 +32,29 @@
    `--d1` is just a token and jumps instantly, which made the bar, the buttons and the popup snap to the
    new game's colors while the hero image was still cross-fading. With a `<color>` syntax the browser
    interpolates them, and every surface built on var(--d1)/var(--d2) follows the background smoothly. */
+/* The fallbacks are the EMPTY SCREEN's own palette — the dominant pair computed from the bundled
+   wallpaper (dominant-color.ts) — not an arbitrary pair. Anything else flashes its own colours for the
+   frames before the first hero is decoded, and a green flash over a violet wallpaper is exactly what the
+   crossfade cannot hide. Recompute these if assets/playhook-wallpaper.jpg is ever replaced. */
 @property --d1 {
   syntax: '<color>';
   inherits: true;
-  initial-value: #2a3340;
+  initial-value: #0d0a1b;
 }
 @property --d2 {
   syntax: '<color>';
   inherits: true;
-  initial-value: #4caf50;
+  initial-value: #836e95;
 }
 
 :root {
   /* One design pixel (mockup is 1920x1080) expressed in vh, so the layout scales with the
      fullscreen height and keeps the mockup's proportions at 16:9. Write design px as calc(N*var(--px)). */
   --px: 0.0925926vh;
-  --bg: #101014;
+  --bg: #0d0a1b;
   /* Palette fallbacks; #app gets --d1/--d2 from the hero background's two dominant colors. */
-  --d1: #2a3340;
-  --d2: #4caf50;
+  --d1: #0d0a1b;
+  --d2: #836e95;
   /* Text colour OUTSIDE the app shell (there is none in practice — see the #app override below). */
   --fg: #f0f0f0;
 }
@@ -1625,4 +1629,22 @@ html:not(.cursor-hidden) .settings-option:hover,
 
 #app[data-overlay='settings'] #carousel {
   pointer-events: none;
+}
+
+/* ── Boot ──────────────────────────────────────────────────────────────────
+   The first second belongs to the background alone. Everything the launcher paints from data — the
+   bar (Play / title / status / More) and the carousel strip — arrives at once, after the state, the
+   hero and its palette have landed, so the UI is never seen assembling itself or changing colour under
+   the user's eyes. The attribute ships in index.html (not added from JS) so there is no frame of a
+   fully-drawn UI before the script runs; app.ts removes it. Fading the STRIP rather than #carousel is
+   the same rule the settings overlay follows — the container's own transition belongs to the card morph. */
+
+#app[data-boot='loading'] #bottom-bar {
+  opacity: 0;
+  transform: translateY(calc(20 * var(--px)));
+}
+
+#app[data-boot='loading'] #carousel-strip,
+#app[data-boot='loading'][data-bar-focus] #carousel-strip {
+  opacity: 0;
 }

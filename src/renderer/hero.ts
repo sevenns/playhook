@@ -33,6 +33,13 @@ export interface HeroController {
   applyBrowseAssets(assets: HeroAssets | null): void;
   /** The empty / idle screen: fallback wallpaper background, its palette, "Insert a game card" title. */
   applyEmptyScreen(): void;
+  /**
+   * Paints the fallback wallpaper as the FIRST background of the session — without claiming the screen
+   * is empty (no title change): a launcher opening onto a card has nothing to show until its hero data
+   * URL arrives, and a blank window in the meantime is worse than the wallpaper the game's own hero then
+   * cross-fades over. No-op once anything is on screen.
+   */
+  showWallpaperBackdrop(): void;
   /** Stores the fallback wallpaper data URL (delivered by main); does not repaint on its own. */
   setWallpaper(url: string | null): void;
   /** Parallax offset in DESIGN px: the background drifts with the carousel (see #hero in styles.css). */
@@ -144,6 +151,15 @@ export function createHeroController(deps: HeroDeps): HeroController {
     applyWallpaperPalette();
   }
 
+  // The wallpaper as the opening backdrop: same image and palette as the empty screen, but it says
+  // nothing about the state — the title is left to render(). Only ever paints into an empty screen, so
+  // it can never override a hero that already arrived.
+  function showWallpaperBackdrop(): void {
+    if (shownUrl !== null || wallpaperUrl === null) return;
+    showImage(wallpaperUrl);
+    applyWallpaperPalette();
+  }
+
   // ── Hero rotation (renderer-local, GTA-5 cadence) ──────────────────────────
 
   // Hero images for the current card (delivered on the hero:update channel) and the rotation cursor.
@@ -248,6 +264,7 @@ export function createHeroController(deps: HeroDeps): HeroController {
     applyAssets,
     applyBrowseAssets: (assets) => applyAssets(assets, true),
     applyEmptyScreen,
+    showWallpaperBackdrop,
     setWallpaper,
     setParallax,
   };
