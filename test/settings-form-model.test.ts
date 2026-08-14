@@ -149,7 +149,7 @@ describe('helpers', () => {
   });
 
   it('prettifies a dashed file name into words', () => {
-    expect(prettifyName('dark-souls')).toBe('Dark Souls');
+    expect(prettifyName('steam-big-picture')).toBe('Steam Big Picture');
     expect(prettifyName('ps5')).toBe('Ps5');
   });
 });
