@@ -884,10 +884,18 @@ export function createControls(deps: ControlsDeps): Controls {
     });
   });
 
-  // One window-level mouse handler, guarded against SYNTHETIC moves (Chromium fires mousemove with
-  // unchanged coordinates when an element shifts under a still pointer — e.g. the busy title-slide — and
-  // that must not undo a gamepad cursor-hide). A real move shows the cursor, counts as activity, and —
-  // when it's over a bar button — wakes/moves the bar focus so A activates what's highlighted.
+  // ONE window-level mouse handler for both surfaces (the bar and the popup stack), guarded against
+  // SYNTHETIC moves — and that guard is the whole point, not a detail.
+  //
+  // Chromium fires mouse events at unchanged coordinates whenever the element UNDER a still pointer
+  // changes: a busy title sliding past, or — the case that bit us — a popup opening with its buttons
+  // landing right where the cursor happens to rest. As `mouseenter` handlers, the stack buttons took
+  // that for a hover and moved the focus off the item the popup had just focused; the next gamepad press
+  // moved it back. That was the "it jumps and returns" stutter, and it needed nothing but a resting
+  // mouse to reproduce — no blur, no dropped frame.
+  //
+  // Reading hover from mousemove with a coordinate check instead means the focus follows the pointer
+  // only when the pointer actually moves.
   let lastMouseX = -1;
   let lastMouseY = -1;
   window.addEventListener('mousemove', (event) => {
@@ -895,9 +903,19 @@ export function createControls(deps: ControlsDeps): Controls {
     lastMouseX = event.clientX;
     lastMouseY = event.clientY;
     noteMouseActivity();
+    const element = event.target instanceof Element ? event.target : null;
+    // The popup owns the pointer while it is open: its stack is the only thing hover may move.
+    if (stackActive()) {
+      const button = element?.closest<HTMLButtonElement>('.text-button') ?? null;
+      if (button === null) return;
+      const idx = stackFocusables().indexOf(button);
+      if (idx === -1 || idx === stackIndex) return;
+      stackIndex = idx;
+      applyStackFocus();
+      return;
+    }
     if (!focusActive()) return;
-    const target =
-      event.target instanceof Element ? event.target.closest<HTMLButtonElement>('#play-button, #more-button') : null;
+    const target = element?.closest<HTMLButtonElement>('#play-button, #more-button') ?? null;
     if (target === null) return;
     const idx = mainFocusables().indexOf(target);
     if (idx === -1) return;
@@ -906,15 +924,6 @@ export function createControls(deps: ControlsDeps): Controls {
       focusIndex = idx;
       applyFocus();
     }
-  });
-  ALL_STACK_BUTTONS.forEach((btn) => {
-    btn.addEventListener('mouseenter', () => {
-      if (!stackActive()) return;
-      const idx = stackFocusables().indexOf(btn);
-      if (idx === -1) return;
-      stackIndex = idx;
-      applyStackFocus();
-    });
   });
 
   // The six navigation primitives, shared by the gamepad AND the keyboard (below) so both drive the exact

@@ -550,10 +550,6 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
         pressFlash(button);
         chooseOption(rowIndex, option);
       });
-      button.addEventListener('mouseenter', () => {
-        optionIndex = row.options.indexOf(option);
-        applyOptionFocus();
-      });
       return button;
     });
     optionsListEl.replaceChildren(...buttons);
@@ -836,6 +832,31 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
     deps.audio.play('back');
     close();
   });
+
+  // Hover inside the expanded dropdown, read from real pointer MOVEMENT only — the list appears under a
+  // resting cursor just like the popup's stack does, and a `mouseenter` there would steal the focus from
+  // the current value the moment the list opens (see the note in controls.ts).
+  let lastOptionX = -1;
+  let lastOptionY = -1;
+  optionsListEl.addEventListener(
+    'mousemove',
+    (event) => {
+      if (event.clientX === lastOptionX && event.clientY === lastOptionY) return;
+      lastOptionX = event.clientX;
+      lastOptionY = event.clientY;
+      if (openSelect === null) return;
+      if (document.documentElement.classList.contains('cursor-hidden')) return;
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      const button = target.closest<HTMLButtonElement>('.settings-option');
+      if (button === null) return;
+      const index = openSelect.buttons.indexOf(button);
+      if (index === -1 || index === optionIndex) return;
+      optionIndex = index;
+      applyOptionFocus();
+    },
+    { passive: true },
+  );
 
   optionsVeil?.addEventListener('click', () => {
     deps.audio.play('back');
