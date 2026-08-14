@@ -222,61 +222,86 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
     window.setTimeout(() => el.classList.remove('is-pressed'), PRESS_MS);
   }
 
-  // The running scroll animation (rAF). A new target re-aims the SAME animation from wherever the list
-  // currently is, so a burst of steps is one continuous movement rather than a queue of competing ones.
-  let scrollTarget = 0;
-  let scrollFrom = 0;
-  let scrollStartedAt = 0;
-  let scrollFrame = 0;
-
-  /** Clamps a desired scrollTop to what the list can actually show. */
-  function clampScroll(top: number): number {
-    return Math.min(Math.max(0, top), Math.max(0, listEl.scrollHeight - listEl.clientHeight));
-  }
-
-  function scrollStep(): void {
-    const progress = Math.min(1, (performance.now() - scrollStartedAt) / SCROLL_MS);
-    listEl.scrollTop = scrollFrom + (scrollTarget - scrollFrom) * easeInOut(progress);
-    applyEdgeFades();
-    if (progress >= 1) {
-      listEl.scrollTop = scrollTarget;
-      scrollFrame = 0;
-      applyEdgeFades();
-      return;
-    }
-    scrollFrame = requestAnimationFrame(scrollStep);
-  }
-
-  /** Animates scrollTop to `top` over SCROLL_MS, starting from the list's current position. */
-  function scrollTo(top: number, instant = false): void {
-    const goal = clampScroll(top);
-    if (instant) {
-      if (scrollFrame !== 0) cancelAnimationFrame(scrollFrame);
-      scrollFrame = 0;
-      scrollTarget = goal;
-      listEl.scrollTop = goal;
-      applyEdgeFades();
-      return;
-    }
-    if (scrollFrame !== 0 && Math.abs(goal - scrollTarget) < 0.5) return; // already heading there
-    scrollTarget = goal;
-    scrollFrom = listEl.scrollTop;
-    scrollStartedAt = performance.now();
-    if (scrollFrame === 0) scrollFrame = requestAnimationFrame(scrollStep);
-  }
-
   /**
-   * The edge fades exist to soften a row CUT BY the clip — so they must not sit over content that has
-   * nothing behind it: at the very top and the very bottom the corresponding fade is switched off, or
-   * the first and last rows read as dimmed for no reason (they are exactly where the focus starts).
+   * A self-animating scroll container: one fixed duration and easing (a re-aim continues from wherever
+   * the box currently is, so a burst of steps is one movement), plus the edge fades that soften a row
+   * cut by the clip. Both scrolling surfaces of this screen use it — the settings list and the expanded
+   * dropdown — so they behave identically.
    */
-  function applyEdgeFades(): void {
-    const top = listEl.scrollTop > 1 ? EDGE_FADE_PX : 0;
-    const bottom =
-      listEl.scrollTop < listEl.scrollHeight - listEl.clientHeight - 1 ? EDGE_FADE_PX : 0;
-    listEl.style.setProperty('--fade-top', `calc(${top} * var(--px))`);
-    listEl.style.setProperty('--fade-bottom', `calc(${bottom} * var(--px))`);
+  interface Scroller {
+    /** Animates (or jumps) to a scrollTop. */
+    to(top: number, instant?: boolean): void;
+    /** Recomputes --fade-top / --fade-bottom for the current position. */
+    fades(): void;
+    /** Brings `target` into view, keeping SCROLL_MARGIN_PX of context beyond it. */
+    reveal(target: HTMLElement, instant?: boolean): void;
   }
+
+  function createScroller(box: HTMLElement): Scroller {
+    let target = 0;
+    let from = 0;
+    let startedAt = 0;
+    let frame = 0;
+
+    const clamp = (top: number): number =>
+      Math.min(Math.max(0, top), Math.max(0, box.scrollHeight - box.clientHeight));
+
+    const fades = (): void => {
+      // A fade only belongs where there IS content beyond the edge — at the very top and the very bottom
+      // the corresponding one is switched off, or the first and last rows read as dimmed for no reason.
+      const top = box.scrollTop > 1 ? EDGE_FADE_PX : 0;
+      const bottom = box.scrollTop < box.scrollHeight - box.clientHeight - 1 ? EDGE_FADE_PX : 0;
+      box.style.setProperty('--fade-top', `calc(${top} * var(--px))`);
+      box.style.setProperty('--fade-bottom', `calc(${bottom} * var(--px))`);
+    };
+
+    const step = (): void => {
+      const progress = Math.min(1, (performance.now() - startedAt) / SCROLL_MS);
+      box.scrollTop = from + (target - from) * easeInOut(progress);
+      fades();
+      if (progress >= 1) {
+        box.scrollTop = target;
+        frame = 0;
+        fades();
+        return;
+      }
+      frame = requestAnimationFrame(step);
+    };
+
+    const to = (top: number, instant = false): void => {
+      const goal = clamp(top);
+      if (instant) {
+        if (frame !== 0) cancelAnimationFrame(frame);
+        frame = 0;
+        target = goal;
+        box.scrollTop = goal;
+        fades();
+        return;
+      }
+      if (frame !== 0 && Math.abs(goal - target) < 0.5) return; // already heading there
+      target = goal;
+      from = box.scrollTop;
+      startedAt = performance.now();
+      if (frame === 0) frame = requestAnimationFrame(step);
+    };
+
+    const reveal = (el: HTMLElement, instant = false): void => {
+      const margin = SCROLL_MARGIN_PX * pxUnit();
+      const top = el.offsetTop - box.offsetTop;
+      const bottom = top + el.offsetHeight;
+      const viewTop = box.scrollTop;
+      const viewBottom = viewTop + box.clientHeight;
+      if (top - margin < viewTop) to(top - margin, instant);
+      else if (bottom + margin > viewBottom) to(bottom + margin - box.clientHeight, instant);
+      else fades();
+    };
+
+    box.addEventListener('scroll', () => fades(), { passive: true });
+    return { to, fades, reveal };
+  }
+
+  const listScroller = createScroller(listEl);
+  const optionsScroller = createScroller(optionsListEl);
 
   /**
    * Paints the focus and keeps it on screen, with a margin: the list starts moving BEFORE the focused
@@ -287,15 +312,7 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
     rendered.forEach((row, index) => row.el.classList.toggle('is-focused', index === focusIndex));
     const target = focusedRow();
     if (target === undefined) return;
-    const margin = SCROLL_MARGIN_PX * pxUnit();
-    const rowTop = target.el.offsetTop - listEl.offsetTop;
-    const rowBottom = rowTop + target.el.offsetHeight;
-    const viewTop = listEl.scrollTop;
-    const viewBottom = viewTop + listEl.clientHeight;
-    if (rowTop - margin < viewTop) scrollTo(rowTop - margin, instant);
-    else if (rowBottom + margin > viewBottom)
-      scrollTo(rowBottom + margin - listEl.clientHeight, instant);
-    else applyEdgeFades();
+    listScroller.reveal(target.el, instant);
   }
 
   /** One design pixel in real px (--px is a vh unit, so it changes with the window). */
@@ -366,7 +383,7 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
     applyRowFocus(true);
     // The rows were inserted THIS tick, so scrollHeight is still the pre-layout value — the fades would
     // be computed against a list that "doesn't scroll yet". Re-run them once the layout has settled.
-    requestAnimationFrame(() => applyEdgeFades());
+    requestAnimationFrame(() => listScroller.fades());
   }
 
   // ── Value changes ──────────────────────────────────────────────────────────
@@ -506,11 +523,12 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
     optionsListEl.replaceChildren();
   }
 
-  function applyOptionFocus(): void {
+  function applyOptionFocus(instant = false): void {
     openSelect?.buttons.forEach((button, index) =>
       button.classList.toggle('is-focused', index === optionIndex),
     );
-    openSelect?.buttons[optionIndex]?.scrollIntoView({ block: 'nearest' });
+    const focused = openSelect?.buttons[optionIndex];
+    if (focused !== undefined) optionsScroller.reveal(focused, instant);
     updateOptionMarquee(); // the marquee follows the focus — only the focused label moves
   }
 
@@ -814,9 +832,6 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
   listEl.addEventListener('pointerup', endDrag);
   listEl.addEventListener('pointercancel', endDrag);
 
-  // The wheel scrolls the list natively (nothing routes it), so the fades follow that too.
-  listEl.addEventListener('scroll', () => applyEdgeFades(), { passive: true });
-
   veil?.addEventListener('click', () => {
     deps.audio.play('back');
     close();
@@ -837,7 +852,7 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
       screen.setAttribute('aria-hidden', 'false');
       // Instant, not animated: a re-open must START at the top rather than glide there from wherever
       // the previous visit left the list (which showed as a half-cropped first row).
-      scrollTo(0, true);
+      listScroller.to(0, true);
       render();
       applyRowFocus(true);
     },
