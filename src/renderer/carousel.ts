@@ -88,6 +88,12 @@ export function createCarousel(deps: CarouselDeps): Carousel {
   // main bumps `artRev`, and the new key misses the cache — no restart needed to see the new cover.
   const art = new Map<string, string | null>();
   const cards = new Map<string, HTMLElement>();
+  // A focusGame() that named a game the list does not hold YET. The browse cursor and the carousel list
+  // are seeded over two independent channels, in either order, so on startup the "put the strip on the
+  // game main is showing" request routinely arrives first — and used to be dropped on the floor, leaving
+  // the strip on games[0] while the title, the background and the music belonged to another game.
+  // Honoured by the next setGames, then forgotten; a real move by the user outranks it (see move()).
+  let pendingFocusId: string | null = null;
 
   const artKey = (game: LibraryEntry): string => `${game.id}@${game.artRev ?? ''}`;
 
@@ -254,6 +260,8 @@ export function createCarousel(deps: CarouselDeps): Carousel {
 
   function move(delta: number): MoveResult {
     if (isLocked()) return 'locked';
+    // The user is steering now: a seed request still waiting for its list must not yank the strip later.
+    pendingFocusId = null;
     const next = clampIndex(index + delta, games.length);
     if (next === index) return 'at-end'; // no move, no sound — the caller decides what a stop means
     const moved = next - index;
@@ -271,7 +279,12 @@ export function createCarousel(deps: CarouselDeps): Carousel {
   return {
     focusGame(id: string): void {
       const position = games.findIndex((game) => game.id === id);
-      if (position === -1 || position === index) return;
+      if (position === -1) {
+        pendingFocusId = id; // the list carrying it is still in flight — see the field
+        return;
+      }
+      pendingFocusId = null;
+      if (position === index) return;
       index = position;
       applyLayout();
       loadNearbyArt();
@@ -279,8 +292,12 @@ export function createCarousel(deps: CarouselDeps): Carousel {
     setGames(list: readonly LibraryEntry[]): void {
       // The selection is remembered BY ID, not by position: the list is re-ordered whenever a card is
       // inserted or a session ends, and a positional cursor would silently land on a different game.
-      const currentId = selected()?.id;
+      // A pending focus request wins over the current selection — it is the newer instruction of the two.
+      const currentId = pendingFocusId ?? selected()?.id;
       games = list;
+      if (pendingFocusId !== null && games.some((game) => game.id === pendingFocusId)) {
+        pendingFocusId = null;
+      }
       index = clampIndex(
         currentId === undefined
           ? 0

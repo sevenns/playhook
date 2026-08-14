@@ -477,7 +477,9 @@ export function createControls(deps: ControlsDeps): Controls {
       // On the carousel the bar-focus spell is not a highlight that can simply go dormant: dropping it
       // would leave the row dimmed with nothing focused anywhere — a dead screen. Hand the focus back to
       // the cards instead, which is where an untouched carousel belongs.
-      if (carouselBarFocus) {
+      // NOT while the menu that button opened is up, though: the focus is inside the popup then, and
+      // pulling the surface out from under it would light the row back up behind an open menu.
+      if (carouselBarFocus && popupView === 'none') {
         setCarouselBarFocus(false);
         return;
       }
