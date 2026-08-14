@@ -577,7 +577,7 @@ body {
   /* width/height are part of the carousel→detail morph and share the strip's curve; `opacity` is
      deliberately NOT transitioned — the carousel card and this button swap places instantaneously while
      they are pixel-identical, and a fade there would show both at once. */
-  transition: background 0.35s ease-in-out, color 0.35s ease-in-out, transform 0.12s ease,
+  transition: background 0.2s ease, color 0.2s ease, transform 0.12s ease,
     width 0.35s cubic-bezier(0.4, 0, 0.2, 1), height 0.35s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
@@ -714,7 +714,7 @@ html:not(.cursor-hidden) .play-button:hover::after,
   background: transparent;
   color: var(--d2);
   cursor: pointer;
-  transition: background 0.35s ease-in-out, color 0.35s ease-in-out, opacity 0.3s ease, transform 0.12s ease;
+  transition: background 0.2s ease, color 0.2s ease, opacity 0.3s ease, transform 0.12s ease;
 }
 
 /* :hover gated on a live cursor — see the note on .text-button:hover. */
@@ -1116,7 +1116,7 @@ html:not(.cursor-hidden) .rect-button:hover,
   font-size: calc(28 * var(--px));
   white-space: nowrap;
   cursor: pointer;
-  transition: background 0.35s ease-in-out, color 0.35s ease-in-out, transform 0.12s ease;
+  transition: background 0.2s ease, color 0.2s ease, transform 0.12s ease;
 }
 
 /* Hover paints the same highlight as .is-focused, but ONLY while the cursor is live: once the gamepad
@@ -1305,7 +1305,7 @@ html:not(.cursor-hidden) .text-button:hover,
   padding: calc(8 * var(--px)) calc(32 * var(--px));
   border-radius: calc(10 * var(--px));
   color: var(--d2);
-  transition: background 0.35s ease-in-out, color 0.35s ease-in-out, transform 0.12s ease;
+  transition: background 0.2s ease, color 0.2s ease, transform 0.12s ease;
 }
 
 /* :hover gated on a live cursor, like every other control here (see .text-button). */
@@ -1350,7 +1350,7 @@ html:not(.cursor-hidden) .setting-row:hover,
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: background 0.35s ease-in-out;
+  transition: background 0.2s ease;
 }
 
 .setting-toggle.is-on {
@@ -1632,7 +1632,7 @@ html:not(.cursor-hidden) .setting-row[data-kind='update-status']:hover {
   font-size: calc(28 * var(--px));
   white-space: nowrap;
   cursor: pointer;
-  transition: background 0.35s ease-in-out, color 0.35s ease-in-out, transform 0.12s ease;
+  transition: background 0.2s ease, color 0.2s ease, transform 0.12s ease;
 }
 
 html:not(.cursor-hidden) .settings-option:hover,
