@@ -463,8 +463,8 @@ export class GameController {
    * to `current()` for a head that has no manifest (a history entry — only reachable with no game at all,
    * since refreshLibrary puts every available game ahead of the history).
    */
-  private firstCarouselGame(): ResolvedManifest | null {
-    const headId = this.currentLibrary?.games[0]?.id;
+  private firstCarouselGame(library: GameLibrary | null = this.currentLibrary): ResolvedManifest | null {
+    const headId = library?.games[0]?.id;
     if (headId === undefined) return this.current();
     return this.games.find((manifest) => manifest.raw.id === headId) ?? this.current();
   }
@@ -774,14 +774,18 @@ export class GameController {
       }
     }
 
-    // Deliver the LIGHT carousel list — this card's games (active) followed by the play history. No heavy
-    // assets: the selected game's hero/audio are built on demand below, the cards' art on request.
-    this.refreshLibrary();
+    // The LIGHT carousel list — this card's games (active) followed by the play history. No heavy assets:
+    // the selected game's hero/audio are built on demand below, the cards' art on request. Built here but
+    // DELIVERED at the end, after the browse cursor: a row that arrives first is reshuffled twice on
+    // screen — once into the new order around the game the window is still showing, and again when the
+    // cursor moves to the card's own game. The renderer holds an early cursor for a row it does not have
+    // yet (see the carousel's pendingFocusId), so the late delivery costs nothing and the cards travel once.
+    const library = this.buildLibrary();
 
     // A real insert starts on the card's first game AS THE ROW ORDERS THEM (by how recently each was
     // played), not as game.json lists them — the cursor has to land where the user can see it. A reload
-    // keeps whatever was selected (keepSelection above). The row was rebuilt one line up, so it is fresh.
-    if (!keepSelection) this.selectedId = this.firstCarouselGame()?.raw.id ?? this.selectedId;
+    // keeps whatever was selected (keepSelection above).
+    if (!keepSelection) this.selectedId = this.firstCarouselGame(library)?.raw.id ?? this.selectedId;
 
     // Always enter `ready` for the selected game (single- or multi-game card). Its hero/audio go out on the
     // existing per-game channels; the carousel handles switching between the card's games.
@@ -795,6 +799,8 @@ export class GameController {
       // screen: browse.id === AppState.game.id).
       await this.browseTo(selected.raw.id);
     }
+    // …and only now the row, so it lands with the cursor already on the card it is about to put first.
+    this.setLibrary(library);
     if (opts.focus) this.deps.window.showAndFocus();
 
     // Copy this card's art/audio into the history IN THE BACKGROUND: a card is slow media and the window
@@ -2245,6 +2251,15 @@ export class GameController {
    * background after the window is already up, and the carousel must not wait for it.
    */
   private refreshLibrary(): void {
+    this.setLibrary(this.buildLibrary());
+  }
+
+  /**
+   * The same list, BUILT but not delivered — for the one caller that must decide something from it before
+   * the renderer sees it (loadCard: the cursor belongs to the row's first card, and the row has to reach
+   * the window AFTER that cursor does).
+   */
+  private buildLibrary(): GameLibrary | null {
     const activeIds = this.games.map((manifest) => manifest.raw.id);
     const active = new Set(activeIds);
     // TWO groups, each sorted on its own: the card's games first, then the local ones. Sorting the union
@@ -2276,7 +2291,7 @@ export class GameController {
           artRev: entry.savedAt,
         })),
     ];
-    this.setLibrary(games.length > 0 ? { games } : null);
+    return games.length > 0 ? { games } : null;
   }
 
   /** One source's games, most recently played first — the per-group ordering refreshLibrary applies. */
