@@ -222,6 +222,7 @@ body {
   pointer-events: auto;
 }
 
+/* The strip dims as a whole while the bar holds the focus (see the [data-bar-focus] block below). */
 #carousel-strip {
   position: absolute;
   /* The anchor: the same x=50 the bar content uses, so the selected card lines up with the title. */
@@ -232,7 +233,7 @@ body {
   align-items: flex-end;
   gap: calc(16 * var(--px));
   transform: translateX(calc(var(--strip-offset, 0) * var(--px)));
-  transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.25s ease;
 }
 
 /* A card. The size transition MUST match the strip's curve and duration, or the card's growth and the
@@ -413,6 +414,31 @@ body {
 #app[data-screen='carousel'] .card.is-beyond {
   opacity: 0;
   pointer-events: none;
+}
+
+/* The bar holds the focus (Y, or right off the last card): the strip is no longer the surface being
+   driven, so it stops looking like one. Three things go together, and all three come back the moment the
+   focus returns to the cards:
+     - the selected card's pulsing ring — that ring IS the carousel's focus marker;
+     - the row itself dims, so "the cards are not what you are steering" reads at a glance;
+     - the bar copy, which names the selected card, and would otherwise sit there labelling a row nobody
+       is on (the title and the status move as one block, as everywhere else).
+   The size of the selected card is deliberately NOT touched: it is the strip's anchor, and shrinking it
+   would shove every card behind it sideways on a mere focus change. */
+#app[data-screen='carousel'][data-bar-focus] #carousel-strip {
+  opacity: 0.45;
+}
+#app[data-screen='carousel'][data-bar-focus] .card.is-selected::after {
+  opacity: 0;
+  animation: none;
+  /* Declared HERE and not in the base rule: entering this state fades the ring out (the after-change
+     style carries the transition), leaving it snaps the ring back — which is what a focus RETURN should
+     feel like. Putting it in the base rule instead would also fade the ring in on every flip. */
+  transition: opacity 0.2s ease;
+}
+#app[data-screen='carousel'][data-bar-focus] .title,
+#app[data-screen='carousel'][data-bar-focus] .status {
+  opacity: 0;
 }
 #app[data-screen='carousel'] .card.is-selected {
   /* The hand-back is a SWAP, same as the hand-over: this card is pixel-identical to the button it takes
@@ -914,6 +940,13 @@ html:not(.cursor-hidden) .rect-button:hover,
 #popup[data-view='confirm'] .popup-confirm,
 #popup[data-view='error'] .popup-error {
   display: flex;
+}
+
+/* …except on the carousel, where the menu is the LAUNCHER's (System + Close) and not a game's — the play
+   statistics of whichever card the row happens to stand on have no business in it. Beats the rule above
+   on specificity, so the panel stays out of the details view there. */
+#app[data-screen='carousel'] #popup[data-view='details'] .popup-info {
+  display: none;
 }
 
 .info-item {

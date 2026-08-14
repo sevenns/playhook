@@ -119,6 +119,9 @@ export function createControls(deps: ControlsDeps): Controls {
   // Seeded once at startup (setGameMode); false until then — the power menu isn't reachable that early.
   let gameMode = false;
 
+  // The app shell — carries the attributes CSS keys the screen-level states on (see setCarouselBarFocus).
+  const app = req('app');
+
   // Bar buttons.
   const playButton = req<HTMLButtonElement>('play-button');
   const moreButton = req<HTMLButtonElement>('more-button');
@@ -864,6 +867,10 @@ export function createControls(deps: ControlsDeps): Controls {
 
   function setCarouselBarFocus(onBar: boolean): void {
     carouselBarFocus = onBar;
+    // The strip stops reading as the active surface while the bar has the focus: the ring goes, the row
+    // dims and the bar copy (which names the selected card) hides. All of it is CSS off this attribute.
+    if (onBar) app.dataset['barFocus'] = 'on';
+    else delete app.dataset['barFocus'];
     if (onBar) {
       focusRevealed = true;
       focusIndex = 0; // More is the whole bar on this screen — see mainFocusables
@@ -981,8 +988,8 @@ export function createControls(deps: ControlsDeps): Controls {
 
   function refresh(): void {
     // The bar-focus spell belongs to the carousel: off that screen the bar has the focus anyway, and a
-    // stale true would send B to a strip that is no longer under it.
-    if (deps.carousel.screen() !== 'carousel') carouselBarFocus = false;
+    // stale true would send B to a strip that is no longer under it (and leave the row dimmed).
+    if (deps.carousel.screen() !== 'carousel' && carouselBarFocus) setCarouselBarFocus(false);
     // The popup lives on every screen now (empty included — More there offers System + Close). Only a
     // game-specific install/uninstall Confirm is void once the card is pulled (no game), so close that
     // one; Details/Power/power-Confirm/Error all remain valid with or without a card. A failed launch
