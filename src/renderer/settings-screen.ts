@@ -32,6 +32,7 @@ import {
   optionLabel,
   patchRow,
   relocalizeRow,
+  relocalizeSections,
   renderSettings,
   updateAction,
   type RenderedRow,
@@ -83,8 +84,9 @@ export interface SettingsScreen {
   isOpen(): boolean;
   open(): void;
   close(): void;
-  navUp(): void;
-  navDown(): void;
+  /** `repeat` marks a hold auto-repeat: the focus scroll then jumps instead of gliding (see applyRowFocus). */
+  navUp(repeat?: boolean): void;
+  navDown(repeat?: boolean): void;
   navLeft(): void;
   navRight(): void;
   navActivate(): void;
@@ -203,9 +205,14 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
     window.setTimeout(() => el.classList.remove('is-pressed'), PRESS_MS);
   }
 
-  function applyRowFocus(): void {
+  /**
+   * Paints the focus and keeps it on screen. `instant` is for a HELD direction: the list scrolls
+   * smoothly for single steps, but a repeat at NAV_REPEAT_MS would out-run a smooth scroll and leave the
+   * focus visibly trailing behind the highlight.
+   */
+  function applyRowFocus(instant = false): void {
     rendered.forEach((row, index) => row.el.classList.toggle('is-focused', index === focusIndex));
-    focusedRow()?.el.scrollIntoView({ block: 'nearest' });
+    focusedRow()?.el.scrollIntoView({ block: 'nearest', behavior: instant ? 'instant' : 'smooth' });
   }
 
   /** The loading line, shown until the first snapshot lands (the settings window did the same). */
@@ -447,13 +454,13 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
 
   // ── The six primitives ─────────────────────────────────────────────────────
 
-  function moveRowFocus(delta: number): void {
+  function moveRowFocus(delta: number, instant = false): void {
     if (rendered.length === 0) return;
     const next = Math.min(rendered.length - 1, Math.max(0, focusIndex + delta));
     if (next === focusIndex) return;
     focusIndex = next;
     deps.audio.play('navigate');
-    applyRowFocus();
+    applyRowFocus(instant);
   }
 
   function moveOptionFocus(delta: number): void {
@@ -466,14 +473,14 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
     applyOptionFocus();
   }
 
-  function navUp(): void {
+  function navUp(repeat = false): void {
     if (openSelect !== null) moveOptionFocus(-1);
-    else moveRowFocus(-1);
+    else moveRowFocus(-1, repeat);
   }
 
-  function navDown(): void {
+  function navDown(repeat = false): void {
     if (openSelect !== null) moveOptionFocus(1);
-    else moveRowFocus(1);
+    else moveRowFocus(1, repeat);
   }
 
   function navHorizontal(delta: number): void {
@@ -515,6 +522,10 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
       case 'slider':
         break;
       case 'action':
+        if (row.id === 'close') {
+          navBack();
+          break;
+        }
         deps.audio.play('button');
         pressFlash(target.el);
         deps.onResetRequested();
@@ -590,10 +601,20 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
     activateRow(entry, index);
   });
 
-  listEl.addEventListener('mouseenter', () => undefined);
+  // Hover moves the focus, but ONLY on a real pointer move. Chromium re-fires mouseover whenever an
+  // element slides under a still cursor — which the focus scroll does on every step — and acting on that
+  // yanked the focus back to the row the pointer happened to be over (the visible "jump back" stutter).
+  // Same reason the bar's own handler filters synthetic moves (controls.ts).
+  let lastX = -1;
+  let lastY = -1;
   listEl.addEventListener(
-    'mouseover',
+    'mousemove',
     (event) => {
+      if (event.clientX === lastX && event.clientY === lastY) return;
+      lastX = event.clientX;
+      lastY = event.clientY;
+      // The gamepad hides the cursor; a stale hover must not fight its focus (see .text-button:hover).
+      if (document.documentElement.classList.contains('cursor-hidden')) return;
       const target = event.target;
       if (!(target instanceof Element)) return;
       const rowEl = target.closest<HTMLElement>('.setting-row');
@@ -672,7 +693,9 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
       focusIndex = 0;
       app.dataset['overlay'] = 'settings';
       screen.setAttribute('aria-hidden', 'false');
-      listEl.scrollTop = 0;
+      // Instant, not smooth: a re-open must START at the top rather than glide there from wherever the
+      // previous visit left the list (which showed as a half-cropped first row).
+      listEl.scrollTo({ top: 0, behavior: 'instant' });
       render();
       applyRowFocus();
     },
@@ -703,6 +726,7 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
         renderLoading();
         return;
       }
+      if (model !== null) relocalizeSections(listEl, model, t());
       for (const row of rendered) relocalizeRow(row, t());
       // The expanded list, if any, carries labels too.
       if (openSelect !== null) {

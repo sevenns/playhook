@@ -37,7 +37,8 @@ describe('buildSettingsModel — composition', () => {
       'settings.sectionLanguage',
       'settings.sectionGeneral',
       'settings.sectionAudio',
-      'settings.sectionOther',
+      // The action stack closing the screen carries no title — see buildSettingsModel.
+      undefined,
     ]);
   });
 
@@ -81,6 +82,13 @@ describe('buildSettingsModel — composition', () => {
       'disableSilentInstall',
       'steamAutoLaunch',
     ]);
+  });
+
+  it('closes with the untitled action stack: reset over close', () => {
+    const model = buildSettingsModel(settings(), env());
+    const last = model.sections[model.sections.length - 1];
+    expect(last?.titleKey).toBeUndefined();
+    expect(rowIds(last?.rows ?? [])).toEqual(['reset', 'close']);
   });
 
   it('carries the app version through', () => {

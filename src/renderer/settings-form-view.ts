@@ -234,7 +234,9 @@ export function renderSettings(
     const sectionEl = div('settings-section');
     // Only the first few sections stagger — past that the delay reads as lag rather than as motion.
     sectionEl.style.setProperty('--section-index', String(Math.min(index, 2)));
-    sectionEl.append(div('settings-section-title', t(section.titleKey)));
+    if (section.titleKey !== undefined) {
+      sectionEl.append(div('settings-section-title', t(section.titleKey)));
+    }
     for (const row of section.rows) {
       const rendered = buildRow(row, t);
       rows.push(rendered);
@@ -284,6 +286,20 @@ export function patchRow(rendered: RenderedRow, row: SettingsRow, t: Translator)
       break;
     }
   }
+}
+
+/** Re-applies the SECTION titles for a new translator (the rows carry their own labels). */
+export function relocalizeSections(
+  container: HTMLElement,
+  model: SettingsModel,
+  t: Translator,
+): void {
+  const sections = [...container.querySelectorAll<HTMLElement>('.settings-section')];
+  model.sections.forEach((section, index) => {
+    const title = sections[index]?.querySelector<HTMLElement>('.settings-section-title');
+    if (title === null || title === undefined || section.titleKey === undefined) return;
+    title.textContent = t(section.titleKey);
+  });
 }
 
 /** Re-applies the row's LABELS for a new translator (values are patched by patchRow). */

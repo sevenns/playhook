@@ -62,8 +62,9 @@ export interface SettingsNav {
   isOpen(): boolean;
   open(): void;
   close(): void;
-  navUp(): void;
-  navDown(): void;
+  /** `repeat` marks a hold auto-repeat — the screen scrolls instantly then, instead of gliding. */
+  navUp(repeat?: boolean): void;
+  navDown(repeat?: boolean): void;
   navLeft(): void;
   navRight(): void;
   navActivate(): void;
@@ -923,21 +924,23 @@ export function createControls(deps: ControlsDeps): Controls {
     }
     if (popupView === 'none') moveFocus(1);
   }
-  function navUp(): void {
+  // Vertical hold-to-repeat exists for the Settings LIST, which is long enough to warrant it. The popup
+  // stacks are short and cyclic — repeating there would spin them — so a repeat is dropped anywhere else.
+  function navUp(repeat = false): void {
     noteGamepadActivity();
     if (popupView !== 'none') {
-      moveStackFocus(-1);
+      if (!repeat) moveStackFocus(-1);
       return;
     }
-    if (deps.settings.isOpen()) deps.settings.navUp();
+    if (deps.settings.isOpen()) deps.settings.navUp(repeat);
   }
-  function navDown(): void {
+  function navDown(repeat = false): void {
     noteGamepadActivity();
     if (popupView !== 'none') {
-      moveStackFocus(1);
+      if (!repeat) moveStackFocus(1);
       return;
     }
-    if (deps.settings.isOpen()) deps.settings.navDown();
+    if (deps.settings.isOpen()) deps.settings.navDown(repeat);
   }
   function navActivate(): void {
     noteGamepadActivity();
@@ -1066,11 +1069,12 @@ export function createControls(deps: ControlsDeps): Controls {
     backspace: navBack,
     escape: navBack,
   };
-  // Left/right are the exception to the edge model: holding them flips through the carousel, matching the
-  // gamepad's hold-to-repeat. The OS auto-repeat supplies the events (its own initial delay is close
-  // enough to the pad's), but its rate is far too fast for a carousel, so it is throttled to the same
-  // NAV_REPEAT_MS cadence. Every other key stays one action per press.
-  const REPEATABLE_KEYS = new Set(['a', 'arrowleft', 'd', 'arrowright']);
+  // The four directions are the exception to the edge model: holding one flips through the carousel or
+  // runs down the Settings list, matching the gamepad's hold-to-repeat (a held direction inside a popup
+  // stack is dropped by navUp/navDown themselves). The OS auto-repeat supplies the events (its own
+  // initial delay is close enough to the pad's), but its rate is far too fast, so it is throttled to the
+  // same NAV_REPEAT_MS cadence. Every other key stays one action per press.
+  const REPEATABLE_KEYS = new Set(['a', 'arrowleft', 'd', 'arrowright', 'w', 'arrowup', 's', 'arrowdown']);
   let lastKeyRepeatAt = 0;
   window.addEventListener('keydown', (event) => {
     const key = event.key.toLowerCase();

@@ -149,7 +149,7 @@ export const en = {
 
   // ── Settings window (settings.html + settings.ts) ───────────────────────────
   'settings.sectionUpdates': 'Updates',
-  'settings.loading': 'Loading…',
+  'settings.loading': 'Loading...',
   'settings.sectionAutoUpdate': 'Automatic updates',
   'settings.autoDownloadInstall': 'Download and install automatically',
   'settings.autoDownloadManual': 'Download automatically, install manually',
@@ -184,21 +184,19 @@ export const en = {
   'settings.openLogs': 'Open logs',
   'settings.openGames': 'Open games folder',
   'settings.reset': 'Reset to defaults',
-  // The launcher screen's last section — it holds the reset action alone.
-  'settings.sectionOther': 'Other',
   'settings.confirmReset': 'Reset all settings to defaults?',
   // Update-status line + primary button (settings.ts render()).
   'settings.status.idle': 'Check for updates to see if a new version is available.',
   'settings.status.upToDate': 'You’re up to date.',
-  'settings.status.checking': 'Checking for updates…',
+  'settings.status.checking': 'Checking for updates...',
   'settings.status.available': 'Update available: {version}',
-  'settings.status.downloading': 'Downloading… {percent}%',
+  'settings.status.downloading': 'Downloading... {percent}%',
   'settings.status.downloaded': 'Update {version} is ready to install.',
   'settings.status.unsupported': 'Updates are available only in the installed build.',
   'settings.action.check': 'Check for updates',
-  'settings.action.checking': 'Checking…',
+  'settings.action.checking': 'Checking...',
   'settings.action.updateTo': 'Update to {version}',
-  'settings.action.downloading': 'Downloading…',
+  'settings.action.downloading': 'Downloading...',
   'settings.action.restartInstall': 'Restart & install',
   'settings.action.retry': 'Retry',
 

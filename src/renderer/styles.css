@@ -901,8 +901,9 @@ html:not(.cursor-hidden) .rect-button:hover,
   position: absolute;
   inset: 0;
   pointer-events: none;
-  /* Above the carousel (which lifts itself over the bar) so the veil covers the whole screen. */
-  z-index: 2;
+  /* Above the carousel (which lifts itself over the bar) AND above the Settings screen (z-index 2), which
+     stays open under a confirm popup opened from it. */
+  z-index: 3;
 }
 
 .popup-veil {
@@ -1145,8 +1146,8 @@ html:not(.cursor-hidden) .text-button:hover,
 .settings {
   position: absolute;
   inset: 0;
-  /* Above the popup's z-index:2 base? No — BELOW it: a confirm popup (reset) has to paint on top of this
-     screen, and the popup surface is the one that owns the veil then. */
+  /* Below the popup (z-index 3): a confirm popup — the reset question — has to paint on top of this
+     screen, which stays open underneath it. */
   z-index: 2;
   opacity: 0;
   pointer-events: none;
@@ -1158,12 +1159,18 @@ html:not(.cursor-hidden) .text-button:hover,
   pointer-events: auto;
 }
 
-/* Veil in the popup's own language, but full-width: this screen is not a right-hand column. */
+/* Veil in the popup's own language, but full-width: this screen is not a right-hand column. Deliberately
+   thin — the game's hero stays readable behind it, which is what makes this a launcher screen and not a
+   settings dialog. The blur carries the contrast the missing opacity would have. */
 .settings-veil {
   position: absolute;
   inset: 0;
-  background: linear-gradient(to right, color-mix(in srgb, var(--d1) 82%, transparent) 0%, var(--d1) 60%);
-  backdrop-filter: blur(12px);
+  background: linear-gradient(
+    to right,
+    color-mix(in srgb, var(--d1) 55%, transparent) 0%,
+    color-mix(in srgb, var(--d1) 72%, transparent) 100%
+  );
+  backdrop-filter: blur(10px);
   opacity: 0;
   transition: opacity 0.35s ease;
 }
@@ -1370,8 +1377,13 @@ html:not(.cursor-hidden) .setting-row:hover,
   font-weight: 500;
   font-size: calc(26 * var(--px));
   min-width: calc(220 * var(--px));
-  text-align: right;
+  text-align: center;
   transition: opacity 0.12s ease, transform 0.12s ease;
+}
+
+/* The slider's readout is not framed by chevrons — keep it flush right against the track. */
+.setting-slider .setting-value {
+  text-align: right;
 }
 
 /* The direction of a value change is readable: the text slides the way the press went. */
@@ -1443,6 +1455,7 @@ html:not(.cursor-hidden) .setting-row:hover,
 .setting-status-body {
   display: flex;
   flex-direction: column;
+  justify-content: center;
   gap: calc(10 * var(--px));
   min-width: 0;
   flex: 1 1 auto;
@@ -1456,16 +1469,19 @@ html:not(.cursor-hidden) .setting-row:hover,
 }
 
 .setting-progress {
-  height: calc(8 * var(--px));
+  /* Height, not display: the bar has to COLLAPSE when idle (otherwise the status text is pushed off the
+     row's centre line, away from its button) yet still grow in smoothly when a download starts. */
+  height: 0;
   width: calc(420 * var(--px));
   max-width: 100%;
   border-radius: calc(4 * var(--px));
   background: color-mix(in srgb, currentColor 30%, transparent);
   opacity: 0;
-  transition: opacity 0.2s ease;
+  transition: opacity 0.2s ease, height 0.2s ease;
 }
 
 .setting-progress.is-visible {
+  height: calc(8 * var(--px));
   opacity: 1;
 }
 
@@ -1475,14 +1491,6 @@ html:not(.cursor-hidden) .setting-row:hover,
   border-radius: calc(4 * var(--px));
   background: currentColor;
   transition: width 0.3s ease;
-}
-
-/* A .text-button inside a row keeps its own colours: the row's inversion would otherwise paint a filled
-   button on a filled row. */
-.setting-row .text-button {
-  height: calc(62 * var(--px));
-  min-width: calc(150 * var(--px));
-  font-size: calc(24 * var(--px));
 }
 
 /* Rows whose ONLY control is a button (the reset action, the Updates row) put the focus on the BUTTON,

@@ -24,7 +24,7 @@ export type SelectId = 'autoUpdate' | 'language' | 'soundSet' | 'ambientTrack';
 export type SliderId = 'sfxVolume' | 'musicVolume';
 
 /** Every plain action row (a `.text-button` inside the row). */
-export type ActionId = 'reset';
+export type ActionId = 'reset' | 'close';
 
 /**
  * One dropdown option. Its label is either a translation key (`system`, `No ambience`) or a literal —
@@ -60,7 +60,8 @@ export type SettingsRow =
   | { readonly kind: 'update-status'; readonly status: UpdateStatus };
 
 export interface SettingsSection {
-  readonly titleKey: MessageKey;
+  /** Absent for the closing section: one titled "Other" over a pair of buttons says nothing. */
+  readonly titleKey?: MessageKey;
   readonly rows: readonly SettingsRow[];
 }
 
@@ -244,8 +245,12 @@ export function buildSettingsModel(settings: AppSettings, env: SettingsEnv): Set
         ],
       },
       {
-        titleKey: 'settings.sectionOther',
-        rows: [{ kind: 'action', id: 'reset', labelKey: 'settings.reset' }],
+        // No title: the last section is the screen's action stack — Reset over Close, bottom-aligned
+        // like every popup stack, where Close is the default way out for the mouse.
+        rows: [
+          { kind: 'action', id: 'reset', labelKey: 'settings.reset' },
+          { kind: 'action', id: 'close', labelKey: 'launcher.menu.close' },
+        ],
       },
     ],
   };
