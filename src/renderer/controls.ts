@@ -32,6 +32,9 @@ type ConfirmMode =
   | 'reset-settings';
 // Gamepad A doesn't trigger :active, so flash a press class to play the scale-down animation.
 const PRESS_MS = 130;
+/** How long the popup takes to fade out (.popup transition in styles.css) — the window its contents
+ *  must stay frozen for, so the user never watches the menu rewrite itself on the way out. */
+const POPUP_FADE_MS = 350;
 
 /** What the interaction layer needs from the rest of the renderer. */
 export interface ControlsDeps {
@@ -202,11 +205,40 @@ export function createControls(deps: ControlsDeps): Controls {
     popup.setAttribute('aria-hidden', 'false');
   }
 
+  /**
+   * Closing is a 0.35s fade, and the menu is still on screen for all of it. Anything that rebuilds its
+   * items in that window is visible — pressing "Home" leaves the detail screen, which swaps the game's
+   * items for the launcher's, and the user watched that happen through the fading popup. So the items
+   * are frozen until the fade is over, then brought up to date in one go for the next opening.
+   */
+  let menuThawTimer = 0;
+
+  function freezeMenuDuringFade(): void {
+    if (menuThawTimer !== 0) window.clearTimeout(menuThawTimer);
+    menuThawTimer = window.setTimeout(() => {
+      menuThawTimer = 0;
+      applyGameButtons();
+    }, POPUP_FADE_MS);
+  }
+
+  /** Whether the menu's items are currently held still (see freezeMenuDuringFade). */
+  function menuFrozen(): boolean {
+    return menuThawTimer !== 0;
+  }
+
+  /** Ends the freeze early and rebuilds now — used when the popup opens again mid-fade. */
+  function thawMenu(): void {
+    if (menuThawTimer === 0) return;
+    window.clearTimeout(menuThawTimer);
+    menuThawTimer = 0;
+  }
+
   function closePopup(): void {
     if (popupView === 'none') return;
     popupView = 'none';
     popup.classList.remove('is-open');
     popup.setAttribute('aria-hidden', 'true');
+    freezeMenuDuringFade();
     applyStackFocus(); // clear the stack highlight (stackActive becomes false)
     applyFocus(); // restore the main bar highlight
   }
@@ -215,6 +247,7 @@ export function createControls(deps: ControlsDeps): Controls {
   // every screen — on the empty (no-card) screen there are no stats and no Install/Uninstall, so it
   // degrades to just System + Close.
   function openDetails(): void {
+    thawMenu(); // a re-open inside the fade window must show the CURRENT items, not the frozen ones
     applyMenuInstallToggle(); // keep the toggle's text/visibility fresh for the current game
     applyMenuKill(); // keep the force-close item's visibility fresh (running-only)
     applyMenuHome(); // keep the "Home" item fresh (only when there is a carousel to go back to)
@@ -392,6 +425,7 @@ export function createControls(deps: ControlsDeps): Controls {
    * is, and dropping System there would strand Shutdown / Minimize Playhook with no way to reach them.
    */
   function applyMenuSystem(): void {
+    if (menuFrozen()) return;
     menuShutdown.classList.toggle('is-hidden', onGameScreen() && deps.carousel.exists());
   }
 
@@ -401,10 +435,12 @@ export function createControls(deps: ControlsDeps): Controls {
    * the detail menu is the only menu there is, and hiding Settings there would put them out of reach.
    */
   function applyMenuSettings(): void {
+    if (menuFrozen()) return;
     menuSettings.classList.toggle('is-hidden', onGameScreen() && deps.carousel.exists());
   }
 
   function applyMenuInstallToggle(): void {
+    if (menuFrozen()) return;
     if (!onGameScreen()) {
       menuInstallToggle.classList.add('is-hidden');
       return;
@@ -429,6 +465,7 @@ export function createControls(deps: ControlsDeps): Controls {
   // so this is the exact opposite of the install toggle, which hides during busy). Text from JS (no
   // data-i18n) so a language change re-labels it at render time and it stays out of the i18n HTML test.
   function applyMenuKill(): void {
+    if (menuFrozen()) return;
     // Shown only while a game is running AND a force-close isn't already in flight (during killing the
     // status reads "Force closing…" and the button would be a no-op — main guards a repeat anyway).
     const s = state();
@@ -441,6 +478,7 @@ export function createControls(deps: ControlsDeps): Controls {
   // The MOUSE route out of a detail screen — the gamepad/keyboard have B for it, but a mouse user had no
   // way back to the strip. Shown only on a detail screen that has a carousel behind it.
   function applyMenuHome(): void {
+    if (menuFrozen()) return;
     const show = deps.carousel.exists() && deps.carousel.screen() === 'detail';
     menuHome.classList.toggle('is-hidden', !show);
     if (show) menuHome.textContent = t()('launcher.menu.home');
@@ -451,6 +489,7 @@ export function createControls(deps: ControlsDeps): Controls {
   // in the PC library". Those games are rebuilt from their manifests on every insert, so removing one
   // would be a lie the next refresh undoes; what CAN be removed is the record of a game you no longer have.
   function applyMenuForget(): void {
+    if (menuFrozen()) return;
     const browse = deps.getBrowse();
     const show = onGameScreen() && browse !== null && !browse.active;
     menuForget.classList.toggle('is-hidden', !show);
@@ -1112,6 +1151,7 @@ export function createControls(deps: ControlsDeps): Controls {
   }
 
   function clearGameButtons(): void {
+    if (menuFrozen()) return;
     // No game → no Install/Uninstall item and no Force close (the popup is force-closed off the ready
     // screen anyway; no-game is never `running`).
     menuInstallToggle.classList.add('is-hidden');
