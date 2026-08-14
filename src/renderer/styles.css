@@ -219,9 +219,19 @@ body {
    already handed its geometry over to #play-button — see the morph block below). */
 #app[data-screen='carousel'] #carousel {
   opacity: 1;
+}
+
+/* The container stays transparent to the mouse even here, and the CARDS take the clicks instead. It is a
+   full-width band (see the box above) painted at z-index 1, so it lies right across the bottom bar — made
+   hit-testable it swallows every click meant for the bar's own buttons, More included. Nothing is bound to
+   the container itself: the card listeners live on the cards (carousel.ts) and the right-click-to-go-back
+   on the window. Gated on the screen because a card must NOT re-enable itself through the invisible strip
+   left behind on the detail screen — `pointer-events: none` on a parent is undone by an `auto` child. */
+#app[data-screen='carousel'] .card {
   pointer-events: auto;
 }
 
+/* The strip dims as a whole while the bar holds the focus (see the [data-bar-focus] block below). */
 #carousel-strip {
   position: absolute;
   /* The anchor: the same x=50 the bar content uses, so the selected card lines up with the title. */
@@ -232,7 +242,7 @@ body {
   align-items: flex-end;
   gap: calc(16 * var(--px));
   transform: translateX(calc(var(--strip-offset, 0) * var(--px)));
-  transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.25s ease;
 }
 
 /* A card. The size transition MUST match the strip's curve and duration, or the card's growth and the
@@ -387,16 +397,66 @@ body {
   transition: opacity 0s linear;
 }
 #app[data-screen='carousel'] .card {
-  /* ONLY the fade-in waits for the grow. Delaying width/height here too would also delay every
-     grow/shrink WHILE flipping — the strip would slide first and the cards resize after.
+  /* Flipping through the row: the only cards whose opacity moves are the ones crossing the window's edge
+     (.is-beyond below), and they must do it WITH the slide — no delay, or the row would arrive first and
+     the newcomer blink in afterwards. The staggered hand-back fade lives in the [data-returning] rule. */
+  transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1), height 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 0.35s cubic-bezier(0.2, 0, 0.2, 1), transform 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+}
+#app[data-screen='carousel'][data-returning] .card {
+  /* Coming back from the detail screen. ONLY the fade-in waits for the grow. Delaying width/height here
+     too would also delay every grow/shrink WHILE flipping — the strip would slide first and the cards
+     resize after.
      The fan: each card comes in one stagger step later than its neighbour closer to the selection, so the
      row opens outwards instead of appearing as one block. --fan is set per card by carousel.ts. The fade
      is much LONGER than the step on purpose — the cards overlap heavily, which reads as one soft wave
      travelling outwards rather than a row of separate blinks.
-     These three numbers (0.35s morph / 50ms step / 0.4s fade) are mirrored by RETURN_MS in
-     carousel-geometry.ts, which locks input out for exactly as long: edit them together. */
+     These three numbers (0.35s morph / 50ms step / 0.4s fade) are mirrored by RETURN_LOCK_MS and
+     RETURN_FAN_MS in carousel-geometry.ts — the first locks input out for the morph, the second is how
+     long the renderer keeps `data-returning` on: edit them together. */
   transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1), height 0.35s cubic-bezier(0.4, 0, 0.2, 1),
-    opacity 0.4s cubic-bezier(0.2, 0, 0.2, 1) calc(0.35s + var(--fan, 0) * 50ms);
+    opacity 0.4s cubic-bezier(0.2, 0, 0.2, 1) calc(0.35s + var(--fan, 0) * 50ms),
+    transform 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+}
+/* Past the end of the shown window (VISIBLE_CARDS = 9 in carousel-geometry.ts): laid out as usual — the
+   strip's offset is positional, so removing the node would shift the whole row — but invisible and
+   unclickable until the selection walks far enough right for it to fade in. */
+#app[data-screen='carousel'] .card.is-beyond {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* The bar holds the focus (Y, or right off the last card): the strip is no longer the surface being
+   driven, so it stops looking like one. Three things go together, and all three come back the moment the
+   focus returns to the cards:
+     - the selected card's pulsing ring — that ring IS the carousel's focus marker;
+     - the row itself dims, so "the cards are not what you are steering" reads at a glance;
+     - the bar copy, which names the selected card, fades to the same value as the row (title and status
+       move as one block, as everywhere else) — it stays readable, it just stops being the focus.
+   The size of the selected card is deliberately NOT touched: it is the strip's anchor, and shrinking it
+   would shove every card behind it sideways on a mere focus change. */
+#app[data-screen='carousel'][data-bar-focus] {
+  /* One knob for the whole dimmed surface — the row and the copy that names it must fade to the SAME
+     value, or the "this is not the active surface" reading falls apart into two unrelated effects. */
+  --strip-dim: 0.45;
+}
+#app[data-screen='carousel'][data-bar-focus] #carousel-strip {
+  opacity: var(--strip-dim);
+}
+#app[data-screen='carousel'][data-bar-focus] .card.is-selected::after {
+  opacity: 0;
+  animation: none;
+  /* Declared HERE and not in the base rule: entering this state fades the ring out (the after-change
+     style carries the transition), leaving it snaps the ring back — which is what a focus RETURN should
+     feel like. Putting it in the base rule instead would also fade the ring in on every flip. */
+  transition: opacity 0.2s ease;
+}
+/* The bar copy dims WITH the row rather than leaving: it still names the selected card, and that card is
+   still there — just not the thing being steered. Both lines move together, as everywhere else. The
+   status is scoped to `shown` so this never overrides its hidden default into a faint empty line. */
+#app[data-screen='carousel'][data-bar-focus] .title,
+#app[data-screen='carousel'][data-bar-focus][data-status='shown'] .status {
+  opacity: var(--strip-dim);
 }
 #app[data-screen='carousel'] .card.is-selected {
   /* The hand-back is a SWAP, same as the hand-over: this card is pixel-identical to the button it takes
@@ -629,12 +689,10 @@ html:not(.cursor-hidden) .play-button:hover::after,
 
 /* ── Rect (Info) button — normal: no background, content d2; fills with d2 on hover/focus ── */
 
-/* Carousel level: Play and More are hidden entirely (Р8) — the actions live one level deeper, on the
-   detail screen (A → detail → More → System/Close), so the carousel stays a pure browsing surface. */
-#app[data-screen='carousel'] #more-button {
-  opacity: 0;
-  pointer-events: none;
-}
+/* Carousel level: Play is hidden (it is the selected card's stand-in for the morph — see below), but
+   More stays. It is the launcher-level menu here — System + Close — while the game's own actions live one
+   level deeper, on the detail screen. Reached with the mouse, or with Y, which hands the focus between
+   the strip and this button (see controls.ts). */
 
 .rect-button {
   position: absolute;
@@ -900,6 +958,13 @@ html:not(.cursor-hidden) .rect-button:hover,
 #popup[data-view='confirm'] .popup-confirm,
 #popup[data-view='error'] .popup-error {
   display: flex;
+}
+
+/* …except on the carousel, where the menu is the LAUNCHER's (System + Close) and not a game's — the play
+   statistics of whichever card the row happens to stand on have no business in it. Beats the rule above
+   on specificity, so the panel stays out of the details view there. */
+#app[data-screen='carousel'] #popup[data-view='details'] .popup-info {
+  display: none;
 }
 
 .info-item {

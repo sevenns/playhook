@@ -8,16 +8,26 @@
 // `browseGame(id)` — this module never derives it. The geometry lives in carousel-geometry.ts (pure).
 import type { LibraryEntry } from '../shared/types';
 import {
+  RETURN_FAN_MS,
   RETURN_LOCK_MS,
   clampIndex,
   fanIndex,
   isNearViewport,
+  isWithinWindow,
   stripOffset,
 } from './carousel-geometry.js';
 import { req } from './dom.js';
 
 /** The two levels of the launcher screen (mirrors `#app[data-screen]`). */
 export type Screen = 'carousel' | 'detail';
+
+/**
+ * What a `move` did. `at-end` is the one the caller acts on: the strip is against a hard stop, so the
+ * press is free for whatever lies beyond the row (the bar's More button — see controls.ts). It must stay
+ * distinct from `locked`, which is the return-morph still running and means "this press does nothing at
+ * all" — treating the two alike would fling the focus off the strip on any press right after coming back.
+ */
+export type MoveResult = 'moved' | 'at-end' | 'locked';
 
 export interface CarouselDeps {
   /** Fetches one card's artwork as a data URL (main caches nothing; we cache by id here). */
@@ -36,7 +46,7 @@ export interface Carousel {
   /** New list from main (insert / removal / a finished session / an eviction). Keeps the selection BY ID. */
   setGames(games: readonly LibraryEntry[]): void;
   /** Moves the selection by `delta` cards (no wrap-around — the ends are hard stops). */
-  move(delta: number): void;
+  move(delta: number): MoveResult;
   /**
    * Puts the selection on `id` WITHOUT telling main about it — for the reverse direction, where main
    * decided what is on screen (a card was inserted, a game was picked) and the strip has to follow.
@@ -70,12 +80,20 @@ export function createCarousel(deps: CarouselDeps): Carousel {
   // play square. Moving the selection through that resizes and reorders a card mid-morph, which shows.
   // Timestamp (performance.now) until which a move is refused; 0 = the card stands at full size.
   let lockedUntil = 0;
+  // Pending clear of `data-returning` (see markReturning); null when the strip is not returning.
+  let returnTimer: number | null = null;
   // Artwork, keyed by game id AND artwork revision. Decoded data URLs are heavy, so each is fetched at
   // most once; a game with no art at all is remembered as null so we don't ask again on every re-render.
   // The revision is what keeps that cache honest: editing gridImage in Configure re-copies the assets,
   // main bumps `artRev`, and the new key misses the cache — no restart needed to see the new cover.
   const art = new Map<string, string | null>();
   const cards = new Map<string, HTMLElement>();
+  // A focusGame() that named a game the list does not hold YET. The browse cursor and the carousel list
+  // are seeded over two independent channels, in either order, so on startup the "put the strip on the
+  // game main is showing" request routinely arrives first — and used to be dropped on the floor, leaving
+  // the strip on games[0] while the title, the background and the music belonged to another game.
+  // Honoured by the next setGames, then forgotten; a real move by the user outranks it (see move()).
+  let pendingFocusId: string | null = null;
 
   const artKey = (game: LibraryEntry): string => `${game.id}@${game.artRev ?? ''}`;
 
@@ -107,6 +125,10 @@ export function createCarousel(deps: CarouselDeps): Carousel {
       card.classList.toggle('is-selected', game.id === current?.id);
       card.classList.toggle('is-busy', game.id === busyId);
       card.classList.toggle('shows-dot', showsDot(game, hasHistory));
+      // Past the shown window (see VISIBLE_CARDS): still laid out — the strip's offset is positional and
+      // a removed node would shift every card after it — but faded out, so it slides in softly when the
+      // selection reaches it instead of popping into existence at the row's end.
+      card.classList.toggle('is-beyond', !isWithinWindow(position, index));
       // Its place in the fan the strip returns in (styles.css turns this into a transition-delay).
       card.style.setProperty('--fan', String(fanIndex(position, index)));
     });
@@ -184,6 +206,38 @@ export function createCarousel(deps: CarouselDeps): Carousel {
     strip.replaceChildren(...nodes);
   }
 
+  /**
+   * Applies a new order to the row WITHOUT the cards jumping into place: FLIP. `apply` rebuilds the nodes
+   * in the new order (the browser lays that out instantly, which is the jump), then every card that was
+   * already on screen is shoved back to where it used to be and released in the same frame — the CSS
+   * transform transition carries it from there to its new slot.
+   *
+   * Positions are read as `offsetLeft`, i.e. LAYOUT coordinates relative to the strip. Viewport rects
+   * would be wrong here: the strip carries its own sliding transform, and half the time it is mid-flight,
+   * so its motion would be folded into the measurement and every card would overshoot by that much.
+   */
+  function reorderSmoothly(apply: () => void): void {
+    const before = new Map<string, number>();
+    for (const [id, card] of cards) before.set(id, card.offsetLeft);
+    apply();
+    const shifted: HTMLElement[] = [];
+    for (const [id, card] of cards) {
+      const from = before.get(id);
+      if (from === undefined) continue; // new to the row: it belongs where it is, and fades in there
+      const dx = from - card.offsetLeft;
+      if (Math.abs(dx) < 1) continue;
+      card.style.transition = 'none';
+      card.style.transform = `translateX(${dx}px)`;
+      shifted.push(card);
+    }
+    if (shifted.length === 0) return;
+    void strip.offsetWidth; // ONE reflow for the whole row, so every card starts its travel together
+    for (const card of shifted) {
+      card.style.transition = '';
+      card.style.transform = '';
+    }
+  }
+
   /** Tells main what is on screen now. */
   function announceSelection(): void {
     const current = selected();
@@ -200,7 +254,29 @@ export function createCarousel(deps: CarouselDeps): Carousel {
     // Coming back, the strip is unusable until the selected card is back at full size (RETURN_LOCK_MS);
     // leaving, nothing is locked — the detail screen has its own focus model.
     lockedUntil = effective === 'carousel' ? performance.now() + RETURN_LOCK_MS : 0;
+    markReturning(effective === 'carousel');
     deps.onScreenChange(effective);
+  }
+
+  /**
+   * Flags the staggered hand-back fade for as long as it runs (see RETURN_FAN_MS). CSS keys the fan's
+   * transition-delay on it, so a card that scrolls into the window while merely FLIPPING fades in
+   * immediately — the stagger belongs to the return, not to every appearance.
+   */
+  function markReturning(returning: boolean): void {
+    if (returnTimer !== null) {
+      window.clearTimeout(returnTimer);
+      returnTimer = null;
+    }
+    if (!returning) {
+      delete app.dataset['returning'];
+      return;
+    }
+    app.dataset['returning'] = 'true';
+    returnTimer = window.setTimeout(() => {
+      returnTimer = null;
+      delete app.dataset['returning'];
+    }, RETURN_FAN_MS);
   }
 
   /** Whether the selected card is still growing back to full size, i.e. must not be flipped through yet. */
@@ -214,16 +290,19 @@ export function createCarousel(deps: CarouselDeps): Carousel {
     deps.onActivate(current);
   }
 
-  function move(delta: number): void {
-    if (isLocked()) return;
+  function move(delta: number): MoveResult {
+    if (isLocked()) return 'locked';
+    // The user is steering now: a seed request still waiting for its list must not yank the strip later.
+    pendingFocusId = null;
     const next = clampIndex(index + delta, games.length);
-    if (next === index) return; // at an end — no move, no sound
+    if (next === index) return 'at-end'; // no move, no sound — the caller decides what a stop means
     const moved = next - index;
     index = next;
     deps.onNavigate(moved);
     applyLayout();
     loadNearbyArt();
     announceSelection();
+    return 'moved';
   }
 
   // The launcher starts on the plain bar screen; the first list with more than one game promotes it.
@@ -232,7 +311,12 @@ export function createCarousel(deps: CarouselDeps): Carousel {
   return {
     focusGame(id: string): void {
       const position = games.findIndex((game) => game.id === id);
-      if (position === -1 || position === index) return;
+      if (position === -1) {
+        pendingFocusId = id; // the list carrying it is still in flight — see the field
+        return;
+      }
+      pendingFocusId = null;
+      if (position === index) return;
       index = position;
       applyLayout();
       loadNearbyArt();
@@ -240,8 +324,12 @@ export function createCarousel(deps: CarouselDeps): Carousel {
     setGames(list: readonly LibraryEntry[]): void {
       // The selection is remembered BY ID, not by position: the list is re-ordered whenever a card is
       // inserted or a session ends, and a positional cursor would silently land on a different game.
-      const currentId = selected()?.id;
+      // A pending focus request wins over the current selection — it is the newer instruction of the two.
+      const currentId = pendingFocusId ?? selected()?.id;
       games = list;
+      if (pendingFocusId !== null && games.some((game) => game.id === pendingFocusId)) {
+        pendingFocusId = null;
+      }
       index = clampIndex(
         currentId === undefined
           ? 0
@@ -251,8 +339,12 @@ export function createCarousel(deps: CarouselDeps): Carousel {
             ),
         games.length,
       );
-      rebuild();
-      applyLayout();
+      // Both together: applyLayout is what resizes the selected card, so measuring between the two would
+      // compare against a width the row is about to change.
+      reorderSmoothly(() => {
+        rebuild();
+        applyLayout();
+      });
       loadNearbyArt();
       // A list that shrank to a single game (or none) has no carousel left to stand on.
       if (!exists() && screen === 'carousel') setScreen('detail');

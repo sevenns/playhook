@@ -10,7 +10,9 @@ import {
   clampIndex,
   fanIndex,
   isNearViewport,
+  isWithinWindow,
   stripOffset,
+  VISIBLE_CARDS,
 } from '../src/renderer/carousel-geometry';
 
 describe('stripOffset', () => {
@@ -84,5 +86,34 @@ describe('isNearViewport', () => {
     expect(isNearViewport(5, 5)).toBe(true);
     expect(isNearViewport(0, 12)).toBe(true);
     expect(isNearViewport(25, 12)).toBe(false);
+  });
+});
+
+describe('isWithinWindow (how many cards the row shows)', () => {
+  it('shows the selected card and the eight after it', () => {
+    expect(VISIBLE_CARDS).toBe(9);
+    expect(isWithinWindow(0, 0)).toBe(true);
+    expect(isWithinWindow(8, 0)).toBe(true);
+    expect(isWithinWindow(9, 0)).toBe(false);
+    expect(isWithinWindow(39, 0)).toBe(false);
+  });
+
+  it('moves with the selection — one flip right brings exactly one card in', () => {
+    expect(isWithinWindow(9, 0)).toBe(false);
+    expect(isWithinWindow(9, 1)).toBe(true);
+    expect(isWithinWindow(10, 1)).toBe(false);
+  });
+
+  it('leaves everything BEHIND the selection alone (the strip slides those off screen itself)', () => {
+    expect(isWithinWindow(0, 20)).toBe(true);
+    expect(isWithinWindow(19, 20)).toBe(true);
+  });
+
+  it('never hides anything in a list that fits the window', () => {
+    for (let selected = 0; selected < VISIBLE_CARDS; selected += 1) {
+      for (let index = 0; index < VISIBLE_CARDS; index += 1) {
+        expect(isWithinWindow(index, selected)).toBe(true);
+      }
+    }
   });
 });

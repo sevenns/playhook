@@ -97,9 +97,16 @@ state, offers:
   [Steam-mode](#steam-mode-launch-and-install-steam-games) cards (an uninstalled game has no Play
   button at all — you start from here);
 - **Force close** — while a game is running, kills it and still records the session and syncs saves;
+- **Remove from history** — for a game you no longer have (its card is out and it is not a local game),
+  drops it from the carousel along with the art copied for it. Saves and playtime stay: put the card
+  back in and the game returns with its stats. Games you *can* play right now don't offer this item —
+  they are rebuilt from their card / library every time it is read;
 - **System** — a submenu with Shutdown / Reboot / Sleep (each behind a confirmation) and
   **Minimize Playhook**, which sends the window back to the tray. In Game Mode that last item is
-  **Close Playhook** (a full quit) instead, since there is no tray to minimize into.
+  **Close Playhook** (a full quit) instead, since there is no tray to minimize into. It belongs to the
+  launcher rather than to any one game, so it lives in the **carousel's** own More menu (System + Close),
+  and a game's menu is only about that game. With no carousel to go up to — a single-game card, or the
+  empty screen — it stays where it was: that menu is then the only one there is.
 
 Every confirmation and every error uses that same popup; close it with **B** or a click on **Close**.
 If a launch fails, the reason appears there and you can simply retry.
@@ -112,7 +119,11 @@ have had once the card is out — pick one and you get its screen (title, stats,
 with no Play button: there is nothing to launch without the card.
 
 Flip through the row with **left/right** (hold to run through it), open a game with **A**, and step back
-to the row with **B**. With a mouse: the wheel scrolls the row, a click selects a card, a second click
+to the row with **B**. **Y** hands the highlight over to the **More** button beside the row and back
+again — the row's own menu is the launcher's (System + Close) — and so does **right** on the last card,
+though only as a separate press: holding right runs to the end of the row and stops there. From the
+button, **left** and **B** both return to the cards. With a mouse: the wheel scrolls the row, a click
+selects a card, a second click
 opens it, and a right-click steps back. The row is the top level — the game's screen sits one step
 inside it, which is where **More** ⋯ and its actions live.
 
@@ -120,11 +131,82 @@ The row is ordered by how recently you **touched** a game — the later of "its 
 played it" — so a card you put in yesterday and never got around to starting still sits near the front.
 The games on the currently inserted card come first, ordered by when you last played them. The history
 keeps 40 games; beyond that the least recently touched are dropped, and the games on the inserted card
-are never evicted.
+are never evicted. To drop one yourself, open it and use **Remove from history** in the More ⋯ menu.
 
 Use `gridImage` in `game.json` to control how a game looks in that row. It expects a **600x900** portrait
 cover — the same format Steam uses, so [SteamGridDB](https://www.steamgriddb.com/) is the easiest place to
 find one. Without it the card is cropped from the first `heroImage`.
+
+### Local games (already installed on this PC)
+
+Not every game lives on a card. A game that is already installed on this machine can be added to the
+launcher through **Configure game → This PC**, and from then on it behaves like any other: its own hero
+art, carousel card, music, stats, save sync and Play button — with or without a card inserted.
+
+Local games are stored in `%APPDATA%/playhook/pc-games/` (`~/.config/playhook/pc-games/` on Linux),
+which is laid out exactly like a card: a `game.json`, an `assets/` folder for the art and music you
+pick (they are **copied in**, so moving or deleting the originals doesn't break anything), and a
+`saves/` folder for the save backups. The manifest is the same format, with one extra block and one
+rule of its own:
+
+```jsonc
+{
+  "schemaVersion": 1,
+  "id": "hades",
+  "title": "Hades",
+  // The FULL path to the game on this PC. Only valid here — a card may never name an absolute path.
+  "pc": { "executable": "C:\\Games\\Hades\\Hades.exe" },
+  "heroImage": ["assets/hades-hero.jpg"],
+  "gridImage": "assets/hades-grid.jpg",
+  // For a local game the save path may be absolute too (a card is limited to the %PREFIX% list).
+  "pcSavePath": "C:\\Games\\Hades\\Saves",
+  "watchProcesses": ["Hades.exe"]
+}
+```
+
+- `pc` replaces `executable` and is mutually exclusive with `install` and `steam`; everything else
+  (`args`, `runAsAdmin`, `watchProcesses`, the timeouts, `winetricks`, `umuGameId`, the art and the
+  music) works exactly as it does for a card game.
+
+A local game can also be a **Steam game installed on this PC** — the second launch mode the library
+accepts. Instead of `pc`, give it a `steam` block:
+
+```jsonc
+{
+  "schemaVersion": 1,
+  "id": "hades-steam",
+  "title": "Hades",
+  "steam": { "appid": 1145360 },
+  // Required in steam mode: Playhook cannot see Steam's own process tree, so it watches for these
+  // image names to know the game is running. Take the name from steamapps/common/<game>/ (or the
+  // game's SteamDB page) — it is the .exe even on the Deck, where the game runs under Proton.
+  "watchProcesses": ["Hades.exe"],
+  "heroImage": ["assets/hades-hero.jpg"],
+  // Optional. Under Proton the saves live inside Steam's own prefix, so use the %PREFIX% form here —
+  // Browse fills it in for you after the game has been run once.
+  "pcSavePath": "%APPDATA%/Hades"
+}
+```
+
+- The button follows Steam: **Install** while the game isn't installed (it opens Steam's download),
+  **Play** once it is, and **Uninstall** hands the removal back to Steam. Installing or removing the
+  game in Steam directly is picked up on its own, card or no card.
+- Everything Steam owns stays Steam's: there is no `install` block, no `runAsAdmin`, and no Wine prefix
+  of ours (the game runs in Steam's compatdata).
+- `pc` and `steam` are mutually exclusive — a local game is one or the other.
+- **Saves are backed up by Playhook itself** — there is no card to keep them on, so `saveOnCard` is not
+  allowed and the backup goes to `pc-games/saves/<id>/`. If you later insert a card carrying the same
+  game, the progress you made without it is copied onto the card on insertion.
+- **Deleting the game from your disk doesn't delete it from Playhook.** The card stays in the carousel
+  with its art and stats, the status line reads *Game files not found*, and Play is hidden. Put the game
+  back at the same path and it is playable again, saves included.
+- If a card carries a game with the **same `id`** as a local one, the card wins while it is inserted;
+  the local entry is hidden until the card is removed.
+- Paths here are **not portable**: they are written in this machine's native form, since this library
+  never travels (a card's `game.json`, by contrast, must work on both Windows and the Deck).
+
+On the Steam Deck in **Game Mode** the launcher is started by a card being inserted, so local games are
+reachable there only if you open Playhook's tile yourself.
 
 The empty screen (no card inserted, no history) reuses the same layout over the wallpaper: "Insert a game card",
 no Play button, and **More** offering just the *System* submenu (where *Minimize Playhook* lives).
@@ -167,7 +249,9 @@ Settings live in `settings.json` next to the rest of the app state (`%APPDATA%\p
 **Configure game** writes the `game.json` onto the inserted card, so you never have to edit JSON by
 hand:
 
-- pick the card (any removable drive — a **blank** one can be initialized from scratch);
+- pick the card (any removable drive — a **blank** one can be initialized from scratch) — or
+  **This PC**, the library of [local games](#local-games-already-installed-on-this-pc) that are already
+  installed on this machine;
 - a **form** with sections *Basics / Launch / Images / Saves / Audio / Advanced*, with Browse pickers
   for the executable, the hero backgrounds (up to 3), the 600x900 carousel card image, the background
   music and the save folders

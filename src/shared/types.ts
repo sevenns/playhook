@@ -14,6 +14,23 @@ export const MANIFEST_FILENAME = 'game.json' as const;
 export const CARD_STATS_FILENAME = 'stats.json' as const;
 
 /**
+ * Directory under `userData` that holds the PC library — the local games added from this machine's own
+ * disk. It is laid out exactly like a card (`game.json` + `assets/`, plus `saves/<id>/` standing in for
+ * the card's save copy), so the whole manifest/asset/history pipeline reads it as an always-inserted
+ * card. See ManifestSource.
+ */
+export const PC_LIBRARY_DIRNAME = 'pc-games' as const;
+
+/**
+ * Where a manifest came from. `card` — an inserted removable card (UNTRUSTED: every path must stay
+ * inside its root). `pc` — the local library in `<userData>/pc-games`, whose games live wherever the
+ * user installed them, so `pc.executable` (and a `pcSavePath`) may be ABSOLUTE. The two modes are
+ * mutually exclusive per manifest: a card manifest carrying a `pc` block is rejected, and so is a PC
+ * manifest without one.
+ */
+export type ManifestSource = 'card' | 'pc';
+
+/**
  * How many hero backgrounds one game may carry — a CARD-FORMAT limit (not a library budget), so it lives
  * in the shared contract: main enforces it (manifest.ts) and the Configure form caps its picker by it.
  *
@@ -128,6 +145,21 @@ export interface SteamManifest {
 }
 
 /**
+ * Optional `pc` block in `game.json` (PC mode — a game already installed on this machine's disk).
+ * Only valid in the PC library (`<userData>/pc-games/game.json`): it is the one place a manifest may
+ * name an ABSOLUTE path, because there is no card root to be relative to. Mutually exclusive with
+ * `install`/`steam`/`executable`/`saveOnCard` (enforced by the schema).
+ */
+export interface PcManifest {
+  /**
+   * ABSOLUTE path to the game's .exe on this PC. Its existence is NOT checked at read time: a game
+   * deleted from disk keeps its library card (art, stats, save backup) and is merely `unavailable` —
+   * exactly like an install-mode game that isn't installed yet.
+   */
+  readonly executable: string;
+}
+
+/**
  * Raw `game.json` manifest after zod-schema validation.
  * The executable/saveOnCard paths and each heroImage entry are relative to the SD root;
  * pcSavePath is absolute with an env prefix from the whitelist.
@@ -182,6 +214,12 @@ export interface GameManifest {
    * `install`/`executable` and requires `watchProcesses` (enforced by the schema). See SteamManifest.
    */
   readonly steam?: SteamManifest;
+  /**
+   * Optional PC mode: the game already lives on this machine's disk and `pc.executable` is its absolute
+   * path. Accepted ONLY in the PC library (see ManifestSource); mutually exclusive with
+   * `install`/`steam`/`executable`/`saveOnCard`. See PcManifest.
+   */
+  readonly pc?: PcManifest;
   /** Optional looping background music (card-relative path), played while the window is visible. */
   readonly backgroundMusic?: string;
   /**
@@ -210,6 +248,12 @@ export type SfxName = 'play' | 'navigate' | 'button' | 'back';
 export interface ResolvedManifest {
   readonly raw: GameManifest;
   readonly root: string;
+  /**
+   * Which root this manifest was read from — a card, or the PC library. Set in exactly one place (the
+   * resolver), and branched on wherever "is this game's source available?" differs: a card game needs its
+   * card inserted, a PC game is always there. See ManifestSource.
+   */
+  readonly source: ManifestSource;
   /**
    * The effective launch target. In install mode this is `<installDir>/<executable>` (and `cwd` its
    * dirname) — it may NOT exist yet (that is exactly the "not installed" state). For a normal game it
@@ -398,6 +442,13 @@ export interface GameInfo {
    * user cancelled Steam's dialog, by a timeout in the background poller (→ back to "Play"/"Uninstall").
    */
   readonly steamUninstalling?: boolean;
+  /**
+   * PC mode only: the game's executable is not on disk right now (deleted, or an external drive is
+   * unplugged). The card stays in the library with its art, stats and save backup — only Play is
+   * disabled and the status reads "Game files not found". Undefined for card games, whose executable is
+   * verified at read time (and whose absence drops them from the card instead).
+   */
+  readonly unavailable?: boolean;
 }
 
 /** The flow state machine (discriminated union). */
@@ -621,6 +672,11 @@ export const IPC = {
   /** renderer → main: "the user is looking at this id" — main answers with browse:update + browse:hero
    * (+ browse:music). Does NOT change the selected game or the AppState. */
   libraryBrowse: 'library:browse',
+  /** renderer → main: drop this game from the play history (its record + the copied artwork). Only ever
+   * accepted for a game that is NOT available right now — main re-checks that, the menu item is the
+   * renderer's half of the same rule. Saves and playtime survive: this forgets the catalogue entry, not
+   * the game. */
+  libraryForget: 'library:forget',
   /** main → renderer: what is on screen (title/stats/active/GameInfo) — see BrowseInfo. */
   browseUpdate: 'browse:update',
   /** renderer → main (invoke): the current BrowseInfo (seed on window startup, like state:request). */
@@ -776,7 +832,17 @@ export type ConfigEditorCommand = 'format';
 export interface DriveCandidate {
   /** Mountpoint / card root, e.g. "E:\\". */
   readonly root: string;
-  /** Display label: "E:\\ — Hollow Knight" | "E:\\ — 3 games" | "E:\\ — invalid game.json" | "E:\\ — blank drive". */
+  /**
+   * What this candidate is: a removable card, or the machine's own PC library (`<userData>/pc-games`,
+   * offered as one more entry in the same picker). Drives the icon/labelling and, in main, which
+   * manifest source the editor validates and saves against. See ManifestSource.
+   */
+  readonly kind: ManifestSource;
+  /**
+   * Display label: "E:\\ — Hollow Knight" | "E:\\ — 3 games" | "E:\\ — invalid game.json" |
+   * "E:\\ — blank drive". The PC library uses the same shape with its own name in front:
+   * "This PC — Hades" | "This PC — 3 games" | "This PC — no games yet".
+   */
   readonly label: string;
   /**
    * Content signature of this card's game.json — the sorted game ids (`''` blank, `'invalid'` unreadable).
@@ -824,10 +890,22 @@ export type ConfigSaveResult =
 /**
  * What the Configure form's Browse button is picking — drives the dialog's filters and mode:
  * file pickers for exe/installer/image/audio (image is multi-select), a folder picker for `directory`
- * (card-relative), and `pc-save` (a PC folder OUTSIDE the card, converted to a %PREFIX%\… save path).
+ * (card-relative), `pc-save` (a PC folder OUTSIDE the card, converted to a %PREFIX%\… save path) and
+ * `pc-executable` (PC library only: any executable anywhere on this machine, kept ABSOLUTE).
+ * `pc-save-local` is `pc-save` WITHOUT that conversion — the picked folder is kept absolute. It is for a
+ * local game that runs from this machine's disk (its saves are an ordinary host folder); a local STEAM
+ * game keeps `pc-save`, because its saves live inside Steam's Proton prefix, which only the %PREFIX%
+ * form can name.
  */
 export type ConfigPickKind =
-  'executable' | 'installer' | 'image' | 'audio' | 'directory' | 'pc-save';
+  | 'executable'
+  | 'installer'
+  | 'image'
+  | 'audio'
+  | 'directory'
+  | 'pc-save'
+  | 'pc-save-local'
+  | 'pc-executable';
 
 /** Request payload for config:pick-path: the card root (re-checked in main) and the pick kind. */
 export interface ConfigPickRequest {
@@ -889,6 +967,9 @@ export interface RendererApi {
   requestGrid(id: string): Promise<string | null>;
   /** Tell main which game the carousel is on — it answers with browse:update/hero/music. */
   browseGame(id: string): void;
+  /** Drop a game from the play history. Refused by main for a game that is available right now (on the
+   *  card or in the PC library) — that one is not history, it is a game you can play. */
+  forgetGame(id: string): void;
   /** Live updates of what is on screen (title/stats/active/GameInfo). */
   onBrowseUpdate(callback: (browse: BrowseInfo | null) => void): void;
   /** What is on screen right now (on window startup). */
@@ -984,8 +1065,12 @@ export interface ConfigureApi {
   onDrivesUpdate(callback: (drives: readonly DriveCandidate[]) => void): void;
   /** Read a card's game.json text into the editor. */
   readConfig(root: string): Promise<ConfigReadResult>;
-  /** Static (fs-free) validation of the current editor text — the Save verdict. */
-  validateConfig(text: string): Promise<ConfigValidationResult>;
+  /**
+   * Static (fs-free) validation of the current editor text — the Save verdict. The `root` decides WHICH
+   * manifest source the text is judged against (a card manifest and a PC-library one accept different
+   * blocks), so it travels with every live validation, exactly as it does with Save.
+   */
+  validateConfig(root: string, text: string): Promise<ConfigValidationResult>;
   /** Write game.json to the card and try to apply it without a restart. */
   saveConfig(root: string, text: string): Promise<ConfigSaveResult>;
   /** Pick file(s)/a folder from the card via a native dialog; resolves with card-relative paths. */

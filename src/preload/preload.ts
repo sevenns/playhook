@@ -46,6 +46,7 @@ const CHANNELS = {
   libraryRequest: 'library:request',
   libraryGridRequest: 'library:grid-request',
   libraryBrowse: 'library:browse',
+  libraryForget: 'library:forget',
   browseUpdate: 'browse:update',
   browseRequest: 'browse:request',
   browseHero: 'browse:hero',
@@ -152,6 +153,9 @@ const api: RendererApi = {
   },
   browseGame(id: string): void {
     ipcRenderer.send(CHANNELS.libraryBrowse, id);
+  },
+  forgetGame(id: string): void {
+    ipcRenderer.send(CHANNELS.libraryForget, id);
   },
   onBrowseUpdate(callback: (browse: BrowseInfo | null) => void): void {
     ipcRenderer.on(CHANNELS.browseUpdate, (_event: IpcRendererEvent, browse: BrowseInfo | null) => {

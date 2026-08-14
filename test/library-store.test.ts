@@ -48,6 +48,7 @@ function manifest(id: string, overrides: Partial<ResolvedManifest> = {}): Resolv
       winetricks: [],
     },
     root: cardRoot,
+    source: 'card',
     executablePath: path.join(cardRoot, 'g.exe'),
     cwd: cardRoot,
     ...overrides,
@@ -387,5 +388,48 @@ describe('entriesForCarousel', () => {
       'orphan',
       'played',
     ]);
+  });
+});
+
+describe('forget (the user removing a game from the history)', () => {
+  it('drops the record and the copied artwork, leaving the other games alone', async () => {
+    const library = store();
+    await library.init();
+    await library.saveFromCard([
+      manifest('a', { gridImagePath: await card('a.jpg') }),
+      manifest('b', { gridImagePath: await card('b.jpg') }),
+    ]);
+
+    expect(await library.forget('a')).toBe(true);
+    expect(library.entry('a')).toBeNull();
+    expect((await readIndex()).entries.map((e) => e.id)).toEqual(['b']);
+    await expect(fs.stat(path.join(baseDir, 'library', 'a'))).rejects.toThrow();
+    // The neighbour keeps both its record and its files — this removes one game, not the catalogue.
+    expect(library.entry('b')).not.toBeNull();
+    expect(await fs.readdir(path.join(baseDir, 'library', 'b'))).toEqual(['grid.jpg']);
+  });
+
+  it('reports an unknown id instead of rewriting the index for nothing', async () => {
+    const library = store();
+    await library.init();
+    await library.saveFromCard([manifest('a', { gridImagePath: await card('a.jpg') })]);
+    expect(await library.forget('nope')).toBe(false);
+    expect((await readIndex()).entries.map((e) => e.id)).toEqual(['a']);
+  });
+
+  it('brings the game back with its old playtime when the card returns', async () => {
+    const library = store();
+    await library.init();
+    statsById.set('a', {
+      schemaVersion: 1,
+      totalPlaySeconds: 3600,
+      lastPlayedAt: '2026-01-01T00:00:00.000Z',
+      launchCount: 7,
+    });
+    await library.saveFromCard([manifest('a', { gridImagePath: await card('a.jpg') })]);
+    await library.forget('a');
+    // forget() never touches stats/<id>.json — the store reads the same authority again on re-insert.
+    await library.saveFromCard([manifest('a', { gridImagePath: await card('a.jpg') })]);
+    expect(library.entry('a')?.launchCount).toBe(7);
   });
 });

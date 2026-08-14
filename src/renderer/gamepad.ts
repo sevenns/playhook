@@ -2,7 +2,8 @@
 // HTML5 Gamepad API + requestAnimationFrame loop, standard mapping.
 // Navigation: D-pad Left/Right (buttons[14]/[15]) or left-stick X (axes[0]) for the bar; D-pad
 // Up/Down (buttons[12]/[13]) or left-stick Y (axes[1]) for the vertical popup stacks.
-// A = buttons[0] (activate focused control), B = buttons[1] (back / close popup).
+// A = buttons[0] (activate focused control), B = buttons[1] (back / close popup),
+// Y = buttons[3] (hand the focus between the carousel strip and the bar — see controls.ts).
 // We fire on the press EDGE (false→true) so one press / one stick tilt = one action.
 
 export interface GamepadController {
@@ -16,14 +17,17 @@ export interface GamepadController {
 
 export interface GamepadHandlers {
   readonly onLeft: () => void;
-  readonly onRight: () => void;
+  /** `repeat` marks a press produced by the hold auto-repeat rather than by a fresh press — the two mean
+   *  different things where a stop is also a step (see navRight in controls.ts). */
+  readonly onRight: (repeat: boolean) => void;
   readonly onUp: () => void;
   readonly onDown: () => void;
   readonly onA: () => void;
   readonly onB: () => void;
+  readonly onY: () => void;
 }
 
-const BTN = { a: 0, b: 1, dpadUp: 12, dpadDown: 13, dpadLeft: 14, dpadRight: 15 } as const;
+const BTN = { a: 0, b: 1, y: 3, dpadUp: 12, dpadDown: 13, dpadLeft: 14, dpadRight: 15 } as const;
 const STICK_X_AXIS = 0;
 const STICK_Y_AXIS = 1;
 const STICK_DEADZONE = 0.5;
@@ -38,7 +42,7 @@ export function createGamepadController(handlers: GamepadHandlers): GamepadContr
   let rafId = 0;
   let running = false;
   let paused = false;
-  const prev = { left: false, right: false, up: false, down: false, a: false, b: false };
+  const prev = { left: false, right: false, up: false, down: false, a: false, b: false, y: false };
   // Auto-repeat bookkeeping for the horizontal pair only: holding left/right flips through the carousel,
   // where running down a 40-game history one press at a time is the thing to avoid. Up/down live in the
   // popup stacks, which are short — a repeat there would just overshoot.
@@ -71,7 +75,11 @@ export function createGamepadController(handlers: GamepadHandlers): GamepadContr
    * `heldSince === 0` means "not counting yet": that is the released state, and also what a pause leaves
    * behind, so a direction held across a resume starts its delay from scratch and doesn't burst.
    */
-  const stepHeld = (dir: 'left' | 'right', down: boolean, fire: () => void): void => {
+  const stepHeld = (
+    dir: 'left' | 'right',
+    down: boolean,
+    fire: (repeat: boolean) => void,
+  ): void => {
     if (!down) {
       heldSince[dir] = 0;
       return;
@@ -80,12 +88,12 @@ export function createGamepadController(handlers: GamepadHandlers): GamepadContr
     if (!prev[dir] || heldSince[dir] === 0) {
       heldSince[dir] = now;
       lastFire[dir] = now;
-      if (!prev[dir]) fire(); // an edge; resuming onto a held direction is not one
+      if (!prev[dir]) fire(false); // an edge; resuming onto a held direction is not one
       return;
     }
     if (now - heldSince[dir] < HOLD_DELAY_MS || now - lastFire[dir] < NAV_REPEAT_MS) return;
     lastFire[dir] = now;
-    fire();
+    fire(true);
   };
 
   const poll = (): void => {
@@ -99,6 +107,7 @@ export function createGamepadController(handlers: GamepadHandlers): GamepadContr
     const down = isDown(BTN.dpadDown) || y > STICK_DEADZONE;
     const a = isDown(BTN.a);
     const b = isDown(BTN.b);
+    const yButton = isDown(BTN.y);
 
     // While paused (launcher backgrounded), read inputs but don't act — prev is still updated below, so a
     // button held across resume won't fire a phantom edge.
@@ -109,6 +118,7 @@ export function createGamepadController(handlers: GamepadHandlers): GamepadContr
       if (down && !prev.down) handlers.onDown();
       if (a && !prev.a) handlers.onA();
       if (b && !prev.b) handlers.onB();
+      if (yButton && !prev.y) handlers.onY();
     } else {
       // Paused: forget any hold in progress, so resuming can't drop straight into a repeat burst.
       heldSince.left = 0;
@@ -121,6 +131,7 @@ export function createGamepadController(handlers: GamepadHandlers): GamepadContr
     prev.down = down;
     prev.a = a;
     prev.b = b;
+    prev.y = yButton;
     rafId = requestAnimationFrame(poll);
   };
 
