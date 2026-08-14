@@ -1743,8 +1743,10 @@ html:not(.cursor-hidden) .settings-option:hover,
   transform: scale(0.9);
 }
 
-/* The current value is marked even when the focus is elsewhere in the list. */
-.settings-option.is-current {
+/* The current value is marked even when the focus is elsewhere in the list. The rule sits on the TEXT,
+   not on the button: text-decoration does not propagate into an inline-block descendant, and the label
+   became one when it was wrapped for the marquee — which is how the underline went missing. */
+.settings-option.is-current .settings-option-text {
   text-decoration: underline;
   text-underline-offset: calc(8 * var(--px));
 }
