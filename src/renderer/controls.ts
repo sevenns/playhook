@@ -474,6 +474,13 @@ export function createControls(deps: ControlsDeps): Controls {
     idleTimer = window.setTimeout(() => {
       idleTimer = 0;
       setCursorHidden(true);
+      // On the carousel the bar-focus spell is not a highlight that can simply go dormant: dropping it
+      // would leave the row dimmed with nothing focused anywhere — a dead screen. Hand the focus back to
+      // the cards instead, which is where an untouched carousel belongs.
+      if (carouselBarFocus) {
+        setCarouselBarFocus(false);
+        return;
+      }
       if (focusRevealed && focusActive()) {
         focusRevealed = false;
         applyFocus();
