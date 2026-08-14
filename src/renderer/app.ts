@@ -11,6 +11,7 @@ import { localizeDocument } from './i18n-dom.js';
 import { createAudioController } from './audio.js';
 import { createHeroController } from './hero.js';
 import { createControls } from './controls.js';
+import { createSettingsScreen, type SettingsScreenApi } from './settings-screen.js';
 import { createCarousel } from './carousel.js';
 import { formatDate, formatPlaytime } from './format.js';
 import { busyKindOf, gameOf, phaseOf, statusOf, steamBusy } from './state-view.js';
@@ -52,16 +53,52 @@ const hero = createHeroController({
   getTranslator,
 });
 
+// ── Settings screen (the fourth surface, see settings-screen.ts) ─────────────
+// The screen owns its rows and focus; everything it writes goes through this seam, which is main's
+// settings:* channels one-to-one. The values it shows come back on settings:update (see the wiring
+// below) — never from a setter's own return, so a reset and a live edit take the same path.
+const settingsApi: SettingsScreenApi = {
+  setAutoUpdate: (mode) => window.api.setAutoUpdate(mode),
+  setPrerelease: (on) => window.api.setPrerelease(on),
+  setSummonHotkey: (on) => window.api.setSummonHotkey(on),
+  setPreventScreensaver: (on) => window.api.setPreventScreensaver(on),
+  setAlwaysShowEmptyScreen: (on) => window.api.setAlwaysShowEmptyScreen(on),
+  setDisableSilentInstall: (on) => window.api.setDisableSilentInstall(on),
+  setSteamAutoLaunch: (on) => window.api.setSteamAutoLaunch(on),
+  setSoundSet: (set) => window.api.setSoundSet(set),
+  setAmbientTrack: (track) => window.api.setAmbientTrack(track),
+  setOnlyGlobalAmbient: (on) => window.api.setOnlyGlobalAmbient(on),
+  setMusicVolume: (volume) => window.api.setMusicVolume(volume),
+  setSfxVolume: (volume) => window.api.setSfxVolume(volume),
+  setLanguage: (mode) => window.api.setLanguage(mode),
+  resetSettings: () => {
+    void window.api.resetSettings();
+  },
+  checkForUpdates: () => window.api.checkForUpdates(),
+  downloadUpdate: () => window.api.downloadUpdate(),
+  installUpdate: () => window.api.installUpdate(),
+};
+
 // ── Interaction layer (popups + focus + actions, see controls.ts) ────────────
 // Owns the popups (Details / Power / Confirm / Error), the focus groups and the
 // actions they trigger, plus their wiring (clicks, hover, gamepad, Esc). render() drives it via
 // applyGameButtons/clearGameButtons/refresh; main's error goes to showError; the gamepad loop starts
 // with start(). The carousel seam below routes A/B/left/right when the strip is the active surface.
+const settingsScreen = createSettingsScreen({
+  audio,
+  getTranslator,
+  api: settingsApi,
+  // Read lazily for the same reason the carousel seam is: `controls` is created just below.
+  onClosed: () => controls.settingsClosed(),
+  onResetRequested: () => controls.confirmResetSettings(),
+});
+
 const controls = createControls({
   getState: () => currentState,
   getBrowse: () => currentBrowse,
   audio,
   getTranslator,
+  settings: settingsScreen,
   // Read lazily: the carousel is created below (it needs `controls` for its own callbacks), so the seam
   // is a set of thunks rather than the object itself.
   carousel: {
@@ -394,6 +431,9 @@ function applyLocale(locale: Locale): void {
   document.documentElement.lang = locale;
   localizeDocument(translator);
   render(currentState);
+  // The Settings screen builds its rows from JS, so localizeDocument doesn't reach them — and render()
+  // knows nothing about it. It keeps its focus and scroll position across the swap.
+  settingsScreen.relocalize();
 }
 window.api.onLanguageUpdate(applyLocale);
 void window.api.getLanguage().then(applyLocale);
@@ -436,16 +476,25 @@ window.api.onBrowseMusic((url) => {
 // A failed launch returns to 'ready' and sends the reason here to open the error popup.
 window.api.onError((messageText) => controls.showError(messageText));
 
+// Settings screen data. Subscribe BEFORE the seeds (the pattern every channel here follows) so a push
+// arriving in between isn't lost. The push is the ONLY source of values — a reset lands here too, so
+// the screen never has to reconcile an invoke result with a push.
+window.api.onSettingsUpdate((settings) => settingsScreen.applySettings(settings));
+window.api.onUpdateStatus((status) => settingsScreen.applyUpdateStatus(status));
+void window.api.getSettings().then((settings) => settingsScreen.applySettings(settings));
+void window.api.requestUpdateStatus().then((status) => settingsScreen.applyUpdateStatus(status));
+// The environment seeds: they never change during a session.
+void Promise.all([
+  window.api.isSteamAvailable(),
+  window.api.getAudioOptions(),
+  window.api.getAppVersion(),
+]).then(([steamAvailable, audioOptions, appVersion]) => {
+  settingsScreen.applyEnv({ steamAvailable, audioOptions, appVersion });
+});
+
 // Fallback wallpaper for the empty screen (data URL from main); apply if we're on it already.
 void window.api.requestWallpaper().then((url) => {
   hero.setWallpaper(url);
-  if (gameOf(currentState) === undefined) hero.applyEmptyScreen();
-});
-
-// Live custom-wallpaper updates (settings window changed the Empty-screen background). An empty string
-// means "no custom / bundle unreadable" → treat as null. Repaint immediately if we're on the Empty screen.
-window.api.onWallpaperUpdate((url) => {
-  hero.setWallpaper(url === '' ? null : url);
   if (gameOf(currentState) === undefined) hero.applyEmptyScreen();
 });
 

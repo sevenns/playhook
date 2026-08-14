@@ -4,7 +4,7 @@
 // and replicates AppState to the window. All FS/process work happens only here (in main).
 import path from 'node:path';
 import fse from 'fs-extra';
-import { app, BrowserWindow, dialog, ipcMain, type WebContents } from 'electron';
+import { app, ipcMain } from 'electron';
 import {
   IPC,
   type AppState,
@@ -20,7 +20,6 @@ import {
   type ResolvedManifest,
   type SfxName,
   type Stats,
-  type WallpaperResult,
 } from '../shared/types';
 import { type Translator } from '../shared/i18n/index';
 import { type StateManager } from './state';
@@ -363,11 +362,9 @@ export class GameController {
   // The reconciled Stats per game id, captured in loadCard so onSelectRequested can rebuild the selected
   // game's GameInfo without re-reading stats (buildGameInfo still re-reads the .acf for a steam game).
   private statsById = new Map<string, Stats>();
-  // Reads card assets (hero/audio/wallpaper) into data URLs; owns the effective-wallpaper cache and the
-  // custom Empty-screen wallpaper (needs userData + the live custom-file name from settings via DI).
+  // Reads card assets (hero/audio/wallpaper) into data URLs; owns the bundled-wallpaper cache and reads
+  // the live audio settings via DI.
   private readonly assets = new AssetReader({
-    userData: app.getPath('userData'),
-    getCustomWallpaperName: async () => (await this.deps.settings.read()).customWallpaper,
     getSoundSet: async () => (await this.deps.settings.read()).soundSet,
     getAmbientTrack: async () => (await this.deps.settings.read()).ambientTrack,
     getOnlyGlobalAmbient: async () => (await this.deps.settings.read()).onlyGlobalAmbient,
@@ -592,13 +589,6 @@ export class GameController {
     ipcMain.on(IPC.libraryBrowse, (_event, id: unknown) => void this.onBrowseRequested(id));
     ipcMain.on(IPC.libraryForget, (_event, id: unknown) => void this.onForgetRequested(id));
     ipcMain.handle(IPC.wallpaperRequest, (): Promise<string | null> => this.assets.readWallpaperDataUrl());
-    // Custom Empty-screen wallpaper (invoked from the settings window; the handlers live here because they
-    // own the AssetReader + the game window — see plan F2.2 p.6). preview-request feeds the settings preview.
-    ipcMain.handle(IPC.wallpaperPick, (event): Promise<WallpaperResult> => this.pickWallpaper(event.sender));
-    ipcMain.handle(IPC.wallpaperClear, (): Promise<{ dataUrl: string }> => this.clearWallpaper());
-    ipcMain.handle(IPC.wallpaperPreviewRequest, async (): Promise<{ dataUrl: string }> => ({
-      dataUrl: (await this.assets.readWallpaperDataUrl()) ?? '',
-    }));
     ipcMain.on(IPC.actionLaunch, () => void this.onLaunchRequested());
     ipcMain.on(IPC.actionUninstall, () => void this.onUninstallRequested());
     // Game Mode: hiding is meaningless (no tray, and on Linux no summon hotkey) — ignore the Hide button
@@ -2077,68 +2067,6 @@ export class GameController {
       ...(steamPausedProgress !== undefined ? { steamPausedProgress } : {}),
       ...(unavailable ? { unavailable: true } : {}),
     };
-  }
-
-  // ── Custom Empty-screen wallpaper ────────────────────────────────────────
-
-  /**
-   * Picks an image via the OS file dialog (parented to the settings window), copies it in as the custom
-   * Empty-screen wallpaper, persists its file name, and pushes the new data URL to the launcher so the
-   * Empty screen updates live. Cancellation and validation failures come back as a Result-union.
-   */
-  private async pickWallpaper(sender: WebContents): Promise<WallpaperResult> {
-    const parent = BrowserWindow.fromWebContents(sender);
-    const options: Electron.OpenDialogOptions = {
-      properties: ['openFile'],
-      filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif'] }],
-    };
-    const result =
-      parent !== null ? await dialog.showOpenDialog(parent, options) : await dialog.showOpenDialog(options);
-    const sourcePath = result.filePaths[0];
-    if (result.canceled || sourcePath === undefined) return { ok: false, cancelled: true };
-    const set = await this.assets.setCustomWallpaper(sourcePath);
-    if (!set.ok) return { ok: false, message: this.wallpaperErrorMessage(set.reason) };
-    await this.deps.settings.patch({ customWallpaper: set.fileName });
-    this.pushWallpaper(set.dataUrl);
-    return { ok: true, dataUrl: set.dataUrl };
-  }
-
-  /** Clears the custom wallpaper (settings + file), returns and pushes the default wallpaper data URL. */
-  private async clearWallpaper(): Promise<{ dataUrl: string }> {
-    const { dataUrl } = await this.assets.clearCustomWallpaper();
-    await this.deps.settings.patch({ customWallpaper: null });
-    this.pushWallpaper(dataUrl);
-    return { dataUrl };
-  }
-
-  /**
-   * Removes the custom wallpaper file and pushes the default to the launcher, for the general settings
-   * Reset: reset() already wrote customWallpaper=null, but the FILE must still be deleted separately (see
-   * plan F2.2 p.7). Called from main via the UpdaterService onWallpaperReset callback.
-   */
-  async resetCustomWallpaper(): Promise<void> {
-    const { dataUrl } = await this.assets.clearCustomWallpaper();
-    this.pushWallpaper(dataUrl);
-  }
-
-  /** Pushes the Empty-screen wallpaper data URL to the game window so it repaints the Empty screen live. */
-  private pushWallpaper(dataUrl: string): void {
-    const browserWindow = this.deps.window.browserWindow;
-    if (browserWindow !== null && !browserWindow.isDestroyed()) {
-      browserWindow.webContents.send(IPC.wallpaperUpdate, dataUrl);
-    }
-  }
-
-  /** Maps an AssetReader failure reason to a localized, user-facing message for the settings window. */
-  private wallpaperErrorMessage(reason: 'too-large' | 'not-image' | 'io'): string {
-    switch (reason) {
-      case 'too-large':
-        return this.t('errors.wallpaperTooLarge');
-      case 'not-image':
-        return this.t('errors.wallpaperNotImage');
-      case 'io':
-        return this.t('errors.wallpaperFailed');
-    }
   }
 
   // ── Hero images (delivered once per card, rotated in the renderer) ───────

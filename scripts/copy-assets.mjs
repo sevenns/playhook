@@ -11,9 +11,9 @@ const srcRenderer = resolve(root, 'src/renderer');
 const outDist = resolve(root, 'dist');
 const outRenderer = resolve(outDist, 'renderer');
 
-// settings.js / configure.js are NOT here — esbuild emits them straight into dist/renderer (see
-// build:settings / build:configure).
-const files = ['index.html', 'styles.css', 'settings.html', 'settings.css', 'configure.html', 'configure.css'];
+// app.js / configure.js are NOT here — esbuild emits them straight into dist/renderer (see
+// build:app / build:configure).
+const files = ['index.html', 'styles.css', 'configure.html', 'configure.css'];
 const dirs = ['fonts'];
 
 await mkdir(outRenderer, { recursive: true });
@@ -27,7 +27,7 @@ for (const name of dirs) {
 // App icons: copied from assets/ into dist so they ship inside the asar and are usable at runtime.
 // icon.ico — main app icon (BrowserWindow, tray on Windows; also referenced by electron-builder for
 //   exe/installer).
-// icon.png — app icon read by main and handed to the settings window's custom title bar as a data URL
+// icon.png — app icon read by main and handed to the Configure window's custom title bar as a data URL
 //   (its CSP allows img-src data: only); the Linux BrowserWindow/AppImage icon; the tray icon on Linux
 //   (a .ico yields an empty nativeImage there); and the Steam shortcut's tile icon + grid logo.
 // There are no separate icon-tray.* files any more — the tray uses these same two.

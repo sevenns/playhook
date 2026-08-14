@@ -135,6 +135,9 @@
               <!-- Drop this game from the history — shown only for a game that is NOT on the card and not
                    in the PC library (those are playable, not history). Text from JS, like its neighbours. -->
               <button id="menu-forget" class="text-button" type="button"></button>
+              <!-- The ONLY way into Settings (the tray item is gone), so it shows on every screen —
+                   including the empty one, where More is still there. -->
+              <button id="menu-settings" class="text-button" type="button" data-i18n="launcher.menu.settings">Settings</button>
               <button id="menu-close" class="text-button" type="button" data-i18n="launcher.menu.close">Close</button>
             </div>
             <div class="actions-group" data-group="power">
@@ -155,6 +158,26 @@
               <button id="error-close" class="text-button" type="button" data-i18n="launcher.menu.close">Close</button>
             </div>
           </div>
+        </div>
+      </section>
+
+      <!-- Settings: the fourth surface (not a carousel screen — the strip keeps its position underneath).
+           Openness is published as #app[data-overlay="settings"]; the veil + the column are built from
+           JS (settings-screen.ts) into #settings-list. Hidden state is opacity + pointer-events, never
+           display:none — see the plan §3.1. -->
+      <section id="settings" class="settings" aria-hidden="true">
+        <div class="settings-veil"></div>
+        <div class="settings-column">
+          <div class="settings-header">
+            <div class="settings-title" data-i18n="window.settings">Settings</div>
+            <div class="settings-version" id="settings-version"></div>
+          </div>
+          <div class="settings-list" id="settings-list"></div>
+        </div>
+        <!-- Expanded dropdown: a list of the focused select's options, on top of the screen. -->
+        <div class="settings-options" id="settings-options" aria-hidden="true">
+          <div class="settings-options-veil"></div>
+          <div class="settings-options-list" id="settings-options-list"></div>
         </div>
       </section>
     </main>

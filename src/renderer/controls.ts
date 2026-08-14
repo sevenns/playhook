@@ -21,7 +21,15 @@ import { req, reqQuery } from './dom.js';
 // The current popup view (mutually exclusive; 'none' = closed). Mirrors the data-view on #popup.
 type PopupView = 'none' | 'details' | 'power' | 'confirm' | 'error';
 // Which action the confirm view is asking about (only meaningful while popupView === 'confirm').
-type ConfirmMode = 'install' | 'uninstall' | 'kill' | 'forget' | 'shutdown' | 'reboot' | 'sleep';
+type ConfirmMode =
+  | 'install'
+  | 'uninstall'
+  | 'kill'
+  | 'forget'
+  | 'shutdown'
+  | 'reboot'
+  | 'sleep'
+  | 'reset-settings';
 // Gamepad A doesn't trigger :active, so flash a press class to play the scale-down animation.
 const PRESS_MS = 130;
 
@@ -41,6 +49,27 @@ export interface ControlsDeps {
   getTranslator(): Translator;
   /** The history carousel — the THIRD focus group, above the bar and the popup stack (see navLeft…). */
   carousel: CarouselNav;
+  /** The Settings screen — the FOURTH surface, between the popup and the carousel (see navLeft…). */
+  settings: SettingsNav;
+}
+
+/**
+ * What the interaction layer needs from the Settings screen. The screen owns its rows, focus and IPC
+ * (settings-screen.ts); this module only routes the six primitives to it and guards the mechanisms that
+ * would otherwise keep running underneath (idle timer, wheel, Y).
+ */
+export interface SettingsNav {
+  isOpen(): boolean;
+  open(): void;
+  close(): void;
+  navUp(): void;
+  navDown(): void;
+  navLeft(): void;
+  navRight(): void;
+  navActivate(): void;
+  navBack(): void;
+  /** Runs the reset once the shared confirm popup says yes. */
+  resetSettings(): void;
 }
 
 /**
@@ -63,6 +92,10 @@ export interface CarouselNav {
 export interface Controls {
   /** Refreshes the game-dependent menu item (Install/Uninstall text + visibility) from the current state. */
   applyGameButtons(): void;
+  /** The Settings screen closed itself — restore the bar highlight on the More button it came from. */
+  settingsClosed(): void;
+  /** The Settings screen asked to reset — opens the shared confirm popup (No returns to Settings). */
+  confirmResetSettings(): void;
   /** Clears the game-dependent menu item for the idle/no-game screen. */
   clearGameButtons(): void;
   /** Per-render refresh: force-close the popup off the ready screen (or while steam-busy), then re-apply focus. */
@@ -139,6 +172,7 @@ export function createControls(deps: ControlsDeps): Controls {
   const menuKill = req<HTMLButtonElement>('menu-kill');
   const menuHome = req<HTMLButtonElement>('menu-home');
   const menuForget = req<HTMLButtonElement>('menu-forget');
+  const menuSettings = req<HTMLButtonElement>('menu-settings');
   const menuClose = req<HTMLButtonElement>('menu-close');
   const powerShutdown = req<HTMLButtonElement>('power-shutdown');
   const powerReboot = req<HTMLButtonElement>('power-reboot');
@@ -153,7 +187,7 @@ export function createControls(deps: ControlsDeps): Controls {
   let confirmMode: ConfirmMode = 'uninstall';
   // Where B/Esc/veil returns FROM the confirm view: install/uninstall come from Details, the power
   // actions come from Power.
-  let confirmReturnTo: 'details' | 'power' = 'details';
+  let confirmReturnTo: 'details' | 'power' | 'settings' = 'details';
   /** The game the open remove-from-history confirm is about — captured when it opens (see openConfirm). */
   let forgetId: string | null = null;
 
@@ -250,6 +284,13 @@ export function createControls(deps: ControlsDeps): Controls {
       popup.dataset['mode'] = mode;
       delete popup.dataset['installVia'];
       confirmMessage.textContent = t()('launcher.confirm.forget', { title: browse.title });
+    } else if (mode === 'reset-settings') {
+      // Asked from the Settings screen, which stays open UNDER the popup — so "No" must return there,
+      // not to the Details menu the screen was reached through.
+      confirmReturnTo = 'settings';
+      popup.dataset['mode'] = mode;
+      delete popup.dataset['installVia'];
+      confirmMessage.textContent = t()('settings.confirmReset');
     } else if (mode === 'kill') {
       // Force-close confirm (from Details): no path note; returns to Details. The message warns about
       // unsaved progress. data-mode ≠ 'install' hides the path note (styles.css).
@@ -295,6 +336,11 @@ export function createControls(deps: ControlsDeps): Controls {
         break;
       case 'confirm':
         audio.play('back');
+        // 'settings' is not a popup view: the screen is already open underneath, so the popup just goes.
+        if (confirmReturnTo === 'settings') {
+          closePopup();
+          break;
+        }
         setView(confirmReturnTo);
         focusStackBottom();
         break;
@@ -306,6 +352,25 @@ export function createControls(deps: ControlsDeps): Controls {
       default:
         break;
     }
+  }
+
+  // ── Settings screen (the fourth surface) ─────────────────────────────────────
+  // Opening/closing lives here because the bar focus does: the screen is entered from More and returns
+  // to it. Everything INSIDE the screen belongs to settings-screen.ts.
+
+  function openSettings(): void {
+    deps.settings.open();
+    applyFocus(); // the bar highlight clears (focusActive is false with the screen open)
+  }
+
+  /** The screen closed itself (B / Esc / veil): put the highlight back on the More button it came from. */
+  function settingsClosed(): void {
+    const items = mainFocusables();
+    const more = items.indexOf(moreButton);
+    if (more !== -1) focusIndex = more;
+    focusRevealed = true;
+    applyFocus();
+    armIdleTimer(); // the countdown was suspended while the screen was up
   }
 
   // ── Menu item: Install / Uninstall (game-dependent) ──────────────────────────
@@ -437,6 +502,8 @@ export function createControls(deps: ControlsDeps): Controls {
   // bar, which is the only way More is reachable there.
   function focusActive(): boolean {
     if (popupView !== 'none') return false;
+    // The Settings screen covers the bar (which is faded out and pointer-events:none underneath).
+    if (deps.settings.isOpen()) return false;
     return deps.carousel.screen() === 'detail' || carouselBarFocus;
   }
 
@@ -471,6 +538,9 @@ export function createControls(deps: ControlsDeps): Controls {
   // goes dormant if it's shown with nothing open — both "went idle" at the same moment.
   function armIdleTimer(): void {
     if (idleTimer !== 0) window.clearTimeout(idleTimer);
+    // With the Settings screen up there is no bar highlight to retire and no carousel to hand back to:
+    // firing would strip the return point on More and light the strip up under the veil.
+    if (deps.settings.isOpen()) return;
     idleTimer = window.setTimeout(() => {
       idleTimer = 0;
       setCursorHidden(true);
@@ -529,6 +599,7 @@ export function createControls(deps: ControlsDeps): Controls {
     menuKill,
     menuHome,
     menuForget,
+    menuSettings,
     menuClose,
     powerShutdown,
     powerReboot,
@@ -550,6 +621,7 @@ export function createControls(deps: ControlsDeps): Controls {
         if (!menuKill.classList.contains('is-hidden')) items.push(menuKill);
         if (!menuHome.classList.contains('is-hidden')) items.push(menuHome);
         if (!menuForget.classList.contains('is-hidden')) items.push(menuForget);
+        items.push(menuSettings);
         items.push(menuClose);
         return items;
       }
@@ -658,6 +730,12 @@ export function createControls(deps: ControlsDeps): Controls {
     } else if (btn === menuForget) {
       audio.play('button');
       openConfirm('forget');
+    } else if (btn === menuSettings) {
+      // The single entrance to Settings — the tray item is gone, so this works the same on the desktop
+      // and in Game Mode. The menu it was opened from closes first: the screen is a surface of its own.
+      audio.play('button');
+      closePopup();
+      openSettings();
     } else if (btn === menuHome) {
       // Non-destructive, so no confirm: close the popup and hand control back to the strip.
       audio.play('back');
@@ -735,6 +813,10 @@ export function createControls(deps: ControlsDeps): Controls {
         audio.play('button');
         window.api.requestSleep();
         break;
+      case 'reset-settings':
+        audio.play('button'); // neutral sound for the destructive confirm
+        deps.settings.resetSettings();
+        break;
     }
   }
 
@@ -802,6 +884,12 @@ export function createControls(deps: ControlsDeps): Controls {
 
   function navLeft(): void {
     noteGamepadActivity();
+    // BEFORE stripActive(): left/right are the slider's own gesture (and the dropdown's fast path), and
+    // holding one on the Settings screen must never flip through the carousel underneath.
+    if (popupView === 'none' && deps.settings.isOpen()) {
+      deps.settings.navLeft();
+      return;
+    }
     if (stripActive()) {
       deps.carousel.move(-1);
       return;
@@ -817,6 +905,12 @@ export function createControls(deps: ControlsDeps): Controls {
   }
   function navRight(repeat = false): void {
     noteGamepadActivity();
+    // Same early branch as navLeft — `repeat` is irrelevant here: a held right is exactly what a slider
+    // wants, one step per repeat, and the screen has no "at the end, hand the focus over" rule.
+    if (popupView === 'none' && deps.settings.isOpen()) {
+      deps.settings.navRight();
+      return;
+    }
     if (stripActive()) {
       // Past the last card there is one thing left to the right: the More button. A HELD right stays
       // pinned at the end instead — running down a long history is one gesture, and it must not end with
@@ -831,15 +925,24 @@ export function createControls(deps: ControlsDeps): Controls {
   }
   function navUp(): void {
     noteGamepadActivity();
-    if (popupView !== 'none') moveStackFocus(-1);
+    if (popupView !== 'none') {
+      moveStackFocus(-1);
+      return;
+    }
+    if (deps.settings.isOpen()) deps.settings.navUp();
   }
   function navDown(): void {
     noteGamepadActivity();
-    if (popupView !== 'none') moveStackFocus(1);
+    if (popupView !== 'none') {
+      moveStackFocus(1);
+      return;
+    }
+    if (deps.settings.isOpen()) deps.settings.navDown();
   }
   function navActivate(): void {
     noteGamepadActivity();
     if (popupView !== 'none') activateStack();
+    else if (deps.settings.isOpen()) deps.settings.navActivate();
     else if (stripActive()) deps.carousel.activate();
     else activateFocused();
   }
@@ -849,6 +952,10 @@ export function createControls(deps: ControlsDeps): Controls {
     // screen steps back to the carousel. On the strip itself B does nothing — it is the top level.
     if (popupView !== 'none') {
       back();
+      return;
+    }
+    if (deps.settings.isOpen()) {
+      deps.settings.navBack();
       return;
     }
     if (carouselBarFocus && deps.carousel.screen() === 'carousel') {
@@ -869,6 +976,8 @@ export function createControls(deps: ControlsDeps): Controls {
    */
   function navToggleBar(): void {
     noteGamepadActivity();
+    // Not a no-op by itself: with the Settings screen up it would hand the focus to a bar nobody can see.
+    if (deps.settings.isOpen()) return;
     if (popupView !== 'none' || deps.carousel.screen() !== 'carousel') return;
     audio.play('navigate');
     setCarouselBarFocus(!carouselBarFocus);
@@ -894,6 +1003,9 @@ export function createControls(deps: ControlsDeps): Controls {
   window.addEventListener(
     'wheel',
     (event) => {
+      // onCarousel() stays true under the Settings screen — without this the wheel would flip through the
+      // strip behind the veil. Inside the screen the wheel scrolls its own list natively.
+      if (deps.settings.isOpen()) return;
       if (!onCarousel()) return;
       noteMouseActivity();
       const delta = event.deltaY !== 0 ? event.deltaY : event.deltaX;
@@ -1025,6 +1137,8 @@ export function createControls(deps: ControlsDeps): Controls {
   return {
     applyGameButtons,
     clearGameButtons,
+    settingsClosed,
+    confirmResetSettings: () => openConfirm('reset-settings'),
     refresh,
     showError: openError,
     setGameMode: (value: boolean) => {

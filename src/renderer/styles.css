@@ -511,7 +511,8 @@ body {
     color-mix(in srgb, var(--d1) 75%, transparent) 42%,
     transparent 100%
   );
-  transition: opacity 0.3s ease;
+  /* transform joins the fade so the bar leaves downwards when the Settings screen takes over. */
+  transition: opacity 0.3s ease, transform 0.3s ease;
 }
 
 /* The blur, as its own layer so it can be masked to the pool's shape without touching the fill above.
@@ -1133,4 +1134,478 @@ html:not(.cursor-hidden) .text-button:hover,
    this class. Author rule needed: .text-button's display:flex would otherwise beat the UA [hidden]. */
 .text-button.is-hidden {
   display: none;
+}
+
+/* ── Settings screen (the fourth surface) ───────────────────────────────────
+   Not a carousel screen: the strip keeps its layout underneath, so returning lands exactly where the
+   user left. Openness is #app[data-overlay='settings']; the hidden state is opacity + pointer-events,
+   never display:none — that keeps everything animatable, keeps the bar's own mouse handlers from firing
+   through a hidden bar, and never collapses the carousel's measured layout. */
+
+.settings {
+  position: absolute;
+  inset: 0;
+  /* Above the popup's z-index:2 base? No — BELOW it: a confirm popup (reset) has to paint on top of this
+     screen, and the popup surface is the one that owns the veil then. */
+  z-index: 2;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.35s ease;
+}
+
+#app[data-overlay='settings'] .settings {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* Veil in the popup's own language, but full-width: this screen is not a right-hand column. */
+.settings-veil {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to right, color-mix(in srgb, var(--d1) 82%, transparent) 0%, var(--d1) 60%);
+  backdrop-filter: blur(12px);
+  opacity: 0;
+  transition: opacity 0.35s ease;
+}
+
+#app[data-overlay='settings'] .settings-veil {
+  opacity: 1;
+}
+
+/* The content column: full-height, inset like the popup column (50), a comfortable reading width. */
+.settings-column {
+  position: absolute;
+  left: calc(120 * var(--px));
+  right: calc(120 * var(--px));
+  top: calc(50 * var(--px));
+  bottom: calc(50 * var(--px));
+  display: flex;
+  flex-direction: column;
+  opacity: 0;
+  transform: translateY(calc(24 * var(--px)));
+  transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+#app[data-overlay='settings'] .settings-column {
+  opacity: 1;
+  transform: none;
+}
+
+.settings-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: calc(30 * var(--px)) calc(24 * var(--px)) calc(20 * var(--px));
+}
+
+.settings-title {
+  font-weight: 800;
+  font-size: calc(48 * var(--px));
+  line-height: calc(64 * var(--px));
+  color: var(--d2);
+  transition: color 0.45s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.settings-version {
+  font-weight: 300;
+  font-size: calc(24 * var(--px));
+  color: color-mix(in srgb, var(--fg) 55%, transparent);
+}
+
+/* The scrolling list. The native scrollbar is hidden — the focus ring is the position indicator, exactly
+   as it is on every other surface here. Smooth scrolling is safe: vertical navigation is one step per
+   press (only left/right hold-to-repeat), so the steps can't pile up into a lagging scroll. */
+.settings-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: none;
+  scroll-behavior: smooth;
+}
+
+.settings-list::-webkit-scrollbar {
+  display: none;
+}
+
+.settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: calc(4 * var(--px));
+  padding-bottom: calc(24 * var(--px));
+  /* Staggered entrance, capped at three steps by the view (--section-index). */
+  transition: opacity 0.35s cubic-bezier(0.4, 0, 0.2, 1) calc(var(--section-index, 0) * 40ms),
+    transform 0.35s cubic-bezier(0.4, 0, 0.2, 1) calc(var(--section-index, 0) * 40ms);
+  opacity: 0;
+  transform: translateY(calc(16 * var(--px)));
+}
+
+#app[data-overlay='settings'] .settings-section {
+  opacity: 1;
+  transform: none;
+}
+
+.settings-section-title {
+  font-weight: 500;
+  font-size: calc(26 * var(--px));
+  line-height: calc(40 * var(--px));
+  color: color-mix(in srgb, var(--fg) 55%, transparent);
+  padding: calc(12 * var(--px)) calc(24 * var(--px)) calc(4 * var(--px));
+}
+
+/* One row: label left, control right. Focus inverts the WHOLE row, so every control drawn in
+   currentColor inverts with it — no second set of rules per control. */
+.setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(24 * var(--px));
+  min-height: calc(78 * var(--px));
+  padding: calc(8 * var(--px)) calc(24 * var(--px));
+  border-radius: calc(10 * var(--px));
+  color: var(--d2);
+  transition: background 0.2s ease, color 0.2s ease, transform 0.12s ease;
+}
+
+/* :hover gated on a live cursor, like every other control here (see .text-button). */
+html:not(.cursor-hidden) .setting-row:hover,
+.setting-row.is-focused {
+  background: var(--d2);
+  color: var(--d1);
+}
+
+.setting-row.is-pressed {
+  transform: scale(0.98);
+}
+
+.setting-label-box {
+  display: flex;
+  flex-direction: column;
+  gap: calc(2 * var(--px));
+  min-width: 0;
+}
+
+.setting-label {
+  font-weight: 500;
+  font-size: calc(28 * var(--px));
+  line-height: calc(40 * var(--px));
+}
+
+.setting-hint {
+  font-weight: 300;
+  font-size: calc(20 * var(--px));
+  line-height: calc(28 * var(--px));
+  opacity: 0.7;
+}
+
+/* Checkbox: an outlined square that fills with currentColor when on; the check is drawn in the row's
+   BACKGROUND colour, which is why it keeps reading right through the focus inversion. */
+.setting-toggle {
+  flex: 0 0 auto;
+  width: calc(34 * var(--px));
+  height: calc(34 * var(--px));
+  border: calc(2 * var(--px)) solid currentColor;
+  border-radius: calc(8 * var(--px));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s ease;
+}
+
+.setting-toggle.is-on {
+  background: currentColor;
+}
+
+.setting-check {
+  width: calc(22 * var(--px));
+  height: calc(22 * var(--px));
+  fill: none;
+  stroke: var(--d1);
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0;
+  transform: scale(0.6);
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.setting-row.is-focused .setting-check {
+  stroke: var(--d2);
+}
+
+.setting-toggle.is-on .setting-check {
+  opacity: 1;
+  transform: scale(1);
+}
+
+/* Dropdown, collapsed: ‹ value ›. The chevrons are clickable with the mouse; left/right cycle the value
+   from the gamepad without expanding at all. */
+.setting-select {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: calc(12 * var(--px));
+}
+
+.setting-chevron {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: calc(28 * var(--px));
+  height: calc(28 * var(--px));
+  cursor: pointer;
+}
+
+.setting-chevron svg {
+  width: calc(18 * var(--px));
+  height: calc(18 * var(--px));
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+.setting-value {
+  font-weight: 500;
+  font-size: calc(26 * var(--px));
+  min-width: calc(220 * var(--px));
+  text-align: right;
+  transition: opacity 0.12s ease, transform 0.12s ease;
+}
+
+/* The direction of a value change is readable: the text slides the way the press went. */
+.setting-value.is-shift-prev {
+  opacity: 0;
+  transform: translateX(calc(10 * var(--px)));
+}
+
+.setting-value.is-shift-next {
+  opacity: 0;
+  transform: translateX(calc(-10 * var(--px)));
+}
+
+/* Slider: a track with a fill and a knob, plus the "N %" readout. */
+.setting-slider {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: calc(20 * var(--px));
+}
+
+.setting-track {
+  position: relative;
+  width: calc(320 * var(--px));
+  height: calc(8 * var(--px));
+  border-radius: calc(4 * var(--px));
+  background: color-mix(in srgb, currentColor 30%, transparent);
+  cursor: pointer;
+}
+
+.setting-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  border-radius: calc(4 * var(--px));
+  background: currentColor;
+  transition: width 0.12s ease;
+}
+
+.setting-knob {
+  position: absolute;
+  top: 50%;
+  width: calc(24 * var(--px));
+  height: calc(24 * var(--px));
+  margin-left: calc(-12 * var(--px));
+  border-radius: 50%;
+  background: currentColor;
+  transform: translateY(-50%);
+  transition: left 0.12s ease;
+  pointer-events: none;
+}
+
+/* While dragging, the knob must sit under the cursor — a transition here reads as lag, not as polish. */
+.setting-slider.is-dragging .setting-fill,
+.setting-slider.is-dragging .setting-knob {
+  transition: none;
+}
+
+.setting-slider .setting-value {
+  min-width: calc(90 * var(--px));
+}
+
+/* Updates row: the status line (+ progress bar) on the left, the primary action on the right. */
+.setting-row-status {
+  align-items: center;
+}
+
+.setting-status-body {
+  display: flex;
+  flex-direction: column;
+  gap: calc(10 * var(--px));
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.setting-status-text {
+  font-weight: 300;
+  font-size: calc(26 * var(--px));
+  line-height: calc(36 * var(--px));
+  overflow-wrap: anywhere;
+}
+
+.setting-progress {
+  height: calc(8 * var(--px));
+  width: calc(420 * var(--px));
+  max-width: 100%;
+  border-radius: calc(4 * var(--px));
+  background: color-mix(in srgb, currentColor 30%, transparent);
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.setting-progress.is-visible {
+  opacity: 1;
+}
+
+.setting-progress-fill {
+  height: 100%;
+  width: 0;
+  border-radius: calc(4 * var(--px));
+  background: currentColor;
+  transition: width 0.3s ease;
+}
+
+/* A .text-button inside a row keeps its own colours: the row's inversion would otherwise paint a filled
+   button on a filled row. */
+.setting-row .text-button {
+  height: calc(62 * var(--px));
+  min-width: calc(150 * var(--px));
+  font-size: calc(24 * var(--px));
+}
+
+/* Rows whose ONLY control is a button (the reset action, the Updates row) put the focus on the BUTTON,
+   like every other button in this UI — filling the whole row and then re-inverting the button inside it
+   reads as two competing highlights. */
+.setting-row[data-kind='action'].is-focused,
+.setting-row[data-kind='update-status'].is-focused,
+html:not(.cursor-hidden) .setting-row[data-kind='action']:hover,
+html:not(.cursor-hidden) .setting-row[data-kind='update-status']:hover {
+  background: transparent;
+  color: var(--d2);
+}
+
+.setting-row[data-kind='action'].is-focused .text-button,
+.setting-row[data-kind='update-status'].is-focused .text-button {
+  background: var(--d2);
+  color: var(--d1);
+}
+
+/* The action row is nothing but its button, pushed to the right edge like the popup's own stacks. */
+.setting-row[data-kind='action'] {
+  justify-content: flex-end;
+}
+
+/* Expanded dropdown — the same motion language as the screen itself, one level up. */
+.settings-options {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.35s ease;
+}
+
+.settings-options.is-open {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.settings-options-veil {
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--d1) 88%, transparent);
+  backdrop-filter: blur(12px);
+}
+
+.settings-options-list {
+  position: absolute;
+  right: calc(120 * var(--px));
+  left: calc(120 * var(--px));
+  top: calc(50 * var(--px));
+  bottom: calc(50 * var(--px));
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: flex-end;
+  gap: calc(8 * var(--px));
+  overflow-y: auto;
+  scrollbar-width: none;
+  transform: translateY(calc(24 * var(--px)));
+  transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.settings-options-list::-webkit-scrollbar {
+  display: none;
+}
+
+.settings-options.is-open .settings-options-list {
+  transform: none;
+}
+
+/* An option reuses the text-button visual, including its focus inversion. A long localized label grows
+   LEFT (the list is right-aligned) and, past the column width, ellipsizes rather than spilling out. */
+.settings-option {
+  height: calc(78 * var(--px));
+  flex: 0 0 auto;
+  min-width: calc(184 * var(--px));
+  max-width: 100%;
+  /* display:block (not flex) so text-overflow can actually ellipsize the label. */
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: calc(78 * var(--px));
+  text-align: right;
+  padding: 0 calc(32 * var(--px));
+  border: none;
+  border-radius: calc(10 * var(--px));
+  background: transparent;
+  color: var(--d2);
+  font-family: inherit;
+  font-weight: 500;
+  font-size: calc(28 * var(--px));
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease, transform 0.12s ease;
+}
+
+html:not(.cursor-hidden) .settings-option:hover,
+.settings-option.is-focused {
+  background: var(--d2);
+  color: var(--d1);
+}
+
+.settings-option.is-pressed {
+  transform: scale(0.96);
+}
+
+/* The current value is marked even when the focus is elsewhere in the list. */
+.settings-option.is-current {
+  text-decoration: underline;
+  text-underline-offset: calc(8 * var(--px));
+}
+
+/* With the screen open the bar leaves downwards (where it came from) and the strip fades out. The strip
+   is faded ONLY — it owns transform transitions of its own, and joining in risks desyncing its position. */
+#app[data-overlay='settings'] #bottom-bar {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(calc(20 * var(--px)));
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
+#app[data-overlay='settings'] #carousel {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.3s ease;
 }
