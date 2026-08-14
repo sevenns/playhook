@@ -502,7 +502,7 @@ export class GameController {
    */
   private cardGoneAfterSequence(): void {
     this.clearCard();
-    const remaining = this.current();
+    const remaining = this.firstCarouselGame();
     if (remaining !== null) {
       void this.enterReadyForLocal(remaining);
       return;
@@ -778,6 +778,11 @@ export class GameController {
     // assets: the selected game's hero/audio are built on demand below, the cards' art on request.
     this.refreshLibrary();
 
+    // A real insert starts on the card's first game AS THE ROW ORDERS THEM (by how recently each was
+    // played), not as game.json lists them — the cursor has to land where the user can see it. A reload
+    // keeps whatever was selected (keepSelection above). The row was rebuilt one line up, so it is fresh.
+    if (!keepSelection) this.selectedId = this.firstCarouselGame()?.raw.id ?? this.selectedId;
+
     // Always enter `ready` for the selected game (single- or multi-game card). Its hero/audio go out on the
     // existing per-game channels; the carousel handles switching between the card's games.
     const selected = manifests.find((manifest) => manifest.raw.id === this.selectedId) ?? manifests[0];
@@ -1010,9 +1015,9 @@ export class GameController {
     this.steamWatch.clearUninstallRequest();
     this.clearCard();
     // A local game is still playable with no card in, so pulling one must not collapse the launcher to the
-    // empty screen: stay `ready` on whatever the cursor fell onto (see current()). Only a truly empty
-    // launcher goes idle + hides, exactly as before.
-    const remaining = this.current();
+    // empty screen: stay `ready` on the first card of the row clearCard just rebuilt (NOT the first entry
+    // of the library file — see firstCarouselGame). Only a truly empty launcher goes idle + hides.
+    const remaining = this.firstCarouselGame();
     if (remaining !== null) {
       void this.enterReadyForLocal(remaining);
       return;

@@ -206,6 +206,38 @@ export function createCarousel(deps: CarouselDeps): Carousel {
     strip.replaceChildren(...nodes);
   }
 
+  /**
+   * Applies a new order to the row WITHOUT the cards jumping into place: FLIP. `apply` rebuilds the nodes
+   * in the new order (the browser lays that out instantly, which is the jump), then every card that was
+   * already on screen is shoved back to where it used to be and released in the same frame — the CSS
+   * transform transition carries it from there to its new slot.
+   *
+   * Positions are read as `offsetLeft`, i.e. LAYOUT coordinates relative to the strip. Viewport rects
+   * would be wrong here: the strip carries its own sliding transform, and half the time it is mid-flight,
+   * so its motion would be folded into the measurement and every card would overshoot by that much.
+   */
+  function reorderSmoothly(apply: () => void): void {
+    const before = new Map<string, number>();
+    for (const [id, card] of cards) before.set(id, card.offsetLeft);
+    apply();
+    const shifted: HTMLElement[] = [];
+    for (const [id, card] of cards) {
+      const from = before.get(id);
+      if (from === undefined) continue; // new to the row: it belongs where it is, and fades in there
+      const dx = from - card.offsetLeft;
+      if (Math.abs(dx) < 1) continue;
+      card.style.transition = 'none';
+      card.style.transform = `translateX(${dx}px)`;
+      shifted.push(card);
+    }
+    if (shifted.length === 0) return;
+    void strip.offsetWidth; // ONE reflow for the whole row, so every card starts its travel together
+    for (const card of shifted) {
+      card.style.transition = '';
+      card.style.transform = '';
+    }
+  }
+
   /** Tells main what is on screen now. */
   function announceSelection(): void {
     const current = selected();
@@ -307,8 +339,12 @@ export function createCarousel(deps: CarouselDeps): Carousel {
             ),
         games.length,
       );
-      rebuild();
-      applyLayout();
+      // Both together: applyLayout is what resizes the selected card, so measuring between the two would
+      // compare against a width the row is about to change.
+      reorderSmoothly(() => {
+        rebuild();
+        applyLayout();
+      });
       loadNearbyArt();
       // A list that shrank to a single game (or none) has no carousel left to stand on.
       if (!exists() && screen === 'carousel') setScreen('detail');

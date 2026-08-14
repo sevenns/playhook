@@ -401,7 +401,7 @@ body {
      (.is-beyond below), and they must do it WITH the slide — no delay, or the row would arrive first and
      the newcomer blink in afterwards. The staggered hand-back fade lives in the [data-returning] rule. */
   transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1), height 0.35s cubic-bezier(0.4, 0, 0.2, 1),
-    opacity 0.35s cubic-bezier(0.2, 0, 0.2, 1);
+    opacity 0.35s cubic-bezier(0.2, 0, 0.2, 1), transform 0.35s cubic-bezier(0.4, 0, 0.2, 1);
 }
 #app[data-screen='carousel'][data-returning] .card {
   /* Coming back from the detail screen. ONLY the fade-in waits for the grow. Delaying width/height here
@@ -415,7 +415,8 @@ body {
      RETURN_FAN_MS in carousel-geometry.ts — the first locks input out for the morph, the second is how
      long the renderer keeps `data-returning` on: edit them together. */
   transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1), height 0.35s cubic-bezier(0.4, 0, 0.2, 1),
-    opacity 0.4s cubic-bezier(0.2, 0, 0.2, 1) calc(0.35s + var(--fan, 0) * 50ms);
+    opacity 0.4s cubic-bezier(0.2, 0, 0.2, 1) calc(0.35s + var(--fan, 0) * 50ms),
+    transform 0.35s cubic-bezier(0.4, 0, 0.2, 1);
 }
 /* Past the end of the shown window (VISIBLE_CARDS = 9 in carousel-geometry.ts): laid out as usual — the
    strip's offset is positional, so removing the node would shift the whole row — but invisible and
