@@ -16,7 +16,7 @@ export interface GamepadController {
 }
 
 export interface GamepadHandlers {
-  readonly onLeft: () => void;
+  readonly onLeft: (repeat: boolean) => void;
   /** `repeat` marks a press produced by the hold auto-repeat rather than by a fresh press — the two mean
    *  different things where a stop is also a step (see navRight in controls.ts). */
   readonly onRight: (repeat: boolean) => void;

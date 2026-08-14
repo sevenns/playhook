@@ -931,11 +931,20 @@ export function createControls(deps: ControlsDeps): Controls {
    *  Y has handed the focus to the bar (then left/right/A belong to More, like on any other screen). */
   const stripActive = (): boolean => onCarousel() && !carouselBarFocus;
 
-  function navLeft(): void {
+  function navLeft(repeat = false): void {
     noteGamepadActivity();
+    // Left is "out" of a popup, the same step B takes: the stacks live on the right edge of the screen,
+    // so moving left off them means leaving — the reading the layout already suggests on the carousel
+    // (where left walks from the More button back to the strip). Sub-views step up one level rather than
+    // closing outright, exactly as B does there. A HELD left is ignored: at the repeat cadence it would
+    // walk out through every level and land on the carousel, flipping cards nobody asked to flip.
+    if (popupView !== 'none') {
+      if (!repeat) back();
+      return;
+    }
     // BEFORE stripActive(): left/right are the slider's own gesture (and the dropdown's fast path), and
     // holding one on the Settings screen must never flip through the carousel underneath.
-    if (popupView === 'none' && deps.settings.isOpen()) {
+    if (deps.settings.isOpen()) {
       deps.settings.navLeft();
       return;
     }
@@ -950,7 +959,7 @@ export function createControls(deps: ControlsDeps): Controls {
       setCarouselBarFocus(false);
       return;
     }
-    if (popupView === 'none') moveFocus(-1);
+    moveFocus(-1);
   }
   function navRight(repeat = false): void {
     noteGamepadActivity();
