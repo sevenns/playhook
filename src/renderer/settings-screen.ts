@@ -84,9 +84,8 @@ export interface SettingsScreen {
   isOpen(): boolean;
   open(): void;
   close(): void;
-  /** `repeat` marks a hold auto-repeat: the focus scroll then jumps instead of gliding (see applyRowFocus). */
-  navUp(repeat?: boolean): void;
-  navDown(repeat?: boolean): void;
+  navUp(): void;
+  navDown(): void;
   navLeft(): void;
   navRight(): void;
   navActivate(): void;
@@ -206,13 +205,13 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
   }
 
   /**
-   * Paints the focus and keeps it on screen. `instant` is for a HELD direction: the list scrolls
-   * smoothly for single steps, but a repeat at NAV_REPEAT_MS would out-run a smooth scroll and leave the
-   * focus visibly trailing behind the highlight.
+   * Paints the focus and keeps it on screen. The scroll stays SMOOTH even under a held direction:
+   * each scrollIntoView re-targets the running animation from wherever it is, so a burst reads as one
+   * continuous glide — where jumping per step (the obvious answer for a repeat) made it stutter.
    */
-  function applyRowFocus(instant = false): void {
+  function applyRowFocus(): void {
     rendered.forEach((row, index) => row.el.classList.toggle('is-focused', index === focusIndex));
-    focusedRow()?.el.scrollIntoView({ block: 'nearest', behavior: instant ? 'instant' : 'smooth' });
+    focusedRow()?.el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   }
 
   /** The loading line, shown until the first snapshot lands (the settings window did the same). */
@@ -454,13 +453,13 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
 
   // ── The six primitives ─────────────────────────────────────────────────────
 
-  function moveRowFocus(delta: number, instant = false): void {
+  function moveRowFocus(delta: number): void {
     if (rendered.length === 0) return;
     const next = Math.min(rendered.length - 1, Math.max(0, focusIndex + delta));
     if (next === focusIndex) return;
     focusIndex = next;
     deps.audio.play('navigate');
-    applyRowFocus(instant);
+    applyRowFocus();
   }
 
   function moveOptionFocus(delta: number): void {
@@ -473,14 +472,14 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
     applyOptionFocus();
   }
 
-  function navUp(repeat = false): void {
+  function navUp(): void {
     if (openSelect !== null) moveOptionFocus(-1);
-    else moveRowFocus(-1, repeat);
+    else moveRowFocus(-1);
   }
 
-  function navDown(repeat = false): void {
+  function navDown(): void {
     if (openSelect !== null) moveOptionFocus(1);
-    else moveRowFocus(1, repeat);
+    else moveRowFocus(1);
   }
 
   function navHorizontal(delta: number): void {

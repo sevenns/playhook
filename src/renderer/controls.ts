@@ -62,9 +62,8 @@ export interface SettingsNav {
   isOpen(): boolean;
   open(): void;
   close(): void;
-  /** `repeat` marks a hold auto-repeat — the screen scrolls instantly then, instead of gliding. */
-  navUp(repeat?: boolean): void;
-  navDown(repeat?: boolean): void;
+  navUp(): void;
+  navDown(): void;
   navLeft(): void;
   navRight(): void;
   navActivate(): void;
@@ -932,7 +931,7 @@ export function createControls(deps: ControlsDeps): Controls {
       if (!repeat) moveStackFocus(-1);
       return;
     }
-    if (deps.settings.isOpen()) deps.settings.navUp(repeat);
+    if (deps.settings.isOpen()) deps.settings.navUp();
   }
   function navDown(repeat = false): void {
     noteGamepadActivity();
@@ -940,7 +939,7 @@ export function createControls(deps: ControlsDeps): Controls {
       if (!repeat) moveStackFocus(1);
       return;
     }
-    if (deps.settings.isOpen()) deps.settings.navDown(repeat);
+    if (deps.settings.isOpen()) deps.settings.navDown();
   }
   function navActivate(): void {
     noteGamepadActivity();

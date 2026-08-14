@@ -31,6 +31,13 @@ const BTN = { a: 0, b: 1, y: 3, dpadUp: 12, dpadDown: 13, dpadLeft: 14, dpadRigh
 const STICK_X_AXIS = 0;
 const STICK_Y_AXIS = 1;
 const STICK_DEADZONE = 0.5;
+/**
+ * How long a direction stays deaf to the STICK after the opposite one is released. A thumbstick springs
+ * back through centre and overshoots past the deadzone on the far side, which the edge detector reads as
+ * a deliberate press the other way — one step down, then an instant step back up. The d-pad is exempt:
+ * it has no spring, and gating it would eat honest quick reversals.
+ */
+const STICK_SETTLE_MS = 140;
 
 /** How long a direction must be HELD before the auto-repeat kicks in (a normal press stays one move). */
 const HOLD_DELAY_MS = 350;
@@ -49,6 +56,16 @@ export function createGamepadController(handlers: GamepadHandlers): GamepadContr
   // (controls.ts drops it outside the Settings screen, where the popup stacks are short and cyclic).
   const heldSince = { left: 0, right: 0, up: 0, down: 0 };
   const lastFire = { left: 0, right: 0, up: 0, down: 0 };
+  // The stick's own previous state per direction, and the moment each one was RELEASED (the edge, not
+  // every idle frame — timing it from "currently centred" would leave both directions of an axis
+  // permanently gating each other). The clock STICK_SETTLE_MS runs from for the opposite direction.
+  const stickPrev = { left: false, right: false, up: false, down: false };
+  const stickReleasedAt = {
+    left: Number.NEGATIVE_INFINITY,
+    right: Number.NEGATIVE_INFINITY,
+    up: Number.NEGATIVE_INFINITY,
+    down: Number.NEGATIVE_INFINITY,
+  };
 
   const isDown = (index: number): boolean => {
     for (const pad of navigator.getGamepads()) {
@@ -97,15 +114,36 @@ export function createGamepadController(handlers: GamepadHandlers): GamepadContr
     fire(true);
   };
 
+  type Dir = 'left' | 'right' | 'up' | 'down';
+  const OPPOSITE: Readonly<Record<Dir, Dir>> = {
+    left: 'right',
+    right: 'left',
+    up: 'down',
+    down: 'up',
+  };
+
+  /**
+   * Whether `dir` is pressed, with the spring-back guard applied: a STICK deflection is ignored while the
+   * opposite direction's own release is still settling. A d-pad press always counts.
+   */
+  const pressed = (dir: Dir, dpad: boolean, stick: boolean, now: number): boolean => {
+    if (stickPrev[dir] && !stick) stickReleasedAt[dir] = now; // the release EDGE starts the clock
+    stickPrev[dir] = stick;
+    if (dpad) return true;
+    if (!stick) return false;
+    return now - stickReleasedAt[OPPOSITE[dir]] >= STICK_SETTLE_MS;
+  };
+
   const poll = (): void => {
     if (!running) return;
     const x = axis(STICK_X_AXIS);
     const y = axis(STICK_Y_AXIS);
-    const left = isDown(BTN.dpadLeft) || x < -STICK_DEADZONE;
-    const right = isDown(BTN.dpadRight) || x > STICK_DEADZONE;
+    const now = performance.now();
+    const left = pressed('left', isDown(BTN.dpadLeft), x < -STICK_DEADZONE, now);
+    const right = pressed('right', isDown(BTN.dpadRight), x > STICK_DEADZONE, now);
     // Standard mapping: stick Y is +down / -up.
-    const up = isDown(BTN.dpadUp) || y < -STICK_DEADZONE;
-    const down = isDown(BTN.dpadDown) || y > STICK_DEADZONE;
+    const up = pressed('up', isDown(BTN.dpadUp), y < -STICK_DEADZONE, now);
+    const down = pressed('down', isDown(BTN.dpadDown), y > STICK_DEADZONE, now);
     const a = isDown(BTN.a);
     const b = isDown(BTN.b);
     const yButton = isDown(BTN.y);
