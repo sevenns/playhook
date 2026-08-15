@@ -23,6 +23,8 @@ export interface NavSurface {
   navTertiary?(): void;
   /** LB / RB (-1 / +1) — the keyboard's layout switch. Same rule: unclaimed means unchanged. */
   navShoulder?(direction: -1 | 1): void;
+  /** RT — "commit what I typed". Only the keyboard claims it; A on the Done key does the same thing. */
+  navCommit?(): void;
   /** Re-renders every label for the current translator, keeping the focus and the scroll position. */
   relocalize(): void;
 }

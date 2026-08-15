@@ -1403,6 +1403,7 @@ html:not(.cursor-hidden) .text-button:hover,
   display: flex;
   align-items: baseline;
   justify-content: space-between;
+  gap: calc(16 * var(--px));
   padding: calc(30 * var(--px)) calc(32 * var(--px)) calc(20 * var(--px));
 }
 
@@ -1418,6 +1419,15 @@ html:not(.cursor-hidden) .text-button:hover,
   font-weight: 300;
   font-size: calc(24 * var(--px));
   color: color-mix(in srgb, var(--fg) 55%, transparent);
+}
+
+/* Where the edited manifest lives, beside the game's name. Quieter than the name itself: it answers a
+   question the user asks once ("whose file is this?"), not one they keep asking. */
+.settings-source {
+  margin-left: calc(12 * var(--px));
+  font-weight: 300;
+  font-size: calc(20 * var(--px));
+  color: color-mix(in srgb, var(--fg) 40%, transparent);
 }
 
 /* The scrolling list. The native scrollbar is hidden — the focus ring is the position indicator, exactly
@@ -1992,24 +2002,23 @@ html:not(.cursor-hidden) .settings-option:hover,
 }
 
 /* The field's own validation problem, under its label. It is a per-game form of thirty fields: a list of
-   messages at the bottom would name paths the user cannot point at. */
+   messages at the bottom would name paths the user cannot point at.
+
+   NO fixed red anywhere below. The palette here is computed from the game's own hero art (--d1/--d2), so
+   a hard-coded accent is a colour that will sooner or later land on a background it cannot be read
+   against — including a red one. Emphasis is carried by WEIGHT and by an inset bar in currentColor
+   instead, which is legible in every palette by construction. */
 .setting-error {
-  font-weight: 400;
+  font-weight: 500;
   font-size: calc(20 * var(--px));
   line-height: calc(28 * var(--px));
-  color: var(--error, #ff6b6b);
-}
-
-/* Inverted, the row's background IS the accent, so a red on top of it would vibrate — the message takes
-   the row's own foreground and leans on the marker below instead. */
-.setting-row.is-focused .setting-error {
   color: inherit;
-  opacity: 0.85;
 }
 
-/* A quiet marker on the row itself, so a scrolled-past problem is still findable. */
+/* A marker on the row itself, so a problem scrolled past is still findable — currentColor, so it
+   survives the focus inversion along with everything else in the row. */
 .setting-row.has-error {
-  box-shadow: inset calc(3 * var(--px)) 0 0 var(--error, #ff6b6b);
+  box-shadow: inset calc(4 * var(--px)) 0 0 currentColor;
 }
 
 /* A forced control (install.runAsAdmin under a custom installer) and an action that cannot run yet
@@ -2030,19 +2039,31 @@ html:not(.cursor-hidden) .settings-option:hover,
   flex: 0 0 auto;
 }
 
+/* 16:9 for a hero background, 2:3 for the carousel card (a 600x900 portrait) — the artwork's own shape,
+   so a cover squeezed into a landscape box can't read as "that's how it will look". */
 .setting-thumb {
-  width: calc(96 * var(--px));
   height: calc(54 * var(--px));
+  width: calc(96 * var(--px));
   object-fit: cover;
   border-radius: calc(6 * var(--px));
+  cursor: pointer;
+}
+
+.setting-thumbs.is-portrait .setting-thumb {
+  height: calc(72 * var(--px));
+  width: calc(48 * var(--px));
 }
 
 /* A note is text inside the list, not a control — no focus, no inversion, and a tone that says how much
    it matters (the mixed-modes banner, the id-change warning, a neighbour's error). */
+/* A note is text inside the list, and its three tones are told apart WITHOUT a colour of their own:
+   info is a quiet tinted block, warning gains an outline, error inverts to the accent — the same
+   inversion a focused row uses, so it is the loudest thing on screen in any palette. */
 .setting-row-note {
   display: block;
   min-height: 0;
   padding: calc(12 * var(--px)) calc(32 * var(--px));
+  border: calc(2 * var(--px)) solid transparent;
   border-radius: calc(10 * var(--px));
   background: color-mix(in srgb, var(--d2) 12%, transparent);
 }
@@ -2055,11 +2076,21 @@ html:not(.cursor-hidden) .settings-option:hover,
 }
 
 .setting-row-note.is-warning {
-  background: color-mix(in srgb, #ffb45c 22%, transparent);
+  border-color: var(--d2);
+  background: transparent;
+}
+
+.setting-row-note.is-warning .setting-note-text {
+  font-weight: 500;
 }
 
 .setting-row-note.is-error {
-  background: color-mix(in srgb, #ff6b6b 22%, transparent);
+  background: var(--d2);
+}
+
+.setting-row-note.is-error .setting-note-text {
+  color: var(--d1);
+  font-weight: 500;
 }
 
 /* An inert row (a static line, a note) must never light up under the mouse — it cannot be activated. */
@@ -2091,10 +2122,12 @@ html:not(.cursor-hidden) .setting-row.is-inert:hover {
   pointer-events: auto;
 }
 
+/* Fully opaque, not a tint: the form behind the keyboard is unreadable at 12% anyway, and showing it
+   through only competes with the keys for attention. */
 .osk-veil {
   position: absolute;
   inset: 0;
-  background: color-mix(in srgb, var(--d1) 88%, transparent);
+  background: var(--d1);
 }
 
 .osk-panel {
@@ -2231,7 +2264,7 @@ html:not(.cursor-hidden) .osk-key:hover,
 .picker-veil {
   position: absolute;
   inset: 0;
-  background: color-mix(in srgb, var(--d1) 92%, transparent);
+  background: var(--d1);
 }
 
 .picker-panel {
@@ -2343,6 +2376,54 @@ html:not(.cursor-hidden) .picker-item:hover,
   font-weight: 300;
   font-size: calc(24 * var(--px));
   color: color-mix(in srgb, var(--d2) 55%, transparent);
+}
+
+/* ── Artwork lightbox ───────────────────────────────────────────────────────
+   Inside the Customize screen, above the keyboard and the picker: the artwork at full size, which is the
+   only way to answer "is this the right picture?" from a 96px thumbnail. */
+
+.lightbox {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: calc(16 * var(--px));
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s ease;
+}
+
+.lightbox.is-open {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.lightbox-veil {
+  position: absolute;
+  inset: 0;
+  background: var(--d1);
+}
+
+/* `contain`, never `cover`: the whole point is to see the picture as it IS, borders and all. */
+.lightbox-image {
+  position: relative;
+  max-width: calc(100% - 120 * var(--px));
+  max-height: calc(100% - 200 * var(--px));
+  object-fit: contain;
+  border-radius: calc(10 * var(--px));
+}
+
+.lightbox-caption {
+  position: relative;
+  max-width: calc(100% - 120 * var(--px));
+  font-weight: 300;
+  font-size: calc(22 * var(--px));
+  color: color-mix(in srgb, var(--d2) 65%, transparent);
+  text-align: center;
+  overflow-wrap: anywhere;
 }
 
 /* ── Boot ──────────────────────────────────────────────────────────────────

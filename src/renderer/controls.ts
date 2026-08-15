@@ -335,7 +335,8 @@ export function createControls(deps: ControlsDeps): Controls {
       else if (mode === 'install' && isCopy) popup.dataset['installVia'] = 'copy';
       else delete popup.dataset['installVia'];
       // Prefix-cleanup uninstall shows its own note in the detail (CSS) — the heading stays a short question.
-      if (mode === 'uninstall' && game.prefixCleanupOnly === true) popup.dataset['uninstallVia'] = 'prefix';
+      if (mode === 'uninstall' && game.prefixCleanupOnly === true)
+        popup.dataset['uninstallVia'] = 'prefix';
       else delete popup.dataset['uninstallVia'];
       if (isSteam) {
         confirmMessage.textContent = t()(
@@ -538,7 +539,9 @@ export function createControls(deps: ControlsDeps): Controls {
     const show = showInstall || showUninstall;
     menuInstallToggle.classList.toggle('is-hidden', !show);
     if (show) {
-      menuInstallToggle.textContent = t()(showInstall ? 'launcher.menu.install' : 'launcher.menu.uninstall');
+      menuInstallToggle.textContent = t()(
+        showInstall ? 'launcher.menu.install' : 'launcher.menu.uninstall',
+      );
       // Which action Yes will run — read back in the stack trigger.
       menuInstallToggle.dataset['action'] = showInstall ? 'install' : 'uninstall';
     }
@@ -601,7 +604,6 @@ export function createControls(deps: ControlsDeps): Controls {
     powerMinimize.classList.toggle('is-hidden', gameMode);
   }
 
-
   // ── Main bar focus (gamepad / mouse) ─────────────────────────────────────────
 
   const ALL_MAIN_BUTTONS: readonly HTMLButtonElement[] = [playButton, moreButton];
@@ -632,7 +634,8 @@ export function createControls(deps: ControlsDeps): Controls {
     // Running with the launcher summoned over the game: Play returns to the game, so it's focusable too —
     // EXCEPT while a force-close is in flight (killing), when Play is a non-interactive loading spinner.
     const running = state();
-    if (running.kind === 'running') return running.killing === true ? [moreButton] : [playButton, moreButton];
+    if (running.kind === 'running')
+      return running.killing === true ? [moreButton] : [playButton, moreButton];
     // Hard busy (install / uninstall / launch / save-sync): the Play button is a non-interactive activity
     // indicator (spinner/gear), so only More is focusable — it still opens Details.
     if (phaseOf(state()) === 'busy') return [moreButton];
@@ -671,7 +674,10 @@ export function createControls(deps: ControlsDeps): Controls {
     // default "Play" label fits better than an action it won't perform).
     const s = state();
     const returnToGame = s.kind === 'running' && s.killing !== true;
-    playButton.setAttribute('aria-label', t()(returnToGame ? 'launcher.aria.returnToGame' : 'launcher.aria.play'));
+    playButton.setAttribute(
+      'aria-label',
+      t()(returnToGame ? 'launcher.aria.returnToGame' : 'launcher.aria.play'),
+    );
   }
 
   function setCursorHidden(hidden: boolean): void {
@@ -762,12 +768,12 @@ export function createControls(deps: ControlsDeps): Controls {
   // A single dynamic group covering all four views; the visible buttons depend on the view (and, for
   // Details, whether the Install/Uninstall item is present). Default focus is the BOTTOM button.
   const ALL_STACK_BUTTONS: readonly HTMLButtonElement[] = [
-    menuShutdown,
-    menuHome,
-    menuCustomize,
     menuInstallToggle,
     menuKill,
     menuForget,
+    menuShutdown,
+    menuHome,
+    menuCustomize,
     menuSettings,
     menuClose,
     powerShutdown,
@@ -785,13 +791,16 @@ export function createControls(deps: ControlsDeps): Controls {
   function stackFocusables(): readonly HTMLButtonElement[] {
     switch (popupView) {
       case 'details': {
+        // MUST match the DOM order in index.html — this list IS the up/down order, and a mismatch would
+        // move the highlight somewhere other than where the eye follows. Volatile items first (they come
+        // and go with the game's phase), then the fixed block that ends at Close: see the note there.
         const items: HTMLButtonElement[] = [];
-        if (!menuShutdown.classList.contains('is-hidden')) items.push(menuShutdown);
-        if (!menuHome.classList.contains('is-hidden')) items.push(menuHome);
-        if (!menuCustomize.classList.contains('is-hidden')) items.push(menuCustomize);
         if (!menuInstallToggle.classList.contains('is-hidden')) items.push(menuInstallToggle);
         if (!menuKill.classList.contains('is-hidden')) items.push(menuKill);
         if (!menuForget.classList.contains('is-hidden')) items.push(menuForget);
+        if (!menuShutdown.classList.contains('is-hidden')) items.push(menuShutdown);
+        if (!menuHome.classList.contains('is-hidden')) items.push(menuHome);
+        if (!menuCustomize.classList.contains('is-hidden')) items.push(menuCustomize);
         if (!menuSettings.classList.contains('is-hidden')) items.push(menuSettings);
         items.push(menuClose);
         return items;
@@ -1270,6 +1279,11 @@ export function createControls(deps: ControlsDeps): Controls {
     overlays.active()?.navShoulder?.(direction);
   }
 
+  function navCommit(): void {
+    if (popupView !== 'none') return;
+    overlays.active()?.navCommit?.();
+  }
+
   function setCarouselBarFocus(onBar: boolean): void {
     carouselBarFocus = onBar;
     // The strip stops reading as the active surface while the bar has the focus: the ring goes, the row
@@ -1333,6 +1347,7 @@ export function createControls(deps: ControlsDeps): Controls {
     onX: navSecondary,
     onShoulderLeft: () => navShoulder(-1),
     onShoulderRight: () => navShoulder(1),
+    onTriggerRight: navCommit,
     onDirectionsReleased: endFlip,
   });
 
@@ -1364,7 +1379,16 @@ export function createControls(deps: ControlsDeps): Controls {
   // stack is dropped by navUp/navDown themselves). The OS auto-repeat supplies the events (its own
   // initial delay is close enough to the pad's), but its rate is far too fast, so it is throttled to the
   // same NAV_REPEAT_MS cadence. Every other key stays one action per press.
-  const REPEATABLE_KEYS = new Set(['a', 'arrowleft', 'd', 'arrowright', 'w', 'arrowup', 's', 'arrowdown']);
+  const REPEATABLE_KEYS = new Set([
+    'a',
+    'arrowleft',
+    'd',
+    'arrowright',
+    'w',
+    'arrowup',
+    's',
+    'arrowdown',
+  ]);
   let lastKeyRepeatAt = 0;
   window.addEventListener('keydown', (event) => {
     const key = event.key.toLowerCase();
@@ -1436,7 +1460,6 @@ export function createControls(deps: ControlsDeps): Controls {
     applyStackFocus();
     applyPlayAria();
   }
-
 
   return {
     applyGameButtons,

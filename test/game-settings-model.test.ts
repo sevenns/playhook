@@ -167,14 +167,19 @@ describe('the rules that are not visibility', () => {
     expect(ready.disabled).toBe(false);
   });
 
-  it('names the source: the card root, or this machine', () => {
-    const card = row(model({}), 'source');
-    if (card?.kind !== 'static') throw new Error('unreachable');
-    expect(card.value).toEqual({ text: 'E:\\' });
+  // The source is a header line, not a row: it is read-only, and among thirty editable rows a fact you
+  // cannot change reads as a control that refuses to work.
+  it('names the source in the header rather than as a row', () => {
+    expect(model({}).source).toEqual({ text: 'E:\\' });
+    expect(model({ launchMode: 'pc' }, { source: 'pc' }).source).toEqual({
+      key: 'gameConfig.thisPc',
+    });
+    expect(ids(model({}))).not.toContain('source');
+  });
 
-    const local = row(model({ launchMode: 'pc' }, { source: 'pc' }), 'source');
-    if (local?.kind !== 'static') throw new Error('unreachable');
-    expect(local.value).toEqual({ key: 'gameConfig.thisPc' });
+  // schemaVersion is always 1 and cannot be anything else — a row for it is a row that does nothing.
+  it('does not show the manifest version at all', () => {
+    expect(ids(model({}))).not.toContain('schemaVersion');
   });
 });
 

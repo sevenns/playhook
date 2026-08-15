@@ -135,18 +135,13 @@
                Each group is a vertical stack (align-items: flex-end): a longer localized label grows
                to the LEFT, the right edge stays fixed. -->
           <div class="popup-actions">
+            <!-- ORDER MATTERS, and it is not thematic: the items that APPEAR AND DISAPPEAR with the
+                 game's phase (install/uninstall, force close, remove from history) are at the TOP, and
+                 the ones that are always there sit in a fixed block just above Close. The stack is
+                 bottom-focused and bottom-anchored, so anything volatile near the bottom shifts the
+                 stable items under the user's thumb between visits — which is how "Customize" got
+                 mis-pressed as "Uninstall". -->
             <div class="actions-group" data-group="details">
-              <button id="menu-shutdown" class="text-button" type="button" data-i18n="launcher.menu.system">System</button>
-              <!-- Back to the history carousel — the mouse counterpart of the B button (shown only on a
-                   detail screen that HAS a carousel to return to). Text from JS, like its neighbours.
-                   Sits ABOVE the game's own actions: leaving is navigation, and navigation belongs over
-                   the things that act on the game (install, uninstall, force close, forget). -->
-              <button id="menu-home" class="text-button" type="button"></button>
-              <!-- Customize — the per-game manifest editor, offered only for a game that is on the card
-                   or in the local library (an `active` game is the only one whose file we can reach).
-                   Sits with Home, ABOVE the actions: configuring the game is of a kind with navigating to
-                   it, not with installing or force-closing it. Text from JS, like its neighbours. -->
-              <button id="menu-customize" class="text-button" type="button"></button>
               <!-- Install/Uninstall — one button; its text + visibility come from JS (executable games
                    have no install block, so the button is hidden entirely). -->
               <button id="menu-install-toggle" class="text-button" type="button"></button>
@@ -156,6 +151,13 @@
               <!-- Drop this game from the history — shown only for a game that is NOT on the card and not
                    in the PC library (those are playable, not history). Text from JS, like its neighbours. -->
               <button id="menu-forget" class="text-button" type="button"></button>
+              <button id="menu-shutdown" class="text-button" type="button" data-i18n="launcher.menu.system">System</button>
+              <!-- Back to the history carousel — the mouse counterpart of the B button (shown only on a
+                   detail screen that HAS a carousel to return to). Text from JS, like its neighbours. -->
+              <button id="menu-home" class="text-button" type="button"></button>
+              <!-- Customize — the per-game manifest editor, offered only for a game that is on the card
+                   or in the local library (an `active` game is the only one whose file we can reach). -->
+              <button id="menu-customize" class="text-button" type="button"></button>
               <!-- The ONLY way into Settings (the tray item is gone), so it shows on every screen —
                    including the empty one, where More is still there. -->
               <button id="menu-settings" class="text-button" type="button" data-i18n="launcher.menu.settings">Settings</button>
@@ -220,8 +222,10 @@
           <div class="settings-header">
             <div class="settings-title" data-i18n="gameSettings.screenTitle">Customize</div>
             <!-- The game's own name, from JS: it says WHOSE settings these are, which matters the moment
-                 a card carries more than one game. -->
+                 a card carries more than one game — followed by where its manifest lives. The source used
+                 to be a row in the form, which put a read-only fact among the editable ones. -->
             <div class="settings-version" id="game-settings-heading"></div>
+            <div class="settings-source" id="game-settings-source"></div>
           </div>
           <div class="settings-list" id="game-settings-list"></div>
         </div>
@@ -260,6 +264,14 @@
             </div>
             <div class="picker-legend" id="picker-legend"></div>
           </div>
+        </div>
+
+        <!-- Artwork at full size. A row's thumbnail is 96px wide — enough to see that a background is
+             set, nowhere near enough to see WHICH one, which is the question the user actually has. -->
+        <div class="lightbox" id="lightbox" aria-hidden="true">
+          <div class="lightbox-veil"></div>
+          <img class="lightbox-image" id="lightbox-image" alt="" />
+          <div class="lightbox-caption" id="lightbox-caption"></div>
         </div>
       </section>
     </main>

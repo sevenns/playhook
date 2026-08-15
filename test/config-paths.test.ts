@@ -104,7 +104,13 @@ describe('toCardRelative', () => {
 });
 
 describe('startDirFor', () => {
-  const env = { homeDir: home, appDataDir: appData, rootIsCard: true };
+  const downloads = path.join(home, 'Downloads');
+  const env = {
+    homeDir: home,
+    appDataDir: appData,
+    downloadsDir: downloads,
+    rootIsCard: true,
+  };
 
   it('reopens where a filled card-relative value points', () => {
     expect(startDirFor({ root, kind: 'executable', current: 'Hades/Hades.exe' }, env)).toBe(
@@ -125,8 +131,17 @@ describe('startDirFor', () => {
     expect(startDirFor({ root, kind: 'image' }, env)).toBe(root);
   });
 
-  it('starts a LOCAL library field at the home folder, not at the library root', () => {
-    expect(startDirFor({ root, kind: 'image' }, { ...env, rootIsCard: false })).toBe(home);
+  // Artwork and music for a LOCAL game were downloaded a minute ago far more often than they were
+  // authored in place, and the library root itself holds only what we already copied into it.
+  it('starts a local library artwork field in Downloads, not at the library root', () => {
+    expect(startDirFor({ root, kind: 'image' }, { ...env, rootIsCard: false })).toBe(downloads);
+    expect(startDirFor({ root, kind: 'audio' }, { ...env, rootIsCard: false })).toBe(downloads);
+  });
+
+  // The game writes its saves on the PC whatever it was launched from, so a CARD game's save path has no
+  // business opening on the card.
+  it('starts a save path at %APPDATA% even for a card game', () => {
+    expect(startDirFor({ root, kind: 'pc-save' }, env)).toBe(appData);
   });
 
   it('starts a local executable at the home folder and a save path at %APPDATA%', () => {

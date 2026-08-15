@@ -86,6 +86,8 @@ export interface StartDirEnv {
   readonly homeDir: string;
   /** `app.getPath('appData')` — where a Windows-dictionary save path most often lives. */
   readonly appDataDir: string;
+  /** `app.getPath('downloads')` — where artwork and music for a local game almost always just landed. */
+  readonly downloadsDir: string;
   /** Whether `root` is a CARD (a PC-library root is not somewhere to browse for a file). */
   readonly rootIsCard: boolean;
 }
@@ -98,9 +100,15 @@ export interface StartDirRequest {
 }
 
 /**
- * Where a field's picker opens when the screen has nowhere of its own to return to: the directory the
- * current value points at, else the card root for a card field, the home folder for a local executable,
- * and `%APPDATA%` for a save path. A `%PREFIX%`-style value names no host directory, so it is skipped.
+ * Where a field's picker opens when the screen has nowhere of its own to return to.
+ *
+ * The rule is "the directory this field's answer usually lives in", not "the root this manifest belongs
+ * to" — the two differ for exactly the fields that caused trouble:
+ *  • a SAVE path is never on the card, even for a card game: the game writes to the PC, so it starts at
+ *    `%APPDATA%` (on Windows, under the system drive; on Linux, the config root) whatever the source is;
+ *  • ARTWORK and MUSIC for a local game were almost certainly downloaded a minute ago, so they start in
+ *    Downloads rather than at the top of the home folder.
+ * A `%PREFIX%`-style value names no host directory, so it is skipped rather than resolved.
  */
 export function startDirFor(request: StartDirRequest, env: StartDirEnv): string {
   const { root, current, kind } = request;
@@ -114,6 +122,8 @@ export function startDirFor(request: StartDirRequest, env: StartDirEnv): string 
   }
   if (kind === 'pc-save' || kind === 'pc-save-local') return env.appDataDir;
   if (kind === 'pc-executable') return env.homeDir;
-  if (root !== undefined && env.rootIsCard) return root;
+  const isCard = root !== undefined && env.rootIsCard;
+  if (!isCard && (kind === 'image' || kind === 'audio')) return env.downloadsDir;
+  if (isCard && root !== undefined) return root;
   return env.homeDir;
 }

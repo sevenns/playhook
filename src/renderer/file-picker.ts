@@ -82,10 +82,13 @@ export function createFilePicker(deps: FilePickerDeps): FilePickerSurface {
   let rootButtons: HTMLButtonElement[] = [];
   let entryButtons: HTMLButtonElement[] = [];
   /**
-   * The directory the last visit ended in, kept for the LIFETIME OF THE SCREEN: picking three hero images
-   * one after another must not start at the top of the filesystem each time.
+   * Where the last visit ENDED, per field kind, kept for the lifetime of the screen: picking three hero
+   * images one after another must not start at the top of the filesystem each time.
+   *
+   * Per KIND, not one shared value — otherwise browsing the card for an executable would leave the PC
+   * save-path picker opening on the card, which is nowhere near where a save folder lives.
    */
-  let lastVisited: string | null = null;
+  const lastVisited = new Map<ConfigPickKind, string>();
 
   function wantsDirectory(): boolean {
     const kind = request?.kind;
@@ -112,6 +115,14 @@ export function createFilePicker(deps: FilePickerDeps): FilePickerSurface {
   function paintEntries(): void {
     pathEl.textContent = here;
     const items: HTMLButtonElement[] = [];
+    // 2: the way OUT, as a row. Backing out with B walks up one directory at a time, which after six
+    // steps into a Steam library is six presses to change your mind — this is one.
+    const cancelItem = document.createElement('button');
+    cancelItem.type = 'button';
+    cancelItem.className = 'picker-item is-cancel';
+    cancelItem.textContent = t()('picker.cancel');
+    cancelItem.addEventListener('click', () => cancel());
+    items.push(cancelItem);
     // "Up one level" is a row of its own rather than a bare B: a mouse user has no B, and the gesture is
     // the one the browser is used for most.
     if (parent !== null) {
@@ -155,6 +166,11 @@ export function createFilePicker(deps: FilePickerDeps): FilePickerSurface {
     entriesEl.replaceChildren(...items);
   }
 
+  /** How many leading rows are not directory entries (Cancel, Up, Use this folder). */
+  function leadingRows(): number {
+    return 1 + (parent !== null ? 1 : 0) + (wantsDirectory() ? 1 : 0);
+  }
+
   /** Joins a directory and a name in whatever separator the directory already uses. */
   function join(directory: string, name: string): string {
     const separator = directory.includes('\\') && !directory.includes('/') ? '\\' : '/';
@@ -181,9 +197,14 @@ export function createFilePicker(deps: FilePickerDeps): FilePickerSurface {
   async function go(path: string | undefined): Promise<void> {
     const at = request;
     if (at === null) return;
+    const remembered = lastVisited.get(at.kind);
     const result = await deps.api.listDir(
       path === undefined
-        ? { root: at.root, kind: at.kind, ...(lastVisited !== null ? { path: lastVisited } : {}) }
+        ? {
+            root: at.root,
+            kind: at.kind,
+            ...(remembered !== undefined ? { path: remembered } : {}),
+          }
         : { path, root: at.root, kind: at.kind },
     );
     roots = result.roots;
@@ -196,12 +217,14 @@ export function createFilePicker(deps: FilePickerDeps): FilePickerSurface {
       return;
     }
     here = result.path;
-    lastVisited = result.path;
+    lastVisited.set(at.kind, result.path);
     parent = result.parent;
     entries = result.entries;
-    entryIndex = 0;
     column = 'entries';
     paintEntries();
+    // The focus lands on the first real ENTRY, past the Cancel / Up / Use-this-folder rows: those are
+    // ways out, and a picker that opens on its own exit button is a picker you have to walk down first.
+    entryIndex = entries.length > 0 ? leadingRows() : Math.max(0, entryButtons.length - 1);
     applyFocus();
     entriesScroller.to(0, true);
   }
@@ -276,9 +299,7 @@ export function createFilePicker(deps: FilePickerDeps): FilePickerSurface {
   }
 
   function focusedEntry(): { readonly entry: DirEntry; readonly full: string } | null {
-    // The leading rows (Up, Use this folder) are not directory entries.
-    const lead = (parent !== null ? 1 : 0) + (wantsDirectory() ? 1 : 0);
-    const entry = entries[entryIndex - lead];
+    const entry = entries[entryIndex - leadingRows()];
     if (entry === undefined) return null;
     return { entry, full: join(here, entry.name) };
   }
@@ -338,8 +359,8 @@ export function createFilePicker(deps: FilePickerDeps): FilePickerSurface {
       root.setAttribute('aria-hidden', 'false');
       hover.arm();
       // No explicit path: main picks the starting point from the field and its current value, unless this
-      // screen has already been somewhere (see lastVisited).
-      void go(next.current !== '' && lastVisited === null ? undefined : (lastVisited ?? undefined));
+      // field has already been browsed once this session (see lastVisited).
+      void go(lastVisited.get(next.kind));
     },
     navUp: () => move(-1),
     navDown: () => move(1),

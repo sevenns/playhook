@@ -11,6 +11,7 @@ import { MAX_HERO_IMAGES, type ConfigPickKind, type ManifestSource } from '../sh
 import type { MessageKey } from '../shared/i18n/index';
 import type { InstallType, LaunchMode, ManifestFormModel } from './configure-form-model';
 import type {
+  RowLabel,
   CoreActionRow,
   CoreListRow,
   CoreNoteRow,
@@ -31,8 +32,6 @@ import type {
 export type GameRowId =
   | 'title'
   | 'id'
-  | 'schemaVersion'
-  | 'source'
   | 'launchMode'
   | 'pc.executable'
   | 'executable'
@@ -59,6 +58,7 @@ export type GameRowId =
   | 'note.mixed'
   | 'note.idChanged'
   | 'note.otherIssues'
+  | 'note.cannotSave'
   | 'note.status'
   | 'save'
   | 'reset'
@@ -85,6 +85,12 @@ export interface GameSettingsModel {
   readonly sections: readonly GameSettingsSection[];
   /** Shown beside the screen title — the game's own name, so the screen says whose settings these are. */
   readonly title: string;
+  /**
+   * Where the manifest came from, for the header line beside the title. It used to be a row of its own,
+   * which put a read-only fact in the middle of the editable ones; up in the header it answers "whose
+   * file am I editing?" at a glance, which is the only question it was ever there to answer.
+   */
+  readonly source: RowLabel;
 }
 
 /** Everything the model needs beyond the form state itself. */
@@ -221,18 +227,6 @@ export function buildGameSettingsModel(
       placeholder: { key: 'gameSettings.notSet' },
       hint: { key: 'gameSettings.idHint' },
       ...error('id'),
-    },
-    {
-      kind: 'static',
-      id: 'schemaVersion',
-      label: { key: 'gameSettings.schemaVersion' },
-      value: { text: '1' },
-    },
-    {
-      kind: 'static',
-      id: 'source',
-      label: { key: 'gameSettings.source' },
-      value: isPcSource ? { key: 'gameConfig.thisPc' } : { text: env.root },
     },
   ];
   // The id is the key of everything this PC remembers about the game; changing it orphans all of it.
@@ -397,7 +391,7 @@ export function buildGameSettingsModel(
       items: form.heroImage,
       max: MAX_HERO_IMAGES,
       placeholder: { key: 'gameSettings.listEmpty' },
-      preview: true,
+      preview: 'wide',
       hint: { key: 'gameSettings.heroImageHint' },
       ...error('heroImage'),
     },
@@ -407,7 +401,7 @@ export function buildGameSettingsModel(
       label: { key: 'gameSettings.gridImage' },
       value: form.gridImage,
       placeholder: { key: 'gameSettings.gridImageAuto' },
-      preview: true,
+      preview: 'portrait',
       ...error('gridImage'),
     },
   ];
@@ -498,6 +492,16 @@ export function buildGameSettingsModel(
   if (env.status !== null) {
     actions.push({ kind: 'note', id: 'note.status', text: { text: env.status }, tone: 'info' });
   }
+  // Why Save is inert, said next to the button. Without this the button is simply dead, and the reason
+  // may well be a row that has scrolled off the top of a thirty-field form.
+  if (!env.canSave && env.dirty) {
+    actions.push({
+      kind: 'note',
+      id: 'note.cannotSave',
+      text: { key: 'gameSettings.cannotSave' },
+      tone: 'error',
+    });
+  }
   actions.push({
     kind: 'action',
     id: 'save',
@@ -522,6 +526,7 @@ export function buildGameSettingsModel(
 
   return {
     title: form.title,
+    source: isPcSource ? { key: 'gameConfig.thisPc' } : { text: env.root },
     sections: [
       { titleKey: 'gameSettings.sectionBasics', rows: basics },
       { titleKey: 'gameSettings.sectionLaunch', rows: launch },

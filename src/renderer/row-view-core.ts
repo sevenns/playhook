@@ -46,6 +46,13 @@ export function optionLabelNode(text: string): HTMLElement {
   return clip;
 }
 
+/**
+ * The shape a row's thumbnails are drawn in. It is the ARTWORK's own shape, not a uniform tile: a hero
+ * background is 16:9 and the carousel card is a 600x900 portrait, and cropping one into the other's box
+ * is exactly the misreading a preview is there to prevent.
+ */
+export type PreviewAspect = 'wide' | 'portrait';
+
 export function div(className: string, text?: string): HTMLElement {
   const el = document.createElement('div');
   el.className = className;
@@ -119,8 +126,8 @@ export interface CorePathRow<Id extends string = string> extends LabeledRow<Id> 
   readonly kind: 'path';
   readonly value: string;
   readonly placeholder?: RowLabel;
-  /** Draw the value as a thumbnail as well (hero / grid artwork). */
-  readonly preview?: boolean;
+  /** Draw the value as a thumbnail as well (hero / grid artwork), in the artwork's own proportions. */
+  readonly preview?: PreviewAspect;
 }
 
 /** A list field (args, watchProcesses, winetricks, heroImage): opens its own editing surface. */
@@ -131,7 +138,7 @@ export interface CoreListRow<Id extends string = string> extends LabeledRow<Id> 
   readonly max: number;
   /** Shown greyed for an empty list ("nothing yet"). */
   readonly placeholder?: RowLabel;
-  readonly preview?: boolean;
+  readonly preview?: PreviewAspect;
 }
 
 /** A read-only line: schemaVersion, the game's source (card / This PC). Not focusable. */

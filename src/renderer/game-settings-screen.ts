@@ -33,7 +33,7 @@ import { type AudioController } from './audio.js';
 import { req } from './dom.js';
 import { createHoverGuard } from './hover-guard.js';
 import { clampIndex, wrapIndex } from './index-math.js';
-import { createScroller } from './screen-scroller.js';
+import { createScroller, pxUnit } from './screen-scroller.js';
 import type { NavSurface } from './nav-surface.js';
 import {
   emptyFormModel,
@@ -65,12 +65,14 @@ import {
   screenHeading,
   type RenderedGameRow,
 } from './game-settings-view.js';
-import { optionLabel, optionLabelNode, type CoreOption } from './row-view-core.js';
+import { optionLabel, optionLabelNode, rowLabelText, type CoreOption } from './row-view-core.js';
 
 /** Gamepad A doesn't trigger :active — the same press flash the rest of the UI uses. */
 const PRESS_MS = 130;
 /** How long the screen waits after a change before asking main to validate the text. */
 const VALIDATE_DEBOUNCE_MS = 400;
+/** Marquee speed for a clipped menu label, in DESIGN px per second (the Settings dropdown's constant). */
+const MARQUEE_SPEED_PX_PER_S = 60;
 
 /** What the screen sends to main. A seam, so app.ts owns the window.api wiring. */
 export interface GameSettingsScreenApi {
@@ -133,8 +135,14 @@ export interface GameSettingsScreen extends NavSurface {
   deletesLocalGame(): boolean;
 }
 
-/** One level of the column menu: an expanded dropdown, a row's actions, or a list being edited. */
+/**
+ * One level of the column menu. `select` is a list of VALUES — the current one is focused and choosing
+ * one is the way out, so it needs no Close. `menu` is a genuine action popup (a path's Browse/Clear, the
+ * list editor): it gets a Close entry appended and opens focused on it, which is the rule every action
+ * stack in this launcher follows.
+ */
 interface MenuLevel {
+  readonly kind: 'select' | 'menu';
   readonly title: string;
   readonly entries: readonly MenuEntry[];
   focus: number;
@@ -156,6 +164,10 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   const menuEl = req('game-settings-options');
   const menuListEl = req('game-settings-options-list');
   const menuVeil = menuEl.querySelector<HTMLElement>('.settings-options-veil');
+  const lightboxEl = req('lightbox');
+  const lightboxImage = req<HTMLImageElement>('lightbox-image');
+  const lightboxCaption = req('lightbox-caption');
+  const sourceEl = req('game-settings-source');
 
   const t = (): Translator => deps.getTranslator();
 
@@ -200,6 +212,8 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
 
   const menuStack: MenuLevel[] = [];
   let menuButtons: readonly HTMLButtonElement[] = [];
+  /** The artwork viewer is the topmost surface of all — a look at a picture, closed by B or the veil. */
+  let lightboxOpen = false;
 
   const listScroller = createScroller(listEl);
   const menuScroller = createScroller(menuListEl);
@@ -272,6 +286,17 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     return ids(a) === ids(b);
   }
 
+  /** Every artwork path the screen currently shows, so a patch can tell whether the strips are stale. */
+  function artworkSignature(from: GameSettingsModel): string {
+    return rowsOf(from)
+      .map((row) => {
+        if (row.kind === 'list' && row.preview !== undefined) return row.items.join(',');
+        if (row.kind === 'path' && row.preview !== undefined) return row.value;
+        return '';
+      })
+      .join('|');
+  }
+
   function renderMessage(text: string): void {
     listEl.replaceChildren();
     const line = document.createElement('div');
@@ -284,6 +309,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   function render(): void {
     const next = currentModel();
     headingEl.textContent = screenHeading(next, t());
+    sourceEl.textContent = next === null ? '' : `(${rowLabelText(next.source, t())})`;
     if (unreadable !== null) {
       renderUnreadable();
       return;
@@ -295,11 +321,16 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     }
     if (model !== null && sameComposition(model, next) && rendered.length > 0) {
       const rows = rowsOf(next);
+      const artworkChanged = artworkSignature(model) !== artworkSignature(next);
       rendered.forEach((row, index) => {
         const nextRow = rows[index];
         if (nextRow !== undefined) patchGameRow(row, nextRow, t());
       });
       model = next;
+      // A patch keeps the DOM, thumbnails included — so the strip has to be re-read whenever the paths
+      // behind it moved. Without this, adding a background to an existing list left the previous strip
+      // on screen (the row composition had not changed, so nothing rebuilt).
+      if (artworkChanged) void refreshThumbnails();
       return;
     }
     model = next;
@@ -334,14 +365,14 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     if (root === undefined) return;
     for (const row of rendered) {
       const source = row.row;
-      if (source.kind === 'list' && source.preview === true) {
+      if (source.kind === 'list' && source.preview !== undefined) {
         const urls = await Promise.all(
           source.items.map((item) => deps.api.imagePreview(root, item)),
         );
-        applyThumbnails(row, urls);
-      } else if (source.kind === 'path' && source.preview === true) {
+        applyThumbnails(row, urls, source.preview, source.items);
+      } else if (source.kind === 'path' && source.preview !== undefined) {
         const url = source.value === '' ? null : await deps.api.imagePreview(root, source.value);
-        applyThumbnails(row, [url]);
+        applyThumbnails(row, [url], source.preview, [source.value]);
       }
     }
   }
@@ -425,7 +456,44 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     screen.classList.add('is-options-open');
     menuEl.classList.add('is-open');
     menuEl.setAttribute('aria-hidden', 'false');
+    // Measured synchronously: reading clientWidth flushes the layout for the nodes just inserted, which
+    // a requestAnimationFrame callback would only reach on the next frame — and never at all in a window
+    // that is not painting.
+    updateMenuMarquee();
     applyMenuFocus(true);
+  }
+
+  /**
+   * Marks every entry whose label does not fit as clipped (a soft fade at the cut) and scrolls the
+   * FOCUSED one. The labels here are paths and file names, so most of them will not fit — cutting them
+   * would leave the user choosing between three items that all read the same.
+   */
+  function updateMenuMarquee(): void {
+    const first = menuButtons[0]?.querySelector<HTMLElement>('.settings-option-clip');
+    if (first !== null && first !== undefined && first.clientWidth === 0) {
+      requestAnimationFrame(() => updateMenuMarquee());
+      return;
+    }
+    for (const button of menuButtons) {
+      const clip = button.querySelector<HTMLElement>('.settings-option-clip');
+      const text = button.querySelector<HTMLElement>('.settings-option-text');
+      if (clip === null || text === null) continue;
+      const overflow = text.scrollWidth - clip.clientWidth;
+      const clipped = overflow > 1;
+      button.classList.toggle('is-clipped', clipped);
+      if (clipped && button.classList.contains('is-focused')) {
+        text.style.setProperty('--marquee-shift', `${-overflow}px`);
+        text.style.setProperty(
+          '--marquee-duration',
+          `${Math.max(2, overflow / (MARQUEE_SPEED_PX_PER_S * pxUnit()))}s`,
+        );
+        button.classList.add('is-scrolling');
+      } else {
+        button.classList.remove('is-scrolling');
+        text.style.removeProperty('--marquee-shift');
+        text.style.removeProperty('--marquee-duration');
+      }
+    }
   }
 
   function applyMenuFocus(instant = false): void {
@@ -436,6 +504,28 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     );
     const focused = menuButtons[level.focus];
     if (focused !== undefined) menuScroller.reveal(focused, instant);
+    updateMenuMarquee(); // only the focused label moves
+  }
+
+  /**
+   * Appends the Close entry an action popup ends with, and points the focus at it. Same shape as every
+   * popup stack in the launcher: the way out is the default, and it is at the bottom where the thumb is.
+   */
+  function asMenu(level: {
+    readonly title: string;
+    readonly entries: readonly MenuEntry[];
+  }): MenuLevel {
+    const entries: MenuEntry[] = [
+      ...level.entries,
+      {
+        label: t()('launcher.menu.close'),
+        run: () => {
+          deps.audio.play('back');
+          popMenu();
+        },
+      },
+    ];
+    return { kind: 'menu', title: level.title, entries, focus: entries.length - 1 };
   }
 
   function pushMenu(level: MenuLevel): void {
@@ -583,6 +673,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   function openSelectMenu(row: Extract<GameSettingsRow, { kind: 'select' }>): void {
     const options: readonly CoreOption[] = row.options;
     pushMenu({
+      kind: 'select',
       title: '',
       focus: Math.max(
         0,
@@ -639,6 +730,12 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     const entries: MenuEntry[] = [
       { label: t()('gameSettings.browse'), run: () => browseInto(row.id, row.value, false) },
     ];
+    if (row.value !== '' && row.preview !== undefined) {
+      entries.push({
+        label: t()('gameSettings.viewImage'),
+        run: () => void showImage(row.value),
+      });
+    }
     if (row.value !== '') {
       entries.push({
         label: t()('gameSettings.clear'),
@@ -649,7 +746,29 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
         },
       });
     }
-    pushMenu({ title: rowTitle(row), entries, focus: 0 });
+    pushMenu(asMenu({ title: rowTitle(row), entries }));
+  }
+
+  /** Opens the artwork at full size. Nothing but a look — B (or the veil) closes it. */
+  async function showImage(relative: string): Promise<void> {
+    const root = origin?.root;
+    if (root === undefined || relative === '') return;
+    const url = await deps.api.imagePreview(root, relative);
+    if (url === null) return;
+    deps.audio.play('button');
+    lightboxImage.src = url;
+    lightboxCaption.textContent = relative;
+    lightboxOpen = true;
+    lightboxEl.classList.add('is-open');
+    lightboxEl.setAttribute('aria-hidden', 'false');
+  }
+
+  function closeImage(): void {
+    if (!lightboxOpen) return;
+    lightboxOpen = false;
+    lightboxEl.classList.remove('is-open');
+    lightboxEl.setAttribute('aria-hidden', 'true');
+    lightboxImage.removeAttribute('src');
   }
 
   /** Opens the file browser for a field and writes what it picked back into the form. */
@@ -687,7 +806,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   // ── List editing (its own level of the column menu) ─────────────────────────
 
   function openListMenu(row: Extract<GameSettingsRow, { kind: 'list' }>): void {
-    pushMenu(buildListLevel(row.id, row.items, row.max, row.preview === true, rowTitle(row)));
+    pushMenu(buildListLevel(row.id, row.items, row.max, row.preview !== undefined, rowTitle(row)));
   }
 
   function buildListLevel(
@@ -726,7 +845,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
         },
       });
     }
-    return { title, entries, focus: 0 };
+    return asMenu({ title, entries });
   }
 
   function openItemMenu(
@@ -743,33 +862,38 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       menuStack.pop();
       replaceMenu(buildListLevel(id, next, max, isPath, title));
     };
-    const entries: MenuEntry[] = [
-      {
-        label: t()('gameSettings.listReplace'),
-        run: () => {
-          if (isPath) {
-            browseInto(id, items[index] ?? '', false, (paths) => {
-              const picked = paths[0];
-              if (picked === undefined) return;
-              setList(
-                id,
-                items.map((item, i) => (i === index ? picked : item)),
-              );
-            });
-            return;
-          }
-          deps.keyboard.open({
-            value: items[index] ?? '',
-            mode: 'text',
-            title,
-            onDone: (value) => {
-              if (value.trim() === '') return;
-              commit(items.map((item, i) => (i === index ? value : item)));
-            },
+    const entries: MenuEntry[] = [];
+    if (isPath) {
+      entries.push({
+        label: t()('gameSettings.viewImage'),
+        run: () => void showImage(items[index] ?? ''),
+      });
+    }
+    entries.push({
+      label: t()('gameSettings.listReplace'),
+      run: () => {
+        if (isPath) {
+          browseInto(id, items[index] ?? '', false, (paths) => {
+            const picked = paths[0];
+            if (picked === undefined) return;
+            setList(
+              id,
+              items.map((item, i) => (i === index ? picked : item)),
+            );
           });
-        },
+          return;
+        }
+        deps.keyboard.open({
+          value: items[index] ?? '',
+          mode: 'text',
+          title,
+          onDone: (value) => {
+            if (value.trim() === '') return;
+            commit(items.map((item, i) => (i === index ? value : item)));
+          },
+        });
       },
-    ];
+    });
     // Reordering is a gamepad gesture here, not a drag: the manifest's order is load-bearing (the first
     // hero image is the one the carousel crops its card from), and a mouse-only affordance would put that
     // out of reach in Game Mode.
@@ -789,7 +913,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       label: t()('gameSettings.listRemove'),
       run: () => commit(items.filter((_, i) => i !== index)),
     });
-    pushMenu({ title: items[index] ?? '', entries, focus: 0 });
+    pushMenu(asMenu({ title: items[index] ?? '', entries }));
   }
 
   function swap(items: readonly string[], a: number, b: number): readonly string[] {
@@ -973,7 +1097,8 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   // ── The six primitives ─────────────────────────────────────────────────────
 
   /** Which surface the primitives drive right now: the deepest open one wins. */
-  function activeSurface(): NavSurface | 'menu' | 'form' {
+  function activeSurface(): NavSurface | 'lightbox' | 'menu' | 'form' {
+    if (lightboxOpen) return 'lightbox';
     if (deps.keyboard.isOpen()) return deps.keyboard;
     if (deps.picker.isOpen()) return deps.picker;
     if (menuStack.length > 0) return 'menu';
@@ -993,6 +1118,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   function navUp(): void {
     hover.arm();
     const surface = activeSurface();
+    if (surface === 'lightbox') return;
     if (surface === 'menu') return moveMenuFocus(-1);
     if (surface === 'form') return moveRowFocus(-1);
     surface.navUp();
@@ -1001,6 +1127,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   function navDown(): void {
     hover.arm();
     const surface = activeSurface();
+    if (surface === 'lightbox') return;
     if (surface === 'menu') return moveMenuFocus(1);
     if (surface === 'form') return moveRowFocus(1);
     surface.navDown();
@@ -1026,6 +1153,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   function navLeft(repeat = false): void {
     hover.arm();
     const surface = activeSurface();
+    if (surface === 'lightbox') return;
     if (surface === 'menu') {
       // Left leaves a level, the same way it leaves a popup: the column sits on the right edge, so moving
       // off it means "out". A HELD left is ignored, or one press would walk out through every level.
@@ -1045,6 +1173,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   function navRight(): void {
     hover.arm();
     const surface = activeSurface();
+    if (surface === 'lightbox') return;
     if (surface === 'menu') return;
     if (surface === 'form') {
       navHorizontal(1);
@@ -1120,6 +1249,10 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   function navActivate(): void {
     hover.arm();
     const surface = activeSurface();
+    if (surface === 'lightbox') {
+      closeImage();
+      return;
+    }
     if (surface === 'menu') {
       const level = menuTop();
       const entry = level?.entries[level.focus];
@@ -1139,6 +1272,11 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   function navBack(): void {
     hover.arm();
     const surface = activeSurface();
+    if (surface === 'lightbox') {
+      deps.audio.play('back');
+      closeImage();
+      return;
+    }
     if (surface === 'menu') {
       deps.audio.play('back');
       popMenu();
@@ -1159,6 +1297,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   function close(): void {
     if (!open) return;
     open = false;
+    closeImage();
     closeMenus();
     if (validateTimer !== 0) {
       window.clearTimeout(validateTimer);
@@ -1174,6 +1313,12 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   listEl.addEventListener('click', (event) => {
     const target = event.target;
     if (!(target instanceof Element)) return;
+    // A thumbnail IS the "show me this picture" affordance for the mouse; the gamepad reaches the same
+    // viewer through the row's own menu. Checked before the row, or the click would also open that menu.
+    if (target instanceof HTMLElement && target.classList.contains('setting-thumb')) {
+      void showImage(target.dataset['path'] ?? '');
+      return;
+    }
     const rowEl = target.closest<HTMLElement>('.setting-row');
     if (rowEl === null) return;
     const index = rendered.findIndex((row) => row.el === rowEl);
@@ -1189,6 +1334,11 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       return;
     }
     activateRow(entry);
+  });
+
+  lightboxEl.querySelector<HTMLElement>('.lightbox-veil')?.addEventListener('click', () => {
+    deps.audio.play('back');
+    closeImage();
   });
 
   veil?.addEventListener('click', () => navBack());
@@ -1256,6 +1406,25 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     navBack,
     isDirty: dirty,
     deletesLocalGame: () => origin?.source === 'pc',
+    // The secondary buttons belong to whatever surface is on top, exactly as the six primitives do.
+    // controls.ts routes them to the open OVERLAY — that is this screen — so they die here unless they
+    // are handed down the stack.
+    navSecondary: () => {
+      const surface = activeSurface();
+      if (typeof surface !== 'string') surface.navSecondary?.();
+    },
+    navTertiary: () => {
+      const surface = activeSurface();
+      if (typeof surface !== 'string') surface.navTertiary?.();
+    },
+    navShoulder: (direction) => {
+      const surface = activeSurface();
+      if (typeof surface !== 'string') surface.navShoulder?.(direction);
+    },
+    navCommit: () => {
+      const surface = activeSurface();
+      if (typeof surface !== 'string') surface.navCommit?.();
+    },
     applyBrowse: (browse) => {
       if (!open) return;
       // The card was pulled, or swapped, or the game stopped being playable: the screen is about a file

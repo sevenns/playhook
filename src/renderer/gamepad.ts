@@ -30,6 +30,8 @@ export interface GamepadHandlers {
   readonly onX: () => void;
   readonly onShoulderLeft: () => void;
   readonly onShoulderRight: () => void;
+  /** RT — "commit"; claimed by the on-screen keyboard as Done. */
+  readonly onTriggerRight: () => void;
   /** Every direction has just gone up — the edge, fired once, not on every idle frame. What ends a hold
    *  for consumers that treat holding as a state rather than as a stream of presses. */
   readonly onDirectionsReleased: () => void;
@@ -42,6 +44,7 @@ const BTN = {
   y: 3,
   shoulderLeft: 4,
   shoulderRight: 5,
+  triggerRight: 7,
   dpadUp: 12,
   dpadDown: 13,
   dpadLeft: 14,
@@ -79,6 +82,7 @@ export function createGamepadController(handlers: GamepadHandlers): GamepadContr
     y: false,
     shoulderLeft: false,
     shoulderRight: false,
+    triggerRight: false,
   };
   // Auto-repeat bookkeeping. Horizontal: holding left/right flips through the carousel, where running
   // down a 40-game history one press at a time is the thing to avoid. Vertical: the same for the long
@@ -180,6 +184,7 @@ export function createGamepadController(handlers: GamepadHandlers): GamepadContr
     const xButton = isDown(BTN.x);
     const shoulderLeft = isDown(BTN.shoulderLeft);
     const shoulderRight = isDown(BTN.shoulderRight);
+    const triggerRight = isDown(BTN.triggerRight);
 
     // While paused (launcher backgrounded), read inputs but don't act — prev is still updated below, so a
     // button held across resume won't fire a phantom edge.
@@ -194,6 +199,7 @@ export function createGamepadController(handlers: GamepadHandlers): GamepadContr
       if (xButton && !prev.x) handlers.onX();
       if (shoulderLeft && !prev.shoulderLeft) handlers.onShoulderLeft();
       if (shoulderRight && !prev.shoulderRight) handlers.onShoulderRight();
+      if (triggerRight && !prev.triggerRight) handlers.onTriggerRight();
     } else {
       // Paused: forget any hold in progress, so resuming can't drop straight into a repeat burst.
       heldSince.left = 0;
@@ -218,6 +224,7 @@ export function createGamepadController(handlers: GamepadHandlers): GamepadContr
     prev.x = xButton;
     prev.shoulderLeft = shoulderLeft;
     prev.shoulderRight = shoulderRight;
+    prev.triggerRight = triggerRight;
     rafId = requestAnimationFrame(poll);
   };
 

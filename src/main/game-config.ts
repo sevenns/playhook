@@ -173,7 +173,6 @@ export class GameConfigService {
     );
   }
 
-
   // ── Drive + PC-library candidates ──────────────────────────────────────────
 
   /**
@@ -304,7 +303,10 @@ export class GameConfigService {
     } catch (cause) {
       return {
         ok: false,
-        message: t('errors.cannotReadManifest', { file: MANIFEST_FILENAME, cause: describe(cause) }),
+        message: t('errors.cannotReadManifest', {
+          file: MANIFEST_FILENAME,
+          cause: describe(cause),
+        }),
       };
     }
   }
@@ -322,7 +324,8 @@ export class GameConfigService {
       const first = validation.issues[0];
       return {
         saved: false,
-        message: first !== undefined ? `${first.path}: ${first.message}` : t('errors.configInvalid'),
+        message:
+          first !== undefined ? `${first.path}: ${first.message}` : t('errors.configInvalid'),
       };
     }
     if (source === 'pc') return this.savePcLibrary(text, t);
@@ -333,7 +336,10 @@ export class GameConfigService {
     } catch (cause) {
       return {
         saved: false,
-        message: t('errors.cannotWriteManifest', { file: MANIFEST_FILENAME, cause: describe(cause) }),
+        message: t('errors.cannotWriteManifest', {
+          file: MANIFEST_FILENAME,
+          cause: describe(cause),
+        }),
       };
     }
     // 4. apply. Active card → reload in place; any other (blank/second) card → DriveWatcher handles it
@@ -364,7 +370,10 @@ export class GameConfigService {
     } catch (cause) {
       return {
         saved: false,
-        message: t('errors.cannotWriteManifest', { file: MANIFEST_FILENAME, cause: describe(cause) }),
+        message: t('errors.cannotWriteManifest', {
+          file: MANIFEST_FILENAME,
+          cause: describe(cause),
+        }),
       };
     }
     const applied = await this.deps.reloadPcLibrary();
@@ -491,6 +500,7 @@ export class GameConfigService {
       startDirFor(request, {
         homeDir: os.homedir(),
         appDataDir: app.getPath('appData'),
+        downloadsDir: app.getPath('downloads'),
         rootIsCard: request.root !== undefined && this.sourceOf(request.root) === 'card',
       });
     let names: readonly string[];
@@ -544,7 +554,6 @@ export class GameConfigService {
     return roots;
   }
 
-
   /**
    * Reads a card-relative image into a data URL for the hero preview. Reuses the manifest's anti-traversal
    * (`resolveInside`) and the untrusted-root check, so the preview can only read files INSIDE the card.
@@ -566,5 +575,4 @@ export class GameConfigService {
     const candidates = await this.candidates();
     return candidates.some((candidate) => candidate.root === root);
   }
-
 }

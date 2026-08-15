@@ -266,6 +266,23 @@ export function createOsk(deps: OskDeps): TextEntrySurface {
     layout = list[wrapIndex(at === -1 ? 0 : at, direction, list.length)] ?? layout;
     shifted = false;
     rebuild();
+    focusKind('layout');
+  }
+
+  /**
+   * Puts the focus back on a CONTROL key by what it is, not by where it was. The control row is built
+   * per layout — the symbol layouts have no Shift — so the same index means a different key after a
+   * switch, and cycling en → ru → symbols would walk the focus off the layout key onto Space.
+   */
+  function focusKind(kind: Key['kind']): void {
+    for (const [r, row] of rows.entries()) {
+      const c = row.findIndex((key) => key.kind === kind);
+      if (c === -1) continue;
+      rowIndex = r;
+      colIndex = c;
+      applyFocus();
+      return;
+    }
   }
 
   function confirm(): void {
@@ -429,6 +446,10 @@ export function createOsk(deps: OskDeps): TextEntrySurface {
     navShoulder: (direction) => {
       deps.audio.play('button');
       switchLayout(direction);
+    },
+    navCommit: () => {
+      deps.audio.play('button');
+      confirm();
     },
     relocalize: () => {
       if (!open) return;

@@ -8,7 +8,14 @@
 // in row-view-core, which is why this module is as short as it is.
 import type { GameSettingsModel, GameSettingsRow } from './game-settings-model';
 import type { Translator } from '../shared/i18n/index';
-import { buildCoreRow, div, patchCoreRow, relocalizeCoreRow, rowLabelText } from './row-view-core';
+import {
+  buildCoreRow,
+  div,
+  patchCoreRow,
+  relocalizeCoreRow,
+  rowLabelText,
+  type PreviewAspect,
+} from './row-view-core';
 
 /** One rendered row: the model row it came from plus the nodes the controller updates. */
 export interface RenderedGameRow {
@@ -36,7 +43,7 @@ function buildRow(row: GameSettingsRow, t: Translator): RenderedGameRow {
   core.el.dataset['row'] = row.id;
   if (!isFocusable(row)) core.el.classList.add('is-inert');
   let previewEl: HTMLElement | null = null;
-  if ((row.kind === 'path' || row.kind === 'list') && row.preview === true) {
+  if ((row.kind === 'path' || row.kind === 'list') && row.preview !== undefined) {
     previewEl = div('setting-thumbs');
     core.el.append(previewEl);
   }
@@ -102,19 +109,30 @@ export function relocalizeGameRow(rendered: RenderedGameRow, t: Translator): voi
   relocalizeCoreRow(rendered, rendered.row, t);
 }
 
-/** Fills an artwork row's thumbnail strip with already-decoded data URLs (null = nothing readable). */
-export function applyThumbnails(rendered: RenderedGameRow, urls: readonly (string | null)[]): void {
+/**
+ * Fills an artwork row's thumbnail strip with already-decoded data URLs (null = nothing readable). The
+ * strip is drawn in the artwork's own shape (`aspect`), and each thumbnail remembers the manifest path
+ * it came from so a click can open that picture full size.
+ */
+export function applyThumbnails(
+  rendered: RenderedGameRow,
+  urls: readonly (string | null)[],
+  aspect: PreviewAspect,
+  paths: readonly string[],
+): void {
   const box = rendered.previewEl;
   if (box === null) return;
-  const thumbs = urls
-    .filter((url): url is string => url !== null)
-    .map((url) => {
-      const image = document.createElement('img');
-      image.className = 'setting-thumb';
-      image.src = url;
-      image.alt = '';
-      return image;
-    });
+  const thumbs: HTMLImageElement[] = [];
+  urls.forEach((url, index) => {
+    if (url === null) return;
+    const image = document.createElement('img');
+    image.className = 'setting-thumb';
+    image.src = url;
+    image.alt = '';
+    image.dataset['path'] = paths[index] ?? '';
+    thumbs.push(image);
+  });
+  box.classList.toggle('is-portrait', aspect === 'portrait');
   box.replaceChildren(...thumbs);
   box.classList.toggle('is-hidden', thumbs.length === 0);
 }
