@@ -49,8 +49,9 @@ const settingsSchema = z.object({
   // `.default('playhook-abyss')` migrates an older settings.json without the field (no schemaVersion bump).
   soundSet: z.string().default('playhook-abyss'),
   // Default background ambience (file name under audio/ambience/, extension included), or null for none.
-  // `.default(null)` migrates an older settings.json without the field (no schemaVersion bump).
-  ambientTrack: z.string().nullable().default(null),
+  // `.default(…)` migrates an older settings.json without the field (no schemaVersion bump); a track that
+  // is no longer bundled just doesn't play (AssetReader checks the file before reading it).
+  ambientTrack: z.string().nullable().default('playhook-abyss.mp3'),
   // Use only the global ambience, ignoring a card's own background music. `.default(false)` keeps the
   // "a card's music wins" behaviour for an older settings.json without the field.
   onlyGlobalAmbient: z.boolean().default(false),
@@ -73,7 +74,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   steamAppIdU32: null,
   steamAutoLaunch: true,
   soundSet: 'playhook-abyss',
-  ambientTrack: null,
+  ambientTrack: 'playhook-abyss.mp3',
   onlyGlobalAmbient: false,
 };
 

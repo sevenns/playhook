@@ -569,7 +569,8 @@ export interface AppSettings {
   /**
    * Default background ambience track (a file name under `audio/ambience/`, extension included), played
    * only when the current card has no music of its own — the game's music always wins. `null` = no
-   * ambience. Default null. `.default(null)` migrates an older settings.json without the field.
+   * ambience. Default 'playhook-abyss.mp3'; `.default(…)` migrates an older settings.json without the
+   * field. A name that is no longer bundled simply doesn't play (checked before reading — AssetReader).
    */
   readonly ambientTrack: string | null;
   /**
