@@ -99,7 +99,10 @@ const controls = createControls({
   audio,
   getTranslator,
   settings: settingsScreen,
-  onFlipping: (flipping) => hero.setFlipping(flipping),
+  onFlipping: (flipping) => {
+    hero.setFlipping(flipping);
+    carousel.setFlipping(flipping);
+  },
   // Read lazily: the carousel is created below (it needs `controls` for its own callbacks), so the seam
   // is a set of thunks rather than the object itself.
   carousel: {
@@ -147,6 +150,11 @@ const carousel = createCarousel({
     // Entering a card is an ordinary button press — same cue as any other "open" action.
     audio.play('button');
     userChoseDetail = true;
+    // Committing to a game outranks the debounce main applies while flipping: ask for its hero and music
+    // NOW. Without this, opening a game straight out of a fast flip leaves the previous game's background
+    // and music on its screen until the debounce elapses.
+    requestedBrowseId = entry.id;
+    window.api.browseGame(entry.id, true);
     // An active game must also become the CARD's selected game (main rebuilds its hero/audio/GameInfo).
     // If that is refused — a launch or install is in flight — the detail screen is still correct: it is
     // drawn from the browse model, so it shows the game you picked, just without an actionable Play.

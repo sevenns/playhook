@@ -930,8 +930,12 @@ export interface RendererApi {
   requestLibrary(): Promise<GameLibrary | null>;
   /** The carousel card artwork of one game as a data URL (null when it has none). Cached per id. */
   requestGrid(id: string): Promise<string | null>;
-  /** Tell main which game the carousel is on — it answers with browse:update/hero/music. */
-  browseGame(id: string): void;
+  /**
+   * Tell main which game the carousel is on — it answers with browse:update/hero/music. `immediate` says
+   * the user COMMITTED to this game (opened its screen) rather than flipped onto it, so the heavy half
+   * (hero images, music) is read at once instead of waiting out main's debounce.
+   */
+  browseGame(id: string, immediate?: boolean): void;
   /** Drop a game from the play history. Refused by main for a game that is available right now (on the
    *  card or in the PC library) — that one is not history, it is a game you can play. */
   forgetGame(id: string): void;

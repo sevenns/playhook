@@ -357,6 +357,8 @@ export class GameController {
   // — which describes one game's process and cannot represent "a history game while no card is in", nor
   // "browsing game B while game A installs". Null only when there is neither a card nor any history.
   private currentBrowse: BrowseInfo | null = null;
+  // Monotonic ticket for browse-asset reads: only the newest may push (see pushBrowseAssets).
+  private browseAssetsSeq = 0;
   // Pending read of the browsed game's hero/music (see BROWSE_ASSETS_DEBOUNCE_MS).
   private browseAssetsTimer: ReturnType<typeof setTimeout> | null = null;
   // The reconciled Stats per game id, captured in loadCard so onSelectRequested can rebuild the selected
@@ -586,7 +588,10 @@ export class GameController {
       if (typeof id !== 'string') return Promise.resolve(null);
       return this.deps.library.readGridThumb(id);
     });
-    ipcMain.on(IPC.libraryBrowse, (_event, id: unknown) => void this.onBrowseRequested(id));
+    ipcMain.on(
+      IPC.libraryBrowse,
+      (_event, id: unknown, immediate: unknown) => void this.onBrowseRequested(id, immediate),
+    );
     ipcMain.on(IPC.libraryForget, (_event, id: unknown) => void this.onForgetRequested(id));
     ipcMain.handle(IPC.wallpaperRequest, (): Promise<string | null> => this.assets.readWallpaperDataUrl());
     ipcMain.handle(
@@ -2283,9 +2288,9 @@ export class GameController {
    * Deliberately does NOT touch `selectedIndex` or the AppState: looking at a game is not choosing it, so
    * this works while another game installs (and with no card at all).
    */
-  private async onBrowseRequested(idRaw: unknown): Promise<void> {
+  private async onBrowseRequested(idRaw: unknown, immediateRaw: unknown): Promise<void> {
     if (typeof idRaw !== 'string') return;
-    await this.browseTo(idRaw);
+    await this.browseTo(idRaw, immediateRaw === true);
   }
 
   /**
@@ -2315,13 +2320,13 @@ export class GameController {
    * music, which are megabytes each, are debounced so flipping through the strip doesn't read the disk
    * once per step.
    */
-  private async browseTo(id: string): Promise<void> {
+  private async browseTo(id: string, immediate = false): Promise<void> {
     const manifest = this.games.find((m) => m.raw.id === id) ?? null;
     if (manifest !== null) {
       const stats = this.statsById.get(id) ?? (await this.deps.stats.read(id));
       const info = await this.buildGameInfo(manifest, stats);
       this.pushBrowse({ id, title: manifest.raw.title, active: true, stats, game: info });
-      this.scheduleBrowseAssets(id);
+      this.scheduleBrowseAssets(id, immediate);
       return;
     }
     const entry = this.deps.library.entry(id);
@@ -2331,12 +2336,20 @@ export class GameController {
     }
     const stats = await this.deps.stats.read(id);
     this.pushBrowse({ id, title: entry.title, active: false, stats });
-    this.scheduleBrowseAssets(id);
+    this.scheduleBrowseAssets(id, immediate);
   }
 
   /** Debounced read+push of the browsed game's hero/music; a newer browse cancels the pending one. */
-  private scheduleBrowseAssets(id: string): void {
+  private scheduleBrowseAssets(id: string, immediate = false): void {
     if (this.browseAssetsTimer !== null) clearTimeout(this.browseAssetsTimer);
+    this.browseAssetsTimer = null;
+    // `immediate` is the renderer saying the user has COMMITTED to this game (opened its screen) rather
+    // than flipped onto it. Waiting out the debounce there means a quarter second of the previous game's
+    // background and music on a screen that is already the new game's.
+    if (immediate) {
+      void this.pushBrowseAssets(id);
+      return;
+    }
     this.browseAssetsTimer = setTimeout(() => {
       this.browseAssetsTimer = null;
       void this.pushBrowseAssets(id);
@@ -2344,20 +2357,35 @@ export class GameController {
   }
 
   private async pushBrowseAssets(id: string): Promise<void> {
-    // The selection moved on while we waited — the read would only fight the newer one.
-    if (this.currentBrowse?.id !== id) return;
+    const seq = ++this.browseAssetsSeq;
+    // Checked before EVERY push, not just on entry. Each read below is megabytes off the disk plus a
+    // base64 encode, and the selection keeps moving while it runs — so a read started for a game the user
+    // flipped past would otherwise land on the game they stopped on, dragging its background, its colours
+    // and its music along. The sequence covers the other half: two reads in flight at once (a debounced
+    // one and an immediate one) can finish out of order, and only the newest may speak.
+    const current = (): boolean => seq === this.browseAssetsSeq && this.currentBrowse?.id === id;
+    if (!current()) return;
     const manifest = this.games.find((m) => m.raw.id === id) ?? null;
     if (manifest !== null) {
-      this.pushBrowseHero(await this.assets.readHeroAssets(manifest));
-      this.pushBrowseMusic(await this.assets.readMusicDataUrl(manifest));
+      const hero = await this.assets.readHeroAssets(manifest);
+      if (!current()) return;
+      this.pushBrowseHero(hero);
+      const music = await this.assets.readMusicDataUrl(manifest);
+      if (!current()) return;
+      this.pushBrowseMusic(music);
       return;
     }
     const assets = await this.deps.library.readBrowseAssets(id);
+    if (!current()) return;
     // A history game with no hero of its own falls back to the wallpaper, exactly like a card game does
     // (readHeroAssets). Without it this push carried `null`, the renderer had nothing to paint, and the
     // PREVIOUS game's background stayed on screen under the new game's name.
-    this.pushBrowseHero(assets.hero ?? (await this.wallpaperHero()));
-    this.pushBrowseMusic(await this.browseMusicFor(id));
+    const hero = assets.hero ?? (await this.wallpaperHero());
+    if (!current()) return;
+    this.pushBrowseHero(hero);
+    const music = await this.browseMusicFor(id);
+    if (!current()) return;
+    this.pushBrowseMusic(music);
   }
 
   /** The wallpaper as a one-image hero payload — the per-game fallback shared by both browse paths. */

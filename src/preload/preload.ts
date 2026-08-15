@@ -181,8 +181,8 @@ const api: RendererApi = {
   requestGrid(id: string): Promise<string | null> {
     return ipcRenderer.invoke(CHANNELS.libraryGridRequest, id) as Promise<string | null>;
   },
-  browseGame(id: string): void {
-    ipcRenderer.send(CHANNELS.libraryBrowse, id);
+  browseGame(id: string, immediate = false): void {
+    ipcRenderer.send(CHANNELS.libraryBrowse, id, immediate);
   },
   forgetGame(id: string): void {
     ipcRenderer.send(CHANNELS.libraryForget, id);
