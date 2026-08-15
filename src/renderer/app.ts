@@ -479,7 +479,7 @@ window.setTimeout(revealUi, BOOT_DEADLINE_MS);
 requestAnimationFrame(() => {
   requestAnimationFrame(() => {
     if (bootRevealed) return;
-    req('hero-boot').style.setProperty('--boot-pan', Math.random() < 0.5 ? '6%' : '-6%');
+    req('hero-boot').style.setProperty('--boot-pan', Math.random() < 0.5 ? '4.5%' : '-4.5%');
     app.dataset['boot'] = 'panning';
   });
 });

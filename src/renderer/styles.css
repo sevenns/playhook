@@ -183,11 +183,14 @@ body {
 }
 
 /* app.ts flips to this a frame after load — the first frame has to paint the resting transform, or the
-   transition has nothing to start from. The drift direction (--boot-pan) is randomized there. */
+   transition has nothing to start from. The drift direction (--boot-pan) is randomized there. The
+   easing matters as much as the numbers: a linear start moves at full speed from the very first frame,
+   which reads as a lurch on an image that has only just appeared. The soft ramp below spends the first
+   moments getting going, so the push is felt rather than seen. */
 #app[data-boot='panning'] #hero-boot {
-  --boot-zoom: 1.28;
-  --boot-shift: var(--boot-pan, 6%);
-  transition: transform 6s linear;
+  --boot-zoom: 1.22;
+  --boot-shift: var(--boot-pan, 4.5%);
+  transition: transform 7s cubic-bezier(0.3, 0, 0.6, 1);
 }
 
 /* ── Per-screen bottom-bar controls ────────────────────────────────────────
