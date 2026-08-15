@@ -455,6 +455,9 @@ function revealUi(): void {
   if (bootRevealed) return;
   bootRevealed = true;
   delete app.dataset['boot'];
+  // The strip's cards were held at zero behind the boot screen — let them fan in now, so the carousel's
+  // own entrance is actually seen instead of having happened under the wallpaper.
+  carousel.playIntro();
 }
 
 /** Reveals once every seed is in, waiting out the remainder of BOOT_MIN_MS if it is still running. */

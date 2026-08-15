@@ -166,6 +166,24 @@ body {
   }
 }
 
+/* The startup variant, for the seconds the wallpaper owns the screen on its own (see WALLPAPER_HOLD_MS
+   in app.ts): a wider zoom travelled at roughly four times the pace, so those seconds read as a title
+   card rather than as a still image someone forgot to replace. The extra scale also buys the headroom
+   the bigger drift needs — at 1.1 minimum a ±3% pan still never reaches an edge. */
+@keyframes bg-pan-boot {
+  from {
+    transform: scale(1.1) translateX(0);
+  }
+  to {
+    /* Twice the usual drift, in whichever direction JS randomised for this image (--pan-x). */
+    transform: scale(1.24) translateX(calc(var(--pan-x, 1.5%) * 2));
+  }
+}
+
+#app[data-boot='loading'] .hero-layer {
+  animation: bg-pan-boot 8s ease-in-out infinite alternate;
+}
+
 /* ── Per-screen bottom-bar controls ────────────────────────────────────────
    The bottom bar is the same on every screen. Game screens (ready / busy) show Play + title + More.
    The empty screen (idle, and the no-game error) shows no Play — just the title "Insert a game card"
@@ -1829,7 +1847,9 @@ html:not(.cursor-hidden) .settings-option:hover,
   transform: translateY(calc(20 * var(--px)));
 }
 
-#app[data-boot='loading'] #carousel-strip,
-#app[data-boot='loading'][data-bar-focus] #carousel-strip {
+/* The CARDS wait, not the strip as a whole: they are built and laid out behind the boot screen, and
+   holding them at zero here is what leaves their staggered entrance (carousel.playIntro) still to play
+   when the wallpaper hands over. Fading the strip instead would show the row already assembled. */
+#app[data-boot='loading'] .card {
   opacity: 0;
 }

@@ -65,6 +65,12 @@ export interface Carousel {
   selected(): LibraryEntry | undefined;
   /** Marks the game AppState is busy with, so its card can pulse wherever it sits in the list. */
   setBusyGame(id: string | null): void;
+  /**
+   * Replays the staggered fan the strip uses when it comes back from a detail screen. Called once at
+   * startup, the moment the loading wallpaper hands over: the cards are built and laid out while the
+   * boot screen still covers them, so without this their entrance would have already happened, unseen.
+   */
+  playIntro(): void;
 }
 
 export function createCarousel(deps: CarouselDeps): Carousel {
@@ -355,6 +361,10 @@ export function createCarousel(deps: CarouselDeps): Carousel {
     setScreen,
     exists,
     selected,
+    playIntro(): void {
+      if (screen !== 'carousel') return;
+      markReturning(true);
+    },
     setBusyGame(id: string | null): void {
       if (id === busyId) return;
       busyId = id;
