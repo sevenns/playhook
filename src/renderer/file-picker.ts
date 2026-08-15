@@ -32,11 +32,13 @@ export interface FilePickerApi {
     readonly root?: string;
     readonly kind?: ConfigPickKind;
     readonly current?: string;
+    readonly base?: string;
   }): Promise<ListDirResult>;
   acceptPaths(request: {
     readonly root: string;
     readonly kind: ConfigPickKind;
     readonly paths: readonly string[];
+    readonly base?: string;
   }): Promise<ConfigPickResult>;
 }
 
@@ -66,6 +68,7 @@ export function createFilePicker(deps: FilePickerDeps): FilePickerSurface {
     readonly root: string;
     readonly kind: ConfigPickKind;
     readonly multi: boolean;
+    readonly base?: string;
     readonly onDone: (result: ConfigPickResult) => void;
   } | null = null;
 
@@ -151,8 +154,6 @@ export function createFilePicker(deps: FilePickerDeps): FilePickerSurface {
       useThis.addEventListener('click', () => void accept([here]));
       items.push(useThis);
     }
-    // The tree starts here — the separator says so, so the actions above are not read as folders.
-    if (entries.length > 0) items[items.length - 1]?.classList.add('is-last-action');
     for (const entry of entries) {
       const button = document.createElement('button');
       button.type = 'button';
@@ -172,7 +173,16 @@ export function createFilePicker(deps: FilePickerDeps): FilePickerSurface {
       return;
     }
     entryButtons = items;
-    entriesEl.replaceChildren(...items);
+    // The tree starts below the actions, and a rule of its OWN says so. Putting the border on the last
+    // action button squared its corner and pushed its label off centre — and that button is "Use this
+    // folder", the primary action of a folder pick.
+    const nodes: HTMLElement[] = [...items];
+    if (entries.length > 0) {
+      const divider = document.createElement('div');
+      divider.className = 'picker-divider';
+      nodes.splice(leadingRows(), 0, divider);
+    }
+    entriesEl.replaceChildren(...nodes);
   }
 
   /** How many leading rows are not directory entries (Cancel, Up, Use this folder). */
@@ -223,6 +233,7 @@ export function createFilePicker(deps: FilePickerDeps): FilePickerSurface {
         ? {
             root: at.root,
             kind: at.kind,
+            ...(at.base !== undefined ? { base: at.base } : {}),
             ...(remembered !== undefined ? { path: remembered } : {}),
           }
         : { path, root: at.root, kind: at.kind },
@@ -289,7 +300,12 @@ export function createFilePicker(deps: FilePickerDeps): FilePickerSurface {
   async function accept(paths: readonly string[]): Promise<void> {
     const at = request;
     if (at === null) return;
-    const result = await deps.api.acceptPaths({ root: at.root, kind: at.kind, paths });
+    const result = await deps.api.acceptPaths({
+      root: at.root,
+      kind: at.kind,
+      paths,
+      ...(at.base !== undefined ? { base: at.base } : {}),
+    });
     if (!result.ok && !('cancelled' in result)) {
       // A rejection is not an exit: the user is standing in the folder they picked from, and the message
       // tells them what to pick instead.
@@ -380,6 +396,7 @@ export function createFilePicker(deps: FilePickerDeps): FilePickerSurface {
         root: next.root,
         kind: next.kind,
         multi: next.multi,
+        ...(next.base !== undefined ? { base: next.base } : {}),
         onDone: next.onDone,
       };
       picked = [];
@@ -427,6 +444,10 @@ export function createFilePicker(deps: FilePickerDeps): FilePickerSurface {
     navBack: () => {
       hover.arm();
       deps.audio.play('back');
+      if (parent !== null && column === 'entries') {
+        void goTo(parent);
+        return;
+      }
       cancel();
     },
     /** X ticks a file in multi mode — the one gesture a single-select browser has no need for. */

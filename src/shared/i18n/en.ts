@@ -230,8 +230,8 @@ export const en = {
   'picker.up': 'Up one level',
   'picker.useThisFolder': 'Use this folder',
   'picker.empty': 'Nothing here.',
-  'picker.legend': 'A - open or choose, B - close, left/right - switch column',
-  'picker.legendMulti': 'X - tick, A - choose, B - close, left/right - switch column',
+  'picker.legend': 'A - open or choose, B - up one level, left/right - switch column',
+  'picker.legendMulti': 'X - tick, A - choose, B - up one level, left/right - switch column',
 
   'gameSettings.screenTitle': 'Customize',
   'gameSettings.loading': 'Reading the manifest...',

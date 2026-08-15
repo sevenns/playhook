@@ -144,6 +144,20 @@ describe('startDirFor', () => {
     expect(startDirFor({ root, kind: 'pc-save' }, env)).toBe(appData);
   });
 
+  // "Move game to PC": the manifest resolves `executable` under the install directory, which receives
+  // the CONTENTS of the named game folder — so both the browsing and the measuring happen from there.
+  it('browses a sub-directory field from that sub-directory, not from the root', () => {
+    const gameDir = path.join(root, 'Games', 'Hades');
+    expect(startDirFor({ root, kind: 'executable', baseDir: gameDir }, env)).toBe(gameDir);
+  });
+
+  it('resolves a filled value against the sub-directory when there is one', () => {
+    const gameDir = path.join(root, 'Games', 'Hades');
+    expect(
+      startDirFor({ root, kind: 'executable', baseDir: gameDir, current: 'bin/hades.exe' }, env),
+    ).toBe(path.join(gameDir, 'bin'));
+  });
+
   it('starts a local executable at the home folder and a save path at %APPDATA%', () => {
     expect(startDirFor({ root, kind: 'pc-executable' }, env)).toBe(home);
     expect(startDirFor({ root, kind: 'pc-save-local' }, env)).toBe(appData);

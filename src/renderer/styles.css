@@ -2380,12 +2380,13 @@ html:not(.cursor-hidden) .picker-item:hover,
   font-weight: 500;
 }
 
-/* …and a rule under the last of them, so the tree visibly starts below. */
-.picker-item.is-last-action {
-  margin-bottom: calc(10 * var(--px));
-  padding-bottom: calc(10 * var(--px));
-  border-bottom: calc(2 * var(--px)) solid color-mix(in srgb, var(--d2) 25%, transparent);
-  border-radius: 0;
+/* …and a rule of its own between them and the tree. A separate element, not a border on the last
+   button: a bottom border there squares one corner of a rounded, invertible button. */
+.picker-divider {
+  flex: 0 0 auto;
+  height: calc(2 * var(--px));
+  margin: calc(8 * var(--px)) calc(20 * var(--px));
+  background: color-mix(in srgb, var(--d2) 25%, transparent);
 }
 
 .picker-item.is-picked {

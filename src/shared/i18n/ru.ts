@@ -196,8 +196,9 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'picker.up': 'На уровень выше',
   'picker.useThisFolder': 'Выбрать эту папку',
   'picker.empty': 'Здесь пусто.',
-  'picker.legend': 'A - открыть или выбрать, B - закрыть, влево/вправо - сменить колонку',
-  'picker.legendMulti': 'X - отметить, A - выбрать, B - закрыть, влево/вправо - сменить колонку',
+  'picker.legend': 'A - открыть или выбрать, B - на уровень выше, влево/вправо - сменить колонку',
+  'picker.legendMulti':
+    'X - отметить, A - выбрать, B - на уровень выше, влево/вправо - сменить колонку',
 
   'gameSettings.screenTitle': 'Настройки игры',
   'gameSettings.loading': 'Читаем манифест...',

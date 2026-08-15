@@ -899,6 +899,13 @@ export interface GameConfigAcceptRequest {
   readonly root: string;
   readonly kind: ConfigPickKind;
   readonly paths: readonly string[];
+  /**
+   * A root-RELATIVE sub-directory the resulting manifest path is measured from, when the field is not
+   * measured from the root itself. Only "move game to PC" uses one: there the manifest resolves
+   * `executable` under the install directory, which receives the CONTENTS of the named game folder, so
+   * a card-relative path would be one level too deep. Re-checked against the root in main.
+   */
+  readonly base?: string;
 }
 
 /**
@@ -912,6 +919,8 @@ export interface GameConfigListDirRequest {
   readonly kind?: ConfigPickKind;
   /** The field's current value, so a filled field reopens where it points. */
   readonly current?: string;
+  /** The sub-directory this field is measured from — see GameConfigAcceptRequest.base. */
+  readonly base?: string;
 }
 
 /** One entry of a listed directory. Symlinks are reported as what they point AT, or skipped when broken. */

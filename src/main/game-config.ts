@@ -165,7 +165,7 @@ export class GameConfigService {
     ipcMain.handle(
       IPC.gameConfigAcceptPath,
       (_event, payload: GameConfigAcceptRequest): Promise<ConfigPickResult> =>
-        this.acceptPickedPaths(payload.root, payload.kind, payload.paths),
+        this.acceptPickedPaths(payload.root, payload.kind, payload.paths, payload.base),
     );
     ipcMain.handle(
       IPC.gameConfigListDir,
@@ -398,11 +398,17 @@ export class GameConfigService {
     root: string,
     kind: ConfigPickKind,
     absolutePaths: readonly string[],
+    base?: string,
   ): Promise<ConfigPickResult> {
     const t = this.deps.getTranslator();
     if (!(await this.isAllowedRoot(root))) {
       return { ok: false, message: t('errors.driveUnavailable') };
     }
+    // A field measured from a sub-directory (see GameConfigAcceptRequest.base) still lives inside the
+    // root, and `resolveInside` is what proves it: the renderer names the sub-path, so it gets the same
+    // anti-traversal treatment every other manifest path does.
+    const measureFrom = base === undefined || base === '' ? root : resolveInside(root, base);
+    if (measureFrom === null) return { ok: false, message: t('gameConfig.pickOutsideCard') };
     if (absolutePaths.length === 0) return { ok: false, cancelled: true };
     const isPcLibrary = this.sourceOf(root) === 'pc';
     // A local game's own executable and its host-side save folder only exist in the PC library.
@@ -452,7 +458,7 @@ export class GameConfigService {
 
     const relatives: string[] = [];
     for (const absolute of absolutePaths) {
-      const relative = toCardRelative(root, absolute);
+      const relative = toCardRelative(measureFrom, absolute);
       if (relative === null) {
         return {
           ok: false,
@@ -495,14 +501,23 @@ export class GameConfigService {
   private async listDir(request: GameConfigListDirRequest): Promise<ListDirResult> {
     const t = this.deps.getTranslator();
     const roots = await this.pickerRoots();
+    // A field measured from a sub-directory browses from there; an unresolvable one falls back to the
+    // root rather than failing — this is where the picker OPENS, not what it will accept.
+    const baseDir =
+      request.root !== undefined && request.base !== undefined && request.base !== ''
+        ? resolveInside(request.root, request.base)
+        : null;
     const target =
       request.path ??
-      startDirFor(request, {
-        homeDir: os.homedir(),
-        appDataDir: app.getPath('appData'),
-        downloadsDir: app.getPath('downloads'),
-        rootIsCard: request.root !== undefined && this.sourceOf(request.root) === 'card',
-      });
+      startDirFor(
+        { ...request, ...(baseDir !== null ? { baseDir } : {}) },
+        {
+          homeDir: os.homedir(),
+          appDataDir: app.getPath('appData'),
+          downloadsDir: app.getPath('downloads'),
+          rootIsCard: request.root !== undefined && this.sourceOf(request.root) === 'card',
+        },
+      );
     let names: readonly string[];
     try {
       names = await fs.readdir(target);

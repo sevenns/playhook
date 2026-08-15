@@ -97,6 +97,8 @@ export interface StartDirRequest {
   readonly kind?: ConfigPickKind;
   /** The field's current value, so a filled field reopens where it points. */
   readonly current?: string;
+  /** An ALREADY-RESOLVED absolute sub-directory the field is measured from (see toRelative's `base`). */
+  readonly baseDir?: string;
 }
 
 /**
@@ -111,15 +113,19 @@ export interface StartDirRequest {
  * A `%PREFIX%`-style value names no host directory, so it is skipped rather than resolved.
  */
 export function startDirFor(request: StartDirRequest, env: StartDirEnv): string {
-  const { root, current, kind } = request;
+  const { root, current, kind, baseDir } = request;
+  // A field measured from a sub-directory is browsed from there: outside it there is nothing this field
+  // can even express, so starting at the card root would open on paths it cannot store.
+  const from = baseDir ?? root;
   if (current !== undefined && current !== '' && !current.startsWith('%')) {
     const absolute = path.isAbsolute(current)
       ? current
-      : root !== undefined
-        ? path.join(root, current)
+      : from !== undefined
+        ? path.join(from, current)
         : null;
     if (absolute !== null) return path.dirname(absolute);
   }
+  if (baseDir !== undefined) return baseDir;
   if (kind === 'pc-save' || kind === 'pc-save-local') return env.appDataDir;
   if (kind === 'pc-executable') return env.homeDir;
   const isCard = root !== undefined && env.rootIsCard;

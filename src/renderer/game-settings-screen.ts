@@ -101,6 +101,8 @@ export interface FilePickerSurface extends NavSurface {
     readonly kind: ConfigPickKind;
     readonly current: string;
     readonly multi: boolean;
+    /** The root-relative sub-directory this field is measured from, when it has one (see baseFor). */
+    readonly base?: string;
     readonly onDone: (result: ConfigPickResult) => void;
   }): void;
 }
@@ -309,7 +311,9 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   function render(): void {
     const next = currentModel();
     headingEl.textContent = screenHeading(next, t());
-    sourceEl.textContent = next === null ? '' : `(${rowLabelText(next.source, t())})`;
+    // Source first, then the game — it reads as a location and its contents ("E:\ · Hades"). The
+    // parentheses went with the swap: a parenthetical is an aside, and an aside cannot come first.
+    sourceEl.textContent = next === null ? '' : `${rowLabelText(next.source, t())} ·`;
     if (unreadable !== null) {
       renderUnreadable();
       return;
@@ -773,7 +777,14 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     lightboxImage.removeAttribute('src');
   }
 
-  /** Opens the file browser for a field and writes what it picked back into the form. */
+  /**
+   * Opens the file browser for a field and writes what it picked back into the form.
+   *
+   * The menu it was opened FROM stays underneath. Closing it up front made backing out of the browser
+   * land on the form instead of on the popup the user was in — one press undoing two levels, which is
+   * not what back means anywhere else here. The menu is dismissed only once a value has actually been
+   * chosen, because then there is nothing left to go back to.
+   */
   function browseInto(
     id: GameRowId,
     current: string,
@@ -784,17 +795,20 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     if (at === null) return;
     const kind = pickKindFor(id, form.launchMode, at.source);
     if (kind === null) return;
-    closeMenus();
     deps.picker.open({
       root: at.root,
       kind,
       current,
       multi,
+      ...(baseFor(id) !== null ? { base: baseFor(id) ?? '' } : {}),
       onDone: (result) => {
         if (!result.ok) {
           if (!('cancelled' in result)) setStatus(result.message);
+          // Cancelled (or refused): the popup is still up, and the focus goes back to it.
+          applyMenuFocus();
           return;
         }
+        closeMenus();
         if (onPicked !== undefined) {
           onPicked(result.paths);
           return;
@@ -803,6 +817,21 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
         if (first !== undefined) setField(id, first);
       },
     });
+  }
+
+  /**
+   * The sub-directory a field's paths are relative to, when it is not the root itself.
+   *
+   * Only "move game to PC" has one, and it is not cosmetic: with the checkbox on, the manifest resolves
+   * `executable` under the INSTALL directory, which receives the contents of the game folder named
+   * below it (manifest.ts, `<installDir>/<executable>`). A card-relative path would carry that folder's
+   * own name as a prefix and point one level too deep — so the browser both starts there and measures
+   * from there.
+   */
+  function baseFor(id: GameRowId): string | null {
+    if (id !== 'executable') return null;
+    if (form.launchMode !== 'executable' || !form.copyToPc) return null;
+    return form.copyInstall.installer === '' ? null : form.copyInstall.installer;
   }
 
   // ── List editing (its own level of the column menu) ─────────────────────────
