@@ -44,6 +44,12 @@ export interface HeroController {
   setWallpaper(url: string | null): void;
   /** Parallax offset in DESIGN px: the background drifts with the carousel (see #hero in styles.css). */
   setParallax(designPx: number): void;
+  /**
+   * The COMPUTED transform (a matrix) of the layer currently on screen — its bg-pan caught mid-drift.
+   * The boot backdrop converges on it as it dissolves, so the handover has no offset to give away; see
+   * the boot reveal in app.ts.
+   */
+  currentLayerTransform(): string;
 }
 
 export function createHeroController(deps: HeroDeps): HeroController {
@@ -258,6 +264,10 @@ export function createHeroController(deps: HeroDeps): HeroController {
     heroPanEl.style.setProperty('--hero-parallax', `calc(${designPx} * var(--px))`);
   }
 
+  function currentLayerTransform(): string {
+    return getComputedStyle(activeLayer).transform;
+  }
+
   return {
     repaint,
     startRotation,
@@ -267,5 +277,6 @@ export function createHeroController(deps: HeroDeps): HeroController {
     showWallpaperBackdrop,
     setWallpaper,
     setParallax,
+    currentLayerTransform,
   };
 }

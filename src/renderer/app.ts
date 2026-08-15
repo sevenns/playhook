@@ -424,10 +424,12 @@ function render(state: AppState): void {
 // index.html ships #app[data-boot], which hides the bar and the carousel strip (styles.css):
 // the launcher opens on the background alone. The order is deliberate — wallpaper, then the game's own
 // hero, then the UI:
-//   1. the bundled wallpaper is the fastest image main can hand over, so it paints as the opening
-//      backdrop even when a card IS inserted (hero.showWallpaperBackdrop) — and it KEEPS the screen for
-//      WALLPAPER_HOLD_MS, however quickly the rest arrives;
-//   2. the card's hero cross-fades over it once that hold is up, carrying its palette;
+//   1. the bundled wallpaper is the fastest image main can hand over, so it paints on the boot backdrop
+//      (#hero-boot — a layer of its own, ABOVE the hero) and keeps the screen for WALLPAPER_HOLD_MS,
+//      however quickly the rest arrives;
+//   2. the card's hero paints on the hero layers UNDERNEATH it as soon as it lands, and the backdrop
+//      then dissolves to reveal a background that is already settled — the alternative, unwinding a
+//      shared zoom, made the picture travel backwards at the exact moment the UI arrived;
 //   3. only then does the UI fade in — so it is never seen assembling itself, and never changes colour
 //      under the user's eyes a beat after appearing.
 // The UI waits for ALL THREE seeds — the state, a settled background, and the carousel list — and never
@@ -437,24 +439,47 @@ function render(state: AppState): void {
 // simply appeared, as if it had been display:none. The deadline covers a seed that never arrives
 // (unreadable wallpaper, no hero, no library at all): the UI must not stay hidden forever.
 /**
- * How long the bundled wallpaper owns the screen at startup. Nothing replaces it before this: a card's
- * hero that arrives earlier waits its turn, so the launcher always opens on the same picture for the
+ * How long the bundled wallpaper owns the screen at startup. A hero arriving earlier is painted right
+ * away but stays hidden under the backdrop, so the launcher always opens on the same picture for the
  * same beat instead of flashing whatever loaded first.
  */
 const WALLPAPER_HOLD_MS = 2000;
 /** The UI never appears before this — the hold plus the cross-fade it hands over to. */
 const BOOT_MIN_MS = WALLPAPER_HOLD_MS;
 const BOOT_DEADLINE_MS = 5000;
+/** Matches the backdrop's fade in styles.css (#hero-boot.is-gone). */
+const BOOT_FADE_MS = 1000;
+const bootBackdrop = req('hero-boot');
 const bootStart = performance.now();
 let bootStateReady = false;
 let bootHeroReady = false;
 let bootLibraryReady = false;
 let bootRevealed = false;
 
+/**
+ * Hands the screen over to the hero underneath: the backdrop fades out and, over the same beat, travels
+ * to where that hero layer currently sits. Converging rather than parting matters because the two are
+ * often the SAME image — with no card, the empty screen is this very wallpaper — and any offset left
+ * between them shows up as a double image sliding apart. Then it is taken out of the page entirely: it
+ * has nothing left to show, and a full-screen composited layer is not free.
+ */
+function dissolveBootBackdrop(): void {
+  const settled = hero.currentLayerTransform();
+  // 'none' means there is no image under it at all (no wallpaper, no hero) — then there is nothing to
+  // converge on, and pulling the backdrop back to the identity transform would be the very lurch this
+  // whole arrangement exists to avoid. It just fades where it is.
+  if (settled !== 'none') bootBackdrop.style.transform = settled;
+  bootBackdrop.classList.add('is-gone');
+  window.setTimeout(() => {
+    bootBackdrop.hidden = true;
+  }, BOOT_FADE_MS);
+}
+
 function revealUi(): void {
   if (bootRevealed) return;
   bootRevealed = true;
   delete app.dataset['boot'];
+  dissolveBootBackdrop();
   // The strip's cards were held at zero behind the boot screen — let them fan in now, so the carousel's
   // own entrance is actually seen instead of having happened under the wallpaper.
   carousel.playIntro();
@@ -471,31 +496,18 @@ function noteBootSeed(seed: 'state' | 'hero' | 'library'): void {
 
 window.setTimeout(revealUi, BOOT_DEADLINE_MS);
 
-// The startup push on the background (#hero-boot in styles.css): a wider, faster drift than the hero's
-// perpetual pan, on for the boot seconds only. Two frames of delay because a transition needs its
-// starting value painted first — set in the same frame as the load and there is nothing to move from.
-// The direction is randomized like the layers' own pan, so the launcher doesn't always open drifting the
-// same way.
+// The startup push on the backdrop (#hero-boot in styles.css): a wider, faster drift than the hero's
+// perpetual pan, and it never unwinds — the layer dissolves mid-travel instead. Two frames of delay
+// because a transition needs its starting value painted first: set in the same frame as the load and
+// there is nothing to move from. The direction is randomized like the layers' own pan, so the launcher
+// doesn't always open drifting the same way.
 requestAnimationFrame(() => {
   requestAnimationFrame(() => {
     if (bootRevealed) return;
-    req('hero-boot').style.setProperty('--boot-pan', Math.random() < 0.5 ? '4.5%' : '-4.5%');
-    app.dataset['boot'] = 'panning';
+    bootBackdrop.style.setProperty('--boot-pan', Math.random() < 0.5 ? '4.5%' : '-4.5%');
+    bootBackdrop.classList.add('is-panning');
   });
 });
-
-/**
- * Runs `paint` no earlier than the end of the wallpaper hold. Only startup is delayed — once the UI is
- * up, a hero arriving on any channel is applied at once (a card inserted mid-session must not wait).
- */
-function afterWallpaperHold(paint: () => void): void {
-  const remaining = WALLPAPER_HOLD_MS - (performance.now() - bootStart);
-  if (bootRevealed || remaining <= 0) {
-    paint();
-    return;
-  }
-  window.setTimeout(paint, remaining);
-}
 
 // Whether the background that will STAY is up: the card's hero when it has one, the wallpaper when it
 // does not. The wallpaper alone is not enough while a hero is still expected — that is the cross-fade
@@ -554,7 +566,7 @@ void window.api.requestBrowse().then((browse) => {
 
 // The browsed game's background: a channel of its own, so a history game can be shown without touching
 // the inserted card's hero:update payload (which stays valid for the card's selected game).
-window.api.onBrowseHero((assets) => afterWallpaperHold(() => hero.applyBrowseAssets(assets)));
+window.api.onBrowseHero((assets) => hero.applyBrowseAssets(assets));
 
 // The browsed game's music. Music ONLY — the SFX set is never rebuilt by browsing, so flipping through
 // the carousel doesn't re-create the sound elements on every step.
@@ -583,10 +595,13 @@ void Promise.all([
 });
 
 // Fallback wallpaper for the empty screen (data URL from main). It doubles as the session's OPENING
-// backdrop: with a card inserted the hero data URL is still on its way, and the wallpaper is what the
-// window shows until it lands (see the boot reveal above).
+// backdrop: it paints on #hero-boot, above the hero layers, and holds the screen while the rest of the
+// launcher loads underneath (see the boot reveal above). It ALSO goes on a hero layer, as it always has:
+// that is the background a card whose hero never arrives is left with once the backdrop dissolves.
 void window.api.requestWallpaper().then((url) => {
   hero.setWallpaper(url);
+  if (url === null) bootBackdrop.hidden = true;
+  else bootBackdrop.style.backgroundImage = `url("${url}")`;
   if (gameOf(currentState) === undefined) hero.applyEmptyScreen();
   else hero.showWallpaperBackdrop();
   wallpaperPainted = url !== null;
@@ -640,20 +655,16 @@ window.api.onWindowFocus((focused) => controls.setGamepadPaused(!focused));
 // Hero images are delivered on their own channel (not in AppState): the renderer rotates through them
 // locally, so we never re-send this large payload on every state transition. See hero.applyAssets.
 window.api.onHeroUpdate((assets) => {
-  afterWallpaperHold(() => {
-    hero.applyAssets(assets);
-    if (assets !== null) {
-      heroPayload = 'present';
-      noteBackgroundSettled();
-    }
-  });
+  hero.applyAssets(assets);
+  if (assets !== null) {
+    heroPayload = 'present';
+    noteBackgroundSettled();
+  }
 });
 void window.api.requestHero().then((assets) => {
-  afterWallpaperHold(() => {
-    hero.applyAssets(assets);
-    heroPayload = assets === null ? 'none' : 'present';
-    noteBackgroundSettled();
-  });
+  hero.applyAssets(assets);
+  heroPayload = assets === null ? 'none' : 'present';
+  noteBackgroundSettled();
 });
 
 // The carousel list (the inserted card's games + the play history, already ordered) arrives on its own

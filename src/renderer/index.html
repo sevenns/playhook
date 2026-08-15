@@ -23,13 +23,14 @@
              carousel is back), #hero-pan drifts with the strip (slow). One element could only carry one
              duration for both. -->
         <div id="hero-pan">
-          <!-- The startup zoom lives on its own wrapper too, for the same reason: it runs only for the
-               boot seconds and then eases back to nothing, at a tempo of its own (see styles.css). -->
-          <div id="hero-boot">
-            <div class="hero-layer"></div>
-            <div class="hero-layer"></div>
-          </div>
+          <div class="hero-layer"></div>
+          <div class="hero-layer"></div>
         </div>
+        <!-- The boot backdrop: the bundled wallpaper on a layer of ITS OWN, on top of the hero layers
+             for the opening seconds. The game's hero is painted underneath it the moment it arrives, so
+             when this one dissolves there is a settled background behind it — nothing has to move back
+             into place. See the boot reveal in app.ts. -->
+        <div id="hero-boot"></div>
       </div>
 
       <!-- History carousel (the `carousel` screen): a horizontal strip of game cards sliding under a

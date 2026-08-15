@@ -166,31 +166,45 @@ body {
   }
 }
 
-/* The startup push, for the seconds the wallpaper owns the screen on its own (see WALLPAPER_HOLD_MS in
-   app.ts): a wider zoom and drift laid ON TOP of each layer's own bg-pan, so those seconds read as a
-   title card rather than as a still image someone forgot to replace.
-   It is a TRANSITION, not an animation, and that is the whole point: boot ends at an unpredictable
-   moment, and an animation dropped mid-flight snaps the image back to where its keyframes began — the
-   one jump the eye always catches. A transition simply retargets from wherever it happens to be, so the
-   push eases back to nothing from its current position. The target below is deliberately further and
-   slower than boot will ever get to travel: only the first seconds of it are ever seen. */
+/* The boot backdrop: the bundled wallpaper, held over the hero layers for the opening seconds (see
+   WALLPAPER_HOLD_MS in app.ts) and given a push of its own — a wider zoom and drift than the perpetual
+   bg-pan, so those seconds read as a title card rather than as a still image someone forgot to replace.
+   The push is a TRANSITION, not an animation, and the layer is separate from the hero on purpose. Both
+   follow from the same rule: nothing may travel BACKWARDS when boot ends. An animation dropped mid-flight
+   snaps to where its keyframes began; a shared layer would have to unwind its zoom with the hero riding
+   along — and a background reversing direction is the one jump the eye always catches. Here the backdrop
+   simply dissolves, over a hero that has been sitting settled underneath it all along. */
 #hero-boot {
   position: absolute;
   inset: 0;
+  background-size: cover;
+  background-position: center;
   transform: scale(var(--boot-zoom, 1)) translateX(var(--boot-shift, 0%));
-  transition: transform 1.6s cubic-bezier(0.22, 0.61, 0.36, 1);
-  will-change: transform;
+  transition: transform 7s cubic-bezier(0.3, 0, 0.6, 1);
+  will-change: transform, opacity;
 }
 
-/* app.ts flips to this a frame after load — the first frame has to paint the resting transform, or the
+/* app.ts adds this a frame after load — the first frame has to paint the resting transform, or the
    transition has nothing to start from. The drift direction (--boot-pan) is randomized there. The
    easing matters as much as the numbers: a linear start moves at full speed from the very first frame,
    which reads as a lurch on an image that has only just appeared. The soft ramp below spends the first
    moments getting going, so the push is felt rather than seen. */
-#app[data-boot='panning'] #hero-boot {
+#hero-boot.is-panning {
   --boot-zoom: 1.22;
   --boot-shift: var(--boot-pan, 4.5%);
-  transition: transform 7s cubic-bezier(0.3, 0, 0.6, 1);
+}
+
+/* The handover. app.ts also writes an inline transform here — the CURRENT transform of the hero layer
+   below — so the backdrop converges on the image it is dissolving into instead of parting from it. That
+   matters most when the two are the SAME picture (no card: the empty screen is this very wallpaper),
+   where any offset between them would read as a double image sliding apart.
+   The two curves are deliberately opposites. Opacity drops fastest at the START (most of it is gone in
+   the first third), while the transform barely moves until the END — so the copy is at its most solid
+   while it is still, and does its travelling when there is almost nothing left to see. Same distance,
+   no visible motion. */
+#hero-boot.is-gone {
+  opacity: 0;
+  transition: opacity 0.9s cubic-bezier(0, 0, 0.3, 1), transform 1s cubic-bezier(0.7, 0, 1, 1);
 }
 
 /* ── Per-screen bottom-bar controls ────────────────────────────────────────
