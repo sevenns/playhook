@@ -71,7 +71,9 @@ export async function readAudioDataUrl(filePath: string): Promise<string | undef
 const SFX_NAMES: readonly SfxName[] = ['play', 'navigate', 'button', 'back'];
 
 // The sound set shipped as the default, and the fallback whenever the chosen set's folder is missing.
-export const DEFAULT_SOUND_SET = 'winhanced';
+// Mirrors DEFAULT_SETTINGS.soundSet in app-settings.ts (kept in sync by hand — importing that module
+// here, or this one there, would put an fs/logger dependency on the daemon's import graph).
+export const DEFAULT_SOUND_SET = 'playhook-aurora';
 
 // Maps a UI sound slot to its file basename inside a set folder (audio/ui/<set>/). `navigate` is the odd
 // one out — its file is `move.wav` (the sets predate the SfxName vocabulary); the rest are 1:1.
@@ -197,12 +199,12 @@ export class AssetReader {
   private sfxSetCache: { set: string; assets: SfxSet } | undefined;
 
   /**
-   * The chosen navigation sound set if it is present, else the bundled default (winhanced). A missing set
+   * The chosen navigation sound set if it is present, else the bundled default. A missing set
    * is a user-facing misconfiguration, so it is logged; an individual slot missing WITHIN a set is not
    * (that slot just stays silent — sets are expected complete).
    *
    * Presence is probed by statting the set's move.wav — a FILE — not the set DIRECTORY: inside the packaged
-   * asar a directory stat is unreliable (it made every non-default set silently fall back to winhanced),
+   * asar a directory stat is unreliable (it made every non-default set silently fall back to the default),
    * whereas a file stat works through Electron's shim. Mirrors readAmbientDataUrl's file existence check.
    */
   private async effectiveSoundSet(): Promise<string> {

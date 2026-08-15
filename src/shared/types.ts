@@ -563,7 +563,7 @@ export interface AppSettings {
    * Name of the UI sound set used for navigation (the folder under `audio/ui/<set>/`) — the only source
    * of UI sounds there is. A plain string (not an enum): sets are enumerated dynamically from what ships
    * in the bundle, and a missing/incomplete folder falls back at read time (see AssetReader).
-   * Default 'winhanced'. `.default('winhanced')` migrates an older settings.json without the field.
+   * Default 'playhook-aurora'. `.default(…)` migrates an older settings.json without the field.
    */
   readonly soundSet: string;
   /**
@@ -581,7 +581,7 @@ export interface AppSettings {
 
 /** The bundled UI sound sets + ambience tracks available to pick in the settings window. */
 export interface AudioOptions {
-  /** Sound-set folder names under `audio/ui/` (e.g. `winhanced`, `ps5`); `winhanced` is always present. */
+  /** Sound-set folder names under `audio/ui/` (e.g. `playhook-aurora`, `ps5`); the default is always present. */
   readonly soundSets: readonly string[];
   /** Ambience file names under `audio/ambience/`, extension included (e.g. `ps5.mp3`). */
   readonly ambientTracks: readonly string[];
