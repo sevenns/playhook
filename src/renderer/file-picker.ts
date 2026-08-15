@@ -84,6 +84,9 @@ export function createFilePicker(deps: FilePickerDeps): FilePickerSurface {
   let rootIndex = 0;
   let rootButtons: HTMLButtonElement[] = [];
   let entryButtons: HTMLButtonElement[] = [];
+  // Where each half of the entries column was left, so the Y toggle returns rather than resets.
+  let lastActionIndex = 0;
+  let lastTreeIndex = 0;
   /**
    * Where the last visit ENDED, per field kind, kept for the lifetime of the screen: picking three hero
    * images one after another must not start at the top of the filesystem each time.
@@ -190,6 +193,11 @@ export function createFilePicker(deps: FilePickerDeps): FilePickerSurface {
     return 1 + (parent !== null ? 1 : 0) + (wantsDirectory() ? 1 : 0);
   }
 
+  /** Whether the focus is currently on one of those action rows rather than in the tree. */
+  function onActionRow(): boolean {
+    return entryIndex < leadingRows();
+  }
+
   /** Joins a directory and a name in whatever separator the directory already uses. */
   function join(directory: string, name: string): string {
     const separator = directory.includes('\\') && !directory.includes('/') ? '\\' : '/';
@@ -267,6 +275,9 @@ export function createFilePicker(deps: FilePickerDeps): FilePickerSurface {
         : entries.length > 0
           ? leadingRows()
           : Math.max(0, entryButtons.length - 1);
+    // A new directory has new rows: both halves of the Y toggle start where this listing put the focus.
+    lastTreeIndex = entries.length > 0 ? entryIndex : leadingRows();
+    lastActionIndex = leadingRows() - 1;
     applyFocus();
     entriesScroller.to(0, true);
   }
@@ -441,14 +452,38 @@ export function createFilePicker(deps: FilePickerDeps): FilePickerSurface {
       if (button === undefined) return;
       button.click();
     },
+    /**
+     * Back goes UP a level, and at the top of the filesystem it does NOTHING.
+     *
+     * Deliberately not "up, then out": those are different actions, and spending the last of a run of
+     * back-presses on closing the browser undoes several folders of work with a keystroke you did not
+     * mean that way. Leaving is the Cancel row instead — always the first row, and one Y away.
+     */
     navBack: () => {
       hover.arm();
+      if (parent === null) return;
       deps.audio.play('back');
-      if (parent !== null && column === 'entries') {
-        void goTo(parent);
-        return;
+      void goTo(parent);
+    },
+    /**
+     * Y jumps between the tree and the action rows above it (Cancel / Up / Use this folder), remembering
+     * which row each half was left on, so it is a round trip rather than a jump to the top.
+     */
+    navTertiary: () => {
+      if (entryButtons.length === 0) return;
+      hover.arm();
+      const lead = leadingRows();
+      if (onActionRow()) {
+        lastActionIndex = entryIndex;
+        if (entries.length === 0) return; // nothing to jump INTO
+        entryIndex = Math.max(lead, Math.min(lastTreeIndex, entryButtons.length - 1));
+      } else {
+        lastTreeIndex = entryIndex;
+        entryIndex = Math.min(lastActionIndex, lead - 1);
       }
-      cancel();
+      column = 'entries';
+      deps.audio.play('navigate');
+      applyFocus();
     },
     /** X ticks a file in multi mode — the one gesture a single-select browser has no need for. */
     navSecondary: () => {
