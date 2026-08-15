@@ -32,6 +32,8 @@ type ConfirmMode =
   | 'reset-settings';
 // Gamepad A doesn't trigger :active, so flash a press class to play the scale-down animation.
 const PRESS_MS = 130;
+/** How far the pointer must travel before hover may take the focus again (see armHover). */
+const HOVER_WAKE_PX = 6;
 /** How long the popup takes to fade out (.popup transition in styles.css) — the window its contents
  *  must stay frozen for, so the user never watches the menu rewrite itself on the way out. */
 const POPUP_FADE_MS = 350;
@@ -200,6 +202,9 @@ export function createControls(deps: ControlsDeps): Controls {
   // shared veil never cross-fades). Closing removes .is-open.
 
   function setView(view: Exclude<PopupView, 'none'>): void {
+    // Every view change lays a new stack under the pointer — hover must not claim the focus the view
+    // itself just set (see the mousemove handler).
+    armHover();
     popupView = view;
     popup.dataset['view'] = view;
     popup.classList.add('is-open');
@@ -899,11 +904,28 @@ export function createControls(deps: ControlsDeps): Controls {
   // only when the pointer actually moves.
   let lastMouseX = -1;
   let lastMouseY = -1;
+  // Where the pointer was when a popup opened. Until the mouse travels HOVER_WAKE_PX from there, hover
+  // does not move the focus: a popup opening under a resting cursor is the ELEMENT moving, not the
+  // mouse, and Chromium reports both the same way. Cleared by the first genuine move.
+  let hoverArmedAt: { readonly x: number; readonly y: number } | null = null;
+
+  function armHover(): void {
+    hoverArmedAt = { x: lastMouseX, y: lastMouseY };
+  }
+
+  function hoverAwake(x: number, y: number): boolean {
+    if (hoverArmedAt === null) return true;
+    if (Math.hypot(x - hoverArmedAt.x, y - hoverArmedAt.y) < HOVER_WAKE_PX) return false;
+    hoverArmedAt = null;
+    return true;
+  }
+
   window.addEventListener('mousemove', (event) => {
     if (event.clientX === lastMouseX && event.clientY === lastMouseY) return; // synthetic — ignore
     lastMouseX = event.clientX;
     lastMouseY = event.clientY;
     noteMouseActivity();
+    if (!hoverAwake(event.clientX, event.clientY)) return;
     const element = event.target instanceof Element ? event.target : null;
     // The popup owns the pointer while it is open: its stack is the only thing hover may move.
     if (stackActive()) {

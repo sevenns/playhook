@@ -64,6 +64,8 @@ const MARQUEE_SPEED_PX_PER_S = 60;
 const SCROLL_MARGIN_PX = 90;
 /** The mask's fade height at each edge (mirrors --fade-size in styles.css). */
 const EDGE_FADE_PX = 28;
+/** How far the pointer must travel before hover may take the focus again (see armHover). */
+const HOVER_WAKE_PX = 6;
 
 /** What the screen sends to main. A seam, so app.ts owns the window.api wiring (and tests can fake it). */
 export interface SettingsScreenApi {
@@ -765,32 +767,6 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
     activateRow(entry, index);
   });
 
-  // Hover moves the focus, but ONLY on a real pointer move. Chromium re-fires mouseover whenever an
-  // element slides under a still cursor — which the focus scroll does on every step — and acting on that
-  // yanked the focus back to the row the pointer happened to be over (the visible "jump back" stutter).
-  // Same reason the bar's own handler filters synthetic moves (controls.ts).
-  let lastX = -1;
-  let lastY = -1;
-  listEl.addEventListener(
-    'mousemove',
-    (event) => {
-      if (event.clientX === lastX && event.clientY === lastY) return;
-      lastX = event.clientX;
-      lastY = event.clientY;
-      // The gamepad hides the cursor; a stale hover must not fight its focus (see .text-button:hover).
-      if (document.documentElement.classList.contains('cursor-hidden')) return;
-      const target = event.target;
-      if (!(target instanceof Element)) return;
-      const rowEl = target.closest<HTMLElement>('.setting-row');
-      if (rowEl === null) return;
-      const index = rendered.findIndex((row) => row.el === rowEl);
-      if (index === -1 || index === focusIndex) return;
-      focusIndex = index;
-      applyRowFocus();
-    },
-    { passive: true },
-  );
-
   /** The percent a pointer at `clientX` picks on `track`. */
   function percentAt(track: HTMLElement, clientX: number): number {
     const rect = track.getBoundingClientRect();
@@ -844,27 +820,64 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
     close();
   });
 
-  // Hover inside the expanded dropdown, read from real pointer MOVEMENT only — the list appears under a
-  // resting cursor just like the popup's stack does, and a `mouseenter` there would steal the focus from
-  // the current value the moment the list opens (see the note in controls.ts).
-  let lastOptionX = -1;
-  let lastOptionY = -1;
-  optionsListEl.addEventListener(
+  /**
+   * Hover, for both the row list and the expanded dropdown — and the whole point here is WHEN it is
+   * allowed to move the focus.
+   *
+   * A surface that opens under a resting cursor makes Chromium fire pointer events at it: the element
+   * moved, not the mouse. Taken as hover, that drags the focus off whatever the surface just focused
+   * (the current value, the bottom button) — the "it opened and blinked" stutter, reproducible by simply
+   * parking the mouse where an item will appear. Comparing against the previous event's coordinates is
+   * not enough on its own: the listener has to already KNOW where the pointer is, which is why this
+   * lives on the window and keeps running while everything is closed.
+   *
+   * So opening ARMS the guard at the pointer's current position, and hover stays asleep until the mouse
+   * has actually travelled HOVER_WAKE_PX from there. The gamepad's cursor-hide is a separate reason to
+   * ignore hover, and it is checked too — a hidden cursor must never fight the focus it is not driving.
+   */
+  let pointerX = -1;
+  let pointerY = -1;
+  let hoverArmedAt: { readonly x: number; readonly y: number } | null = null;
+
+  /** Called whenever a surface opens: hover sleeps until the pointer leaves this spot. */
+  function armHover(): void {
+    hoverArmedAt = { x: pointerX, y: pointerY };
+  }
+
+  /** Whether this move is the user's, rather than the UI arriving under a still pointer. */
+  function hoverAwake(x: number, y: number): boolean {
+    if (hoverArmedAt === null) return true;
+    if (Math.hypot(x - hoverArmedAt.x, y - hoverArmedAt.y) < HOVER_WAKE_PX) return false;
+    hoverArmedAt = null;
+    return true;
+  }
+
+  window.addEventListener(
     'mousemove',
     (event) => {
-      if (event.clientX === lastOptionX && event.clientY === lastOptionY) return;
-      lastOptionX = event.clientX;
-      lastOptionY = event.clientY;
-      if (openSelect === null) return;
+      const moved = event.clientX !== pointerX || event.clientY !== pointerY;
+      pointerX = event.clientX;
+      pointerY = event.clientY;
+      if (!moved || !open) return;
       if (document.documentElement.classList.contains('cursor-hidden')) return;
+      if (!hoverAwake(event.clientX, event.clientY)) return;
       const target = event.target;
       if (!(target instanceof Element)) return;
-      const button = target.closest<HTMLButtonElement>('.settings-option');
-      if (button === null) return;
-      const index = openSelect.buttons.indexOf(button);
-      if (index === -1 || index === optionIndex) return;
-      optionIndex = index;
-      applyOptionFocus();
+      if (openSelect !== null) {
+        const button = target.closest<HTMLButtonElement>('.settings-option');
+        if (button === null) return;
+        const index = openSelect.buttons.indexOf(button);
+        if (index === -1 || index === optionIndex) return;
+        optionIndex = index;
+        applyOptionFocus();
+        return;
+      }
+      const rowEl = target.closest<HTMLElement>('.setting-row');
+      if (rowEl === null) return;
+      const index = rendered.findIndex((row) => row.el === rowEl);
+      if (index === -1 || index === focusIndex) return;
+      focusIndex = index;
+      applyRowFocus();
     },
     { passive: true },
   );
@@ -882,6 +895,7 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
       focusIndex = 0;
       app.dataset['overlay'] = 'settings';
       screen.setAttribute('aria-hidden', 'false');
+      armHover(); // same as the dropdown: the screen appears under wherever the mouse happens to rest
       // Instant, not animated: a re-open must START at the top rather than glide there from wherever
       // the previous visit left the list (which showed as a half-cropped first row).
       listScroller.to(0, true);
