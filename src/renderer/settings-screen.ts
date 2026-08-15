@@ -104,7 +104,8 @@ export interface SettingsScreen {
   close(): void;
   navUp(): void;
   navDown(): void;
-  navLeft(): void;
+  /** `repeat` marks a hold auto-repeat: a held left must not walk out of the expanded list and beyond. */
+  navLeft(repeat?: boolean): void;
   navRight(): void;
   navActivate(): void;
   navBack(): void;
@@ -637,7 +638,7 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
   }
 
   function navHorizontal(delta: number): void {
-    if (openSelect !== null) return; // the expanded list is vertical
+    if (openSelect !== null) return; // handled by navLeft — the expanded list is otherwise vertical
     const target = focusedRow();
     if (target === undefined) return;
     const row = target.row;
@@ -652,7 +653,17 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
     if (row.kind === 'slider') stepSlider(row, delta);
   }
 
-  function navLeft(): void {
+  function navLeft(repeat = false): void {
+    // Left leaves the expanded list, the same way it leaves a popup (controls.ts): its column sits on the
+    // right edge, so moving left off it means "out". A HELD left is ignored, or the same press would
+    // close the list and then start cycling the row's value behind it.
+    if (openSelect !== null) {
+      if (!repeat) {
+        deps.audio.play('back');
+        closeOptions();
+      }
+      return;
+    }
     navHorizontal(-1);
   }
 

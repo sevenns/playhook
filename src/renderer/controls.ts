@@ -67,7 +67,8 @@ export interface SettingsNav {
   close(): void;
   navUp(): void;
   navDown(): void;
-  navLeft(): void;
+  /** `repeat` marks a hold auto-repeat — see the screen's own navLeft. */
+  navLeft(repeat?: boolean): void;
   navRight(): void;
   navActivate(): void;
   navBack(): void;
@@ -954,7 +955,7 @@ export function createControls(deps: ControlsDeps): Controls {
     // BEFORE stripActive(): left/right are the slider's own gesture (and the dropdown's fast path), and
     // holding one on the Settings screen must never flip through the carousel underneath.
     if (deps.settings.isOpen()) {
-      deps.settings.navLeft();
+      deps.settings.navLeft(repeat);
       return;
     }
     if (stripActive()) {
