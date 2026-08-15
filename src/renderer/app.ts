@@ -429,14 +429,18 @@ function render(state: AppState): void {
 //   2. the card's hero cross-fades over it as soon as it arrives, carrying its palette;
 //   3. only then does the UI fade in — so it is never seen assembling itself, and never changes colour
 //      under the user's eyes a beat after appearing.
-// The UI waits for BOTH seeds (state + a settled background) and never appears before BOOT_MIN_MS, so
-// the reveal reads as an intro rather than as a stutter. The deadline covers a seed that never arrives
-// (unreadable wallpaper, no hero at all): the UI must not stay hidden forever.
+// The UI waits for ALL THREE seeds — the state, a settled background, and the carousel list — and never
+// appears before BOOT_MIN_MS, so the reveal reads as an intro rather than as a stutter. The list is a
+// seed in its own right because the strip's container is switched on in ONE frame (its opacity
+// transition belongs to the card morph, see styles.css): arriving after the reveal, the whole carousel
+// simply appeared, as if it had been display:none. The deadline covers a seed that never arrives
+// (unreadable wallpaper, no hero, no library at all): the UI must not stay hidden forever.
 const BOOT_MIN_MS = 1000;
 const BOOT_DEADLINE_MS = 3000;
 const bootStart = performance.now();
 let bootStateReady = false;
 let bootHeroReady = false;
+let bootLibraryReady = false;
 let bootRevealed = false;
 
 function revealUi(): void {
@@ -445,11 +449,12 @@ function revealUi(): void {
   delete app.dataset['boot'];
 }
 
-/** Reveals once both seeds are in, waiting out the remainder of BOOT_MIN_MS if it is still running. */
-function noteBootSeed(seed: 'state' | 'hero'): void {
+/** Reveals once every seed is in, waiting out the remainder of BOOT_MIN_MS if it is still running. */
+function noteBootSeed(seed: 'state' | 'hero' | 'library'): void {
   if (seed === 'state') bootStateReady = true;
-  else bootHeroReady = true;
-  if (bootRevealed || !bootStateReady || !bootHeroReady) return;
+  else if (seed === 'hero') bootHeroReady = true;
+  else bootLibraryReady = true;
+  if (bootRevealed || !bootStateReady || !bootHeroReady || !bootLibraryReady) return;
   window.setTimeout(revealUi, Math.max(0, BOOT_MIN_MS - (performance.now() - bootStart)));
 }
 
@@ -620,7 +625,12 @@ function applyLibrary(games: readonly LibraryEntry[]): void {
   render(currentState);
 }
 window.api.onLibraryUpdate((library) => applyLibrary(library?.games ?? []));
-void window.api.requestLibrary().then((library) => applyLibrary(library?.games ?? []));
+void window.api.requestLibrary().then((library) => {
+  applyLibrary(library?.games ?? []);
+  // Even an empty list counts: it settles `data-screen`, which is what decides whether the strip's
+  // container is on at all. Waiting for it is what keeps the carousel from popping in afterwards.
+  noteBootSeed('library');
+});
 
 // Game Mode (gamescope) is static for the process — seed it once so the power menu shows "Close Playhook"
 // (full quit) instead of the no-op "Minimize Playhook".
