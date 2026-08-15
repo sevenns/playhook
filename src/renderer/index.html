@@ -23,8 +23,12 @@
              carousel is back), #hero-pan drifts with the strip (slow). One element could only carry one
              duration for both. -->
         <div id="hero-pan">
-          <div class="hero-layer"></div>
-          <div class="hero-layer"></div>
+          <!-- The startup zoom lives on its own wrapper too, for the same reason: it runs only for the
+               boot seconds and then eases back to nothing, at a tempo of its own (see styles.css). -->
+          <div id="hero-boot">
+            <div class="hero-layer"></div>
+            <div class="hero-layer"></div>
+          </div>
         </div>
       </div>
 

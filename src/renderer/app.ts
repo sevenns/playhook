@@ -421,7 +421,7 @@ function render(state: AppState): void {
 }
 
 // ── Boot reveal ─────────────────────────────────────────────────────────────
-// index.html ships #app[data-boot='loading'], which hides the bar and the carousel strip (styles.css):
+// index.html ships #app[data-boot], which hides the bar and the carousel strip (styles.css):
 // the launcher opens on the background alone. The order is deliberate — wallpaper, then the game's own
 // hero, then the UI:
 //   1. the bundled wallpaper is the fastest image main can hand over, so it paints as the opening
@@ -470,6 +470,19 @@ function noteBootSeed(seed: 'state' | 'hero' | 'library'): void {
 }
 
 window.setTimeout(revealUi, BOOT_DEADLINE_MS);
+
+// The startup push on the background (#hero-boot in styles.css): a wider, faster drift than the hero's
+// perpetual pan, on for the boot seconds only. Two frames of delay because a transition needs its
+// starting value painted first — set in the same frame as the load and there is nothing to move from.
+// The direction is randomized like the layers' own pan, so the launcher doesn't always open drifting the
+// same way.
+requestAnimationFrame(() => {
+  requestAnimationFrame(() => {
+    if (bootRevealed) return;
+    req('hero-boot').style.setProperty('--boot-pan', Math.random() < 0.5 ? '6%' : '-6%');
+    app.dataset['boot'] = 'panning';
+  });
+});
 
 /**
  * Runs `paint` no earlier than the end of the wallpaper hold. Only startup is delayed — once the UI is
