@@ -1067,11 +1067,12 @@ export function createControls(deps: ControlsDeps): Controls {
       deps.settings.navBack();
       return;
     }
-    if (carouselBarFocus && deps.carousel.screen() === 'carousel') {
-      // B means "back" everywhere else; leaving the bar only by the same key that entered it would be a
-      // corner a gamepad user can get stuck in.
-      audio.play('back');
-      setCarouselBarFocus(false);
+    if (deps.carousel.screen() === 'carousel') {
+      // The strip is the top level: there is nothing above home to go back TO, so rather than doing
+      // nothing, back hands the focus to More — the only other place on this screen — and hands it
+      // straight back on the next press. That makes B / Tab / Esc a round trip instead of a dead key.
+      audio.play(carouselBarFocus ? 'back' : 'navigate');
+      setCarouselBarFocus(!carouselBarFocus);
       return;
     }
     if (deps.carousel.leaveDetail()) audio.play('back');
@@ -1155,11 +1156,9 @@ export function createControls(deps: ControlsDeps): Controls {
   });
 
   // Keyboard navigation (Desktop Mode / no gamepad): WASD + arrows move, Space/Enter activate, Tab/Backspace
-  // (and Esc) step back, M/Y hand the focus to More — the SAME seven primitives as the gamepad, so the two
-  // input models stay in lockstep. Two keys for the last one because either mnemonic may be the one that
-  // sticks: M for the button it reaches (More), Y for the pad button it stands in for. Tab was the obvious
-  // third candidate and is taken (back), and rebinding it would break the one keyboard habit this UI
-  // already relies on.
+  // (and Esc) step back — the SAME six primitives as the gamepad, so the two input models stay in lockstep.
+  // No key of its own for "go to More": on home, back has nothing above it to return to, so it doubles as
+  // that toggle (see navBack) and Tab / Esc / B all reach the button.
   // Edge-only (event.repeat ignored) to match the gamepad's one-move-per-press feel. preventDefault stops
   // the browser default (Tab focus traversal, Space scroll / native button press, arrow scroll) from firing
   // alongside our custom navigation. A backgrounded launcher doesn't receive keydown (the OS routes keys to
@@ -1178,8 +1177,6 @@ export function createControls(deps: ControlsDeps): Controls {
     tab: navBack,
     backspace: navBack,
     escape: navBack,
-    m: navToggleBar,
-    y: navToggleBar,
   };
   // The four directions are the exception to the edge model: holding one flips through the carousel or
   // runs down the Settings list, matching the gamepad's hold-to-repeat (a held direction inside a popup

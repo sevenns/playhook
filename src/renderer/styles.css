@@ -1058,6 +1058,56 @@ html:not(.cursor-hidden) .rect-button:hover,
   display: none;
 }
 
+/* The stats and the action items come in one after another as the popup opens, in reading order: the
+   column slides in as a whole (see .popup-column), and its contents arrive just behind it instead of
+   being fully drawn the moment it lands. Keyed on .is-open, so the animation restarts on every open.
+   `both` holds the first frame during the delay — without it each item would flash at full opacity
+   before its turn. The items are laid out either way; this only decides when they become visible. */
+@keyframes popup-item-in {
+  from {
+    opacity: 0;
+    transform: translateY(calc(12 * var(--px)));
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.popup.is-open .info-item,
+.popup.is-open .actions-group > .text-button {
+  animation: popup-item-in 0.3s cubic-bezier(0.2, 0, 0.2, 1) both;
+  animation-delay: calc(0.12s + var(--pop, 0) * 45ms);
+}
+
+.popup.is-open .info-item:nth-child(2),
+.popup.is-open .actions-group > .text-button:nth-child(2) {
+  --pop: 1;
+}
+.popup.is-open .info-item:nth-child(3),
+.popup.is-open .actions-group > .text-button:nth-child(3) {
+  --pop: 2;
+}
+.popup.is-open .actions-group > .text-button:nth-child(4) {
+  --pop: 3;
+}
+.popup.is-open .actions-group > .text-button:nth-child(5) {
+  --pop: 4;
+}
+.popup.is-open .actions-group > .text-button:nth-child(6) {
+  --pop: 5;
+}
+.popup.is-open .actions-group > .text-button:nth-child(n + 7) {
+  --pop: 6;
+}
+
+/* An item that collapses (or grows back) WHILE the popup is open must not have the entrance animation
+   sitting on its opacity — `both` would pin it at the animation's end value and the fade below would
+   never show. The entrance has long finished by then, so dropping it costs nothing. */
+.popup.is-open .actions-group > .text-button.is-hidden {
+  animation: none;
+}
+
 .info-item {
   display: flex;
   flex-direction: column;
@@ -1169,7 +1219,12 @@ html:not(.cursor-hidden) .rect-button:hover,
   display: none;
   flex-direction: column;
   align-items: flex-end;
-  gap: calc(8 * var(--px));
+}
+
+/* The gap is a MARGIN rather than `gap`, so an item that collapses can take its own spacing with it —
+   a flex gap survives a zero-height neighbour and would leave a step in the stack while it folds away. */
+.actions-group > .text-button + .text-button {
+  margin-top: calc(8 * var(--px));
 }
 #popup[data-view='details'] .actions-group[data-group='details'],
 #popup[data-view='power'] .actions-group[data-group='power'],
@@ -1224,6 +1279,25 @@ html:not(.cursor-hidden) .text-button:hover,
    this class. Author rule needed: .text-button's display:flex would otherwise beat the UA [hidden]. */
 .text-button.is-hidden {
   display: none;
+}
+
+/* …except inside the popup's action stack, where an item can come and go while the menu is on screen
+   (a game starts running → Force close appears; it exits → it goes). There it FOLDS instead: height,
+   spacing and opacity animate to nothing and the items below slide up to meet it. Kept out of the base
+   rule on purpose — everywhere else `is-hidden` is decided before the element is ever seen, and a fold
+   would be an animation of nothing. */
+.actions-group > .text-button {
+  transition: background 0.2s ease, color 0.2s ease, transform 0.12s ease, opacity 0.2s ease,
+    height 0.24s cubic-bezier(0.4, 0, 0.2, 1), margin-top 0.24s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.actions-group > .text-button.is-hidden {
+  display: flex;
+  height: 0;
+  margin-top: 0;
+  opacity: 0;
+  overflow: hidden;
+  pointer-events: none;
 }
 
 /* ── Settings screen (the fourth surface) ───────────────────────────────────

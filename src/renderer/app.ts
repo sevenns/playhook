@@ -194,13 +194,34 @@ function infoItem(label: string, value: string): HTMLElement {
   return item;
 }
 
+/**
+ * Fills the Details popup's stats panel. Rebuilt only when the panel is empty — otherwise the three rows
+ * are updated IN PLACE. Not a micro-optimization: the rows carry the popup's staggered entrance (see
+ * popup-item-in in styles.css), which replays whenever the nodes are recreated. render() runs on every
+ * state push and on every carousel step, so rebuilding here would restart that entrance mid-view and the
+ * stats would flicker while the user reads them.
+ */
 function buildInfoPanel(stats: Stats): void {
+  const rows: readonly (readonly [string, string])[] = [
+    [translator('launcher.info.lastPlayed'), formatDate(stats.lastPlayedAt, translator, currentLocale)],
+    [translator('launcher.info.playtime'), formatPlaytime(stats.totalPlaySeconds, translator)],
+    [translator('launcher.info.launches'), String(stats.launchCount)],
+  ];
+  const existing = [...infoPanel.children];
+  if (existing.length === rows.length) {
+    existing.forEach((item, i) => {
+      const row = rows[i];
+      if (row === undefined) return;
+      const [label, value] = row;
+      const labelEl = item.querySelector('.info-label');
+      const valueEl = item.querySelector('.info-value');
+      if (labelEl !== null) labelEl.textContent = label;
+      if (valueEl !== null) valueEl.textContent = value;
+    });
+    return;
+  }
   while (infoPanel.firstChild !== null) infoPanel.removeChild(infoPanel.firstChild);
-  infoPanel.append(
-    infoItem(translator('launcher.info.lastPlayed'), formatDate(stats.lastPlayedAt, translator, currentLocale)),
-    infoItem(translator('launcher.info.playtime'), formatPlaytime(stats.totalPlaySeconds, translator)),
-    infoItem(translator('launcher.info.launches'), String(stats.launchCount)),
-  );
+  infoPanel.append(...rows.map(([label, value]) => infoItem(label, value)));
 }
 
 // ── Title / status busy layout ──────────────────────────────────────────────
