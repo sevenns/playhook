@@ -108,8 +108,8 @@ export interface Controls {
   refresh(): void;
   /** Opens the error popup with the given message (a failed launch/action from main). */
   showError(message: string): void;
-  /** Seeds whether this is a Game Mode (gamescope) session — flips the power menu's primary item from
-   *  "Minimize Playhook" (hide to tray) to "Close Playhook" (full quit). Called once at startup. */
+  /** Seeds whether this is a Game Mode (gamescope) session — drops "Minimize Playhook" from the power
+   *  menu, since there is no tray to minimize into there. Called once at startup. */
   setGameMode(gameMode: boolean): void;
   /** Starts the gamepad polling loop. */
   start(): void;
@@ -184,6 +184,7 @@ export function createControls(deps: ControlsDeps): Controls {
   const powerReboot = req<HTMLButtonElement>('power-reboot');
   const powerSleep = req<HTMLButtonElement>('power-sleep');
   const powerMinimize = req<HTMLButtonElement>('power-minimize');
+  const powerQuit = req<HTMLButtonElement>('power-quit');
   const powerClose = req<HTMLButtonElement>('power-close');
   const confirmYes = req<HTMLButtonElement>('confirm-yes');
   const confirmNo = req<HTMLButtonElement>('confirm-no');
@@ -502,12 +503,12 @@ export function createControls(deps: ControlsDeps): Controls {
     if (show) menuForget.textContent = t()('launcher.menu.forget');
   }
 
-  // The power menu's primary item. Desktop/Windows: "Minimize Playhook" (hide to tray). Game Mode: "Close
-  // Playhook" — a full quit, since there is no tray to minimize into (mirrors how closing the window quits
-  // in Game Mode). Label from JS (no data-i18n) so a language change relabels it at render time and it
-  // stays out of the i18n HTML test.
-  function applyPowerPrimary(): void {
-    powerMinimize.textContent = t()(gameMode ? 'launcher.menu.quit' : 'launcher.menu.minimize');
+  // The power menu carries both ways out of the launcher: "Minimize Playhook" (hide to the tray) and
+  // "Close Playhook" (full quit). In Game Mode the first one goes — there is no tray to hide into, so
+  // hiding is a no-op there, and the quit is the honest option (mirrors how closing the window quits in
+  // Game Mode).
+  function applyPowerItems(): void {
+    powerMinimize.classList.toggle('is-hidden', gameMode);
   }
 
 
@@ -682,6 +683,7 @@ export function createControls(deps: ControlsDeps): Controls {
     powerReboot,
     powerSleep,
     powerMinimize,
+    powerQuit,
     powerClose,
     confirmYes,
     confirmNo,
@@ -702,8 +704,12 @@ export function createControls(deps: ControlsDeps): Controls {
         items.push(menuClose);
         return items;
       }
-      case 'power':
-        return [powerShutdown, powerReboot, powerSleep, powerMinimize, powerClose];
+      case 'power': {
+        const items: HTMLButtonElement[] = [powerShutdown, powerReboot, powerSleep];
+        if (!powerMinimize.classList.contains('is-hidden')) items.push(powerMinimize);
+        items.push(powerQuit, powerClose);
+        return items;
+      }
       case 'confirm':
         return [confirmYes, confirmNo];
       case 'error':
@@ -832,14 +838,19 @@ export function createControls(deps: ControlsDeps): Controls {
       audio.play('button');
       openConfirm('sleep');
     } else if (btn === powerMinimize) {
-      // Desktop/Windows: hide to the tray (same as the empty-screen Hide button). Game Mode: quit the app
-      // ("Close Playhook") — there is no tray, so hide is a no-op there. No confirm either way — hide is
-      // non-destructive, and a quit is as recoverable as relaunching from the Steam library. Close the
-      // popup first so a re-summoned launcher shows a clean bar, not this menu.
+      // Hide to the tray (same as the empty-screen Hide button); never shown in Game Mode, where there is
+      // no tray and this would be a no-op. No confirm — hiding is non-destructive. Close the popup first
+      // so a re-summoned launcher shows a clean bar, not this menu.
       audio.play('back');
       closePopup();
-      if (gameMode) window.api.requestQuit();
-      else window.api.requestHide();
+      window.api.requestHide();
+    } else if (btn === powerQuit) {
+      // The full quit. No confirm either: it is as recoverable as relaunching from the Steam library —
+      // and in Game Mode this is the only way out, so a confirm would sit between the user and the exit
+      // every single time.
+      audio.play('back');
+      closePopup();
+      window.api.requestQuit();
     } else if (btn === confirmYes) {
       acceptConfirm();
     } else if (btn === confirmNo) {
@@ -1144,7 +1155,11 @@ export function createControls(deps: ControlsDeps): Controls {
   });
 
   // Keyboard navigation (Desktop Mode / no gamepad): WASD + arrows move, Space/Enter activate, Tab/Backspace
-  // (and Esc) step back — the SAME six primitives as the gamepad, so the two input models stay in lockstep.
+  // (and Esc) step back, M/Y hand the focus to More — the SAME seven primitives as the gamepad, so the two
+  // input models stay in lockstep. Two keys for the last one because either mnemonic may be the one that
+  // sticks: M for the button it reaches (More), Y for the pad button it stands in for. Tab was the obvious
+  // third candidate and is taken (back), and rebinding it would break the one keyboard habit this UI
+  // already relies on.
   // Edge-only (event.repeat ignored) to match the gamepad's one-move-per-press feel. preventDefault stops
   // the browser default (Tab focus traversal, Space scroll / native button press, arrow scroll) from firing
   // alongside our custom navigation. A backgrounded launcher doesn't receive keydown (the OS routes keys to
@@ -1163,6 +1178,8 @@ export function createControls(deps: ControlsDeps): Controls {
     tab: navBack,
     backspace: navBack,
     escape: navBack,
+    m: navToggleBar,
+    y: navToggleBar,
   };
   // The four directions are the exception to the edge model: holding one flips through the carousel or
   // runs down the Settings list, matching the gamepad's hold-to-repeat (a held direction inside a popup
@@ -1229,7 +1246,7 @@ export function createControls(deps: ControlsDeps): Controls {
     const active = phaseOf(state()) === 'busy' || steamBusy(state());
     if (active && !wasActive) focusRevealed = false;
     wasActive = active;
-    applyPowerPrimary(); // re-label on a language change (refresh runs after applyLocale → render)
+    applyPowerItems();
     applyFocus();
     applyStackFocus();
     applyPlayAria();
@@ -1245,7 +1262,7 @@ export function createControls(deps: ControlsDeps): Controls {
     showError: openError,
     setGameMode: (value: boolean) => {
       gameMode = value;
-      applyPowerPrimary();
+      applyPowerItems();
     },
     start: () => {
       gamepad.start();

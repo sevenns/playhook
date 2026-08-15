@@ -516,6 +516,13 @@ body {
   transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1), height 0.35s cubic-bezier(0.4, 0, 0.2, 1),
     opacity 0s linear;
 }
+/* The startup fan (carousel.playIntro): the same wave, except the selected card fades in WITH the row
+   instead of swapping in opaque. Both rules above exist to hand over from the play button — at startup
+   there is no button to hand over from, and a card snapping in mid-wave is what gives that away. */
+#app[data-screen='carousel'][data-returning='intro'] .card.is-selected {
+  transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1), height 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 0.4s cubic-bezier(0.2, 0, 0.2, 1) 0.35s;
+}
 #app[data-screen='carousel'][data-card-morph='on'] .play-button {
   /* Stays visible (and keeps its cover) for exactly that grow, then is swapped out in one frame. */
   transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1), height 0.35s cubic-bezier(0.4, 0, 0.2, 1),

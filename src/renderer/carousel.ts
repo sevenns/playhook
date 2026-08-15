@@ -363,7 +363,28 @@ export function createCarousel(deps: CarouselDeps): Carousel {
     selected,
     playIntro(): void {
       if (screen !== 'carousel') return;
+      // Pull the cards back to zero and flush BEFORE arming the fan, rather than trusting them to still
+      // be hidden. By the time the boot screen hands over, the strip has been through setGames and
+      // setScreen — either of which may already have run (and finished) a return of its own, leaving the
+      // row fully faded in. Starting the fan from that state is a no-op: an opacity that never changes
+      // has nothing to transition, which is exactly the "the carousel is just there" it was meant to fix.
+      // Suppressing the transition for that reset is not optional: the cards carry a DELAYED opacity
+      // transition, so a plain `opacity = 0` would animate its way there (350ms later) instead of taking
+      // effect now — leaving nothing to fade in from. The reflow makes the 0 the transition's start value.
+      for (const card of cards.values()) {
+        card.style.transition = 'none';
+        card.style.opacity = '0';
+      }
+      void strip.offsetWidth;
       markReturning(true);
+      // Same fan, one difference: the selected card fades in with the rest. On a real hand-back it swaps
+      // in opaque because it takes over from a pixel-identical play button — at startup there is no button
+      // to take over from, and an opaque card appearing mid-wave is the one thing that breaks it.
+      app.dataset['returning'] = 'intro';
+      for (const card of cards.values()) {
+        card.style.removeProperty('transition');
+        card.style.removeProperty('opacity');
+      }
     },
     setBusyGame(id: string | null): void {
       if (id === busyId) return;
