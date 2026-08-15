@@ -28,12 +28,13 @@ import type {
   GameConfigSaveRequest,
   ManifestSource,
 } from '../shared/types';
-import type { Translator } from '../shared/i18n/index.js';
+import type { MessageKey, Translator } from '../shared/i18n/index.js';
 import { type AudioController } from './audio.js';
 import { req } from './dom.js';
 import { createHoverGuard } from './hover-guard.js';
 import { clampIndex, wrapIndex } from './index-math.js';
 import { createScroller, pxUnit } from './screen-scroller.js';
+import { createSidebar, type SidebarEntry } from './screen-sidebar.js';
 import type { NavSurface } from './nav-surface.js';
 import {
   emptyFormModel,
@@ -162,6 +163,8 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   const screen = req('game-settings');
   const veil = screen.querySelector<HTMLElement>('.settings-veil');
   const listEl = req('game-settings-list');
+  const navEl = req('game-settings-nav');
+  const statusEl = req('game-settings-status');
   const headingEl = req('game-settings-heading');
   const menuEl = req('game-settings-options');
   const menuListEl = req('game-settings-options-list');
@@ -206,8 +209,11 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   let status: string | null = null;
 
   let model: GameSettingsModel | null = null;
+  /** The rows of the SELECTED section only — the pane shows one section at a time. */
   let rendered: readonly RenderedGameRow[] = [];
   let focusIndex = 0;
+  /** Which titled section the pane is showing, by its translation key. */
+  let sectionKey: MessageKey | null = null;
   let validateTimer = 0;
   /** Guards a late answer from a validation whose text is already stale. */
   let validateToken = 0;
@@ -220,6 +226,21 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   const listScroller = createScroller(listEl);
   const menuScroller = createScroller(menuListEl);
   const hover = createHoverGuard();
+
+  /**
+   * The section column. It carries this screen's actions too — Save, Discard edits, Delete, Close —
+   * which is the whole point: they used to sit under six sections of form, so committing an edit meant
+   * scrolling past every field you had just finished with.
+   */
+  const sidebar = createSidebar(navEl, {
+    audio: deps.audio,
+    onSection: (id, entered) => {
+      sectionKey = id as MessageKey;
+      renderPane();
+      if (entered) enterPane();
+    },
+    onAction: (id) => runAction(id as GameRowId),
+  });
 
   // ── Form state ─────────────────────────────────────────────────────────────
 
@@ -284,7 +305,9 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   /** Whether two models describe the same rows in the same order (a patch is enough when they do). */
   function sameComposition(a: GameSettingsModel, b: GameSettingsModel): boolean {
     const ids = (m: GameSettingsModel): string =>
-      m.sections.flatMap((section) => section.rows.map((row) => `${row.kind}:${row.id}`)).join('|');
+      visibleRows(m)
+        .map((row) => `${row.kind}:${row.id}`)
+        .join('|');
     return ids(a) === ids(b);
   }
 
@@ -308,6 +331,88 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     rendered = [];
   }
 
+  /** A section that HAS a title — i.e. one the column can name and the pane can show. */
+  interface TitledSection {
+    readonly titleKey: MessageKey;
+    readonly rows: readonly GameSettingsRow[];
+  }
+
+  function titledSections(from: GameSettingsModel): readonly TitledSection[] {
+    return from.sections.flatMap((section) => {
+      const key = section.titleKey;
+      return key === undefined ? [] : [{ titleKey: key, rows: section.rows }];
+    });
+  }
+
+  function currentSection(from: GameSettingsModel): TitledSection | undefined {
+    const titled = titledSections(from);
+    return titled.find((section) => section.titleKey === sectionKey) ?? titled[0];
+  }
+
+  /** The rows that are NOT in any titled section: this screen's actions and its notes. */
+  function trailingRows(from: GameSettingsModel): readonly GameSettingsRow[] {
+    return from.sections.filter((s) => s.titleKey === undefined).flatMap((s) => s.rows);
+  }
+
+  /**
+   * The column: the sections, then the actions. The NOTES that share the model's last section stay out
+   * of it — they are the screen's own feedback (what the last save did, why Save is unavailable), so
+   * they go under both columns where they are readable from anywhere.
+   */
+  /** What the column WOULD show — so it is only rebuilt when that actually changed. */
+  let columnSignature = '';
+
+  function renderColumn(from: GameSettingsModel): void {
+    const entries = columnEntries(from);
+    const signature = entries
+      .map((entry) => `${entry.id}:${entry.label}:${entry.disabled === true ? '1' : '0'}`)
+      .join('|');
+    // Save's enabled state follows every keystroke, so this runs constantly — rebuilding the buttons
+    // each time would drop the hover state and flicker under the cursor for no reason.
+    if (signature === columnSignature) return;
+    columnSignature = signature;
+    sidebar.render(entries);
+  }
+
+  function columnEntries(from: GameSettingsModel): readonly SidebarEntry[] {
+    return [
+      ...titledSections(from).map((section) => ({
+        id: section.titleKey,
+        label: t()(section.titleKey),
+        kind: 'section' as const,
+      })),
+      ...trailingRows(from).flatMap((row) =>
+        row.kind === 'action'
+          ? [
+              {
+                id: row.id,
+                label: rowLabelText(row.label, t()),
+                kind: 'action' as const,
+                ...(row.danger === true ? { danger: true } : {}),
+                ...(row.disabled === true ? { disabled: true } : {}),
+              },
+            ]
+          : [],
+      ),
+    ];
+  }
+
+  /** The notes, under both columns. */
+  function renderStatus(from: GameSettingsModel): void {
+    const notes = trailingRows(from).flatMap((row) => (row.kind === 'note' ? [row] : []));
+    statusEl.replaceChildren(
+      ...notes.map((note) => {
+        const el = document.createElement('div');
+        el.className = `setting-row setting-row-note is-inert is-${note.tone}`;
+        const text = document.createElement('div');
+        text.className = 'setting-note-text';
+        text.textContent = rowLabelText(note.text, t());
+        el.append(text);
+        return el;
+      }),
+    );
+  }
+
   function render(): void {
     const next = currentModel();
     headingEl.textContent = screenHeading(next, t());
@@ -323,26 +428,62 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       renderMessage(t()('gameSettings.loading'));
       return;
     }
-    if (model !== null && sameComposition(model, next) && rendered.length > 0) {
-      const rows = rowsOf(next);
-      const artworkChanged = artworkSignature(model) !== artworkSignature(next);
+    const previous = model;
+    model = next;
+    // The column carries Save's own enabled state, so it follows every edit — unlike the Settings
+    // screen's, whose entries only change when a section appears.
+    renderColumn(next);
+    renderStatus(next);
+    if (previous !== null && sameComposition(previous, next) && rendered.length > 0) {
+      const rows = visibleRows(next);
+      const artworkChanged = artworkSignature(previous) !== artworkSignature(next);
       rendered.forEach((row, index) => {
         const nextRow = rows[index];
         if (nextRow !== undefined) patchGameRow(row, nextRow, t());
       });
-      model = next;
       // A patch keeps the DOM, thumbnails included — so the strip has to be re-read whenever the paths
       // behind it moved. Without this, adding a background to an existing list left the previous strip
       // on screen (the row composition had not changed, so nothing rebuilt).
       if (artworkChanged) void refreshThumbnails();
       return;
     }
-    model = next;
-    rendered = renderGameSettings(listEl, next, t()).rows;
+    renderPane();
+  }
+
+  /** The rows the pane currently shows — one section's worth. */
+  function visibleRows(from: GameSettingsModel): readonly GameSettingsRow[] {
+    return currentSection(from)?.rows ?? [];
+  }
+
+  function renderPane(): void {
+    const from = model;
+    if (from === null) return;
+    const section = currentSection(from);
+    if (section === undefined) return;
+    sectionKey = section.titleKey;
+    rendered = renderGameSettings(listEl, { ...from, sections: [section] }, t()).rows;
     focusIndex = nearestFocusable(focusIndex, 1);
     applyRowFocus(true);
+    listScroller.to(0, true);
     requestAnimationFrame(() => listScroller.fades());
     void refreshThumbnails();
+  }
+
+  /** Hands the focus from the column to the pane, at its first focusable row. */
+  function enterPane(): void {
+    if (rendered.length === 0) return;
+    sidebar.setFocused(false);
+    focusIndex = nearestFocusable(0, 1);
+    hover.arm();
+    applyRowFocus();
+  }
+
+  /** …and back. The column is the only place the screen can be left from. */
+  function leavePane(): void {
+    closeMenus();
+    sidebar.setFocused(true);
+    hover.arm();
+    applyRowFocus();
   }
 
   /**
@@ -399,7 +540,11 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   }
 
   function applyRowFocus(instant = false): void {
-    rendered.forEach((row, index) => row.el.classList.toggle('is-focused', index === focusIndex));
+    const active = !sidebar.hasFocus();
+    rendered.forEach((row, index) =>
+      row.el.classList.toggle('is-focused', active && index === focusIndex),
+    );
+    if (!active) return;
     const target = rendered[focusIndex];
     if (target === undefined) return;
     listScroller.reveal(target.el, instant);
@@ -1151,7 +1296,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     const surface = activeSurface();
     if (surface === 'lightbox') return;
     if (surface === 'menu') return moveMenuFocus(-1);
-    if (surface === 'form') return moveRowFocus(-1);
+    if (surface === 'form') return sidebar.hasFocus() ? sidebar.move(-1) : moveRowFocus(-1);
     surface.navUp();
   }
 
@@ -1160,11 +1305,17 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     const surface = activeSurface();
     if (surface === 'lightbox') return;
     if (surface === 'menu') return moveMenuFocus(1);
-    if (surface === 'form') return moveRowFocus(1);
+    if (surface === 'form') return sidebar.hasFocus() ? sidebar.move(1) : moveRowFocus(1);
     surface.navDown();
   }
 
   function navHorizontal(delta: number): void {
+    // From the column, RIGHT steps into the pane. Left is NOT its mirror there: inside the pane it
+    // belongs to the selects and the number steppers, so leaving is B.
+    if (sidebar.hasFocus()) {
+      if (delta > 0 && sidebar.selected()?.kind === 'section') enterPane();
+      return;
+    }
     const target = rendered[focusIndex];
     if (target === undefined) return;
     const row = target.row;
@@ -1244,33 +1395,31 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
         openListMenu(row);
         return;
       case 'action':
-        if (row.disabled === true) return;
-        activateAction(row.id, target);
+        // Actions live in the column now; a row of this kind should never reach the pane.
         return;
       default:
         return;
     }
   }
 
-  function activateAction(id: GameRowId, target: RenderedGameRow): void {
+  /** The screen's actions, now that they live in the column rather than at the end of the form. */
+  function runAction(id: GameRowId): void {
     switch (id) {
       case 'save':
         deps.audio.play('button');
-        pressFlash(target.el);
         void runSave();
         return;
       case 'reset':
         deps.audio.play('button');
-        pressFlash(target.el);
         deps.onConfirmRequested('reset');
         return;
       case 'delete':
         deps.audio.play('button');
-        pressFlash(target.el);
         deps.onConfirmRequested('delete');
         return;
       case 'close':
-        navBack();
+        // The same question B asks from the column: leaving with unsaved edits is confirmed first.
+        leaveScreen();
         return;
       default:
         return;
@@ -1293,6 +1442,10 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       return;
     }
     if (surface === 'form') {
+      if (sidebar.hasFocus()) {
+        sidebar.activate();
+        return;
+      }
       const target = rendered[focusIndex];
       if (target !== undefined) activateRow(target);
       return;
@@ -1318,6 +1471,17 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       return;
     }
     deps.audio.play('back');
+    // Out of the pane, back to the column; out of the column, off the screen — which is where the
+    // unsaved-edits question belongs, since the column is the only way out.
+    if (!sidebar.hasFocus()) {
+      leavePane();
+      return;
+    }
+    leaveScreen();
+  }
+
+  /** Leaves the screen, asking first when there is anything to lose. */
+  function leaveScreen(): void {
     if (dirty()) {
       deps.onConfirmRequested('discard');
       return;
@@ -1355,6 +1519,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     const index = rendered.findIndex((row) => row.el === rowEl);
     const entry = rendered[index];
     if (entry === undefined || !isFocusable(entry.row)) return;
+    sidebar.setFocused(false);
     focusIndex = index;
     applyRowFocus();
     const chevronEl = target.closest<HTMLElement>('.setting-chevron');
@@ -1401,8 +1566,9 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       if (rowEl === null) return;
       const index = rendered.findIndex((row) => row.el === rowEl);
       const entry = rendered[index];
-      if (index === -1 || index === focusIndex || entry === undefined || !isFocusable(entry.row))
-        return;
+      if (index === -1 || entry === undefined || !isFocusable(entry.row)) return;
+      if (index === focusIndex && !sidebar.hasFocus()) return;
+      sidebar.setFocused(false);
       focusIndex = index;
       applyRowFocus();
     },
@@ -1416,6 +1582,9 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       open = true;
       app.dataset['overlay'] = 'game-settings';
       screen.setAttribute('aria-hidden', 'false');
+      sidebar.setFocused(true); // the screen opens on its table of contents, not inside a section
+      sectionKey = null;
+      columnSignature = '';
       hover.arm();
       listScroller.to(0, true);
       focusIndex = 0;
@@ -1471,9 +1640,16 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     },
     relocalize: () => {
       if (model !== null) {
-        relocalizeGameSections(listEl, model, t());
+        const section = currentSection(model);
+        if (section !== undefined) {
+          relocalizeGameSections(listEl, { ...model, sections: [section] }, t());
+        }
         for (const row of rendered) relocalizeGameRow(row, t());
         headingEl.textContent = screenHeading(model, t());
+        sourceEl.textContent = `${rowLabelText(model.source, t())} ·`;
+        // The column and the status strip ARE labels — rebuilt, not patched.
+        renderColumn(model);
+        renderStatus(model);
       } else {
         render();
       }

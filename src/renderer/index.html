@@ -197,7 +197,13 @@
             <div class="settings-title" data-i18n="window.settings">Settings</div>
             <div class="settings-version" id="settings-version"></div>
           </div>
-          <div class="settings-list" id="settings-list"></div>
+          <!-- TWO columns: the screen's sections (and the actions that end it) on the left, the rows of
+               the selected section on the right. One long scroll put Reset and Close behind the whole
+               form — see screen-sidebar.ts. -->
+          <div class="settings-body">
+            <div class="settings-nav" id="settings-nav"></div>
+            <div class="settings-list" id="settings-list"></div>
+          </div>
         </div>
         <!-- The dropdown's frost lives OUTSIDE the fading container: its own opacity animation would
              otherwise fade the blur along with everything else, which is the cost we are avoiding. -->
@@ -231,7 +237,13 @@
               <span class="settings-version" id="game-settings-heading"></span>
             </div>
           </div>
-          <div class="settings-list" id="game-settings-list"></div>
+          <div class="settings-body">
+            <div class="settings-nav" id="game-settings-nav"></div>
+            <div class="settings-list" id="game-settings-list"></div>
+          </div>
+          <!-- Save's own feedback and the validation summary: they belong to the SCREEN, not to any one
+               section, so they sit under both columns and stay readable wherever the focus is. -->
+          <div class="settings-status" id="game-settings-status"></div>
         </div>
         <div class="settings-options-blur"></div>
         <!-- One column menu for three jobs: an expanded dropdown, a path row's Browse/Clear, and the list

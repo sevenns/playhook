@@ -16,12 +16,13 @@ import type {
   LanguageMode,
   UpdateStatus,
 } from '../shared/types';
-import type { Translator } from '../shared/i18n/index.js';
+import type { MessageKey, Translator } from '../shared/i18n/index.js';
 import { type AudioController } from './audio.js';
 import { req } from './dom.js';
 import { createHoverGuard } from './hover-guard.js';
 import { clampIndex, wrapIndex } from './index-math.js';
 import { createScroller, pxUnit } from './screen-scroller.js';
+import { createSidebar } from './screen-sidebar.js';
 import {
   buildSettingsModel,
   volumePercent,
@@ -31,6 +32,7 @@ import {
   type SettingsRow,
   type ToggleId,
 } from './settings-form-model.js';
+import { rowLabelText } from './row-view-core.js';
 import {
   optionLabel,
   optionLabelNode,
@@ -158,6 +160,12 @@ function withSelect(settings: AppSettings, id: SelectId, value: string): AppSett
   }
 }
 
+/** A section that HAS a title — i.e. one the column can name and the pane can show. */
+interface TitledSection {
+  readonly titleKey: MessageKey;
+  readonly rows: readonly SettingsRow[];
+}
+
 function clampPercent(percent: number): number {
   return Math.min(100, Math.max(0, Math.round(percent)));
 }
@@ -167,6 +175,7 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
   const screen = req('settings');
   const veil = screen.querySelector<HTMLElement>('.settings-veil');
   const listEl = req('settings-list');
+  const navEl = req('settings-nav');
   const versionEl = req('settings-version');
   const optionsEl = req('settings-options');
   const optionsListEl = req('settings-options-list');
@@ -183,8 +192,11 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
   let appVersion = '';
 
   let model: SettingsModel | null = null;
+  /** The rows of the SELECTED section only — the pane shows one section at a time (screen-sidebar.ts). */
   let rendered: readonly RenderedRow[] = [];
   let focusIndex = 0;
+  /** Which titled section the pane is showing, by its translation key. */
+  let sectionKey: MessageKey | null = null;
 
   // The expanded dropdown: which row it belongs to, its option buttons and the focused option.
   let openSelect: {
@@ -214,6 +226,25 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
   // Both scrolling surfaces of this screen use the shared scroller (screen-scroller.ts) — the settings
   // list and the expanded dropdown — so they behave identically, and so do the other screens.
   const listScroller = createScroller(listEl);
+
+  /**
+   * The section column. Selecting a section shows it in the pane; ACTIVATING one moves the focus there,
+   * which is the only way in — so B is always "back to the column", and the way out of the screen is
+   * from the column alone.
+   */
+  const sidebar = createSidebar(navEl, {
+    audio: deps.audio,
+    onSection: (id, entered) => {
+      sectionKey = id as MessageKey;
+      renderPane();
+      if (entered) enterPane();
+    },
+    onAction: (id) => {
+      deps.audio.play('button');
+      if (id === 'reset') deps.onResetRequested();
+      else navBack();
+    },
+  });
   const optionsScroller = createScroller(optionsListEl);
 
   /**
@@ -222,7 +253,11 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
    * rather than a jump per step at the boundary.
    */
   function applyRowFocus(instant = false): void {
-    rendered.forEach((row, index) => row.el.classList.toggle('is-focused', index === focusIndex));
+    const active = !sidebar.hasFocus();
+    rendered.forEach((row, index) =>
+      row.el.classList.toggle('is-focused', active && index === focusIndex),
+    );
+    if (!active) return;
     const target = focusedRow();
     if (target === undefined) return;
     listScroller.reveal(target.el, instant);
@@ -263,7 +298,21 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
     return next.sections.flatMap((section) => section.rows);
   }
 
-  /** Rebuilds or patches the list for the current state, keeping the focus index in range. */
+  /** The titled sections — the ones the column offers. The title-less one is the action stack. */
+  function titledSections(from: SettingsModel): readonly TitledSection[] {
+    return from.sections.flatMap((section) => {
+      const key = section.titleKey;
+      return key === undefined ? [] : [{ titleKey: key, rows: section.rows }];
+    });
+  }
+
+  /** The section the pane is showing, falling back to the first one. */
+  function currentSection(from: SettingsModel): TitledSection | undefined {
+    const titled = titledSections(from);
+    return titled.find((section) => section.titleKey === sectionKey) ?? titled[0];
+  }
+
+  /** Rebuilds or patches the screen for the current state, keeping the focus index in range. */
   function render(): void {
     const next = currentModel();
     versionEl.textContent = appVersion;
@@ -272,24 +321,82 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
       renderLoading();
       return;
     }
-    if (model !== null && sameComposition(model, next) && rendered.length > 0) {
-      const rows = rowsOf(next);
+    const previous = model;
+    model = next;
+    if (previous === null || !sameComposition(previous, next)) renderColumn(next);
+    if (previous !== null && sameComposition(previous, next) && rendered.length > 0) {
+      const rows = visibleRows(next);
       rendered.forEach((row, index) => {
         const nextRow = rows[index];
         // A field being dragged owns its value until the pointer is released — see the module note.
         if (nextRow === undefined || (dragging !== null && dragging.rowIndex === index)) return;
         patchRow(row, nextRow, t());
       });
-      model = next;
       return;
     }
-    model = next;
-    rendered = renderSettings(listEl, next, t()).rows;
+    renderPane();
+  }
+
+  /**
+   * The column: one entry per titled section, then the screen's actions. The actions come from the
+   * title-less section the model already ends with — the same one that used to sit at the bottom of the
+   * scroll, which is exactly what made them hard to reach.
+   */
+  function renderColumn(from: SettingsModel): void {
+    sidebar.render([
+      ...titledSections(from).map((section) => ({
+        id: section.titleKey,
+        label: t()(section.titleKey),
+        kind: 'section' as const,
+      })),
+      ...from.sections
+        .filter((section) => section.titleKey === undefined)
+        .flatMap((section) => section.rows)
+        .flatMap((row) =>
+          row.kind === 'action'
+            ? [{ id: row.id, label: rowLabelText(row.label, t()), kind: 'action' as const }]
+            : [],
+        ),
+    ]);
+  }
+
+  /** The rows the pane currently shows — one section's worth. */
+  function visibleRows(from: SettingsModel): readonly SettingsRow[] {
+    return currentSection(from)?.rows ?? [];
+  }
+
+  /** Draws the selected section into the pane. The column is rebuilt separately (its entries change far
+   *  less often than the values inside a section do). */
+  function renderPane(): void {
+    const from = model;
+    if (from === null) return;
+    const section = currentSection(from);
+    if (section === undefined) return;
+    sectionKey = section.titleKey;
+    rendered = renderSettings(listEl, { ...from, sections: [section] }, t()).rows;
     focusIndex = Math.min(Math.max(focusIndex, 0), Math.max(0, rendered.length - 1));
     applyRowFocus(true);
+    listScroller.to(0, true);
     // The rows were inserted THIS tick, so scrollHeight is still the pre-layout value — the fades would
     // be computed against a list that "doesn't scroll yet". Re-run them once the layout has settled.
     requestAnimationFrame(() => listScroller.fades());
+  }
+
+  /** Hands the focus from the column to the pane, at its first row. */
+  function enterPane(): void {
+    if (rendered.length === 0) return;
+    sidebar.setFocused(false);
+    focusIndex = 0;
+    armHover();
+    applyRowFocus();
+  }
+
+  /** …and back. The column is the only place the screen can be left from. */
+  function leavePane(): void {
+    closeOptions();
+    sidebar.setFocused(true);
+    armHover();
+    applyRowFocus();
   }
 
   // ── Value changes ──────────────────────────────────────────────────────────
@@ -534,18 +641,26 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
   function navUp(): void {
     armHover(); // last input wins — see the mousemove handler
     if (openSelect !== null) moveOptionFocus(-1);
+    else if (sidebar.hasFocus()) sidebar.move(-1);
     else moveRowFocus(-1);
   }
 
   function navDown(): void {
     armHover();
     if (openSelect !== null) moveOptionFocus(1);
+    else if (sidebar.hasFocus()) sidebar.move(1);
     else moveRowFocus(1);
   }
 
   function navHorizontal(delta: number): void {
     armHover();
     if (openSelect !== null) return; // handled by navLeft — the expanded list is otherwise vertical
+    // From the column, RIGHT steps into the pane — the direction the layout already suggests. Left is
+    // NOT its mirror inside the pane: there it belongs to the sliders and the dropdowns, so leaving is B.
+    if (sidebar.hasFocus()) {
+      if (delta > 0 && sidebar.selected()?.kind === 'section') enterPane();
+      return;
+    }
     const target = focusedRow();
     if (target === undefined) return;
     const row = target.row;
@@ -617,6 +732,10 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
 
   function navActivate(): void {
     armHover();
+    if (openSelect === null && sidebar.hasFocus()) {
+      sidebar.activate();
+      return;
+    }
     if (openSelect !== null) {
       const row = rendered[openSelect.rowIndex]?.row;
       if (row === undefined || row.kind !== 'select') return;
@@ -648,6 +767,12 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
       return;
     }
     deps.audio.play('back');
+    // Out of the pane, back to the column; out of the column, off the screen. The screen can only be
+    // left from the column, which is also where Reset and Close live — so leaving is never a surprise.
+    if (!sidebar.hasFocus()) {
+      leavePane();
+      return;
+    }
     close();
   }
 
@@ -663,6 +788,7 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
     if (index === -1) return;
     const entry = rendered[index];
     if (entry === undefined) return;
+    sidebar.setFocused(false);
     focusIndex = index;
     applyRowFocus();
     const chevronEl = target.closest<HTMLElement>('.setting-chevron');
@@ -768,7 +894,8 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
       const rowEl = target.closest<HTMLElement>('.setting-row');
       if (rowEl === null) return;
       const index = rendered.findIndex((row) => row.el === rowEl);
-      if (index === -1 || index === focusIndex) return;
+      if (index === -1 || (index === focusIndex && !sidebar.hasFocus())) return;
+      sidebar.setFocused(false);
       focusIndex = index;
       applyRowFocus();
     },
@@ -788,6 +915,7 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
       focusIndex = 0;
       app.dataset['overlay'] = 'settings';
       screen.setAttribute('aria-hidden', 'false');
+      sidebar.setFocused(true); // the screen opens on its table of contents, not inside a section
       armHover(); // same as the dropdown: the screen appears under wherever the mouse happens to rest
       // Instant, not animated: a re-open must START at the top rather than glide there from wherever
       // the previous visit left the list (which showed as a half-cropped first row).
@@ -822,7 +950,13 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
         renderLoading();
         return;
       }
-      if (model !== null) relocalizeSections(listEl, model, t());
+      if (model !== null) {
+        const section = currentSection(model);
+        if (section !== undefined)
+          relocalizeSections(listEl, { ...model, sections: [section] }, t());
+        // The column IS labels, so it is rebuilt rather than patched — it keeps its selection by id.
+        renderColumn(model);
+      }
       for (const row of rendered) relocalizeRow(row, t());
       // The expanded list, if any, carries labels too.
       if (openSelect !== null) {

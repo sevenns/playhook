@@ -1438,6 +1438,102 @@ html:not(.cursor-hidden) .text-button:hover,
   color: color-mix(in srgb, var(--fg) 40%, transparent);
 }
 
+/* The two columns: the section list on the left, the selected section's rows on the right. */
+.settings-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  gap: calc(40 * var(--px));
+}
+
+/* The section column. Narrow and fixed: it is a table of contents, not a second form. */
+.settings-nav {
+  flex: 0 0 calc(380 * var(--px));
+  display: flex;
+  flex-direction: column;
+  gap: calc(4 * var(--px));
+  overflow-y: auto;
+  scrollbar-width: none;
+  --fade-top: 0px;
+  --fade-bottom: 0px;
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 var(--fade-top),
+    #000 calc(100% - var(--fade-bottom)),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 var(--fade-top),
+    #000 calc(100% - var(--fade-bottom)),
+    transparent 100%
+  );
+}
+
+.settings-nav::-webkit-scrollbar {
+  display: none;
+}
+
+.settings-nav-item {
+  flex: 0 0 auto;
+  min-height: calc(72 * var(--px));
+  display: flex;
+  align-items: center;
+  padding: 0 calc(28 * var(--px));
+  border: none;
+  border-radius: calc(10 * var(--px));
+  background: transparent;
+  color: var(--d2);
+  font-family: inherit;
+  font-weight: 500;
+  font-size: calc(28 * var(--px));
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease;
+}
+
+html:not(.cursor-hidden) .settings-nav-item:hover,
+.settings-nav-item.is-focused {
+  background: var(--d2);
+  color: var(--d1);
+}
+
+/* The section the pane is showing, while the focus is over in the pane: underlined rather than filled,
+   so "where I am" and "what has the focus" never claim the same highlight. */
+.settings-nav-item.is-current {
+  text-decoration: underline;
+  text-underline-offset: calc(8 * var(--px));
+}
+
+/* The actions that end the column, set apart from the sections above them. */
+.settings-nav-item[data-kind='action'] {
+  font-weight: 400;
+}
+
+.settings-nav-item[data-kind='section'] + .settings-nav-item[data-kind='action'] {
+  margin-top: calc(20 * var(--px));
+}
+
+.settings-nav-item.is-disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* Save's own feedback, under both columns — see the note in index.html. */
+.settings-status {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: calc(6 * var(--px));
+  padding: calc(12 * var(--px)) calc(32 * var(--px)) 0;
+}
+
+.settings-status:empty {
+  display: none;
+}
+
 /* The scrolling list. The native scrollbar is hidden — the focus ring is the position indicator, exactly
    as it is on every other surface here. Smooth scrolling is safe: vertical navigation is one step per
    press (only left/right hold-to-repeat), so the steps can't pile up into a lagging scroll. */
