@@ -346,8 +346,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   /** Arms the one-shot entrance animation (see .settings-list.is-entering in styles.css). */
   function armEntrance(): void {
     if (entranceTimer !== 0) window.clearTimeout(entranceTimer);
-    // Off and on around a forced reflow, so it replays even when the rows themselves were not rebuilt
-    // (stepping INTO a section the pane is already showing).
+    // Off and on around a forced reflow, so a caller that did not rebuild the rows still gets a replay.
     listEl.classList.remove('is-entering');
     void listEl.offsetWidth;
     listEl.classList.add('is-entering');
@@ -542,9 +541,6 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   function enterPane(): void {
     flushPreview(); // whatever the column last moved onto is what the focus is stepping into
     if (rendered.length === 0) return;
-    // The rows come in again on the way in: the pane is where the focus now is, and the same movement
-    // that introduced it is what says so.
-    armEntrance();
     sidebar.setFocused(false);
     focusIndex = nearestFocusable(0, 1);
     hover.arm();
@@ -627,6 +623,8 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
 
   function applyRowFocus(instant = false): void {
     const active = !sidebar.hasFocus();
+    // The pane widens to the left while it holds the focus (see .settings-list in styles.css).
+    listEl.classList.toggle('is-active', active);
     rendered.forEach((row, index) =>
       row.el.classList.toggle('is-focused', active && index === focusIndex),
     );

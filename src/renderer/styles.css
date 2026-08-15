@@ -1555,6 +1555,12 @@ html:not(.cursor-hidden) .settings-nav-item:hover,
   min-height: 0;
   overflow-y: auto;
   scrollbar-width: none;
+  /* The pane sits narrow while the COLUMN has the focus and opens out to the left when the focus steps
+     into it — its right edge never moves, so the rows stay aligned and only the entrance widens. That
+     sideways move is what says "you are in here now"; replaying the rows' own entrance said "here is a
+     different section", which is a different sentence and was read as one. */
+  margin-left: calc(20 * var(--px));
+  transition: margin-left 0.25s cubic-bezier(0.4, 0, 0.2, 1);
   /* NOT scroll-behavior: smooth — the screen animates scrollTop itself (settings-screen.ts) with one
      fixed duration and easing; leaving the native smoothing on would fight it frame for frame. */
   /* Each edge fades rather than cuts, so a row crossing the clip is half-transparent instead of sliced.
@@ -1578,6 +1584,10 @@ html:not(.cursor-hidden) .settings-nav-item:hover,
   );
 }
 
+.settings-list.is-active {
+  margin-left: 0;
+}
+
 .settings-list::-webkit-scrollbar {
   display: none;
 }
@@ -1590,9 +1600,10 @@ html:not(.cursor-hidden) .settings-nav-item:hover,
 }
 
 /* The pane's rows arrive the same way the column's entries do — the two halves of the screen behave
-   alike. Armed by the screen (settings-screen.ts) on each deliberate change of what the pane shows: a
-   different section, or the focus moving into it. NOT on a value patch, and not on the rebuilds a held
-   direction used to cause — those are debounced away before they reach here. */
+   alike. Armed by the screen (settings-screen.ts) when the pane changes SECTION, and only then: NOT on a
+   value patch, not on the rebuilds a held direction used to cause (those are debounced away before they
+   reach here), and not when the focus merely steps in — that one is the width change above, because
+   "you moved in here" and "this is another section" must not look like the same event. */
 .settings-list.is-entering .setting-row {
   animation: popup-item-in 0.28s cubic-bezier(0.2, 0, 0.2, 1) both;
   animation-delay: calc(var(--row-index, 0) * 30ms);
