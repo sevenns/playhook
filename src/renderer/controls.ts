@@ -615,9 +615,31 @@ export function createControls(deps: ControlsDeps): Controls {
     }, IDLE_MS);
   }
 
-  // Gamepad input = activity: hide the cursor at once (the user switched to the pad) + restart the idle.
+  // Where the pointer was when hover was last disarmed — by a surface opening under it, or by a
+  // keyboard/gamepad step. Until the mouse travels HOVER_WAKE_PX from there, hover does not move the
+  // focus: an element arriving under a still cursor is the ELEMENT moving, not the mouse, and Chromium
+  // reports both the same way. Cleared by the first genuine move.
+  let hoverArmedAt: { readonly x: number; readonly y: number } | null = null;
+
+  function armHover(): void {
+    hoverArmedAt = { x: lastMouseX, y: lastMouseY };
+  }
+
+  function hoverAwake(x: number, y: number): boolean {
+    if (hoverArmedAt === null) return true;
+    if (Math.hypot(x - hoverArmedAt.x, y - hoverArmedAt.y) < HOVER_WAKE_PX) return false;
+    hoverArmedAt = null;
+    return true;
+  }
+
+  // Gamepad/keyboard input = activity: hide the cursor at once (the user switched to the pad), disarm
+  // hover, restart the idle countdown.
   function noteGamepadActivity(): void {
     setCursorHidden(true);
+    // Every keyboard/gamepad step re-arms the hover guard: last input wins. Without this, one real mouse
+    // move wakes hover for good, and from then on any element that slides under the still cursor — a
+    // scrolling list, a popup opening — can take the focus back off the key that just moved it.
+    armHover();
     armIdleTimer();
   }
 
@@ -904,22 +926,6 @@ export function createControls(deps: ControlsDeps): Controls {
   // only when the pointer actually moves.
   let lastMouseX = -1;
   let lastMouseY = -1;
-  // Where the pointer was when a popup opened. Until the mouse travels HOVER_WAKE_PX from there, hover
-  // does not move the focus: a popup opening under a resting cursor is the ELEMENT moving, not the
-  // mouse, and Chromium reports both the same way. Cleared by the first genuine move.
-  let hoverArmedAt: { readonly x: number; readonly y: number } | null = null;
-
-  function armHover(): void {
-    hoverArmedAt = { x: lastMouseX, y: lastMouseY };
-  }
-
-  function hoverAwake(x: number, y: number): boolean {
-    if (hoverArmedAt === null) return true;
-    if (Math.hypot(x - hoverArmedAt.x, y - hoverArmedAt.y) < HOVER_WAKE_PX) return false;
-    hoverArmedAt = null;
-    return true;
-  }
-
   window.addEventListener('mousemove', (event) => {
     if (event.clientX === lastMouseX && event.clientY === lastMouseY) return; // synthetic — ignore
     lastMouseX = event.clientX;

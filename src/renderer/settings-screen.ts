@@ -630,16 +630,19 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
   }
 
   function navUp(): void {
+    armHover(); // last input wins — see the mousemove handler
     if (openSelect !== null) moveOptionFocus(-1);
     else moveRowFocus(-1);
   }
 
   function navDown(): void {
+    armHover();
     if (openSelect !== null) moveOptionFocus(1);
     else moveRowFocus(1);
   }
 
   function navHorizontal(delta: number): void {
+    armHover();
     if (openSelect !== null) return; // handled by navLeft — the expanded list is otherwise vertical
     const target = focusedRow();
     if (target === undefined) return;
@@ -656,6 +659,7 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
   }
 
   function navLeft(repeat = false): void {
+    armHover();
     // Left leaves the expanded list, the same way it leaves a popup (controls.ts): its column sits on the
     // right edge, so moving left off it means "out". A HELD left is ignored, or the same press would
     // close the list and then start cycling the row's value behind it.
@@ -710,6 +714,7 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
   }
 
   function navActivate(): void {
+    armHover();
     if (openSelect !== null) {
       const row = rendered[openSelect.rowIndex]?.row;
       if (row === undefined || row.kind !== 'select') return;
@@ -734,6 +739,7 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
   }
 
   function navBack(): void {
+    armHover();
     if (openSelect !== null) {
       deps.audio.play('back');
       closeOptions();
