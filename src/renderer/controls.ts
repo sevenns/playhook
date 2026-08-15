@@ -1054,7 +1054,15 @@ export function createControls(deps: ControlsDeps): Controls {
       if (!repeat) moveStackFocus(1);
       return;
     }
-    if (deps.settings.isOpen()) deps.settings.navDown();
+    if (deps.settings.isOpen()) {
+      deps.settings.navDown();
+      return;
+    }
+    // The other half of the vertical pair: down opens the selected card (what A does), up on the detail
+    // screen comes back out. The strip only — with the focus on More, down has no card to open, and
+    // inside a popup the direction belongs to the menu (handled above). Held presses are dropped, as
+    // everywhere a direction crosses a screen boundary.
+    if (!repeat && stripActive()) deps.carousel.activate();
   }
   function navActivate(): void {
     noteGamepadActivity();
