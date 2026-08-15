@@ -143,10 +143,8 @@ export function renderSettings(
   t: Translator,
 ): RenderedScreen {
   const rows: RenderedRow[] = [];
-  const sections = model.sections.map((section, index) => {
+  const sections = model.sections.map((section) => {
     const sectionEl = div('settings-section');
-    // Only the first few sections stagger — past that the delay reads as lag rather than as motion.
-    sectionEl.style.setProperty('--section-index', String(Math.min(index, 2)));
     if (section.titleKey !== undefined) {
       sectionEl.append(div('settings-section-title', t(section.titleKey)));
     }

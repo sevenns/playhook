@@ -68,9 +68,8 @@ export function renderGameSettings(
   t: Translator,
 ): RenderedGameScreen {
   const rows: RenderedGameRow[] = [];
-  const sections = model.sections.map((section, index) => {
+  const sections = model.sections.map((section) => {
     const sectionEl = div('settings-section');
-    sectionEl.style.setProperty('--section-index', String(Math.min(index, 2)));
     if (section.titleKey !== undefined) {
       sectionEl.append(div('settings-section-title', t(section.titleKey)));
     }

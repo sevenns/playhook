@@ -239,8 +239,11 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     audio: deps.audio,
     onSection: (id, entered) => {
       sectionKey = id as MessageKey;
-      renderPane();
-      if (entered) enterPane();
+      if (entered) {
+        enterPane();
+        return;
+      }
+      schedulePreview();
     },
     onAction: (id) => runAction(id as GameRowId),
   });
@@ -334,18 +337,48 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     rendered = [];
   }
 
-  /** How long the staggered section entrance runs — the class is dropped once it is over. */
+  /** How long the staggered row entrance runs — the class is dropped once it is over. */
   const ENTRANCE_MS = 700;
+  /** The stagger stops counting here: past a handful of rows the wave is a wait, not a wave. */
+  const ENTRANCE_STEPS = 8;
   let entranceTimer = 0;
 
   /** Arms the one-shot entrance animation (see .settings-list.is-entering in styles.css). */
   function armEntrance(): void {
     if (entranceTimer !== 0) window.clearTimeout(entranceTimer);
+    // Off and on around a forced reflow, so it replays even when the rows themselves were not rebuilt
+    // (stepping INTO a section the pane is already showing).
+    listEl.classList.remove('is-entering');
+    void listEl.offsetWidth;
     listEl.classList.add('is-entering');
     entranceTimer = window.setTimeout(() => {
       entranceTimer = 0;
       listEl.classList.remove('is-entering');
     }, ENTRANCE_MS);
+  }
+
+  /**
+   * How long the pane waits before showing the section the column moved onto. A held direction walks
+   * through the column faster than that, so the pane is drawn ONCE, when the movement stops, instead of
+   * being torn down and rebuilt — thumbnails and all — at every step.
+   */
+  const PREVIEW_MS = 120;
+  let previewTimer = 0;
+
+  function schedulePreview(): void {
+    if (previewTimer !== 0) window.clearTimeout(previewTimer);
+    previewTimer = window.setTimeout(() => {
+      previewTimer = 0;
+      renderPane();
+    }, PREVIEW_MS);
+  }
+
+  /** Draws a pending preview NOW. Anything that reads the rendered rows has to call this first. */
+  function flushPreview(): void {
+    if (previewTimer === 0) return;
+    window.clearTimeout(previewTimer);
+    previewTimer = 0;
+    renderPane();
   }
 
   /** A section that HAS a title — i.e. one the column can name and the pane can show. */
@@ -437,6 +470,9 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   }
 
   function render(): void {
+    // A pending preview means `rendered` belongs to the section BEFORE the one sectionKey now names —
+    // patching it against the new section's values would write them into the old section's rows.
+    flushPreview();
     const next = currentModel();
     headingEl.textContent = screenHeading(next, t());
     // Source first, then the game — it reads as a location and its contents ("E:\ · Hades"). The
@@ -484,7 +520,17 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     const section = currentSection(from);
     if (section === undefined) return;
     sectionKey = section.titleKey;
-    rendered = renderGameSettings(listEl, { ...from, sections: [section] }, t()).rows;
+    // WITHOUT its title: the column beside it already names the section, and printing the name again at
+    // the top of the pane says the same thing twice.
+    rendered = renderGameSettings(
+      listEl,
+      { ...from, sections: [{ rows: section.rows }] },
+      t(),
+    ).rows;
+    rendered.forEach((row, at) =>
+      row.el.style.setProperty('--row-index', String(Math.min(at, ENTRANCE_STEPS))),
+    );
+    armEntrance();
     focusIndex = nearestFocusable(focusIndex, 1);
     applyRowFocus(true);
     listScroller.to(0, true);
@@ -494,7 +540,11 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
 
   /** Hands the focus from the column to the pane, at its first focusable row. */
   function enterPane(): void {
+    flushPreview(); // whatever the column last moved onto is what the focus is stepping into
     if (rendered.length === 0) return;
+    // The rows come in again on the way in: the pane is where the focus now is, and the same movement
+    // that introduced it is what says so.
+    armEntrance();
     sidebar.setFocused(false);
     focusIndex = nearestFocusable(0, 1);
     hover.arm();
@@ -527,6 +577,21 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     rendered = [];
   }
 
+  /**
+   * The thumbnails read so far, by path. Stepping back onto a section re-renders its rows, and reading
+   * every picture off the disk again for a strip that has not changed is both a round trip per image and
+   * a visible re-decode. Emptied on open, so a screen re-opened after the files moved starts fresh.
+   */
+  const thumbnails = new Map<string, string | null>();
+
+  async function thumbnailFor(root: string, path: string): Promise<string | null> {
+    const cached = thumbnails.get(path);
+    if (cached !== undefined) return cached;
+    const url = await deps.api.imagePreview(root, path);
+    thumbnails.set(path, url);
+    return url;
+  }
+
   /** Reads the artwork rows' thumbnails (one invoke per path) and drops them into their rows. */
   async function refreshThumbnails(): Promise<void> {
     const root = origin?.root;
@@ -534,12 +599,10 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     for (const row of rendered) {
       const source = row.row;
       if (source.kind === 'list' && source.preview !== undefined) {
-        const urls = await Promise.all(
-          source.items.map((item) => deps.api.imagePreview(root, item)),
-        );
+        const urls = await Promise.all(source.items.map((item) => thumbnailFor(root, item)));
         applyThumbnails(row, urls, source.preview, source.items);
       } else if (source.kind === 'path' && source.preview !== undefined) {
-        const url = source.value === '' ? null : await deps.api.imagePreview(root, source.value);
+        const url = source.value === '' ? null : await thumbnailFor(root, source.value);
         applyThumbnails(row, [url], source.preview, [source.value]);
       }
     }
@@ -1517,6 +1580,10 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       window.clearTimeout(entranceTimer);
       entranceTimer = 0;
     }
+    if (previewTimer !== 0) {
+      window.clearTimeout(previewTimer);
+      previewTimer = 0;
+    }
     listEl.classList.remove('is-entering');
     if (validateTimer !== 0) {
       window.clearTimeout(validateTimer);
@@ -1606,13 +1673,14 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       open = true;
       app.dataset['overlay'] = 'game-settings';
       screen.setAttribute('aria-hidden', 'false');
-      armEntrance(); // the sections fade in once, on the way in — not on every pane rebuild
       sidebar.reset(); // a re-opened screen starts at the first section, column and pane together
       sidebar.setFocused(true); // the screen opens on its table of contents, not inside a section
+      sidebar.animateIn();
       sectionKey = null;
       columnSignature = '';
       statusSignature = '';
       hover.arm();
+      thumbnails.clear();
       listScroller.to(0, true);
       focusIndex = 0;
       model = null;

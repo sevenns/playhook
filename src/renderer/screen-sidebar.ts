@@ -49,12 +49,18 @@ export interface Sidebar {
   /** Selects a section by id without announcing it (used to restore a selection after a rebuild). */
   select(id: string): void;
   /**
-   * Forgets the selection entirely, so the next render starts at the first entry. A re-opened screen
-   * must not resume where the last visit left the column while the pane falls back to section one —
-   * the two would then disagree about what is on screen.
+   * Puts the selection back on the first entry. A re-opened screen must not resume where the last visit
+   * left the column while the pane falls back to section one — the two would then disagree about what is
+   * on screen. It does NOT empty the column: the entries survive, so the caller's own "has this changed?"
+   * guards stay honest and the screen re-opens with its buttons already there.
    */
   reset(): void;
+  /** Replays the staggered entrance on the entries, as the popup stack does when it opens. */
+  animateIn(): void;
 }
+
+/** How long the staggered entrance runs before the class that drives it is dropped. */
+const ENTRANCE_MS = 700;
 
 export function createSidebar(box: HTMLElement, deps: SidebarDeps): Sidebar {
   const scroller = createScroller(box);
@@ -62,6 +68,12 @@ export function createSidebar(box: HTMLElement, deps: SidebarDeps): Sidebar {
   let buttons: readonly HTMLButtonElement[] = [];
   let index = 0;
   let focused = true;
+  // The buttons, by entry id. The column is REBUILT on every render — Save's enabled state follows every
+  // keystroke — so making that rebuild replace the DOM was a button visibly blinking out and back in
+  // under the cursor. Reusing the node for an id that is still there turns the common rebuild into a
+  // handful of property writes, and the DOM is only touched when the SET of entries actually moved.
+  const nodes = new Map<string, HTMLButtonElement>();
+  let entranceTimer = 0;
 
   function paintFocus(instant = false): void {
     buttons.forEach((button, at) => {
@@ -82,6 +94,26 @@ export function createSidebar(box: HTMLElement, deps: SidebarDeps): Sidebar {
     if (entry?.kind === 'section') deps.onSection(entry.id, entered);
   }
 
+  /** The button for one entry, created on first sight of its id and kept for as long as it is offered. */
+  function nodeFor(entry: SidebarEntry): HTMLButtonElement {
+    const existing = nodes.get(entry.id);
+    if (existing !== undefined) return existing;
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'settings-nav-item';
+    // The index is resolved at click time rather than captured: the node outlives the render that made it.
+    button.addEventListener('click', () => {
+      const at = entries.findIndex((candidate) => candidate.id === entry.id);
+      if (at === -1) return;
+      index = at;
+      focused = true;
+      paintFocus();
+      runSelected();
+    });
+    nodes.set(entry.id, button);
+    return button;
+  }
+
   return {
     render: (next) => {
       const previousId = entries[index]?.id;
@@ -89,22 +121,25 @@ export function createSidebar(box: HTMLElement, deps: SidebarDeps): Sidebar {
       const restored = previousId === undefined ? -1 : next.findIndex((e) => e.id === previousId);
       index = restored === -1 ? 0 : restored;
       buttons = next.map((entry, at) => {
-        const button = document.createElement('button');
-        button.type = 'button';
-        button.className = 'settings-nav-item';
+        const button = nodeFor(entry);
         button.dataset['kind'] = entry.kind;
         button.classList.toggle('is-danger', entry.danger === true);
         button.classList.toggle('is-disabled', entry.disabled === true);
-        button.textContent = entry.label;
-        button.addEventListener('click', () => {
-          index = at;
-          focused = true;
-          paintFocus();
-          runSelected();
-        });
+        button.style.setProperty('--nav-index', String(at));
+        if (button.textContent !== entry.label) button.textContent = entry.label;
         return button;
       });
-      box.replaceChildren(...buttons);
+      for (const [id, node] of nodes)
+        if (!next.some((entry) => entry.id === id)) {
+          node.remove();
+          nodes.delete(id);
+        }
+      // In-order sync rather than replaceChildren: re-inserting a node it already holds would restart
+      // that button's animation and drop its transition state for nothing. Only what actually moved moves.
+      buttons.forEach((button, at) => {
+        const current = box.children[at];
+        if (current !== button) box.insertBefore(button, current ?? null);
+      });
       paintFocus(true);
     },
     move: (delta) => {
@@ -132,10 +167,20 @@ export function createSidebar(box: HTMLElement, deps: SidebarDeps): Sidebar {
       paintFocus();
     },
     reset: () => {
-      entries = [];
-      buttons = [];
       index = 0;
-      box.replaceChildren();
+      paintFocus(true);
+    },
+    animateIn: () => {
+      if (entranceTimer !== 0) window.clearTimeout(entranceTimer);
+      // Removed and re-added around a forced reflow: the nodes are reused across visits, so re-adding the
+      // class alone would leave the animation already finished and play nothing.
+      box.classList.remove('is-entering');
+      void box.offsetWidth;
+      box.classList.add('is-entering');
+      entranceTimer = window.setTimeout(() => {
+        entranceTimer = 0;
+        box.classList.remove('is-entering');
+      }, ENTRANCE_MS);
     },
   };
 

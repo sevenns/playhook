@@ -1249,10 +1249,12 @@ export function createControls(deps: ControlsDeps): Controls {
   }
 
   /**
-   * Y: hands the focus between the strip and the bar's More button, and only on the carousel screen —
-   * everywhere else the bar already has it, and there is nothing to swap with. The highlight is woken
-   * along with it: the press IS the user pointing at where it should be. Coming BACK there are two more
-   * ways out, both meaning what they usually mean: B (back) and left (More is right of the strip).
+   * Y: "put me on More". On the carousel that means handing the focus between the strip and the bar; on a
+   * detail screen, where both buttons are already in the same bar, it means jumping between Play and More
+   * — which is the same promise the button makes on home, and the reason it is worth having here: the
+   * hand that learned Y-then-A on the carousel was launching games with it on the detail screen instead.
+   * The highlight is woken along with it: the press IS the user pointing at where it should be. Coming
+   * BACK there are two more ways out, both meaning what they usually mean: B (back) and left.
    */
   function navToggleBar(): void {
     noteGamepadActivity();
@@ -1263,9 +1265,29 @@ export function createControls(deps: ControlsDeps): Controls {
       overlay.navTertiary?.();
       return;
     }
-    if (popupView !== 'none' || deps.carousel.screen() !== 'carousel') return;
+    if (popupView !== 'none') return;
+    if (deps.carousel.screen() !== 'carousel') {
+      toggleMoreFocus();
+      return;
+    }
     audio.play('navigate');
     setCarouselBarFocus(!carouselBarFocus);
+  }
+
+  /** The detail screen's half of Y: the focus swaps between More and whatever else the bar offers. */
+  function toggleMoreFocus(): void {
+    if (!focusActive()) return;
+    const items = mainFocusables();
+    const more = items.indexOf(moreButton);
+    if (more === -1) return;
+    // Only More is focusable (a busy game, an installer): there is nothing to swap with, so Y wakes the
+    // highlight where it is rather than moving it somewhere that does not exist.
+    const next = focusRevealed && focusIndex === more ? (items.length > 1 ? 0 : more) : more;
+    if (focusRevealed && next === focusIndex) return;
+    focusIndex = next;
+    focusRevealed = true;
+    audio.play('navigate');
+    applyFocus();
   }
 
   /** X and the shoulders: overlay-only, and only when the surface on top claims them. */

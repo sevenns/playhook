@@ -1446,9 +1446,13 @@ html:not(.cursor-hidden) .text-button:hover,
   gap: calc(40 * var(--px));
 }
 
-/* The section column. Narrow and fixed: it is a table of contents, not a second form. */
+/* The section column. Narrow and fixed: it is a table of contents, not a second form.
+   The padding is what puts the BUTTONS' edge under the screen title rather than their text: the filled
+   entry is the shape the eye tracks down the screen, so it is the shape that has to line up with the
+   heading above it. */
 .settings-nav {
   flex: 0 0 calc(380 * var(--px));
+  padding-left: calc(32 * var(--px));
   display: flex;
   flex-direction: column;
   gap: calc(4 * var(--px));
@@ -1481,9 +1485,8 @@ html:not(.cursor-hidden) .text-button:hover,
   min-height: calc(72 * var(--px));
   display: flex;
   align-items: center;
-  /* 32 to match .settings-header's own padding: the column's labels and the screen title share a
-     left edge, which is the line the eye follows down the screen. */
-  padding: 0 calc(32 * var(--px));
+  /* Inset from the button's own edge — that edge is what carries the alignment (see .settings-nav). */
+  padding: 0 calc(22 * var(--px));
   border: none;
   border-radius: calc(10 * var(--px));
   background: transparent;
@@ -1521,6 +1524,14 @@ html:not(.cursor-hidden) .settings-nav-item:hover,
 .settings-nav-item.is-disabled {
   opacity: 0.4;
   cursor: default;
+}
+
+/* The column arrives the way the popup's items do — one after another, top-down, which is the order they
+   are read in. Driven by a class rather than by the overlay state, because the buttons are REUSED between
+   visits (screen-sidebar.ts): the animation has to be re-armed, not re-triggered by a state change. */
+.settings-nav.is-entering .settings-nav-item {
+  animation: popup-item-in 0.3s cubic-bezier(0.2, 0, 0.2, 1) both;
+  animation-delay: calc(var(--nav-index, 0) * 40ms);
 }
 
 /* Save's own feedback, under both columns — see the note in index.html. */
@@ -1578,24 +1589,13 @@ html:not(.cursor-hidden) .settings-nav-item:hover,
   padding-bottom: calc(24 * var(--px));
 }
 
-/* Staggered entrance, capped at three steps by the view (--section-index), and played ONCE: the class
-   is armed when the screen opens and dropped when the animation is over. As a transition off the
-   overlay state it re-ran on every rebuild of the pane — which happens on every step through the
-   section column, so the whole pane flashed as you moved. */
-@keyframes section-enter {
-  from {
-    opacity: 0;
-    transform: translateY(calc(16 * var(--px)));
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-
-.settings-list.is-entering .settings-section {
-  animation: section-enter 0.35s cubic-bezier(0.4, 0, 0.2, 1) both;
-  animation-delay: calc(var(--section-index, 0) * 40ms);
+/* The pane's rows arrive the same way the column's entries do — the two halves of the screen behave
+   alike. Armed by the screen (settings-screen.ts) on each deliberate change of what the pane shows: a
+   different section, or the focus moving into it. NOT on a value patch, and not on the rebuilds a held
+   direction used to cause — those are debounced away before they reach here. */
+.settings-list.is-entering .setting-row {
+  animation: popup-item-in 0.28s cubic-bezier(0.2, 0, 0.2, 1) both;
+  animation-delay: calc(var(--row-index, 0) * 30ms);
 }
 
 .settings-section-title {

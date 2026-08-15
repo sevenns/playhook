@@ -236,8 +236,11 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
     audio: deps.audio,
     onSection: (id, entered) => {
       sectionKey = id as MessageKey;
-      renderPane();
-      if (entered) enterPane();
+      if (entered) {
+        enterPane();
+        return;
+      }
+      schedulePreview();
     },
     onAction: (id) => {
       deps.audio.play('button');
@@ -294,18 +297,49 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
     return ids(a) === ids(b);
   }
 
-  /** How long the staggered section entrance runs — the class is dropped once it is over. */
+  /** How long the staggered row entrance runs — the class is dropped once it is over. */
   const ENTRANCE_MS = 700;
+  /** The stagger stops counting here: past a handful of rows the wave is a wait, not a wave. */
+  const ENTRANCE_STEPS = 8;
   let entranceTimer = 0;
 
   /** Arms the one-shot entrance animation (see .settings-list.is-entering in styles.css). */
   function armEntrance(): void {
     if (entranceTimer !== 0) window.clearTimeout(entranceTimer);
+    // Off and on around a forced reflow, so it replays even when the rows themselves were not rebuilt
+    // (stepping INTO a section the pane is already showing).
+    listEl.classList.remove('is-entering');
+    void listEl.offsetWidth;
     listEl.classList.add('is-entering');
     entranceTimer = window.setTimeout(() => {
       entranceTimer = 0;
       listEl.classList.remove('is-entering');
     }, ENTRANCE_MS);
+  }
+
+  /**
+   * How long the pane waits before showing the section the column moved onto. A held direction walks
+   * through the column faster than that, so the pane is drawn ONCE, when the movement stops, instead of
+   * being torn down and rebuilt at every step — which is what made the whole screen flicker under a hold.
+   * Short enough that a single press still reads as instant.
+   */
+  const PREVIEW_MS = 120;
+  let previewTimer = 0;
+
+  function schedulePreview(): void {
+    if (previewTimer !== 0) window.clearTimeout(previewTimer);
+    previewTimer = window.setTimeout(() => {
+      previewTimer = 0;
+      renderPane();
+    }, PREVIEW_MS);
+  }
+
+  /** Draws a pending preview NOW. Anything that reads the rendered rows has to call this first. */
+  function flushPreview(): void {
+    if (previewTimer === 0) return;
+    window.clearTimeout(previewTimer);
+    previewTimer = 0;
+    renderPane();
   }
 
   /** The titled sections — the ones the column offers. The title-less one is the action stack. */
@@ -324,6 +358,9 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
 
   /** Rebuilds or patches the screen for the current state, keeping the focus index in range. */
   function render(): void {
+    // A pending preview means `rendered` belongs to the section BEFORE the one sectionKey now names —
+    // patching it against the new section's values would write them into the old section's rows.
+    flushPreview();
     const next = currentModel();
     versionEl.textContent = appVersion;
     if (next === null) {
@@ -333,7 +370,7 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
     }
     const previous = model;
     model = next;
-    if (previous === null || !sameComposition(previous, next)) renderColumn(next);
+    renderColumn(next);
     if (previous !== null && sameComposition(previous, next) && rendered.length > 0) {
       const rows = visibleRows(next);
       rendered.forEach((row, index) => {
@@ -383,7 +420,13 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
     const section = currentSection(from);
     if (section === undefined) return;
     sectionKey = section.titleKey;
-    rendered = renderSettings(listEl, { ...from, sections: [section] }, t()).rows;
+    // WITHOUT its title: the column beside it already names the section, and printing the name again at
+    // the top of the pane says the same thing twice.
+    rendered = renderSettings(listEl, { ...from, sections: [{ rows: section.rows }] }, t()).rows;
+    rendered.forEach((row, at) =>
+      row.el.style.setProperty('--row-index', String(Math.min(at, ENTRANCE_STEPS))),
+    );
+    armEntrance();
     focusIndex = Math.min(Math.max(focusIndex, 0), Math.max(0, rendered.length - 1));
     applyRowFocus(true);
     listScroller.to(0, true);
@@ -394,7 +437,11 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
 
   /** Hands the focus from the column to the pane, at its first row. */
   function enterPane(): void {
+    flushPreview(); // whatever the column last moved onto is what the focus is stepping into
     if (rendered.length === 0) return;
+    // The rows come in again on the way in: the pane is where the focus now is, and the same movement
+    // that introduced it is what says so.
+    armEntrance();
     sidebar.setFocused(false);
     focusIndex = 0;
     armHover();
@@ -768,6 +815,10 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
       window.clearTimeout(entranceTimer);
       entranceTimer = 0;
     }
+    if (previewTimer !== 0) {
+      window.clearTimeout(previewTimer);
+      previewTimer = 0;
+    }
     listEl.classList.remove('is-entering');
     delete app.dataset['overlay'];
     screen.setAttribute('aria-hidden', 'true');
@@ -930,10 +981,13 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
       focusIndex = 0;
       app.dataset['overlay'] = 'settings';
       screen.setAttribute('aria-hidden', 'false');
-      armEntrance(); // the sections fade in once, on the way in — not on every pane rebuild
       sidebar.reset(); // a re-opened screen starts at the first section, column and pane together
       sectionKey = null;
+      // …and the pane is REBUILT rather than patched: the rows still in it belong to whichever section
+      // the last visit ended on, and patching those with section one's values crosses the two.
+      rendered = [];
       sidebar.setFocused(true); // the screen opens on its table of contents, not inside a section
+      sidebar.animateIn();
       armHover(); // same as the dropdown: the screen appears under wherever the mouse happens to rest
       // Instant, not animated: a re-open must START at the top rather than glide there from wherever
       // the previous visit left the list (which showed as a half-cropped first row).
