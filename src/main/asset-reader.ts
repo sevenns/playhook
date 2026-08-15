@@ -73,7 +73,7 @@ const SFX_NAMES: readonly SfxName[] = ['play', 'navigate', 'button', 'back'];
 // The sound set shipped as the default, and the fallback whenever the chosen set's folder is missing.
 // Mirrors DEFAULT_SETTINGS.soundSet in app-settings.ts (kept in sync by hand — importing that module
 // here, or this one there, would put an fs/logger dependency on the daemon's import graph).
-export const DEFAULT_SOUND_SET = 'playhook-aurora';
+export const DEFAULT_SOUND_SET = 'playhook-abyss';
 
 // Maps a UI sound slot to its file basename inside a set folder (audio/ui/<set>/). `navigate` is the odd
 // one out — its file is `move.wav` (the sets predate the SfxName vocabulary); the rest are 1:1.
