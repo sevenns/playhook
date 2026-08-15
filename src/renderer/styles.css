@@ -1421,10 +1421,18 @@ html:not(.cursor-hidden) .text-button:hover,
   color: color-mix(in srgb, var(--fg) 55%, transparent);
 }
 
-/* Where the edited manifest lives, beside the game's name. Quieter than the name itself: it answers a
-   question the user asks once ("whose file is this?"), not one they keep asking. */
+/* The trailing half of the header: the game's name and, after a single space, where its manifest lives.
+   A flex row with a gap rather than two header children — space-between would fling them apart. */
+.settings-heading {
+  display: flex;
+  align-items: baseline;
+  gap: calc(8 * var(--px));
+  min-width: 0;
+}
+
+/* Quieter than the name itself: it answers a question the user asks once ("whose file is this?"), not
+   one they keep asking. */
 .settings-source {
-  margin-left: calc(12 * var(--px));
   font-weight: 300;
   font-size: calc(20 * var(--px));
   color: color-mix(in srgb, var(--fg) 40%, transparent);
@@ -2360,10 +2368,24 @@ html:not(.cursor-hidden) .picker-item:hover,
   color: var(--d1);
 }
 
-/* A folder reads differently from a file at a glance — the browser is used at arm's length on a Deck. */
+/* A folder reads differently from a file at a glance — the browser is used at arm's length on a Deck.
+   The ACTION rows (cancel, up, use this folder) deliberately carry no glyph: they are not part of the
+   tree, and a marker would put them in it. */
 .picker-item.is-dir::before {
   content: '/';
   opacity: 0.6;
+}
+
+.picker-item.is-action {
+  font-weight: 500;
+}
+
+/* …and a rule under the last of them, so the tree visibly starts below. */
+.picker-item.is-last-action {
+  margin-bottom: calc(10 * var(--px));
+  padding-bottom: calc(10 * var(--px));
+  border-bottom: calc(2 * var(--px)) solid color-mix(in srgb, var(--d2) 25%, transparent);
+  border-radius: 0;
 }
 
 .picker-item.is-picked {

@@ -727,15 +727,17 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
 
   /** A path row's own little menu: browse for a new value, or clear the one it has. */
   function openPathMenu(row: Extract<GameSettingsRow, { kind: 'path' }>): void {
-    const entries: MenuEntry[] = [
-      { label: t()('gameSettings.browse'), run: () => browseInto(row.id, row.value, false) },
-    ];
+    const entries: MenuEntry[] = [];
     if (row.value !== '' && row.preview !== undefined) {
       entries.push({
         label: t()('gameSettings.viewImage'),
         run: () => void showImage(row.value),
       });
     }
+    entries.push({
+      label: t()('gameSettings.browse'),
+      run: () => browseInto(row.id, row.value, false),
+    });
     if (row.value !== '') {
       entries.push({
         label: t()('gameSettings.clear'),

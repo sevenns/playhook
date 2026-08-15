@@ -89,6 +89,12 @@ export function createFilePicker(deps: FilePickerDeps): FilePickerSurface {
    * save-path picker opening on the card, which is nowhere near where a save folder lives.
    */
   const lastVisited = new Map<ConfigPickKind, string>();
+  /**
+   * Which entry was focused in each directory visited this session, by name. Stepping into the third
+   * folder and back must put the cursor on the THIRD folder — landing on the first every time turns
+   * "look inside a few of these" into counting rows over and over.
+   */
+  const focusMemory = new Map<string, string>();
 
   function wantsDirectory(): boolean {
     const kind = request?.kind;
@@ -105,7 +111,7 @@ export function createFilePicker(deps: FilePickerDeps): FilePickerSurface {
         column = 'roots';
         rootIndex = index;
         applyFocus();
-        void go(entry.path);
+        void goTo(entry.path);
       });
       return button;
     });
@@ -119,19 +125,20 @@ export function createFilePicker(deps: FilePickerDeps): FilePickerSurface {
     // steps into a Steam library is six presses to change your mind — this is one.
     const cancelItem = document.createElement('button');
     cancelItem.type = 'button';
-    cancelItem.className = 'picker-item is-cancel';
+    cancelItem.className = 'picker-item is-action';
     cancelItem.textContent = t()('picker.cancel');
     cancelItem.addEventListener('click', () => cancel());
     items.push(cancelItem);
-    // "Up one level" is a row of its own rather than a bare B: a mouse user has no B, and the gesture is
-    // the one the browser is used for most.
+    // "Up one level" is a row of its own rather than only a button gesture: a mouse user has no B, and
+    // it is the move the browser is used for most. It carries no folder glyph — it is an ACTION, and
+    // reading as one of the folders in the tree is exactly how it gets confused with one.
     if (parent !== null) {
       const up = document.createElement('button');
       up.type = 'button';
-      up.className = 'picker-item is-dir';
+      up.className = 'picker-item is-action';
       up.textContent = t()('picker.up');
       up.addEventListener('click', () => {
-        if (parent !== null) void go(parent);
+        if (parent !== null) void goTo(parent);
       });
       items.push(up);
     }
@@ -139,11 +146,13 @@ export function createFilePicker(deps: FilePickerDeps): FilePickerSurface {
     if (wantsDirectory()) {
       const useThis = document.createElement('button');
       useThis.type = 'button';
-      useThis.className = 'picker-item';
+      useThis.className = 'picker-item is-action';
       useThis.textContent = t()('picker.useThisFolder');
       useThis.addEventListener('click', () => void accept([here]));
       items.push(useThis);
     }
+    // The tree starts here — the separator says so, so the actions above are not read as folders.
+    if (entries.length > 0) items[items.length - 1]?.classList.add('is-last-action');
     for (const entry of entries) {
       const button = document.createElement('button');
       button.type = 'button';
@@ -194,6 +203,17 @@ export function createFilePicker(deps: FilePickerDeps): FilePickerSurface {
     }
   }
 
+  /** Navigates, remembering where the cursor stood in the directory being left (see focusMemory). */
+  async function goTo(path: string): Promise<void> {
+    rememberFocus();
+    await go(path);
+  }
+
+  function rememberFocus(): void {
+    const focused = focusedEntry();
+    if (here !== '' && focused !== null) focusMemory.set(here, focused.entry.name);
+  }
+
   async function go(path: string | undefined): Promise<void> {
     const at = request;
     if (at === null) return;
@@ -222,9 +242,20 @@ export function createFilePicker(deps: FilePickerDeps): FilePickerSurface {
     entries = result.entries;
     column = 'entries';
     paintEntries();
-    // The focus lands on the first real ENTRY, past the Cancel / Up / Use-this-folder rows: those are
-    // ways out, and a picker that opens on its own exit button is a picker you have to walk down first.
-    entryIndex = entries.length > 0 ? leadingRows() : Math.max(0, entryButtons.length - 1);
+    // The focus goes back to whatever was focused here last time (coming up out of a folder lands ON
+    // that folder), and otherwise to the first real ENTRY — past the Cancel / Up / Use-this-folder rows,
+    // since a picker that opens on its own exit button is one you have to walk down before using.
+    const rememberedName = focusMemory.get(here);
+    const rememberedAt =
+      rememberedName === undefined
+        ? -1
+        : entries.findIndex((entry) => entry.name === rememberedName);
+    entryIndex =
+      rememberedAt !== -1
+        ? leadingRows() + rememberedAt
+        : entries.length > 0
+          ? leadingRows()
+          : Math.max(0, entryButtons.length - 1);
     applyFocus();
     entriesScroller.to(0, true);
   }
@@ -232,7 +263,7 @@ export function createFilePicker(deps: FilePickerDeps): FilePickerSurface {
   async function activatePath(entry: DirEntry, full: string): Promise<void> {
     if (entry.kind === 'dir') {
       deps.audio.play('button');
-      await go(full);
+      await goTo(full);
       return;
     }
     if (wantsDirectory()) return; // a folder field has no use for a file
@@ -386,7 +417,7 @@ export function createFilePicker(deps: FilePickerDeps): FilePickerSurface {
         const target = roots[rootIndex];
         if (target === undefined) return;
         deps.audio.play('button');
-        void go(target.path);
+        void goTo(target.path);
         return;
       }
       const button = entryButtons[entryIndex];
@@ -396,10 +427,6 @@ export function createFilePicker(deps: FilePickerDeps): FilePickerSurface {
     navBack: () => {
       hover.arm();
       deps.audio.play('back');
-      if (parent !== null && column === 'entries') {
-        void go(parent);
-        return;
-      }
       cancel();
     },
     /** X ticks a file in multi mode — the one gesture a single-select browser has no need for. */

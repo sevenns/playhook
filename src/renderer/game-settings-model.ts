@@ -269,13 +269,23 @@ export function buildGameSettingsModel(
     });
   }
   if (mode === 'executable' || mode === 'installer') {
+    // What `executable` is RELATIVE TO depends on whether anything gets installed or copied first, and
+    // saying "relative to the card root" in the other two cases is simply false: with an install block
+    // present — an installer, or the copy checkbox — the manifest resolves it under the install
+    // directory (manifest.ts, `<installDir>/<executable>`), which holds what was installed or copied.
+    const executableHint: MessageKey =
+      mode === 'installer'
+        ? 'gameSettings.executableInstallHint'
+        : form.copyToPc
+          ? 'gameSettings.executableCopyHint'
+          : 'gameSettings.executableHint';
     launch.push({
       kind: 'path',
       id: 'executable',
       label: { key: 'gameSettings.executable' },
       value: form.executable,
       placeholder: { key: 'gameSettings.notSet' },
-      hint: { key: 'gameSettings.executableHint' },
+      hint: { key: executableHint },
       ...error('executable'),
     });
   }

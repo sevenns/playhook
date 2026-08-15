@@ -226,8 +226,24 @@ function valueOrPlaceholder(
   return { text: placeholder === undefined ? '' : rowLabelText(placeholder, t), empty: true };
 }
 
+/**
+ * The text beside an ARTWORK value — which is nothing, once there is a picture to look at. The
+ * thumbnail already answers "what is set here", and a path repeated next to it only crowds the row; the
+ * path itself is one menu press away. An EMPTY artwork field still shows its placeholder, because then
+ * there is no picture and the row would otherwise be blank.
+ */
+function artworkText(
+  hasValue: boolean,
+  placeholder: RowLabel | undefined,
+  t: Translator,
+): { readonly text: string; readonly empty: boolean } {
+  if (hasValue) return { text: '', empty: false };
+  return { text: placeholder === undefined ? '' : rowLabelText(placeholder, t), empty: true };
+}
+
 /** The summary a list row shows in place of its items: "3 items" is useless, the items are not. */
 function listSummary(row: CoreListRow, t: Translator): string {
+  if (row.preview !== undefined) return artworkText(row.items.length > 0, row.placeholder, t).text;
   if (row.items.length > 0) return row.items.join(', ');
   return row.placeholder === undefined ? '' : rowLabelText(row.placeholder, t);
 }
@@ -301,7 +317,10 @@ export function buildCoreRow(row: CoreRow, t: Translator): CoreRendered {
     }
     case 'text':
     case 'path': {
-      const shown = valueOrPlaceholder(row.value, row.placeholder, t);
+      const shown =
+        row.kind === 'path' && row.preview !== undefined
+          ? artworkText(row.value !== '', row.placeholder, t)
+          : valueOrPlaceholder(row.value, row.placeholder, t);
       const value = div('setting-value setting-value-wide', shown.text);
       value.classList.toggle('is-empty', shown.empty);
       el.append(value);
@@ -366,7 +385,10 @@ export function patchCoreRow(rendered: CoreRendered, row: CoreRow, t: Translator
     case 'text':
     case 'path':
     case 'number': {
-      const shown = valueOrPlaceholder(row.value, row.placeholder, t);
+      const shown =
+        row.kind === 'path' && row.preview !== undefined
+          ? artworkText(row.value !== '', row.placeholder, t)
+          : valueOrPlaceholder(row.value, row.placeholder, t);
       if (rendered.valueEl !== null) {
         rendered.valueEl.textContent = shown.text;
         rendered.valueEl.classList.toggle('is-empty', shown.empty);

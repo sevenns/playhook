@@ -193,12 +193,11 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'osk.legend': 'X - стереть, Y - регистр, LB/RB - раскладка, RT - готово, B - отмена',
   'picker.title': 'Выбор',
   'picker.cancel': 'Отмена',
-  'picker.up': '.. на уровень выше',
+  'picker.up': 'На уровень выше',
   'picker.useThisFolder': 'Выбрать эту папку',
   'picker.empty': 'Здесь пусто.',
-  'picker.legend': 'A - открыть или выбрать, B - на уровень выше, влево/вправо - сменить колонку',
-  'picker.legendMulti':
-    'X - отметить, A - выбрать, B - на уровень выше, влево/вправо - сменить колонку',
+  'picker.legend': 'A - открыть или выбрать, B - закрыть, влево/вправо - сменить колонку',
+  'picker.legendMulti': 'X - отметить, A - выбрать, B - закрыть, влево/вправо - сменить колонку',
 
   'gameSettings.screenTitle': 'Настройки игры',
   'gameSettings.loading': 'Читаем манифест...',
@@ -224,6 +223,9 @@ export const ru: Partial<Record<MessageKey, string>> = {
     'В манифесте описано несколько типов запуска. Останется только выбранный, остальные при сохранении удалятся.',
   'gameSettings.executable': 'Исполняемый файл',
   'gameSettings.executableHint': 'Относительно корня карты.',
+  'gameSettings.executableCopyHint':
+    'Относительно указанной ниже папки игры на карте, которая копируется.',
+  'gameSettings.executableInstallHint': 'Относительно папки, в которую установится игра.',
   'gameSettings.pcExecutable': 'Исполняемый файл на этом ПК',
   'gameSettings.args': 'Аргументы запуска',
   'gameSettings.runAsAdmin': 'Запускать от администратора',
@@ -269,9 +271,9 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'gameSettings.umuGameIdAuto': 'автоматически',
   'gameSettings.umuGameIdHint': 'Применяет protonfix конкретной игры вместо общего (Linux).',
   'gameSettings.save': 'Сохранить',
-  'gameSettings.reset': 'Вернуть сохранённое',
+  'gameSettings.reset': 'Отменить правки',
   'gameSettings.delete': 'Удалить игру',
-  'gameSettings.viewImage': 'Посмотреть изображение',
+  'gameSettings.viewImage': 'Посмотреть',
   'gameSettings.cannotSave':
     'Чтобы сохранить, исправьте отмеченные ошибки. Каждое такое поле выделено полосой слева.',
   'gameSettings.browse': 'Выбрать...',
@@ -289,7 +291,7 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'gameSettings.slotNotFound': 'В манифесте больше нет игры с идентификатором "{id}".',
   'gameSettings.otherGameUnnamed': 'без названия',
   'gameSettings.otherGameIssue': 'Ошибка в игре {number} ({game}): {field} - {message}',
-  'gameSettings.confirmReset': 'Вернуть эту игру к тому, что записано в манифесте?',
+  'gameSettings.confirmReset': 'Отменить правки этой игры и перечитать манифест?',
   'gameSettings.confirmDiscard': 'Выйти без сохранения? Изменения будут потеряны.',
   'gameSettings.confirmDelete': 'Удалить "{title}" из манифеста?',
   'gameSettings.confirmDeleteNote':

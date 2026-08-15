@@ -222,10 +222,14 @@
           <div class="settings-header">
             <div class="settings-title" data-i18n="gameSettings.screenTitle">Customize</div>
             <!-- The game's own name, from JS: it says WHOSE settings these are, which matters the moment
-                 a card carries more than one game — followed by where its manifest lives. The source used
-                 to be a row in the form, which put a read-only fact among the editable ones. -->
-            <div class="settings-version" id="game-settings-heading"></div>
-            <div class="settings-source" id="game-settings-source"></div>
+                 a card carries more than one game — followed, in the same breath, by where its manifest
+                 lives. ONE group, so the two read as a phrase ("Hades (E:\)") instead of drifting to
+                 opposite ends of a space-between header. The source used to be a row in the form, which
+                 put a read-only fact among the editable ones. -->
+            <div class="settings-heading">
+              <span class="settings-version" id="game-settings-heading"></span>
+              <span class="settings-source" id="game-settings-source"></span>
+            </div>
           </div>
           <div class="settings-list" id="game-settings-list"></div>
         </div>
