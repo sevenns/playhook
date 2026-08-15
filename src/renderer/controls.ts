@@ -1038,7 +1038,15 @@ export function createControls(deps: ControlsDeps): Controls {
       if (!repeat) moveStackFocus(-1);
       return;
     }
-    if (deps.settings.isOpen()) deps.settings.navUp();
+    if (deps.settings.isOpen()) {
+      deps.settings.navUp();
+      return;
+    }
+    // Nothing sits above the bar on the detail screen, so up leaves it: the strip the game was picked
+    // from is literally where it came from, and it re-enters exactly there. Held (repeat) presses are
+    // dropped — one hold must not walk out of the screen the moment the user pauses on it. Only when no
+    // popup is up: there the direction belongs to the menu, which is handled above.
+    if (!repeat && deps.carousel.leaveDetail()) audio.play('back');
   }
   function navDown(repeat = false): void {
     noteGamepadActivity();
