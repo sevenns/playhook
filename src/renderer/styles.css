@@ -1058,11 +1058,14 @@ html:not(.cursor-hidden) .rect-button:hover,
   display: none;
 }
 
-/* The stats and the action items come in one after another as the popup opens, in reading order: the
-   column slides in as a whole (see .popup-column), and its contents arrive just behind it instead of
-   being fully drawn the moment it lands. Keyed on .is-open, so the animation restarts on every open.
-   `both` holds the first frame during the delay — without it each item would flash at full opacity
-   before its turn. The items are laid out either way; this only decides when they become visible. */
+/* The stats and the action items come in one after another as the popup opens: the column slides in as a
+   whole (see .popup-column), and its contents arrive just behind it instead of being fully drawn the
+   moment it lands. The wave runs BOTTOM-UP — the item nearest the bottom of its block goes first — which
+   is both the direction the items rise from AND where the focus lands: the bottom item is the one the
+   user is already looking at, and having it arrive last made the whole menu feel slow to open. Counting
+   with nth-LAST-child is what keeps that true however many items the current menu happens to have.
+   Keyed on .is-open, so the animation restarts on every open. `both` holds the first frame during the
+   delay — without it each item would flash at full opacity before its turn. */
 @keyframes popup-item-in {
   from {
     opacity: 0;
@@ -1080,24 +1083,24 @@ html:not(.cursor-hidden) .rect-button:hover,
   animation-delay: calc(0.12s + var(--pop, 0) * 45ms);
 }
 
-.popup.is-open .info-item:nth-child(2),
-.popup.is-open .actions-group > .text-button:nth-child(2) {
+.popup.is-open .info-item:nth-last-child(2),
+.popup.is-open .actions-group > .text-button:nth-last-child(2) {
   --pop: 1;
 }
-.popup.is-open .info-item:nth-child(3),
-.popup.is-open .actions-group > .text-button:nth-child(3) {
+.popup.is-open .info-item:nth-last-child(3),
+.popup.is-open .actions-group > .text-button:nth-last-child(3) {
   --pop: 2;
 }
-.popup.is-open .actions-group > .text-button:nth-child(4) {
+.popup.is-open .actions-group > .text-button:nth-last-child(4) {
   --pop: 3;
 }
-.popup.is-open .actions-group > .text-button:nth-child(5) {
+.popup.is-open .actions-group > .text-button:nth-last-child(5) {
   --pop: 4;
 }
-.popup.is-open .actions-group > .text-button:nth-child(6) {
+.popup.is-open .actions-group > .text-button:nth-last-child(6) {
   --pop: 5;
 }
-.popup.is-open .actions-group > .text-button:nth-child(n + 7) {
+.popup.is-open .actions-group > .text-button:nth-last-child(n + 7) {
   --pop: 6;
 }
 
