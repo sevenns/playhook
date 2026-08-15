@@ -17,7 +17,6 @@ export const en = {
   // ── Tray context menu (tray.ts) ─────────────────────────────────────────────
   'tray.showLauncher': 'Show launcher',
   'tray.configureGame': 'Configure game',
-  'tray.settings': 'Settings',
   'tray.quit': 'Quit',
   // Steam Deck only: registering Playhook as a non-Steam game so it gets a Game Mode tile. The item is
   // hidden entirely on Windows and on any run that isn't a packaged AppImage.
@@ -76,6 +75,7 @@ export const en = {
   'launcher.menu.forceClose': 'Force close',
   'launcher.menu.home': 'Home',
   'launcher.menu.forget': 'Remove from history',
+  'launcher.menu.settings': 'Settings',
   // Confirmation popup copy (controls.ts). The Yes/No buttons use the shared common.* keys.
   'launcher.confirm.install': 'Do you want to install game?',
   'launcher.confirm.uninstall': 'Do you want to uninstall game from your PC?',
@@ -149,23 +149,22 @@ export const en = {
 
   // ── Settings window (settings.html + settings.ts) ───────────────────────────
   'settings.sectionUpdates': 'Updates',
-  'settings.loading': 'Loading…',
+  'settings.loading': 'Loading...',
   'settings.sectionAutoUpdate': 'Automatic updates',
   'settings.autoDownloadInstall': 'Download and install automatically',
   'settings.autoDownloadManual': 'Download automatically, install manually',
   'settings.autoOff': 'Off (check manually)',
   'settings.prerelease': 'Receive pre-release (beta) updates',
-  'settings.sectionAppearance': 'Appearance',
-  'settings.themeSystem': 'Match system',
-  'settings.themeLight': 'Light',
-  'settings.themeDark': 'Dark',
   'settings.sectionLanguage': 'Language',
+  // The row inside that section — named apart from the section title so the screen doesn't say
+  // "Language / Language" twice in a row.
+  'settings.language': 'Interface language',
   // Same wording as the Appearance "Match system" option, for consistency across the two selectors.
   'settings.languageSystem': 'Match system',
   'settings.sectionGeneral': 'General',
   'settings.summonHotkey': 'Show the launcher with a gamepad shortcut',
-  'settings.summonHintPre': 'Hold',
-  'settings.summonHintPost': 'on your gamepad at any time to bring the launcher to the front.',
+  // The launcher screen states the chord in one line (the settings window splits it around a <b>).
+  'settings.summonHint': 'Hold Menu + View on your gamepad to bring the launcher to the front.',
   'settings.preventScreensaver': 'Keep the screen awake while the launcher is open',
   'settings.alwaysShowEmpty': 'Always show the no-card screen',
   'settings.disableSilentInstall': 'Disable silent installer mode (show the installer wizard)',
@@ -173,9 +172,6 @@ export const en = {
   'settings.steamAutoLaunch': 'Open Playhook in Steam when a card is inserted (Game Mode only)',
   'settings.steamAutoLaunchHint':
     'Off frees about 120 MB of RAM: the background watcher stops running. The Steam tile stays — launch it from the library.',
-  'settings.wallpaperLabel': 'Empty screen background',
-  'settings.wallpaperChoose': 'Choose image…',
-  'settings.wallpaperReset': 'Reset',
   'settings.sectionAudio': 'Audio',
   'settings.soundSet': 'Navigation sounds',
   'settings.soundSetVolume': 'Navigation sounds volume',
@@ -185,23 +181,22 @@ export const en = {
   'settings.onlyGlobalAmbientHint':
     "When on, only the global ambience plays — a game's own background music is ignored.",
   'settings.ambientVolume': 'Ambience volume',
-  'settings.sectionAdvanced': 'Advanced',
   'settings.openLogs': 'Open logs',
   'settings.openGames': 'Open games folder',
   'settings.reset': 'Reset to defaults',
-  'settings.titlebarVersion': '({version}) — Settings',
+  'settings.confirmReset': 'Reset all settings to defaults?',
   // Update-status line + primary button (settings.ts render()).
   'settings.status.idle': 'Check for updates to see if a new version is available.',
   'settings.status.upToDate': 'You’re up to date.',
-  'settings.status.checking': 'Checking for updates…',
+  'settings.status.checking': 'Checking for updates...',
   'settings.status.available': 'Update available: {version}',
-  'settings.status.downloading': 'Downloading… {percent}%',
+  'settings.status.downloading': 'Downloading... {percent}%',
   'settings.status.downloaded': 'Update {version} is ready to install.',
   'settings.status.unsupported': 'Updates are available only in the installed build.',
   'settings.action.check': 'Check for updates',
-  'settings.action.checking': 'Checking…',
+  'settings.action.checking': 'Checking...',
   'settings.action.updateTo': 'Update to {version}',
-  'settings.action.downloading': 'Downloading…',
+  'settings.action.downloading': 'Downloading...',
   'settings.action.restartInstall': 'Restart & install',
   'settings.action.retry': 'Retry',
 
@@ -369,9 +364,6 @@ export const en = {
   'errors.configInvalid': 'the config is invalid',
   'errors.powerUnsupported': 'power actions are only available on Windows',
   'errors.powerFailed': 'power command failed: {cause}',
-  'errors.wallpaperTooLarge': 'The image is too large (over 8 MB). Choose a smaller file.',
-  'errors.wallpaperNotImage': 'That file is not a supported image (PNG, JPEG, WebP or GIF).',
-  'errors.wallpaperFailed': 'Failed to set the background image.',
 
   // ── Manifest validation (manifest.ts) ───────────────────────────────────────
   // Schema-level custom messages: stored in the schema AS THESE KEYS; translated at the issue-mapping

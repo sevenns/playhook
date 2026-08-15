@@ -21,9 +21,22 @@ import { req, reqQuery } from './dom.js';
 // The current popup view (mutually exclusive; 'none' = closed). Mirrors the data-view on #popup.
 type PopupView = 'none' | 'details' | 'power' | 'confirm' | 'error';
 // Which action the confirm view is asking about (only meaningful while popupView === 'confirm').
-type ConfirmMode = 'install' | 'uninstall' | 'kill' | 'forget' | 'shutdown' | 'reboot' | 'sleep';
+type ConfirmMode =
+  | 'install'
+  | 'uninstall'
+  | 'kill'
+  | 'forget'
+  | 'shutdown'
+  | 'reboot'
+  | 'sleep'
+  | 'reset-settings';
 // Gamepad A doesn't trigger :active, so flash a press class to play the scale-down animation.
 const PRESS_MS = 130;
+/** How far the pointer must travel before hover may take the focus again (see armHover). */
+const HOVER_WAKE_PX = 6;
+/** How long the popup takes to fade out (.popup transition in styles.css) — the window its contents
+ *  must stay frozen for, so the user never watches the menu rewrite itself on the way out. */
+const POPUP_FADE_MS = 350;
 
 /** What the interaction layer needs from the rest of the renderer. */
 export interface ControlsDeps {
@@ -41,6 +54,33 @@ export interface ControlsDeps {
   getTranslator(): Translator;
   /** The history carousel — the THIRD focus group, above the bar and the popup stack (see navLeft…). */
   carousel: CarouselNav;
+  /** The Settings screen — the FOURTH surface, between the popup and the carousel (see navLeft…). */
+  settings: SettingsNav;
+  /**
+   * A direction is being HELD, i.e. the strip is flipping on its own (true), or it has just been let go
+   * (false). The background subsystem holds its image for the duration — see hero.setFlipping.
+   */
+  onFlipping(flipping: boolean): void;
+}
+
+/**
+ * What the interaction layer needs from the Settings screen. The screen owns its rows, focus and IPC
+ * (settings-screen.ts); this module only routes the six primitives to it and guards the mechanisms that
+ * would otherwise keep running underneath (idle timer, wheel, Y).
+ */
+export interface SettingsNav {
+  isOpen(): boolean;
+  open(): void;
+  close(): void;
+  navUp(): void;
+  navDown(): void;
+  /** `repeat` marks a hold auto-repeat — see the screen's own navLeft. */
+  navLeft(repeat?: boolean): void;
+  navRight(): void;
+  navActivate(): void;
+  navBack(): void;
+  /** Runs the reset once the shared confirm popup says yes. */
+  resetSettings(): void;
 }
 
 /**
@@ -63,14 +103,18 @@ export interface CarouselNav {
 export interface Controls {
   /** Refreshes the game-dependent menu item (Install/Uninstall text + visibility) from the current state. */
   applyGameButtons(): void;
+  /** The Settings screen closed itself — restore the bar highlight on the More button it came from. */
+  settingsClosed(): void;
+  /** The Settings screen asked to reset — opens the shared confirm popup (No returns to Settings). */
+  confirmResetSettings(): void;
   /** Clears the game-dependent menu item for the idle/no-game screen. */
   clearGameButtons(): void;
   /** Per-render refresh: force-close the popup off the ready screen (or while steam-busy), then re-apply focus. */
   refresh(): void;
   /** Opens the error popup with the given message (a failed launch/action from main). */
   showError(message: string): void;
-  /** Seeds whether this is a Game Mode (gamescope) session — flips the power menu's primary item from
-   *  "Minimize Playhook" (hide to tray) to "Close Playhook" (full quit). Called once at startup. */
+  /** Seeds whether this is a Game Mode (gamescope) session — drops "Minimize Playhook" from the power
+   *  menu, since there is no tray to minimize into there. Called once at startup. */
   setGameMode(gameMode: boolean): void;
   /** Starts the gamepad polling loop. */
   start(): void;
@@ -139,11 +183,13 @@ export function createControls(deps: ControlsDeps): Controls {
   const menuKill = req<HTMLButtonElement>('menu-kill');
   const menuHome = req<HTMLButtonElement>('menu-home');
   const menuForget = req<HTMLButtonElement>('menu-forget');
+  const menuSettings = req<HTMLButtonElement>('menu-settings');
   const menuClose = req<HTMLButtonElement>('menu-close');
   const powerShutdown = req<HTMLButtonElement>('power-shutdown');
   const powerReboot = req<HTMLButtonElement>('power-reboot');
   const powerSleep = req<HTMLButtonElement>('power-sleep');
   const powerMinimize = req<HTMLButtonElement>('power-minimize');
+  const powerQuit = req<HTMLButtonElement>('power-quit');
   const powerClose = req<HTMLButtonElement>('power-close');
   const confirmYes = req<HTMLButtonElement>('confirm-yes');
   const confirmNo = req<HTMLButtonElement>('confirm-no');
@@ -153,7 +199,7 @@ export function createControls(deps: ControlsDeps): Controls {
   let confirmMode: ConfirmMode = 'uninstall';
   // Where B/Esc/veil returns FROM the confirm view: install/uninstall come from Details, the power
   // actions come from Power.
-  let confirmReturnTo: 'details' | 'power' = 'details';
+  let confirmReturnTo: 'details' | 'power' | 'settings' = 'details';
   /** The game the open remove-from-history confirm is about — captured when it opens (see openConfirm). */
   let forgetId: string | null = null;
 
@@ -162,10 +208,41 @@ export function createControls(deps: ControlsDeps): Controls {
   // shared veil never cross-fades). Closing removes .is-open.
 
   function setView(view: Exclude<PopupView, 'none'>): void {
+    // Every view change lays a new stack under the pointer — hover must not claim the focus the view
+    // itself just set (see the mousemove handler).
+    armHover();
     popupView = view;
     popup.dataset['view'] = view;
     popup.classList.add('is-open');
     popup.setAttribute('aria-hidden', 'false');
+  }
+
+  /**
+   * Closing is a 0.35s fade, and the menu is still on screen for all of it. Anything that rebuilds its
+   * items in that window is visible — pressing "Home" leaves the detail screen, which swaps the game's
+   * items for the launcher's, and the user watched that happen through the fading popup. So the items
+   * are frozen until the fade is over, then brought up to date in one go for the next opening.
+   */
+  let menuThawTimer = 0;
+
+  function freezeMenuDuringFade(): void {
+    if (menuThawTimer !== 0) window.clearTimeout(menuThawTimer);
+    menuThawTimer = window.setTimeout(() => {
+      menuThawTimer = 0;
+      applyGameButtons();
+    }, POPUP_FADE_MS);
+  }
+
+  /** Whether the menu's items are currently held still (see freezeMenuDuringFade). */
+  function menuFrozen(): boolean {
+    return menuThawTimer !== 0;
+  }
+
+  /** Ends the freeze early and rebuilds now — used when the popup opens again mid-fade. */
+  function thawMenu(): void {
+    if (menuThawTimer === 0) return;
+    window.clearTimeout(menuThawTimer);
+    menuThawTimer = 0;
   }
 
   function closePopup(): void {
@@ -173,6 +250,7 @@ export function createControls(deps: ControlsDeps): Controls {
     popupView = 'none';
     popup.classList.remove('is-open');
     popup.setAttribute('aria-hidden', 'true');
+    freezeMenuDuringFade();
     applyStackFocus(); // clear the stack highlight (stackActive becomes false)
     applyFocus(); // restore the main bar highlight
   }
@@ -181,11 +259,13 @@ export function createControls(deps: ControlsDeps): Controls {
   // every screen — on the empty (no-card) screen there are no stats and no Install/Uninstall, so it
   // degrades to just System + Close.
   function openDetails(): void {
+    thawMenu(); // a re-open inside the fade window must show the CURRENT items, not the frozen ones
     applyMenuInstallToggle(); // keep the toggle's text/visibility fresh for the current game
     applyMenuKill(); // keep the force-close item's visibility fresh (running-only)
     applyMenuHome(); // keep the "Home" item fresh (only when there is a carousel to go back to)
     applyMenuForget(); // keep the "Remove from history" item fresh (history-only games)
     applyMenuSystem(); // …and System, which belongs to the carousel level, not to a game
+    applyMenuSettings(); // …and Settings, which belongs to that level too
     setView('details');
     focusStackBottom(); // default focus: Close
     applyFocus(); // main highlight clears (focusActive false with a popup open)
@@ -250,6 +330,13 @@ export function createControls(deps: ControlsDeps): Controls {
       popup.dataset['mode'] = mode;
       delete popup.dataset['installVia'];
       confirmMessage.textContent = t()('launcher.confirm.forget', { title: browse.title });
+    } else if (mode === 'reset-settings') {
+      // Asked from the Settings screen, which stays open UNDER the popup — so "No" must return there,
+      // not to the Details menu the screen was reached through.
+      confirmReturnTo = 'settings';
+      popup.dataset['mode'] = mode;
+      delete popup.dataset['installVia'];
+      confirmMessage.textContent = t()('settings.confirmReset');
     } else if (mode === 'kill') {
       // Force-close confirm (from Details): no path note; returns to Details. The message warns about
       // unsaved progress. data-mode ≠ 'install' hides the path note (styles.css).
@@ -295,6 +382,11 @@ export function createControls(deps: ControlsDeps): Controls {
         break;
       case 'confirm':
         audio.play('back');
+        // 'settings' is not a popup view: the screen is already open underneath, so the popup just goes.
+        if (confirmReturnTo === 'settings') {
+          closePopup();
+          break;
+        }
         setView(confirmReturnTo);
         focusStackBottom();
         break;
@@ -306,6 +398,25 @@ export function createControls(deps: ControlsDeps): Controls {
       default:
         break;
     }
+  }
+
+  // ── Settings screen (the fourth surface) ─────────────────────────────────────
+  // Opening/closing lives here because the bar focus does: the screen is entered from More and returns
+  // to it. Everything INSIDE the screen belongs to settings-screen.ts.
+
+  function openSettings(): void {
+    deps.settings.open();
+    applyFocus(); // the bar highlight clears (focusActive is false with the screen open)
+  }
+
+  /** The screen closed itself (B / Esc / veil): put the highlight back on the More button it came from. */
+  function settingsClosed(): void {
+    const items = mainFocusables();
+    const more = items.indexOf(moreButton);
+    if (more !== -1) focusIndex = more;
+    focusRevealed = true;
+    applyFocus();
+    armIdleTimer(); // the countdown was suspended while the screen was up
   }
 
   // ── Menu item: Install / Uninstall (game-dependent) ──────────────────────────
@@ -326,10 +437,22 @@ export function createControls(deps: ControlsDeps): Controls {
    * is, and dropping System there would strand Shutdown / Minimize Playhook with no way to reach them.
    */
   function applyMenuSystem(): void {
+    if (menuFrozen()) return;
     menuShutdown.classList.toggle('is-hidden', onGameScreen() && deps.carousel.exists());
   }
 
+  /**
+   * Settings live at the launcher level (Home), not inside one game's menu — the same rule System
+   * follows, and the same exception: with NO carousel to go up to (a single-game card, the empty screen)
+   * the detail menu is the only menu there is, and hiding Settings there would put them out of reach.
+   */
+  function applyMenuSettings(): void {
+    if (menuFrozen()) return;
+    menuSettings.classList.toggle('is-hidden', onGameScreen() && deps.carousel.exists());
+  }
+
   function applyMenuInstallToggle(): void {
+    if (menuFrozen()) return;
     if (!onGameScreen()) {
       menuInstallToggle.classList.add('is-hidden');
       return;
@@ -354,6 +477,7 @@ export function createControls(deps: ControlsDeps): Controls {
   // so this is the exact opposite of the install toggle, which hides during busy). Text from JS (no
   // data-i18n) so a language change re-labels it at render time and it stays out of the i18n HTML test.
   function applyMenuKill(): void {
+    if (menuFrozen()) return;
     // Shown only while a game is running AND a force-close isn't already in flight (during killing the
     // status reads "Force closing…" and the button would be a no-op — main guards a repeat anyway).
     const s = state();
@@ -366,6 +490,7 @@ export function createControls(deps: ControlsDeps): Controls {
   // The MOUSE route out of a detail screen — the gamepad/keyboard have B for it, but a mouse user had no
   // way back to the strip. Shown only on a detail screen that has a carousel behind it.
   function applyMenuHome(): void {
+    if (menuFrozen()) return;
     const show = deps.carousel.exists() && deps.carousel.screen() === 'detail';
     menuHome.classList.toggle('is-hidden', !show);
     if (show) menuHome.textContent = t()('launcher.menu.home');
@@ -376,18 +501,19 @@ export function createControls(deps: ControlsDeps): Controls {
   // in the PC library". Those games are rebuilt from their manifests on every insert, so removing one
   // would be a lie the next refresh undoes; what CAN be removed is the record of a game you no longer have.
   function applyMenuForget(): void {
+    if (menuFrozen()) return;
     const browse = deps.getBrowse();
     const show = onGameScreen() && browse !== null && !browse.active;
     menuForget.classList.toggle('is-hidden', !show);
     if (show) menuForget.textContent = t()('launcher.menu.forget');
   }
 
-  // The power menu's primary item. Desktop/Windows: "Minimize Playhook" (hide to tray). Game Mode: "Close
-  // Playhook" — a full quit, since there is no tray to minimize into (mirrors how closing the window quits
-  // in Game Mode). Label from JS (no data-i18n) so a language change relabels it at render time and it
-  // stays out of the i18n HTML test.
-  function applyPowerPrimary(): void {
-    powerMinimize.textContent = t()(gameMode ? 'launcher.menu.quit' : 'launcher.menu.minimize');
+  // The power menu carries both ways out of the launcher: "Minimize Playhook" (hide to the tray) and
+  // "Close Playhook" (full quit). In Game Mode the first one goes — there is no tray to hide into, so
+  // hiding is a no-op there, and the quit is the honest option (mirrors how closing the window quits in
+  // Game Mode).
+  function applyPowerItems(): void {
+    powerMinimize.classList.toggle('is-hidden', gameMode);
   }
 
 
@@ -437,6 +563,8 @@ export function createControls(deps: ControlsDeps): Controls {
   // bar, which is the only way More is reachable there.
   function focusActive(): boolean {
     if (popupView !== 'none') return false;
+    // The Settings screen covers the bar (which is faded out and pointer-events:none underneath).
+    if (deps.settings.isOpen()) return false;
     return deps.carousel.screen() === 'detail' || carouselBarFocus;
   }
 
@@ -471,6 +599,9 @@ export function createControls(deps: ControlsDeps): Controls {
   // goes dormant if it's shown with nothing open — both "went idle" at the same moment.
   function armIdleTimer(): void {
     if (idleTimer !== 0) window.clearTimeout(idleTimer);
+    // With the Settings screen up there is no bar highlight to retire and no carousel to hand back to:
+    // firing would strip the return point on More and light the strip up under the veil.
+    if (deps.settings.isOpen()) return;
     idleTimer = window.setTimeout(() => {
       idleTimer = 0;
       setCursorHidden(true);
@@ -490,9 +621,31 @@ export function createControls(deps: ControlsDeps): Controls {
     }, IDLE_MS);
   }
 
-  // Gamepad input = activity: hide the cursor at once (the user switched to the pad) + restart the idle.
+  // Where the pointer was when hover was last disarmed — by a surface opening under it, or by a
+  // keyboard/gamepad step. Until the mouse travels HOVER_WAKE_PX from there, hover does not move the
+  // focus: an element arriving under a still cursor is the ELEMENT moving, not the mouse, and Chromium
+  // reports both the same way. Cleared by the first genuine move.
+  let hoverArmedAt: { readonly x: number; readonly y: number } | null = null;
+
+  function armHover(): void {
+    hoverArmedAt = { x: lastMouseX, y: lastMouseY };
+  }
+
+  function hoverAwake(x: number, y: number): boolean {
+    if (hoverArmedAt === null) return true;
+    if (Math.hypot(x - hoverArmedAt.x, y - hoverArmedAt.y) < HOVER_WAKE_PX) return false;
+    hoverArmedAt = null;
+    return true;
+  }
+
+  // Gamepad/keyboard input = activity: hide the cursor at once (the user switched to the pad), disarm
+  // hover, restart the idle countdown.
   function noteGamepadActivity(): void {
     setCursorHidden(true);
+    // Every keyboard/gamepad step re-arms the hover guard: last input wins. Without this, one real mouse
+    // move wakes hover for good, and from then on any element that slides under the still cursor — a
+    // scrolling list, a popup opening — can take the focus back off the key that just moved it.
+    armHover();
     armIdleTimer();
   }
 
@@ -525,15 +678,17 @@ export function createControls(deps: ControlsDeps): Controls {
   // Details, whether the Install/Uninstall item is present). Default focus is the BOTTOM button.
   const ALL_STACK_BUTTONS: readonly HTMLButtonElement[] = [
     menuShutdown,
+    menuHome,
     menuInstallToggle,
     menuKill,
-    menuHome,
     menuForget,
+    menuSettings,
     menuClose,
     powerShutdown,
     powerReboot,
     powerSleep,
     powerMinimize,
+    powerQuit,
     powerClose,
     confirmYes,
     confirmNo,
@@ -546,15 +701,20 @@ export function createControls(deps: ControlsDeps): Controls {
       case 'details': {
         const items: HTMLButtonElement[] = [];
         if (!menuShutdown.classList.contains('is-hidden')) items.push(menuShutdown);
+        if (!menuHome.classList.contains('is-hidden')) items.push(menuHome);
         if (!menuInstallToggle.classList.contains('is-hidden')) items.push(menuInstallToggle);
         if (!menuKill.classList.contains('is-hidden')) items.push(menuKill);
-        if (!menuHome.classList.contains('is-hidden')) items.push(menuHome);
         if (!menuForget.classList.contains('is-hidden')) items.push(menuForget);
+        if (!menuSettings.classList.contains('is-hidden')) items.push(menuSettings);
         items.push(menuClose);
         return items;
       }
-      case 'power':
-        return [powerShutdown, powerReboot, powerSleep, powerMinimize, powerClose];
+      case 'power': {
+        const items: HTMLButtonElement[] = [powerShutdown, powerReboot, powerSleep];
+        if (!powerMinimize.classList.contains('is-hidden')) items.push(powerMinimize);
+        items.push(powerQuit, powerClose);
+        return items;
+      }
       case 'confirm':
         return [confirmYes, confirmNo];
       case 'error':
@@ -658,6 +818,12 @@ export function createControls(deps: ControlsDeps): Controls {
     } else if (btn === menuForget) {
       audio.play('button');
       openConfirm('forget');
+    } else if (btn === menuSettings) {
+      // The single entrance to Settings — the tray item is gone, so this works the same on the desktop
+      // and in Game Mode. The menu it was opened from closes first: the screen is a surface of its own.
+      audio.play('button');
+      closePopup();
+      openSettings();
     } else if (btn === menuHome) {
       // Non-destructive, so no confirm: close the popup and hand control back to the strip.
       audio.play('back');
@@ -677,14 +843,19 @@ export function createControls(deps: ControlsDeps): Controls {
       audio.play('button');
       openConfirm('sleep');
     } else if (btn === powerMinimize) {
-      // Desktop/Windows: hide to the tray (same as the empty-screen Hide button). Game Mode: quit the app
-      // ("Close Playhook") — there is no tray, so hide is a no-op there. No confirm either way — hide is
-      // non-destructive, and a quit is as recoverable as relaunching from the Steam library. Close the
-      // popup first so a re-summoned launcher shows a clean bar, not this menu.
+      // Hide to the tray (same as the empty-screen Hide button); never shown in Game Mode, where there is
+      // no tray and this would be a no-op. No confirm — hiding is non-destructive. Close the popup first
+      // so a re-summoned launcher shows a clean bar, not this menu.
       audio.play('back');
       closePopup();
-      if (gameMode) window.api.requestQuit();
-      else window.api.requestHide();
+      window.api.requestHide();
+    } else if (btn === powerQuit) {
+      // The full quit. No confirm either: it is as recoverable as relaunching from the Steam library —
+      // and in Game Mode this is the only way out, so a confirm would sit between the user and the exit
+      // every single time.
+      audio.play('back');
+      closePopup();
+      window.api.requestQuit();
     } else if (btn === confirmYes) {
       acceptConfirm();
     } else if (btn === confirmNo) {
@@ -735,6 +906,10 @@ export function createControls(deps: ControlsDeps): Controls {
         audio.play('button');
         window.api.requestSleep();
         break;
+      case 'reset-settings':
+        audio.play('button'); // neutral sound for the destructive confirm
+        deps.settings.resetSettings();
+        break;
     }
   }
 
@@ -753,10 +928,18 @@ export function createControls(deps: ControlsDeps): Controls {
     });
   });
 
-  // One window-level mouse handler, guarded against SYNTHETIC moves (Chromium fires mousemove with
-  // unchanged coordinates when an element shifts under a still pointer — e.g. the busy title-slide — and
-  // that must not undo a gamepad cursor-hide). A real move shows the cursor, counts as activity, and —
-  // when it's over a bar button — wakes/moves the bar focus so A activates what's highlighted.
+  // ONE window-level mouse handler for both surfaces (the bar and the popup stack), guarded against
+  // SYNTHETIC moves — and that guard is the whole point, not a detail.
+  //
+  // Chromium fires mouse events at unchanged coordinates whenever the element UNDER a still pointer
+  // changes: a busy title sliding past, or — the case that bit us — a popup opening with its buttons
+  // landing right where the cursor happens to rest. As `mouseenter` handlers, the stack buttons took
+  // that for a hover and moved the focus off the item the popup had just focused; the next gamepad press
+  // moved it back. That was the "it jumps and returns" stutter, and it needed nothing but a resting
+  // mouse to reproduce — no blur, no dropped frame.
+  //
+  // Reading hover from mousemove with a coordinate check instead means the focus follows the pointer
+  // only when the pointer actually moves.
   let lastMouseX = -1;
   let lastMouseY = -1;
   window.addEventListener('mousemove', (event) => {
@@ -764,9 +947,20 @@ export function createControls(deps: ControlsDeps): Controls {
     lastMouseX = event.clientX;
     lastMouseY = event.clientY;
     noteMouseActivity();
+    if (!hoverAwake(event.clientX, event.clientY)) return;
+    const element = event.target instanceof Element ? event.target : null;
+    // The popup owns the pointer while it is open: its stack is the only thing hover may move.
+    if (stackActive()) {
+      const button = element?.closest<HTMLButtonElement>('.text-button') ?? null;
+      if (button === null) return;
+      const idx = stackFocusables().indexOf(button);
+      if (idx === -1 || idx === stackIndex) return;
+      stackIndex = idx;
+      applyStackFocus();
+      return;
+    }
     if (!focusActive()) return;
-    const target =
-      event.target instanceof Element ? event.target.closest<HTMLButtonElement>('#play-button, #more-button') : null;
+    const target = element?.closest<HTMLButtonElement>('#play-button, #more-button') ?? null;
     if (target === null) return;
     const idx = mainFocusables().indexOf(target);
     if (idx === -1) return;
@@ -775,15 +969,6 @@ export function createControls(deps: ControlsDeps): Controls {
       focusIndex = idx;
       applyFocus();
     }
-  });
-  ALL_STACK_BUTTONS.forEach((btn) => {
-    btn.addEventListener('mouseenter', () => {
-      if (!stackActive()) return;
-      const idx = stackFocusables().indexOf(btn);
-      if (idx === -1) return;
-      stackIndex = idx;
-      applyStackFocus();
-    });
   });
 
   // The six navigation primitives, shared by the gamepad AND the keyboard (below) so both drive the exact
@@ -800,8 +985,51 @@ export function createControls(deps: ControlsDeps): Controls {
    *  Y has handed the focus to the bar (then left/right/A belong to More, like on any other screen). */
   const stripActive = (): boolean => onCarousel() && !carouselBarFocus;
 
-  function navLeft(): void {
+  // ── Held directions ────────────────────────────────────────────────────────
+  // A repeat press means a direction is being held. It ends on an explicit release — the pad reports one
+  // (onDirectionsReleased), the keyboard has keyup — but neither is guaranteed to arrive: the window can
+  // lose focus mid-hold and swallow the keyup, and a pad can be unplugged. So a watchdog closes it too,
+  // renewed on every repeat; at the repeat cadence (NAV_REPEAT_MS) this silence can only mean a stop.
+  const FLIP_WATCHDOG_MS = 400;
+  let flipping = false;
+  let flipWatchdog = 0;
+
+  function noteFlip(): void {
+    if (flipWatchdog !== 0) window.clearTimeout(flipWatchdog);
+    flipWatchdog = window.setTimeout(endFlip, FLIP_WATCHDOG_MS);
+    if (flipping) return;
+    flipping = true;
+    deps.onFlipping(true);
+  }
+
+  function endFlip(): void {
+    if (flipWatchdog !== 0) {
+      window.clearTimeout(flipWatchdog);
+      flipWatchdog = 0;
+    }
+    if (!flipping) return;
+    flipping = false;
+    deps.onFlipping(false);
+  }
+
+  function navLeft(repeat = false): void {
     noteGamepadActivity();
+    if (repeat) noteFlip();
+    // Left is "out" of a popup, the same step B takes: the stacks live on the right edge of the screen,
+    // so moving left off them means leaving — the reading the layout already suggests on the carousel
+    // (where left walks from the More button back to the strip). Sub-views step up one level rather than
+    // closing outright, exactly as B does there. A HELD left is ignored: at the repeat cadence it would
+    // walk out through every level and land on the carousel, flipping cards nobody asked to flip.
+    if (popupView !== 'none') {
+      if (!repeat) back();
+      return;
+    }
+    // BEFORE stripActive(): left/right are the slider's own gesture (and the dropdown's fast path), and
+    // holding one on the Settings screen must never flip through the carousel underneath.
+    if (deps.settings.isOpen()) {
+      deps.settings.navLeft(repeat);
+      return;
+    }
     if (stripActive()) {
       deps.carousel.move(-1);
       return;
@@ -813,10 +1041,17 @@ export function createControls(deps: ControlsDeps): Controls {
       setCarouselBarFocus(false);
       return;
     }
-    if (popupView === 'none') moveFocus(-1);
+    moveFocus(-1);
   }
   function navRight(repeat = false): void {
     noteGamepadActivity();
+    if (repeat) noteFlip();
+    // Same early branch as navLeft — `repeat` is irrelevant here: a held right is exactly what a slider
+    // wants, one step per repeat, and the screen has no "at the end, hand the focus over" rule.
+    if (popupView === 'none' && deps.settings.isOpen()) {
+      deps.settings.navRight();
+      return;
+    }
     if (stripActive()) {
       // Past the last card there is one thing left to the right: the More button. A HELD right stays
       // pinned at the end instead — running down a long history is one gesture, and it must not end with
@@ -829,17 +1064,46 @@ export function createControls(deps: ControlsDeps): Controls {
     }
     if (popupView === 'none') moveFocus(1);
   }
-  function navUp(): void {
+  // Vertical hold-to-repeat exists for the Settings LIST, which is long enough to warrant it. The popup
+  // stacks are short and cyclic — repeating there would spin them — so a repeat is dropped anywhere else.
+  function navUp(repeat = false): void {
     noteGamepadActivity();
-    if (popupView !== 'none') moveStackFocus(-1);
+    if (repeat) noteFlip();
+    if (popupView !== 'none') {
+      if (!repeat) moveStackFocus(-1);
+      return;
+    }
+    if (deps.settings.isOpen()) {
+      deps.settings.navUp();
+      return;
+    }
+    // Nothing sits above the bar on the detail screen, so up leaves it: the strip the game was picked
+    // from is literally where it came from, and it re-enters exactly there. Held (repeat) presses are
+    // dropped — one hold must not walk out of the screen the moment the user pauses on it. Only when no
+    // popup is up: there the direction belongs to the menu, which is handled above.
+    if (!repeat && deps.carousel.leaveDetail()) audio.play('back');
   }
-  function navDown(): void {
+  function navDown(repeat = false): void {
     noteGamepadActivity();
-    if (popupView !== 'none') moveStackFocus(1);
+    if (repeat) noteFlip();
+    if (popupView !== 'none') {
+      if (!repeat) moveStackFocus(1);
+      return;
+    }
+    if (deps.settings.isOpen()) {
+      deps.settings.navDown();
+      return;
+    }
+    // The other half of the vertical pair: down opens the selected card (what A does), up on the detail
+    // screen comes back out. The strip only — with the focus on More, down has no card to open, and
+    // inside a popup the direction belongs to the menu (handled above). Held presses are dropped, as
+    // everywhere a direction crosses a screen boundary.
+    if (!repeat && stripActive()) deps.carousel.activate();
   }
   function navActivate(): void {
     noteGamepadActivity();
     if (popupView !== 'none') activateStack();
+    else if (deps.settings.isOpen()) deps.settings.navActivate();
     else if (stripActive()) deps.carousel.activate();
     else activateFocused();
   }
@@ -851,11 +1115,16 @@ export function createControls(deps: ControlsDeps): Controls {
       back();
       return;
     }
-    if (carouselBarFocus && deps.carousel.screen() === 'carousel') {
-      // B means "back" everywhere else; leaving the bar only by the same key that entered it would be a
-      // corner a gamepad user can get stuck in.
-      audio.play('back');
-      setCarouselBarFocus(false);
+    if (deps.settings.isOpen()) {
+      deps.settings.navBack();
+      return;
+    }
+    if (deps.carousel.screen() === 'carousel') {
+      // The strip is the top level: there is nothing above home to go back TO, so rather than doing
+      // nothing, back hands the focus to More — the only other place on this screen — and hands it
+      // straight back on the next press. That makes B / Tab / Esc a round trip instead of a dead key.
+      audio.play(carouselBarFocus ? 'back' : 'navigate');
+      setCarouselBarFocus(!carouselBarFocus);
       return;
     }
     if (deps.carousel.leaveDetail()) audio.play('back');
@@ -869,6 +1138,8 @@ export function createControls(deps: ControlsDeps): Controls {
    */
   function navToggleBar(): void {
     noteGamepadActivity();
+    // Not a no-op by itself: with the Settings screen up it would hand the focus to a bar nobody can see.
+    if (deps.settings.isOpen()) return;
     if (popupView !== 'none' || deps.carousel.screen() !== 'carousel') return;
     audio.play('navigate');
     setCarouselBarFocus(!carouselBarFocus);
@@ -894,6 +1165,9 @@ export function createControls(deps: ControlsDeps): Controls {
   window.addEventListener(
     'wheel',
     (event) => {
+      // onCarousel() stays true under the Settings screen — without this the wheel would flip through the
+      // strip behind the veil. Inside the screen the wheel scrolls its own list natively.
+      if (deps.settings.isOpen()) return;
       if (!onCarousel()) return;
       noteMouseActivity();
       const delta = event.deltaY !== 0 ? event.deltaY : event.deltaX;
@@ -931,10 +1205,13 @@ export function createControls(deps: ControlsDeps): Controls {
     onA: navActivate,
     onB: navBack,
     onY: navToggleBar,
+    onDirectionsReleased: endFlip,
   });
 
   // Keyboard navigation (Desktop Mode / no gamepad): WASD + arrows move, Space/Enter activate, Tab/Backspace
   // (and Esc) step back — the SAME six primitives as the gamepad, so the two input models stay in lockstep.
+  // No key of its own for "go to More": on home, back has nothing above it to return to, so it doubles as
+  // that toggle (see navBack) and Tab / Esc / B all reach the button.
   // Edge-only (event.repeat ignored) to match the gamepad's one-move-per-press feel. preventDefault stops
   // the browser default (Tab focus traversal, Space scroll / native button press, arrow scroll) from firing
   // alongside our custom navigation. A backgrounded launcher doesn't receive keydown (the OS routes keys to
@@ -954,11 +1231,12 @@ export function createControls(deps: ControlsDeps): Controls {
     backspace: navBack,
     escape: navBack,
   };
-  // Left/right are the exception to the edge model: holding them flips through the carousel, matching the
-  // gamepad's hold-to-repeat. The OS auto-repeat supplies the events (its own initial delay is close
-  // enough to the pad's), but its rate is far too fast for a carousel, so it is throttled to the same
-  // NAV_REPEAT_MS cadence. Every other key stays one action per press.
-  const REPEATABLE_KEYS = new Set(['a', 'arrowleft', 'd', 'arrowright']);
+  // The four directions are the exception to the edge model: holding one flips through the carousel or
+  // runs down the Settings list, matching the gamepad's hold-to-repeat (a held direction inside a popup
+  // stack is dropped by navUp/navDown themselves). The OS auto-repeat supplies the events (its own
+  // initial delay is close enough to the pad's), but its rate is far too fast, so it is throttled to the
+  // same NAV_REPEAT_MS cadence. Every other key stays one action per press.
+  const REPEATABLE_KEYS = new Set(['a', 'arrowleft', 'd', 'arrowright', 'w', 'arrowup', 's', 'arrowdown']);
   let lastKeyRepeatAt = 0;
   window.addEventListener('keydown', (event) => {
     const key = event.key.toLowerCase();
@@ -973,6 +1251,11 @@ export function createControls(deps: ControlsDeps): Controls {
     }
     handler(event.repeat);
   });
+  // The keyboard's half of "the hold is over". A keyup can be missed (the window loses focus mid-hold and
+  // the release goes to whoever took it), which is what the watchdog in noteFlip covers.
+  window.addEventListener('keyup', (event) => {
+    if (REPEATABLE_KEYS.has(event.key.toLowerCase())) endFlip();
+  });
 
   function applyGameButtons(): void {
     // The game-dependent Details items: the Install/Uninstall toggle and the running-only Force close.
@@ -983,9 +1266,11 @@ export function createControls(deps: ControlsDeps): Controls {
     applyMenuHome();
     applyMenuForget();
     applyMenuSystem();
+    applyMenuSettings();
   }
 
   function clearGameButtons(): void {
+    if (menuFrozen()) return;
     // No game → no Install/Uninstall item and no Force close (the popup is force-closed off the ready
     // screen anyway; no-game is never `running`).
     menuInstallToggle.classList.add('is-hidden');
@@ -993,6 +1278,7 @@ export function createControls(deps: ControlsDeps): Controls {
     menuForget.classList.add('is-hidden'); // no game on screen → nothing to remove from the history
     applyMenuHome(); // the carousel can still be there with no game on screen (history only)
     applyMenuSystem();
+    applyMenuSettings();
   }
 
   function refresh(): void {
@@ -1015,7 +1301,7 @@ export function createControls(deps: ControlsDeps): Controls {
     const active = phaseOf(state()) === 'busy' || steamBusy(state());
     if (active && !wasActive) focusRevealed = false;
     wasActive = active;
-    applyPowerPrimary(); // re-label on a language change (refresh runs after applyLocale → render)
+    applyPowerItems();
     applyFocus();
     applyStackFocus();
     applyPlayAria();
@@ -1025,11 +1311,13 @@ export function createControls(deps: ControlsDeps): Controls {
   return {
     applyGameButtons,
     clearGameButtons,
+    settingsClosed,
+    confirmResetSettings: () => openConfirm('reset-settings'),
     refresh,
     showError: openError,
     setGameMode: (value: boolean) => {
       gameMode = value;
-      applyPowerPrimary();
+      applyPowerItems();
     },
     start: () => {
       gamepad.start();

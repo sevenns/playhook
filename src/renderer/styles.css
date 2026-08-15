@@ -32,25 +32,29 @@
    `--d1` is just a token and jumps instantly, which made the bar, the buttons and the popup snap to the
    new game's colors while the hero image was still cross-fading. With a `<color>` syntax the browser
    interpolates them, and every surface built on var(--d1)/var(--d2) follows the background smoothly. */
+/* The fallbacks are the EMPTY SCREEN's own palette — the dominant pair computed from the bundled
+   wallpaper (dominant-color.ts) — not an arbitrary pair. Anything else flashes its own colours for the
+   frames before the first hero is decoded, and a green flash over a violet wallpaper is exactly what the
+   crossfade cannot hide. Recompute these if assets/playhook-wallpaper.jpg is ever replaced. */
 @property --d1 {
   syntax: '<color>';
   inherits: true;
-  initial-value: #2a3340;
+  initial-value: #0d0a1b;
 }
 @property --d2 {
   syntax: '<color>';
   inherits: true;
-  initial-value: #4caf50;
+  initial-value: #836e95;
 }
 
 :root {
   /* One design pixel (mockup is 1920x1080) expressed in vh, so the layout scales with the
      fullscreen height and keeps the mockup's proportions at 16:9. Write design px as calc(N*var(--px)). */
   --px: 0.0925926vh;
-  --bg: #101014;
+  --bg: #0d0a1b;
   /* Palette fallbacks; #app gets --d1/--d2 from the hero background's two dominant colors. */
-  --d1: #2a3340;
-  --d2: #4caf50;
+  --d1: #0d0a1b;
+  --d2: #836e95;
   /* Text colour OUTSIDE the app shell (there is none in practice — see the #app override below). */
   --fg: #f0f0f0;
 }
@@ -160,6 +164,47 @@ body {
   to {
     transform: scale(1.12) translateX(var(--pan-x, 1.5%));
   }
+}
+
+/* The boot backdrop: the bundled wallpaper, held over the hero layers for the opening seconds (see
+   WALLPAPER_HOLD_MS in app.ts) and given a push of its own — a wider zoom and drift than the perpetual
+   bg-pan, so those seconds read as a title card rather than as a still image someone forgot to replace.
+   The push is a TRANSITION, not an animation, and the layer is separate from the hero on purpose. Both
+   follow from the same rule: nothing may travel BACKWARDS when boot ends. An animation dropped mid-flight
+   snaps to where its keyframes began; a shared layer would have to unwind its zoom with the hero riding
+   along — and a background reversing direction is the one jump the eye always catches. Here the backdrop
+   simply dissolves, over a hero that has been sitting settled underneath it all along. */
+#hero-boot {
+  position: absolute;
+  inset: 0;
+  background-size: cover;
+  background-position: center;
+  transform: scale(var(--boot-zoom, 1)) translateX(var(--boot-shift, 0%));
+  transition: transform 7s cubic-bezier(0.3, 0, 0.6, 1);
+  will-change: transform, opacity;
+}
+
+/* app.ts adds this a frame after load — the first frame has to paint the resting transform, or the
+   transition has nothing to start from. The drift direction (--boot-pan) is randomized there. The
+   easing matters as much as the numbers: a linear start moves at full speed from the very first frame,
+   which reads as a lurch on an image that has only just appeared. The soft ramp below spends the first
+   moments getting going, so the push is felt rather than seen. */
+#hero-boot.is-panning {
+  --boot-zoom: 1.22;
+  --boot-shift: var(--boot-pan, 4.5%);
+}
+
+/* The handover. app.ts also writes an inline transform here — the CURRENT transform of the hero layer
+   below — so the backdrop converges on the image it is dissolving into instead of parting from it. That
+   matters most when the two are the SAME picture (no card: the empty screen is this very wallpaper),
+   where any offset between them would read as a double image sliding apart.
+   The two curves are deliberately opposites. Opacity drops fastest at the START (most of it is gone in
+   the first third), while the transform barely moves until the END — so the copy is at its most solid
+   while it is still, and does its travelling when there is almost nothing left to see. Same distance,
+   no visible motion. */
+#hero-boot.is-gone {
+  opacity: 0;
+  transition: opacity 0.9s cubic-bezier(0, 0, 0.3, 1), transform 1s cubic-bezier(0.7, 0, 1, 1);
 }
 
 /* ── Per-screen bottom-bar controls ────────────────────────────────────────
@@ -471,6 +516,13 @@ body {
   transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1), height 0.35s cubic-bezier(0.4, 0, 0.2, 1),
     opacity 0s linear;
 }
+/* The startup fan (carousel.playIntro): the same wave, except the selected card fades in WITH the row
+   instead of swapping in opaque. Both rules above exist to hand over from the play button — at startup
+   there is no button to hand over from, and a card snapping in mid-wave is what gives that away. */
+#app[data-screen='carousel'][data-returning='intro'] .card.is-selected {
+  transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1), height 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 0.4s cubic-bezier(0.2, 0, 0.2, 1) 0.35s;
+}
 #app[data-screen='carousel'][data-card-morph='on'] .play-button {
   /* Stays visible (and keeps its cover) for exactly that grow, then is swapped out in one frame. */
   transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1), height 0.35s cubic-bezier(0.4, 0, 0.2, 1),
@@ -511,7 +563,8 @@ body {
     color-mix(in srgb, var(--d1) 75%, transparent) 42%,
     transparent 100%
   );
-  transition: opacity 0.3s ease;
+  /* transform joins the fade so the bar leaves downwards when the Settings screen takes over. */
+  transition: opacity 0.3s ease, transform 0.3s ease;
 }
 
 /* The blur, as its own layer so it can be masked to the pool's shape without touching the fill above.
@@ -900,8 +953,9 @@ html:not(.cursor-hidden) .rect-button:hover,
   position: absolute;
   inset: 0;
   pointer-events: none;
-  /* Above the carousel (which lifts itself over the bar) so the veil covers the whole screen. */
-  z-index: 2;
+  /* Above the carousel (which lifts itself over the bar) AND above the Settings screen (z-index 2), which
+     stays open under a confirm popup opened from it. */
+  z-index: 3;
 }
 
 .popup-veil {
@@ -909,12 +963,46 @@ html:not(.cursor-hidden) .rect-button:hover,
   inset: 0;
   /* Horizontal gradient: transparent on the left (hero visible) → solid d1 on the right. */
   background: linear-gradient(to right, transparent 0%, var(--d1) 100%);
-  backdrop-filter: blur(12px);
-  /* Mask so the frosted blur only appears on the right, fading in from the center. */
+  /* Mask so the tint only builds up on the right, fading in from the center. */
   -webkit-mask-image: linear-gradient(to right, transparent 0%, #000 58%);
   mask-image: linear-gradient(to right, transparent 0%, #000 58%);
   opacity: 0;
   transition: opacity 0.35s ease;
+  /* Keep this on its own composited layer: promoting it mid-animation is a frame the launcher can't
+     spare, and that frame is exactly when the focus tends to move (see .popup-blur). */
+  will-change: opacity;
+}
+
+/**
+ * The frosted layer, SEPARATE from the tint above and deliberately NOT animated.
+ *
+ * A backdrop-filter re-samples everything beneath it, and Chromium rasterizes that region afresh the
+ * first time a given popup shows it — one costly frame, once per popup (after that the raster is
+ * cached, which is why the stutter never repeated on the same popup). Two things keep that frame away
+ * from the moment the user is navigating:
+ *  • the blur is switched on in ONE frame, never faded, so the cost lands on the press itself;
+ *  • `will-change: transform` pins it to its own composited layer for good, so the layer is neither
+ *    created nor thrown away as the animations ABOVE it (the tint, the column) start and finish — that
+ *    hand-off was itself a repaint of the whole blurred region.
+ */
+.popup-blur {
+  position: absolute;
+  /* Only the RIGHT part of the screen, not inset:0. The mask hid the left half anyway, so a full-width
+     layer was sampling — and re-sampling — twice the pixels it ever showed. The mask keeps the soft
+     start, now measured against this narrower box (0.58 of the screen ≈ 0.36 of a box starting at 35%). */
+  left: 35%;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  backdrop-filter: blur(12px);
+  -webkit-mask-image: linear-gradient(to right, transparent 0%, #000 36%);
+  mask-image: linear-gradient(to right, transparent 0%, #000 36%);
+  opacity: 0;
+  will-change: transform;
+}
+
+.popup.is-open .popup-blur {
+  opacity: 1;
 }
 
 /* Right column: 550px wide, inset 50px on right/top/bottom. Content sits at the top; the action stack
@@ -931,6 +1019,9 @@ html:not(.cursor-hidden) .rect-button:hover,
   transform: translateX(calc(40 * var(--px)));
   opacity: 0;
   transition: transform 0.35s ease, opacity 0.35s ease;
+  /* Its own layer, permanently: promoting it when the slide starts and dropping it when the slide ends
+     repaints what is under it — including the blurred region (see .popup-blur). */
+  will-change: transform, opacity;
 }
 
 .popup.is-open {
@@ -965,6 +1056,59 @@ html:not(.cursor-hidden) .rect-button:hover,
    on specificity, so the panel stays out of the details view there. */
 #app[data-screen='carousel'] #popup[data-view='details'] .popup-info {
   display: none;
+}
+
+/* The stats and the action items come in one after another as the popup opens: the column slides in as a
+   whole (see .popup-column), and its contents arrive just behind it instead of being fully drawn the
+   moment it lands. The wave runs BOTTOM-UP — the item nearest the bottom of its block goes first — which
+   is both the direction the items rise from AND where the focus lands: the bottom item is the one the
+   user is already looking at, and having it arrive last made the whole menu feel slow to open. Counting
+   with nth-LAST-child is what keeps that true however many items the current menu happens to have.
+   Keyed on .is-open, so the animation restarts on every open. `both` holds the first frame during the
+   delay — without it each item would flash at full opacity before its turn. */
+@keyframes popup-item-in {
+  from {
+    opacity: 0;
+    transform: translateY(calc(12 * var(--px)));
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.popup.is-open .info-item,
+.popup.is-open .actions-group > .text-button {
+  animation: popup-item-in 0.3s cubic-bezier(0.2, 0, 0.2, 1) both;
+  animation-delay: calc(0.12s + var(--pop, 0) * 45ms);
+}
+
+.popup.is-open .info-item:nth-last-child(2),
+.popup.is-open .actions-group > .text-button:nth-last-child(2) {
+  --pop: 1;
+}
+.popup.is-open .info-item:nth-last-child(3),
+.popup.is-open .actions-group > .text-button:nth-last-child(3) {
+  --pop: 2;
+}
+.popup.is-open .actions-group > .text-button:nth-last-child(4) {
+  --pop: 3;
+}
+.popup.is-open .actions-group > .text-button:nth-last-child(5) {
+  --pop: 4;
+}
+.popup.is-open .actions-group > .text-button:nth-last-child(6) {
+  --pop: 5;
+}
+.popup.is-open .actions-group > .text-button:nth-last-child(n + 7) {
+  --pop: 6;
+}
+
+/* An item that collapses (or grows back) WHILE the popup is open must not have the entrance animation
+   sitting on its opacity — `both` would pin it at the animation's end value and the fade below would
+   never show. The entrance has long finished by then, so dropping it costs nothing. */
+.popup.is-open .actions-group > .text-button.is-hidden {
+  animation: none;
 }
 
 .info-item {
@@ -1078,7 +1222,12 @@ html:not(.cursor-hidden) .rect-button:hover,
   display: none;
   flex-direction: column;
   align-items: flex-end;
-  gap: calc(8 * var(--px));
+}
+
+/* The gap is a MARGIN rather than `gap`, so an item that collapses can take its own spacing with it —
+   a flex gap survives a zero-height neighbour and would leave a step in the stack while it folds away. */
+.actions-group > .text-button + .text-button {
+  margin-top: calc(8 * var(--px));
 }
 #popup[data-view='details'] .actions-group[data-group='details'],
 #popup[data-view='power'] .actions-group[data-group='power'],
@@ -1133,4 +1282,683 @@ html:not(.cursor-hidden) .text-button:hover,
    this class. Author rule needed: .text-button's display:flex would otherwise beat the UA [hidden]. */
 .text-button.is-hidden {
   display: none;
+}
+
+/* …except inside the popup's action stack, where an item can come and go while the menu is on screen
+   (a game starts running → Force close appears; it exits → it goes). There it FOLDS instead: height,
+   spacing and opacity animate to nothing and the items below slide up to meet it. Kept out of the base
+   rule on purpose — everywhere else `is-hidden` is decided before the element is ever seen, and a fold
+   would be an animation of nothing. */
+.actions-group > .text-button {
+  transition: background 0.2s ease, color 0.2s ease, transform 0.12s ease, opacity 0.2s ease,
+    height 0.24s cubic-bezier(0.4, 0, 0.2, 1), margin-top 0.24s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.actions-group > .text-button.is-hidden {
+  display: flex;
+  height: 0;
+  margin-top: 0;
+  opacity: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+/* ── Settings screen (the fourth surface) ───────────────────────────────────
+   Not a carousel screen: the strip keeps its layout underneath, so returning lands exactly where the
+   user left. Openness is #app[data-overlay='settings']; the hidden state is opacity + pointer-events,
+   never display:none — that keeps everything animatable, keeps the bar's own mouse handlers from firing
+   through a hidden bar, and never collapses the carousel's measured layout. */
+
+.settings {
+  position: absolute;
+  inset: 0;
+  /* Below the popup (z-index 3): a confirm popup — the reset question — has to paint on top of this
+     screen, which stays open underneath it. */
+  z-index: 2;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.35s ease;
+}
+
+#app[data-overlay='settings'] .settings {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* Veil in the popup's own language, but full-width: this screen is not a right-hand column.
+   NO backdrop-filter here, deliberately. A blur samples everything under it EVERY frame, and what is
+   under it is a full-screen hero running a perpetual pan animation — on a Deck that is enough to cost
+   frames, and dropped frames are what made the focus stutter as it moved. Instead the hero itself fades
+   out (see below) and the veil fills with flat --d1: one composited layer, no per-frame sampling. */
+.settings-veil {
+  position: absolute;
+  inset: 0;
+  background: var(--d1);
+  opacity: 0;
+  transition: opacity 0.35s ease;
+}
+
+/* The hero goes with it — faded out, and its pan animation PAUSED so nothing keeps painting behind a
+   screen that no longer shows it. Both come back on the way out, in the same beat as everything else. */
+#app[data-overlay='settings'] #hero {
+  opacity: 0;
+}
+
+#app[data-overlay='settings'] .hero-layer {
+  animation-play-state: paused;
+}
+
+#hero {
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.35s ease;
+}
+
+#app[data-overlay='settings'] .settings-veil {
+  opacity: 1;
+}
+
+/* The content column: full-height, inset like the popup column (50), a comfortable reading width. */
+.settings-column {
+  position: absolute;
+  left: calc(120 * var(--px));
+  right: calc(120 * var(--px));
+  top: calc(50 * var(--px));
+  bottom: calc(50 * var(--px));
+  display: flex;
+  flex-direction: column;
+  opacity: 0;
+  transform: translateY(calc(24 * var(--px)));
+  transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+#app[data-overlay='settings'] .settings-column {
+  opacity: 1;
+  transform: none;
+}
+
+.settings-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: calc(30 * var(--px)) calc(32 * var(--px)) calc(20 * var(--px));
+}
+
+.settings-title {
+  font-weight: 800;
+  font-size: calc(48 * var(--px));
+  line-height: calc(64 * var(--px));
+  color: var(--d2);
+  transition: color 0.45s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.settings-version {
+  font-weight: 300;
+  font-size: calc(24 * var(--px));
+  color: color-mix(in srgb, var(--fg) 55%, transparent);
+}
+
+/* The scrolling list. The native scrollbar is hidden — the focus ring is the position indicator, exactly
+   as it is on every other surface here. Smooth scrolling is safe: vertical navigation is one step per
+   press (only left/right hold-to-repeat), so the steps can't pile up into a lagging scroll. */
+.settings-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: none;
+  /* NOT scroll-behavior: smooth — the screen animates scrollTop itself (settings-screen.ts) with one
+     fixed duration and easing; leaving the native smoothing on would fight it frame for frame. */
+  /* Each edge fades rather than cuts, so a row crossing the clip is half-transparent instead of sliced.
+     The sizes are driven from JS: an edge with nothing beyond it (the very top, the very bottom) has NO
+     fade, or the first and last rows would sit dimmed under a gradient that hides nothing. */
+  --fade-top: 0px;
+  --fade-bottom: 0px;
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 var(--fade-top),
+    #000 calc(100% - var(--fade-bottom)),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 var(--fade-top),
+    #000 calc(100% - var(--fade-bottom)),
+    transparent 100%
+  );
+}
+
+.settings-list::-webkit-scrollbar {
+  display: none;
+}
+
+.settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: calc(4 * var(--px));
+  padding-bottom: calc(24 * var(--px));
+  /* Staggered entrance, capped at three steps by the view (--section-index). */
+  transition: opacity 0.35s cubic-bezier(0.4, 0, 0.2, 1) calc(var(--section-index, 0) * 40ms),
+    transform 0.35s cubic-bezier(0.4, 0, 0.2, 1) calc(var(--section-index, 0) * 40ms);
+  opacity: 0;
+  transform: translateY(calc(16 * var(--px)));
+}
+
+#app[data-overlay='settings'] .settings-section {
+  opacity: 1;
+  transform: none;
+}
+
+.settings-section-title {
+  font-weight: 500;
+  font-size: calc(26 * var(--px));
+  line-height: calc(40 * var(--px));
+  color: color-mix(in srgb, var(--fg) 55%, transparent);
+  padding: calc(12 * var(--px)) calc(32 * var(--px)) calc(4 * var(--px));
+}
+
+/* One row: label left, control right. Focus inverts the WHOLE row, so every control drawn in
+   currentColor inverts with it — no second set of rules per control. */
+.setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(24 * var(--px));
+  min-height: calc(78 * var(--px));
+  padding: calc(8 * var(--px)) calc(32 * var(--px));
+  border-radius: calc(10 * var(--px));
+  color: var(--d2);
+  transition: background 0.2s ease, color 0.2s ease, transform 0.12s ease;
+}
+
+/* :hover gated on a live cursor, like every other control here (see .text-button). */
+html:not(.cursor-hidden) .setting-row:hover,
+.setting-row.is-focused {
+  background: var(--d2);
+  color: var(--d1);
+}
+
+.setting-row.is-pressed {
+  transform: scale(0.98);
+}
+
+.setting-label-box {
+  display: flex;
+  flex-direction: column;
+  gap: calc(2 * var(--px));
+  min-width: 0;
+}
+
+.setting-label {
+  font-weight: 500;
+  font-size: calc(28 * var(--px));
+  line-height: calc(40 * var(--px));
+}
+
+.setting-hint {
+  font-weight: 300;
+  font-size: calc(20 * var(--px));
+  line-height: calc(28 * var(--px));
+  opacity: 0.7;
+}
+
+/* Checkbox: an outlined square that fills with currentColor when on; the check is drawn in the row's
+   BACKGROUND colour, which is why it keeps reading right through the focus inversion. */
+.setting-toggle {
+  flex: 0 0 auto;
+  width: calc(34 * var(--px));
+  height: calc(34 * var(--px));
+  border: calc(2 * var(--px)) solid currentColor;
+  border-radius: calc(8 * var(--px));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s ease;
+}
+
+.setting-toggle.is-on {
+  background: currentColor;
+}
+
+.setting-check {
+  width: calc(22 * var(--px));
+  height: calc(22 * var(--px));
+  fill: none;
+  stroke: var(--d1);
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0;
+  transform: scale(0.6);
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.setting-row.is-focused .setting-check {
+  stroke: var(--d2);
+}
+
+.setting-toggle.is-on .setting-check {
+  opacity: 1;
+  transform: scale(1);
+}
+
+/* Dropdown, collapsed: ‹ value ›. The chevrons are clickable with the mouse; left/right cycle the value
+   from the gamepad without expanding at all. */
+.setting-select {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: calc(12 * var(--px));
+}
+
+.setting-chevron {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: calc(28 * var(--px));
+  height: calc(28 * var(--px));
+  cursor: pointer;
+}
+
+.setting-chevron svg {
+  width: calc(18 * var(--px));
+  height: calc(18 * var(--px));
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+.setting-value {
+  font-weight: 500;
+  font-size: calc(26 * var(--px));
+  min-width: calc(220 * var(--px));
+  text-align: center;
+  transition: opacity 0.12s ease, transform 0.12s ease;
+}
+
+/* The slider's readout is not framed by chevrons — keep it flush right against the track. */
+.setting-slider .setting-value {
+  text-align: right;
+}
+
+/* The direction of a value change is readable: the text slides the way the press went. */
+.setting-value.is-shift-prev {
+  opacity: 0;
+  transform: translateX(calc(10 * var(--px)));
+}
+
+.setting-value.is-shift-next {
+  opacity: 0;
+  transform: translateX(calc(-10 * var(--px)));
+}
+
+/* Slider: a track with a fill and a knob, plus the "N %" readout. */
+.setting-slider {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: calc(20 * var(--px));
+}
+
+.setting-track {
+  position: relative;
+  width: calc(320 * var(--px));
+  height: calc(8 * var(--px));
+  border-radius: calc(4 * var(--px));
+  background: color-mix(in srgb, currentColor 30%, transparent);
+  cursor: pointer;
+}
+
+.setting-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  border-radius: calc(4 * var(--px));
+  background: currentColor;
+  transition: width 0.12s ease;
+}
+
+.setting-knob {
+  position: absolute;
+  top: 50%;
+  width: calc(24 * var(--px));
+  height: calc(24 * var(--px));
+  margin-left: calc(-12 * var(--px));
+  border-radius: 50%;
+  background: currentColor;
+  transform: translateY(-50%);
+  transition: left 0.12s ease;
+  pointer-events: none;
+}
+
+/* While dragging, the knob must sit under the cursor — a transition here reads as lag, not as polish. */
+.setting-slider.is-dragging .setting-fill,
+.setting-slider.is-dragging .setting-knob {
+  transition: none;
+}
+
+.setting-slider .setting-value {
+  min-width: calc(90 * var(--px));
+}
+
+/* Updates row: the status line (+ progress bar) on the left, the primary action on the right. */
+.setting-row-status {
+  align-items: center;
+}
+
+.setting-status-body {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: calc(10 * var(--px));
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.setting-status-text {
+  font-weight: 300;
+  font-size: calc(26 * var(--px));
+  line-height: calc(36 * var(--px));
+  overflow-wrap: anywhere;
+}
+
+.setting-progress {
+  /* Height, not display: the bar has to COLLAPSE when idle (otherwise the status text is pushed off the
+     row's centre line, away from its button) yet still grow in smoothly when a download starts. */
+  height: 0;
+  width: calc(420 * var(--px));
+  max-width: 100%;
+  border-radius: calc(4 * var(--px));
+  background: color-mix(in srgb, currentColor 30%, transparent);
+  opacity: 0;
+  transition: opacity 0.2s ease, height 0.2s ease;
+}
+
+.setting-progress.is-visible {
+  height: calc(8 * var(--px));
+  opacity: 1;
+}
+
+.setting-progress-fill {
+  height: 100%;
+  width: 0;
+  border-radius: calc(4 * var(--px));
+  background: currentColor;
+  transition: width 0.3s ease;
+}
+
+/* A button's own 32 of padding is pulled back out, so its LABEL lands on the same right edge as the
+   checkboxes and values above it — the button's BACKGROUND then reaches the list edge, exactly like the
+   popup's action stacks. Without this the buttons read as inset by a hair, which is all it takes. */
+.setting-row .text-button {
+  margin-right: calc(-32 * var(--px));
+}
+
+/* Rows whose ONLY control is a button (the reset action, the Updates row) put the focus on the BUTTON,
+   like every other button in this UI — filling the whole row and then re-inverting the button inside it
+   reads as two competing highlights. */
+.setting-row[data-kind='action'].is-focused,
+.setting-row[data-kind='update-status'].is-focused,
+html:not(.cursor-hidden) .setting-row[data-kind='action']:hover,
+html:not(.cursor-hidden) .setting-row[data-kind='update-status']:hover {
+  background: transparent;
+  color: var(--d2);
+}
+
+.setting-row[data-kind='action'].is-focused .text-button,
+.setting-row[data-kind='update-status'].is-focused .text-button {
+  background: var(--d2);
+  color: var(--d1);
+}
+
+/* The action row is nothing but its button, pushed to the right edge like the popup's own stacks. */
+.setting-row[data-kind='action'] {
+  justify-content: flex-end;
+}
+
+/* Expanded dropdown — the launcher's popup, reused verbatim: the same frosted veil fading in from the
+   left and the same right-hand column sliding in. It sits INSIDE the settings screen (which is why it is
+   not #popup itself), but it must not look like a second, lesser kind of overlay.
+   The blur is affordable here, unlike the settings veil: the hero underneath is already faded out and its
+   pan animation paused, so this samples a static picture rather than an animating one every frame. */
+.settings-options {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.35s ease;
+}
+
+.settings-options.is-open {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.settings-options-veil {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to right, transparent 0%, var(--d1) 100%);
+  -webkit-mask-image: linear-gradient(to right, transparent 0%, #000 58%);
+  mask-image: linear-gradient(to right, transparent 0%, #000 58%);
+  will-change: opacity;
+}
+
+/* Same split as the popup's: the blur is switched on in one frame, never faded. It sits beside the
+   dropdown rather than inside it, because that container fades as a whole. */
+.settings-options-blur {
+  position: absolute;
+  /* Same narrowing as .popup-blur — half the pixels to sample, identical result on screen. */
+  left: 35%;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  backdrop-filter: blur(12px);
+  -webkit-mask-image: linear-gradient(to right, transparent 0%, #000 36%);
+  mask-image: linear-gradient(to right, transparent 0%, #000 36%);
+  opacity: 0;
+  pointer-events: none;
+  will-change: transform; /* same layer pinning as .popup-blur */
+}
+
+#settings.is-options-open .settings-options-blur {
+  opacity: 1;
+}
+
+/* The column mirrors .popup-column: 550 wide, inset 50, right-aligned, stack pinned to the bottom —
+   and it scrolls exactly like the settings list behind it, edge fades included (sizes from JS). */
+.settings-options-list {
+  position: absolute;
+  right: calc(50 * var(--px));
+  top: calc(50 * var(--px));
+  bottom: calc(50 * var(--px));
+  width: calc(550 * var(--px));
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: calc(8 * var(--px));
+  overflow-y: auto;
+  scrollbar-width: none;
+  transform: translateX(calc(40 * var(--px)));
+  transition: transform 0.35s ease;
+  will-change: transform;
+  --fade-top: 0px;
+  --fade-bottom: 0px;
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 var(--fade-top),
+    #000 calc(100% - var(--fade-bottom)),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 var(--fade-top),
+    #000 calc(100% - var(--fade-bottom)),
+    transparent 100%
+  );
+}
+
+/* Bottom-pinned via an auto margin on the FIRST option, not `justify-content: flex-end`: that keeps a
+   list longer than the column scrollable to its start, where flex-end would push the overflow out of
+   reach above the scroll origin. With enough options the margin collapses to zero on its own. */
+.settings-options-list > .settings-option:first-child {
+  margin-top: auto;
+}
+
+.settings-options-list::-webkit-scrollbar {
+  display: none;
+}
+
+.settings-options.is-open .settings-options-list {
+  transform: none;
+}
+
+/* An option IS a .text-button, down to the focus inversion — only the alignment differs (a long label
+   grows left, like every popup stack item). */
+.settings-option {
+  height: calc(92 * var(--px));
+  flex: 0 0 auto;
+  min-width: calc(184 * var(--px));
+  max-width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 0 calc(32 * var(--px));
+  border: none;
+  border-radius: calc(10 * var(--px));
+  background: transparent;
+  color: var(--d2);
+  font-family: inherit;
+  font-weight: 500;
+  font-size: calc(28 * var(--px));
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease, transform 0.12s ease;
+}
+
+/* The label's window + a moving inner span — the same mechanism the 0.6 "Select game" picker used for
+   long titles (.game-label / .game-label-inner), brought back here. A label too long for the column is
+   hard-clipped with a soft fade at the cut, and only the FOCUSED option scrolls, so the list doesn't
+   crawl. No ellipsis anywhere: the bundled font draws it as three mid-height dots. */
+.settings-option-clip {
+  /* `0 1 auto` + min-width:0 — sized by the text, but allowed to shrink once the button hits its cap;
+     that shrink is what produces the clip. */
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  --fade: calc(8 * var(--px));
+}
+
+/* Clipped but not scrolling: an overflowing label is laid out from its start, so the cut is on the
+   RIGHT — that edge fades, exactly as the 0.6 picker did it. */
+.settings-option.is-clipped .settings-option-clip {
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - var(--fade)), transparent 100%);
+  mask-image: linear-gradient(to right, #000 calc(100% - var(--fade)), transparent 100%);
+}
+
+/* While it scrolls, both edges fade so the text enters and leaves softly on either side. */
+.settings-option.is-scrolling .settings-option-clip {
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    #000 var(--fade),
+    #000 calc(100% - var(--fade)),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    #000 var(--fade),
+    #000 calc(100% - var(--fade)),
+    transparent 100%
+  );
+}
+
+.settings-option-text {
+  display: inline-block;
+  white-space: nowrap;
+  will-change: transform;
+}
+
+/* Ping-pong marquee: shift + per-label duration come from JS (measured overflow at a constant speed);
+   `alternate` runs to the end and back, `ease-in-out` dwells at each edge so both ends are readable. */
+.settings-option.is-scrolling .settings-option-text {
+  animation: option-marquee var(--marquee-duration, 6s) ease-in-out infinite alternate;
+}
+
+@keyframes option-marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(var(--marquee-shift, 0));
+  }
+}
+
+html:not(.cursor-hidden) .settings-option:hover,
+.settings-option.is-focused {
+  background: var(--d2);
+  color: var(--d1);
+}
+
+.settings-option.is-pressed {
+  transform: scale(0.9);
+}
+
+/* The current value is marked even when the focus is elsewhere in the list. The rule sits on the TEXT,
+   not on the button: text-decoration does not propagate into an inline-block descendant, and the label
+   became one when it was wrapped for the marquee — which is how the underline went missing. */
+.settings-option.is-current .settings-option-text {
+  text-decoration: underline;
+  text-underline-offset: calc(8 * var(--px));
+}
+
+/* With the screen open the bar leaves downwards (where it came from) and the strip fades out. The strip
+   is faded ONLY — it owns transform transitions of its own, and joining in risks desyncing its position. */
+#app[data-overlay='settings'] #bottom-bar {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(calc(20 * var(--px)));
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
+/* The STRIP is what fades, not its #carousel container: the container's opacity transition belongs to
+   the card morph, which pins it to `0s linear` at a higher specificity than anything written here (see
+   the [data-card-morph] rules above) — hiding it through that made the carousel snap back into place on
+   the way out, as if it had been display:none. The strip's own `opacity 0.25s` is untouched by the morph
+   and runs in BOTH directions, which is exactly what the return needs. The [data-bar-focus] pair beats
+   that state's dim (0.45), which is on by definition here: this screen is entered from the More button. */
+#app[data-overlay='settings'] #carousel-strip,
+#app[data-overlay='settings'][data-bar-focus] #carousel-strip {
+  opacity: 0;
+}
+
+#app[data-overlay='settings'] #carousel {
+  pointer-events: none;
+}
+
+/* ── Boot ──────────────────────────────────────────────────────────────────
+   The first second belongs to the background alone. Everything the launcher paints from data — the
+   bar (Play / title / status / More) and the carousel strip — arrives at once, after the state, the
+   hero and its palette have landed, so the UI is never seen assembling itself or changing colour under
+   the user's eyes. The attribute ships in index.html (not added from JS) so there is no frame of a
+   fully-drawn UI before the script runs; app.ts removes it. Its VALUE ('loading' then 'panning') only
+   drives the startup push on #hero-boot — everything hidden here keys off the attribute's presence.
+   Fading the STRIP rather than #carousel is the same rule the settings overlay follows — the container's
+   own transition belongs to the card morph. */
+
+#app[data-boot] #bottom-bar {
+  opacity: 0;
+  transform: translateY(calc(20 * var(--px)));
+}
+
+/* The CARDS wait, not the strip as a whole: they are built and laid out behind the boot screen, and
+   holding them at zero here is what leaves their staggered entrance (carousel.playIntro) still to play
+   when the wallpaper hands over. Fading the strip instead would show the row already assembled. */
+#app[data-boot] .card {
+  opacity: 0;
 }

@@ -19,7 +19,6 @@ import { createTray, buildTrayMenu, type TrayCallbacks, type TraySteamState } fr
 import { createSteamShortcutService } from './steam-shortcut';
 import { installDaemonUnit, removeDaemonUnit } from './daemon-unit';
 import { UpdaterService } from './updater';
-import { SettingsWindow } from './settings-window';
 import { GameConfigService } from './game-config';
 import { ConfigureWindow } from './configure-window';
 import { LocaleService } from './locale';
@@ -45,13 +44,12 @@ const gameModeSession = isGamescopeSession();
 let trayRef: Tray | null = null;
 let controllerRef: GameController | null = null;
 let windowRef: GameWindow | null = null;
-let settingsWindowRef: SettingsWindow | null = null;
 let configureWindowRef: ConfigureWindow | null = null;
 let globalGamepadRef: GlobalGamepad | null = null;
 let keepAwakeRef: KeepAwakeService | null = null;
 let quitting = false;
 // Whether the global Start+Back summon chord is active (mirrors AppSettings.summonHotkeyEnabled, toggled
-// live from the settings window). Read inside the chord callback so a toggle takes effect immediately.
+// live from the Settings screen). Read inside the chord callback so a toggle takes effect immediately.
 let summonHotkeyEnabled = true;
 
 function configureAutoLaunch(): void {
@@ -97,7 +95,7 @@ function configureLinuxAutoLaunch(): void {
   }
 }
 
-// Opens the log folder (settings window "Open logs" — moved here from the tray menu).
+// Opens the log folder (the tray's "Open logs").
 function openLogs(): void {
   void shell.openPath(path.dirname(logFilePath()));
 }
@@ -124,7 +122,6 @@ function quit(): void {
   globalGamepadRef?.stop();
   keepAwakeRef?.dispose();
   windowRef?.allowClose();
-  settingsWindowRef?.allowClose();
   configureWindowRef?.allowClose();
   app.quit();
 }
@@ -142,7 +139,14 @@ async function bootstrap(): Promise<void> {
   const store = new PcStore(app.getPath('userData'));
   await store.init();
 
-  const settings = new AppSettingsStore(app.getPath('userData'));
+  // Every write (a setter, a reset) funnels through the store's one persist() and is pushed straight to
+  // the launcher, so the Settings screen never has to derive state from a setter's own return value —
+  // and a setter added later cannot forget to notify. windowRef is used (not `window`, declared below)
+  // because this runs before the window exists; the guard covers that gap.
+  const settings = new AppSettingsStore(app.getPath('userData'), (next) => {
+    const bw = windowRef?.browserWindow ?? null;
+    if (bw !== null && !bw.isDestroyed()) bw.webContents.send(IPC.settingsUpdate, next);
+  });
   const initialSettings = await settings.read();
   summonHotkeyEnabled = initialSettings.summonHotkeyEnabled;
 
@@ -229,9 +233,9 @@ async function bootstrap(): Promise<void> {
   // and setting sources push their own recompute). A second subscriber alongside the controller's replicator.
   state.subscribe(() => recomputeKeepAwake());
 
-  // Update service + settings window. isBusy covers ALL in-flight states (not just a running game),
-  // so a manual install can't tear down a save-sync / game install. beforeInstall drops both
-  // windows' close-guards synchronously before quitAndInstall.
+  // Update service. isBusy covers ALL in-flight states (not just a running game), so a manual install
+  // can't tear down a save-sync / game install. beforeInstall drops the windows' close-guards
+  // synchronously before quitAndInstall.
   const updater = new UpdaterService({
     settings,
     isBusy: () => {
@@ -241,11 +245,8 @@ async function bootstrap(): Promise<void> {
     beforeInstall: () => {
       quitting = true;
       window.allowClose();
-      settingsWindow.allowClose();
       configureWindow.allowClose();
     },
-    openLogs,
-    openGamesFolder,
     onSummonHotkeyChanged: (enabled) => {
       summonHotkeyEnabled = enabled;
     },
@@ -263,29 +264,16 @@ async function bootstrap(): Promise<void> {
       if (bw !== null && !bw.isDestroyed()) bw.webContents.send(IPC.volumeUpdate, volumes);
     },
     // The sound-set / ambience / only-global changes are re-read + re-pushed by the controller (it owns the
-    // AssetReader and the game window) — the settings window only persisted the new value.
+    // AssetReader and the game window) — the Settings screen only persisted the new value.
     onSoundSetChanged: () => void controller.refreshAudio(),
     onAudioScopeChanged: () => void controller.refreshAudio(),
     onAmbientChanged: (track) => void controller.setAmbientTrack(track),
-    // A general "Reset to defaults" writes customWallpaper=null, but the copied file must be deleted
-    // separately — delegate to the controller (it owns the AssetReader + the game window push).
-    onWallpaperReset: () => controller.resetCustomWallpaper(),
     onLanguageChanged: (mode) => applyLanguage(mode),
-    // Push a theme change to the Configure window so an open one recolors live (the settings window
-    // applies it locally; the game window doesn't use the Fluent theme). No-op when it was never opened.
-    onThemeChanged: (mode) => {
-      const configureBw = configureWindow.browserWindow;
-      if (configureBw !== null && !configureBw.isDestroyed()) {
-        configureBw.webContents.send(IPC.configThemeUpdate, mode);
-      }
-    },
     getTranslator,
   });
-  const settingsWindow = new SettingsWindow(updater, getTranslator);
-  settingsWindowRef = settingsWindow;
 
   // Configure-game window + its backend. getActiveRoot / reloadManifest come from the controller/watcher
-  // (interface-DI); the theme comes from the same settings store the settings window uses.
+  // (interface-DI); the theme comes from the same settings store the launcher uses.
   const gameConfig = new GameConfigService({
     settings,
     getActiveRoot: () => watcher.getActiveRoot(),
@@ -308,6 +296,11 @@ async function bootstrap(): Promise<void> {
     // close through and quit on window-all-closed (Р8, point 5). Desktop/Windows keep the hide-to-tray guard.
     { hideToTrayOnClose: !gameModeSession },
   );
+  // The update status is pushed to the launcher, which is where the Settings screen lives now. Attached
+  // once, right after the window exists: it survives the whole session (hiding to the tray does not
+  // destroy it), and every push re-checks isDestroyed().
+  const launcherWindow = window.browserWindow;
+  if (launcherWindow !== null) updater.attachWindow(launcherWindow);
   // Normally start hidden in the tray — the window appears only when a valid game card is detected
   // (GameController shows it on the 'ready' state). But if "always show the no-card screen" is enabled,
   // seed the controller with it now so it shows the empty screen at startup (reconciles: idle + no card).
@@ -366,7 +359,8 @@ async function bootstrap(): Promise<void> {
   const trayCallbacks: TrayCallbacks = {
     onShow: () => window.showAndFocus(),
     onOpenConfigureGame: () => configureWindow.openOrFocus(),
-    onOpenSettings: () => settingsWindow.openOrFocus(),
+    onOpenLogs: () => openLogs(),
+    onOpenGamesFolder: () => openGamesFolder(),
     onToggleSteamShortcut: () => {
       void (steamShortcut.isRegistered() ? steamShortcut.remove() : steamShortcut.add());
     },
@@ -394,7 +388,6 @@ async function bootstrap(): Promise<void> {
   // — the plain windows are created lazily, so there's nothing to hook; the invoke-seed covers startup
   // instead. All three requests just return the current effective locale.
   ipcMain.handle(IPC.languageRequest, (): Locale => localeService.current());
-  ipcMain.handle(IPC.settingsLanguageRequest, (): Locale => localeService.current());
   ipcMain.handle(IPC.configLanguageRequest, (): Locale => localeService.current());
 
   // Power menu (Shutdown/Reboot/Sleep). Wired here, NOT in GameController, so the game controller stays
@@ -416,22 +409,17 @@ async function bootstrap(): Promise<void> {
   // close-guards, disposes services). Only ever sent from the Game Mode power menu — Desktop keeps hiding.
   ipcMain.on(IPC.actionQuit, () => quit());
 
-  // Applies a language change everywhere: re-resolve the locale, rebuild the tray menu, re-title the plain
-  // windows, and push the effective locale to every live webContents (game/settings/configure). Called
-  // from the settings set-language handler and from resetSettings (both via UpdaterService deps).
+  // Applies a language change everywhere: re-resolve the locale, rebuild the tray menu, re-title the
+  // Configure window, and push the effective locale to every live webContents (launcher/configure).
+  // Called from the settings set-language handler and from resetSettings (both via UpdaterService deps).
   function applyLanguage(mode: typeof initialSettings.language): void {
     localeService.setMode(mode);
     const locale = localeService.current();
     refreshTrayMenu();
-    settingsWindow.refreshTitle();
     configureWindow.refreshTitle();
     const gameBw = window.browserWindow;
     if (gameBw !== null && !gameBw.isDestroyed())
       gameBw.webContents.send(IPC.languageUpdate, locale);
-    const settingsBw = settingsWindow.browserWindow;
-    if (settingsBw !== null && !settingsBw.isDestroyed()) {
-      settingsBw.webContents.send(IPC.settingsLanguageUpdate, locale);
-    }
     const configureBw = configureWindow.browserWindow;
     if (configureBw !== null && !configureBw.isDestroyed()) {
       configureBw.webContents.send(IPC.configLanguageUpdate, locale);
@@ -479,7 +467,6 @@ if (!gotSingleInstanceLock) {
     globalGamepadRef?.stop();
     keepAwakeRef?.dispose();
     windowRef?.allowClose();
-    settingsWindowRef?.allowClose();
     configureWindowRef?.allowClose();
   });
 

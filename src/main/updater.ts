@@ -4,10 +4,10 @@
 // so an update could never interrupt a running game — it applied when the user quit from the tray or
 // rebooted. Only the packaged nsis build self-updates; in dev (not packaged) this is a no-op.
 //
-// This file is now a SERVICE (UpdaterService) driving the settings window:
-//  • It owns an UpdateStatus snapshot, returns it on request and pushes it to the settings window on
+// This file is now a SERVICE (UpdaterService) driving the launcher's Settings screen:
+//  • It owns an UpdateStatus snapshot, returns it on request and pushes it to the launcher window on
 //    every change (only while that window is attached and alive).
-//  • It supports a MANUAL path — check / download / install triggered from the settings UI. The
+//  • It supports a MANUAL path — check / download / install triggered from the Settings screen. The
 //    manual install (quitAndInstall) DOES restart the app, which breaks the original "never interrupt"
 //    philosophy, so install() is double-guarded (see below) so it can only run when it's safe.
 //  • It applies an auto-update MODE (download-install / download / off) from AppSettingsStore, mapping
@@ -21,9 +21,9 @@
 //      game, because quitAndInstall's app.quit() would also tear down a save-sync or a game install.
 //
 // Window-guard lifecycle: quitAndInstall() closes ALL app windows BEFORE emitting `before-quit`
-// (AppUpdater docs), bypassing main.ts.quit(). Both GameWindow and SettingsWindow hold a
+// (AppUpdater docs), bypassing main.ts.quit(). GameWindow (and the Configure window) hold a
 // close→preventDefault+hide guard, so the install could hang on those guards. Hence beforeInstall() is
-// called SYNCHRONOUSLY right before quitAndInstall() to drop both windows' guards first.
+// called SYNCHRONOUSLY right before quitAndInstall() to drop those guards first.
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import { app, type BrowserWindow } from 'electron';
@@ -36,7 +36,6 @@ import {
   type AudioVolumes,
   type AutoUpdateMode,
   type LanguageMode,
-  type ThemeMode,
   type UpdateStatus,
 } from '../shared/types';
 import { type Translator } from '../shared/i18n/index';
@@ -52,10 +51,6 @@ export interface UpdaterDeps {
   readonly isBusy: () => boolean;
   /** Drops both windows' close-guards synchronously right before quitAndInstall. */
   readonly beforeInstall: () => void;
-  /** Opens the log folder in the OS file manager (settings window "Open logs"). */
-  readonly openLogs: () => void;
-  /** Opens the games install folder in the OS file manager (settings window "Open games folder"). */
-  readonly openGamesFolder: () => void;
   /** Applies the Start+Back summon-hotkey toggle to the running global gamepad listener. */
   readonly onSummonHotkeyChanged: (enabled: boolean) => void;
   /** Applies the keep-display-awake toggle (recomputes the powerSaveBlocker in main). */
@@ -77,13 +72,9 @@ export interface UpdaterDeps {
   readonly onAudioScopeChanged: () => void;
   /** Applies a default-ambience change (re-reads the track + pushes it to the game window). */
   readonly onAmbientChanged: (track: string | null) => void;
-  /** Deletes the custom Empty-screen wallpaper file and pushes the default (general Reset only). */
-  readonly onWallpaperReset: () => Promise<void>;
   /** Applies a UI-language change (re-resolve locale, rebuild tray/titles, push to live windows). */
   readonly onLanguageChanged: (mode: LanguageMode) => void;
-  /** Pushes a UI-theme change to the Configure window so an open one recolors live (no hide/show). */
-  readonly onThemeChanged: (mode: ThemeMode) => void;
-  /** The current translator (for the install-busy soft error rendered in the settings window). */
+  /** The current translator (for the install-busy soft error surfaced in the launcher). */
   readonly getTranslator: () => Translator;
 }
 
@@ -101,7 +92,7 @@ export class UpdaterService {
    * The single point where all update:* / settings:* / app:version IPC is registered, plus (when
    * packaged) autoUpdater subscriptions, the initial check and the periodic timer. Keeping IPC
    * registration here — and NOWHERE else — rules out a duplicate ipcMain.handle (a crash) or a
-   * forgotten channel. In dev / non-packaged the IPC is still registered (so the settings window can
+   * forgotten channel. In dev / non-packaged the IPC is still registered (so the Settings screen can
    * show the version and persist the mode), but there are NO autoUpdater subscriptions and NO timer.
    */
   async init(): Promise<void> {
@@ -109,9 +100,7 @@ export class UpdaterService {
 
     if (!app.isPackaged) {
       this.status = { kind: 'unsupported' };
-      log.info(
-        '[updater] disabled (not packaged) — settings window still works (version/mode only)',
-      );
+      log.info('[updater] disabled (not packaged) — the Settings screen still works (version/mode only)');
       return;
     }
 
@@ -131,15 +120,14 @@ export class UpdaterService {
     if (settings.autoUpdate !== 'off') this.backgroundCheck();
   }
 
-  /** Attaches the settings window so status changes are pushed to it. Sends the current snapshot now. */
+  /**
+   * Attaches the launcher window so status changes are pushed to it, and sends the current snapshot now.
+   * Called ONCE at bootstrap: the launcher window is created at startup and lives for the whole session
+   * (hiding to the tray does not destroy it), and every push re-checks isDestroyed() anyway.
+   */
   attachWindow(window: BrowserWindow): void {
     this.window = window;
     this.pushStatus();
-  }
-
-  /** Detaches the settings window (on hide/close) so nothing is pushed to a hidden/destroyed window. */
-  detachWindow(): void {
-    this.window = null;
   }
 
   getStatus(): UpdateStatus {
@@ -166,15 +154,6 @@ export class UpdaterService {
         .catch((cause: unknown) =>
           log.error('[updater] failed to persist auto-update mode:', cause),
         );
-    });
-    // The settings renderer applies the theme live in its own window; main persists it so the choice
-    // survives a restart AND pushes it to the Configure window (onThemeChanged) so an open Configure
-    // recolors live too — otherwise it only updated on its next hide/show.
-    ipcMain.on(IPC.settingsSetTheme, (_event, mode: ThemeMode) => {
-      void this.deps.settings
-        .setTheme(mode)
-        .then(() => this.deps.onThemeChanged(mode))
-        .catch((cause: unknown) => log.error('[updater] failed to persist theme:', cause));
     });
     ipcMain.on(IPC.settingsSetPrerelease, (_event, on: boolean) => {
       void this.deps.settings
@@ -262,21 +241,13 @@ export class UpdaterService {
       return { music: settings.musicVolume, sfx: settings.sfxVolume };
     });
     ipcMain.handle(IPC.appVersionRequest, (): string => app.getVersion());
-    ipcMain.handle(IPC.appIconRequest, (): Promise<string> => this.readIconDataUrl());
-    ipcMain.handle(IPC.moveSoundRequest, (_event, set: unknown): Promise<string> =>
-      this.readMoveSoundDataUrl(typeof set === 'string' ? set : DEFAULT_SOUND_SET),
-    );
     ipcMain.handle(IPC.audioOptionsRequest, (): Promise<AudioOptions> => this.readAudioOptions());
-    // Imperative maintenance actions — the logic (paths, shell) lives in main.ts callbacks; registered
-    // here only to keep every settings-window channel in one place (avoids a duplicate handler).
-    ipcMain.on(IPC.openLogs, () => this.deps.openLogs());
-    ipcMain.on(IPC.openGamesFolder, () => this.deps.openGamesFolder());
   }
 
   // Resets settings to defaults and re-applies every side effect (auto-update mode, prerelease flag,
-  // summon-hotkey toggle, game-renderer volumes). The settings renderer re-applies the theme in its own
-  // window from the returned AppSettings; the Configure window gets it via onThemeChanged (the reset may
-  // have flipped the theme to the default). Returns the defaults so the settings UI can re-render.
+  // summon-hotkey toggle, renderer volumes). The Settings screen repaints from the settings:update push
+  // the write itself emits (AppSettingsStore.onChange), not from this return value — which is kept
+  // because settings:reset is an invoke.
   private async resetSettings(): Promise<AppSettings> {
     const next = await this.deps.settings.reset();
     if (app.isPackaged) {
@@ -292,10 +263,7 @@ export class UpdaterService {
     this.deps.onVolumesChanged({ music: next.musicVolume, sfx: next.sfxVolume });
     this.deps.onSoundSetChanged(next.soundSet);
     this.deps.onAmbientChanged(next.ambientTrack);
-    // reset() already wrote customWallpaper=null; this deletes the copied file and pushes the default.
-    await this.deps.onWallpaperReset();
     this.deps.onLanguageChanged(next.language);
-    this.deps.onThemeChanged(next.theme);
     return next;
   }
 
@@ -309,49 +277,6 @@ export class UpdaterService {
     } catch (cause) {
       log.error('[updater] failed to persist volume:', cause);
     }
-  }
-
-  // The settings window shows the app icon in its custom title bar. CSP there is `img-src data:`, so we
-  // hand the icon over as a data URL rather than a file path. Read once and cache.
-  private iconDataUrl: string | null = null;
-  private async readIconDataUrl(): Promise<string> {
-    if (this.iconDataUrl !== null) return this.iconDataUrl;
-    try {
-      const buffer = await fs.readFile(path.join(__dirname, '../icon.png'));
-      this.iconDataUrl = `data:image/png;base64,${buffer.toString('base64')}`;
-    } catch (cause) {
-      log.error('[updater] failed to read app icon:', cause);
-      this.iconDataUrl = ''; // empty → the renderer just hides the <img>
-    }
-    return this.iconDataUrl;
-  }
-
-  // A set's "move" UI sound, handed to the settings window as a data URL (its CSP allows `media-src data:`
-  // only) so a volume slider can play a preview at the released level, in the currently-selected set. The
-  // set is passed in by the renderer (never read from settings here) so a just-changed dropdown previews
-  // the new set without racing the on-disk settings write. Cached per set; a missing set falls back to
-  // winhanced. Read once per set.
-  private readonly moveSoundBySet = new Map<string, string>();
-  private async readMoveSoundDataUrl(set: string): Promise<string> {
-    const cached = this.moveSoundBySet.get(set);
-    if (cached !== undefined) return cached;
-    const read = async (name: string): Promise<Buffer> =>
-      fs.readFile(path.join(__dirname, '../audio/ui', name, 'move.wav'));
-    let dataUrl = '';
-    try {
-      let buffer: Buffer;
-      try {
-        buffer = await read(set);
-      } catch {
-        buffer = await read(DEFAULT_SOUND_SET); // the chosen set's move.wav is missing → preview the default
-      }
-      dataUrl = `data:audio/wav;base64,${buffer.toString('base64')}`;
-    } catch (cause) {
-      log.error('[updater] failed to read move sound:', cause);
-      dataUrl = ''; // empty → the renderer just skips the preview
-    }
-    this.moveSoundBySet.set(set, dataUrl);
-    return dataUrl;
   }
 
   // The bundled sound sets + ambience tracks, read once from dist/audio/index.json (generated at build

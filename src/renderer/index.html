@@ -11,7 +11,10 @@
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
-    <main id="app" data-phase="idle">
+    <!-- data-boot: the launcher opens on the background alone and reveals its UI once the first state +
+         hero (and the palette computed from it) have landed — see the boot reveal in app.ts. Set here,
+         not from JS, so there is never a frame of a fully-drawn UI before the script runs. -->
+    <main id="app" data-phase="idle" data-boot="loading">
       <!-- Hero background: two stacked layers behind all UI (z-index only on the container, see
            styles.css). JS writes the image + pan into the idle layer and cross-fades it in, GTA-5-style,
            rotating through multiple hero images (and the idle wallpaper) — see app.ts. -->
@@ -23,6 +26,11 @@
           <div class="hero-layer"></div>
           <div class="hero-layer"></div>
         </div>
+        <!-- The boot backdrop: the bundled wallpaper on a layer of ITS OWN, on top of the hero layers
+             for the opening seconds. The game's hero is painted underneath it the moment it arrives, so
+             when this one dissolves there is a settled background behind it — nothing has to move back
+             into place. See the boot reveal in app.ts. -->
+        <div id="hero-boot"></div>
       </div>
 
       <!-- History carousel (the `carousel` screen): a horizontal strip of game cards sliding under a
@@ -81,6 +89,8 @@
            blur veils when moving Details ↔ Power: the veil stays, only the content changes.
            Default focus in every stack is the BOTTOM button (Close / No) — see controls.ts. -->
       <section id="popup" class="popup" aria-hidden="true" data-view="details">
+        <!-- Two layers, on purpose: the tint fades, the frost switches on in one frame (styles.css). -->
+        <div class="popup-blur"></div>
         <div class="popup-veil"></div>
         <div class="popup-column">
           <!-- Top content — only the block for the active view shows (CSS). -->
@@ -123,28 +133,35 @@
           <div class="popup-actions">
             <div class="actions-group" data-group="details">
               <button id="menu-shutdown" class="text-button" type="button" data-i18n="launcher.menu.system">System</button>
+              <!-- Back to the history carousel — the mouse counterpart of the B button (shown only on a
+                   detail screen that HAS a carousel to return to). Text from JS, like its neighbours.
+                   Sits ABOVE the game's own actions: leaving is navigation, and navigation belongs over
+                   the things that act on the game (install, uninstall, force close, forget). -->
+              <button id="menu-home" class="text-button" type="button"></button>
               <!-- Install/Uninstall — one button; its text + visibility come from JS (executable games
                    have no install block, so the button is hidden entirely). -->
               <button id="menu-install-toggle" class="text-button" type="button"></button>
               <!-- Force-close the running game — its text + visibility come from JS (shown only while a
                    game is running), so no data-i18n (mirrors the install toggle, keeps the i18n HTML test happy). -->
               <button id="menu-kill" class="text-button" type="button"></button>
-              <!-- Back to the history carousel — the mouse counterpart of the B button (shown only on a
-                   detail screen that HAS a carousel to return to). Text from JS, like its neighbours. -->
-              <button id="menu-home" class="text-button" type="button"></button>
               <!-- Drop this game from the history — shown only for a game that is NOT on the card and not
                    in the PC library (those are playable, not history). Text from JS, like its neighbours. -->
               <button id="menu-forget" class="text-button" type="button"></button>
+              <!-- The ONLY way into Settings (the tray item is gone), so it shows on every screen —
+                   including the empty one, where More is still there. -->
+              <button id="menu-settings" class="text-button" type="button" data-i18n="launcher.menu.settings">Settings</button>
               <button id="menu-close" class="text-button" type="button" data-i18n="launcher.menu.close">Close</button>
             </div>
             <div class="actions-group" data-group="power">
               <button id="power-shutdown" class="text-button" type="button" data-i18n="launcher.menu.shutdown">Shutdown</button>
               <button id="power-reboot" class="text-button" type="button" data-i18n="launcher.menu.reboot">Reboot</button>
               <button id="power-sleep" class="text-button" type="button" data-i18n="launcher.menu.sleep">Sleep</button>
-              <!-- Label set from JS (applyPowerPrimary): "Minimize Playhook" on Desktop/Windows, "Close
-                   Playhook" (full quit) in Game Mode where there is no tray to minimize into. No data-i18n
-                   so it stays out of the i18n HTML test and a language change relabels it at render time. -->
-              <button id="power-minimize" class="text-button" type="button">Minimize Playhook</button>
+              <!-- Hidden in Game Mode (applyPowerItems): there is no tray to minimize into there, so the
+                   quit below is the only way out. -->
+              <button id="power-minimize" class="text-button" type="button" data-i18n="launcher.menu.minimize">
+                Minimize Playhook
+              </button>
+              <button id="power-quit" class="text-button" type="button" data-i18n="launcher.menu.quit">Close Playhook</button>
               <button id="power-close" class="text-button" type="button" data-i18n="launcher.menu.close">Close</button>
             </div>
             <div class="actions-group" data-group="confirm">
@@ -155,6 +172,29 @@
               <button id="error-close" class="text-button" type="button" data-i18n="launcher.menu.close">Close</button>
             </div>
           </div>
+        </div>
+      </section>
+
+      <!-- Settings: the fourth surface (not a carousel screen — the strip keeps its position underneath).
+           Openness is published as #app[data-overlay="settings"]; the veil + the column are built from
+           JS (settings-screen.ts) into #settings-list. Hidden state is opacity + pointer-events, never
+           display:none — see the plan §3.1. -->
+      <section id="settings" class="settings" aria-hidden="true">
+        <div class="settings-veil"></div>
+        <div class="settings-column">
+          <div class="settings-header">
+            <div class="settings-title" data-i18n="window.settings">Settings</div>
+            <div class="settings-version" id="settings-version"></div>
+          </div>
+          <div class="settings-list" id="settings-list"></div>
+        </div>
+        <!-- The dropdown's frost lives OUTSIDE the fading container: its own opacity animation would
+             otherwise fade the blur along with everything else, which is the cost we are avoiding. -->
+        <div class="settings-options-blur"></div>
+        <!-- Expanded dropdown: a list of the focused select's options, on top of the screen. -->
+        <div class="settings-options" id="settings-options" aria-hidden="true">
+          <div class="settings-options-veil"></div>
+          <div class="settings-options-list" id="settings-options-list"></div>
         </div>
       </section>
     </main>

@@ -11,6 +11,7 @@ import { localizeDocument } from './i18n-dom.js';
 import { createAudioController } from './audio.js';
 import { createHeroController } from './hero.js';
 import { createControls } from './controls.js';
+import { createSettingsScreen, type SettingsScreenApi } from './settings-screen.js';
 import { createCarousel } from './carousel.js';
 import { formatDate, formatPlaytime } from './format.js';
 import { busyKindOf, gameOf, phaseOf, statusOf, steamBusy } from './state-view.js';
@@ -52,16 +53,56 @@ const hero = createHeroController({
   getTranslator,
 });
 
+// ── Settings screen (the fourth surface, see settings-screen.ts) ─────────────
+// The screen owns its rows and focus; everything it writes goes through this seam, which is main's
+// settings:* channels one-to-one. The values it shows come back on settings:update (see the wiring
+// below) — never from a setter's own return, so a reset and a live edit take the same path.
+const settingsApi: SettingsScreenApi = {
+  setAutoUpdate: (mode) => window.api.setAutoUpdate(mode),
+  setPrerelease: (on) => window.api.setPrerelease(on),
+  setSummonHotkey: (on) => window.api.setSummonHotkey(on),
+  setPreventScreensaver: (on) => window.api.setPreventScreensaver(on),
+  setAlwaysShowEmptyScreen: (on) => window.api.setAlwaysShowEmptyScreen(on),
+  setDisableSilentInstall: (on) => window.api.setDisableSilentInstall(on),
+  setSteamAutoLaunch: (on) => window.api.setSteamAutoLaunch(on),
+  setSoundSet: (set) => window.api.setSoundSet(set),
+  setAmbientTrack: (track) => window.api.setAmbientTrack(track),
+  setOnlyGlobalAmbient: (on) => window.api.setOnlyGlobalAmbient(on),
+  setMusicVolume: (volume) => window.api.setMusicVolume(volume),
+  setSfxVolume: (volume) => window.api.setSfxVolume(volume),
+  setLanguage: (mode) => window.api.setLanguage(mode),
+  resetSettings: () => {
+    void window.api.resetSettings();
+  },
+  checkForUpdates: () => window.api.checkForUpdates(),
+  downloadUpdate: () => window.api.downloadUpdate(),
+  installUpdate: () => window.api.installUpdate(),
+};
+
 // ── Interaction layer (popups + focus + actions, see controls.ts) ────────────
 // Owns the popups (Details / Power / Confirm / Error), the focus groups and the
 // actions they trigger, plus their wiring (clicks, hover, gamepad, Esc). render() drives it via
 // applyGameButtons/clearGameButtons/refresh; main's error goes to showError; the gamepad loop starts
 // with start(). The carousel seam below routes A/B/left/right when the strip is the active surface.
+const settingsScreen = createSettingsScreen({
+  audio,
+  getTranslator,
+  api: settingsApi,
+  // Read lazily for the same reason the carousel seam is: `controls` is created just below.
+  onClosed: () => controls.settingsClosed(),
+  onResetRequested: () => controls.confirmResetSettings(),
+});
+
 const controls = createControls({
   getState: () => currentState,
   getBrowse: () => currentBrowse,
   audio,
   getTranslator,
+  settings: settingsScreen,
+  onFlipping: (flipping) => {
+    hero.setFlipping(flipping);
+    carousel.setFlipping(flipping);
+  },
   // Read lazily: the carousel is created below (it needs `controls` for its own callbacks), so the seam
   // is a set of thunks rather than the object itself.
   carousel: {
@@ -109,6 +150,11 @@ const carousel = createCarousel({
     // Entering a card is an ordinary button press — same cue as any other "open" action.
     audio.play('button');
     userChoseDetail = true;
+    // Committing to a game outranks the debounce main applies while flipping: ask for its hero and music
+    // NOW. Without this, opening a game straight out of a fast flip leaves the previous game's background
+    // and music on its screen until the debounce elapses.
+    requestedBrowseId = entry.id;
+    window.api.browseGame(entry.id, true);
     // An active game must also become the CARD's selected game (main rebuilds its hero/audio/GameInfo).
     // If that is refused — a launch or install is in flight — the detail screen is still correct: it is
     // drawn from the browse model, so it shows the game you picked, just without an actionable Play.
@@ -157,13 +203,34 @@ function infoItem(label: string, value: string): HTMLElement {
   return item;
 }
 
+/**
+ * Fills the Details popup's stats panel. Rebuilt only when the panel is empty — otherwise the three rows
+ * are updated IN PLACE. Not a micro-optimization: the rows carry the popup's staggered entrance (see
+ * popup-item-in in styles.css), which replays whenever the nodes are recreated. render() runs on every
+ * state push and on every carousel step, so rebuilding here would restart that entrance mid-view and the
+ * stats would flicker while the user reads them.
+ */
 function buildInfoPanel(stats: Stats): void {
+  const rows: readonly (readonly [string, string])[] = [
+    [translator('launcher.info.lastPlayed'), formatDate(stats.lastPlayedAt, translator, currentLocale)],
+    [translator('launcher.info.playtime'), formatPlaytime(stats.totalPlaySeconds, translator)],
+    [translator('launcher.info.launches'), String(stats.launchCount)],
+  ];
+  const existing = [...infoPanel.children];
+  if (existing.length === rows.length) {
+    existing.forEach((item, i) => {
+      const row = rows[i];
+      if (row === undefined) return;
+      const [label, value] = row;
+      const labelEl = item.querySelector('.info-label');
+      const valueEl = item.querySelector('.info-value');
+      if (labelEl !== null) labelEl.textContent = label;
+      if (valueEl !== null) valueEl.textContent = value;
+    });
+    return;
+  }
   while (infoPanel.firstChild !== null) infoPanel.removeChild(infoPanel.firstChild);
-  infoPanel.append(
-    infoItem(translator('launcher.info.lastPlayed'), formatDate(stats.lastPlayedAt, translator, currentLocale)),
-    infoItem(translator('launcher.info.playtime'), formatPlaytime(stats.totalPlaySeconds, translator)),
-    infoItem(translator('launcher.info.launches'), String(stats.launchCount)),
-  );
+  infoPanel.append(...rows.map(([label, value]) => infoItem(label, value)));
 }
 
 // ── Title / status busy layout ──────────────────────────────────────────────
@@ -383,6 +450,136 @@ function render(state: AppState): void {
   }
 }
 
+// ── Boot reveal ─────────────────────────────────────────────────────────────
+// index.html ships #app[data-boot], which hides the bar and the carousel strip (styles.css):
+// the launcher opens on the background alone. The order is deliberate — wallpaper, then the game's own
+// hero, then the UI:
+//   1. the bundled wallpaper is the fastest image main can hand over, so it paints on the boot backdrop
+//      (#hero-boot — a layer of its own, ABOVE the hero) and keeps the screen for WALLPAPER_HOLD_MS,
+//      however quickly the rest arrives;
+//   2. the card's hero paints on the hero layers UNDERNEATH it as soon as it lands, and the backdrop
+//      then dissolves to reveal a background that is already settled — the alternative, unwinding a
+//      shared zoom, made the picture travel backwards at the exact moment the UI arrived;
+//   3. only then does the UI fade in — so it is never seen assembling itself, and never changes colour
+//      under the user's eyes a beat after appearing.
+// The UI waits for ALL THREE seeds — the state, a settled background, and the carousel list — and never
+// appears before BOOT_MIN_MS, so the reveal reads as an intro rather than as a stutter. The list is a
+// seed in its own right because the strip's container is switched on in ONE frame (its opacity
+// transition belongs to the card morph, see styles.css): arriving after the reveal, the whole carousel
+// simply appeared, as if it had been display:none. The deadline covers a seed that never arrives
+// (unreadable wallpaper, no hero, no library at all): the UI must not stay hidden forever.
+/**
+ * How long the bundled wallpaper owns the screen at startup. A hero arriving earlier is painted right
+ * away but stays hidden under the backdrop, so the launcher always opens on the same picture for the
+ * same beat instead of flashing whatever loaded first. It is also the length of the startup jingle's
+ * FIRST half (assets/playhook-startup.mp3): the swell is the backdrop's, the tail plays over the UI
+ * arriving — which is why the countdown runs from the moment the sound starts, not from window load.
+ */
+const WALLPAPER_HOLD_MS = 2000;
+/** The UI never appears before this — the hold plus the cross-fade it hands over to. */
+const BOOT_MIN_MS = WALLPAPER_HOLD_MS;
+const BOOT_DEADLINE_MS = 5000;
+/** Matches the backdrop's fade in styles.css (#hero-boot.is-gone). */
+const BOOT_FADE_MS = 1000;
+const bootBackdrop = req('hero-boot');
+const bootStart = performance.now();
+let bootStateReady = false;
+let bootHeroReady = false;
+let bootLibraryReady = false;
+let bootRevealed = false;
+let revealTimer = 0;
+// When the startup jingle actually began playing; null until it does (or forever, if it can't).
+let jingleStartedAt: number | null = null;
+
+/**
+ * Hands the screen over to the hero underneath: the backdrop fades out and, over the same beat, travels
+ * to where that hero layer currently sits. Converging rather than parting matters because the two are
+ * often the SAME image — with no card, the empty screen is this very wallpaper — and any offset left
+ * between them shows up as a double image sliding apart. Then it is taken out of the page entirely: it
+ * has nothing left to show, and a full-screen composited layer is not free.
+ */
+function dissolveBootBackdrop(): void {
+  const settled = hero.currentLayerTransform();
+  // 'none' means there is no image under it at all (no wallpaper, no hero) — then there is nothing to
+  // converge on, and pulling the backdrop back to the identity transform would be the very lurch this
+  // whole arrangement exists to avoid. It just fades where it is.
+  if (settled !== 'none') bootBackdrop.style.transform = settled;
+  bootBackdrop.classList.add('is-gone');
+  window.setTimeout(() => {
+    bootBackdrop.hidden = true;
+  }, BOOT_FADE_MS);
+}
+
+function revealUi(): void {
+  if (bootRevealed) return;
+  bootRevealed = true;
+  delete app.dataset['boot'];
+  dissolveBootBackdrop();
+  // The strip's cards were held at zero behind the boot screen — let them fan in now, so the carousel's
+  // own entrance is actually seen instead of having happened under the wallpaper.
+  carousel.playIntro();
+}
+
+/**
+ * When the boot image's turn is up: BOOT_MIN_MS after the jingle started, or — when there is no jingle
+ * (unreadable file, muted output, a refused autoplay) — after the window itself opened. The jingle is
+ * fetched over IPC and can start a beat late; letting the hold slide with it is what keeps the swell and
+ * the picture in step, rather than the sound arriving over a UI that is already up.
+ */
+function bootHoldEndsAt(): number {
+  return (jingleStartedAt ?? bootStart) + BOOT_MIN_MS;
+}
+
+/** Arms (or re-arms) the reveal for the end of the hold. No-op until every seed is in. */
+function scheduleReveal(): void {
+  if (bootRevealed || !bootStateReady || !bootHeroReady || !bootLibraryReady) return;
+  if (revealTimer !== 0) window.clearTimeout(revealTimer);
+  revealTimer = window.setTimeout(revealUi, Math.max(0, bootHoldEndsAt() - performance.now()));
+}
+
+function noteBootSeed(seed: 'state' | 'hero' | 'library'): void {
+  if (seed === 'state') bootStateReady = true;
+  else if (seed === 'hero') bootHeroReady = true;
+  else bootLibraryReady = true;
+  scheduleReveal();
+}
+
+window.setTimeout(revealUi, BOOT_DEADLINE_MS);
+
+// The startup jingle, played once. Requested as early as everything else and started the moment it
+// lands; the boot hold is then re-armed around it (see bootHoldEndsAt). The deadline above is the
+// backstop: a jingle that arrives absurdly late can delay the reveal, but never hold it hostage.
+void window.api.requestStartupSound().then(async (url) => {
+  if (url === null || bootRevealed) return;
+  await audio.playStartup(url);
+  if (bootRevealed) return;
+  jingleStartedAt = performance.now();
+  scheduleReveal();
+});
+
+// The startup push on the backdrop (#hero-boot in styles.css): a wider, faster drift than the hero's
+// perpetual pan, and it never unwinds — the layer dissolves mid-travel instead. Two frames of delay
+// because a transition needs its starting value painted first: set in the same frame as the load and
+// there is nothing to move from. The direction is randomized like the layers' own pan, so the launcher
+// doesn't always open drifting the same way.
+requestAnimationFrame(() => {
+  requestAnimationFrame(() => {
+    if (bootRevealed) return;
+    bootBackdrop.style.setProperty('--boot-pan', Math.random() < 0.5 ? '4.5%' : '-4.5%');
+    bootBackdrop.classList.add('is-panning');
+  });
+});
+
+// Whether the background that will STAY is up: the card's hero when it has one, the wallpaper when it
+// does not. The wallpaper alone is not enough while a hero is still expected — that is the cross-fade
+// the reveal is supposed to happen after, not during.
+let heroPayload: 'pending' | 'none' | 'present' = 'pending';
+let wallpaperPainted = false;
+
+function noteBackgroundSettled(): void {
+  if (heroPayload === 'present' || (heroPayload === 'none' && wallpaperPainted)) noteBootSeed('hero');
+}
+
 // ── Wiring ──────────────────────────────────────────────────────────────────
 
 // UI locale: subscribe BEFORE the invoke-seed so a push arriving in between isn't lost (seed pattern).
@@ -394,12 +591,18 @@ function applyLocale(locale: Locale): void {
   document.documentElement.lang = locale;
   localizeDocument(translator);
   render(currentState);
+  // The Settings screen builds its rows from JS, so localizeDocument doesn't reach them — and render()
+  // knows nothing about it. It keeps its focus and scroll position across the swap.
+  settingsScreen.relocalize();
 }
 window.api.onLanguageUpdate(applyLocale);
 void window.api.getLanguage().then(applyLocale);
 
 window.api.onStateUpdate(render);
-void window.api.requestState().then(render);
+void window.api.requestState().then((state) => {
+  render(state);
+  noteBootSeed('state');
+});
 
 // What is on screen (title / stats / active / GameInfo). Subscribe BEFORE the seed, like every other
 // channel here, so a push arriving in between isn't lost.
@@ -436,17 +639,34 @@ window.api.onBrowseMusic((url) => {
 // A failed launch returns to 'ready' and sends the reason here to open the error popup.
 window.api.onError((messageText) => controls.showError(messageText));
 
-// Fallback wallpaper for the empty screen (data URL from main); apply if we're on it already.
-void window.api.requestWallpaper().then((url) => {
-  hero.setWallpaper(url);
-  if (gameOf(currentState) === undefined) hero.applyEmptyScreen();
+// Settings screen data. Subscribe BEFORE the seeds (the pattern every channel here follows) so a push
+// arriving in between isn't lost. The push is the ONLY source of values — a reset lands here too, so
+// the screen never has to reconcile an invoke result with a push.
+window.api.onSettingsUpdate((settings) => settingsScreen.applySettings(settings));
+window.api.onUpdateStatus((status) => settingsScreen.applyUpdateStatus(status));
+void window.api.getSettings().then((settings) => settingsScreen.applySettings(settings));
+void window.api.requestUpdateStatus().then((status) => settingsScreen.applyUpdateStatus(status));
+// The environment seeds: they never change during a session.
+void Promise.all([
+  window.api.isSteamAvailable(),
+  window.api.getAudioOptions(),
+  window.api.getAppVersion(),
+]).then(([steamAvailable, audioOptions, appVersion]) => {
+  settingsScreen.applyEnv({ steamAvailable, audioOptions, appVersion });
 });
 
-// Live custom-wallpaper updates (settings window changed the Empty-screen background). An empty string
-// means "no custom / bundle unreadable" → treat as null. Repaint immediately if we're on the Empty screen.
-window.api.onWallpaperUpdate((url) => {
-  hero.setWallpaper(url === '' ? null : url);
+// Fallback wallpaper for the empty screen (data URL from main). It doubles as the session's OPENING
+// backdrop: it paints on #hero-boot, above the hero layers, and holds the screen while the rest of the
+// launcher loads underneath (see the boot reveal above). It ALSO goes on a hero layer, as it always has:
+// that is the background a card whose hero never arrives is left with once the backdrop dissolves.
+void window.api.requestWallpaper().then((url) => {
+  hero.setWallpaper(url);
+  if (url === null) bootBackdrop.hidden = true;
+  else bootBackdrop.style.backgroundImage = `url("${url}")`;
   if (gameOf(currentState) === undefined) hero.applyEmptyScreen();
+  else hero.showWallpaperBackdrop();
+  wallpaperPainted = url !== null;
+  noteBackgroundSettled();
 });
 
 // The card's music is delivered on its own channel (not in AppState); load it and keep music in sync.
@@ -495,8 +715,18 @@ window.api.onWindowFocus((focused) => controls.setGamepadPaused(!focused));
 
 // Hero images are delivered on their own channel (not in AppState): the renderer rotates through them
 // locally, so we never re-send this large payload on every state transition. See hero.applyAssets.
-window.api.onHeroUpdate((assets) => hero.applyAssets(assets));
-void window.api.requestHero().then((assets) => hero.applyAssets(assets));
+window.api.onHeroUpdate((assets) => {
+  hero.applyAssets(assets);
+  if (assets !== null) {
+    heroPayload = 'present';
+    noteBackgroundSettled();
+  }
+});
+void window.api.requestHero().then((assets) => {
+  hero.applyAssets(assets);
+  heroPayload = assets === null ? 'none' : 'present';
+  noteBackgroundSettled();
+});
 
 // The carousel list (the inserted card's games + the play history, already ordered) arrives on its own
 // channel. Seed on startup (back-fill after a window reconnect), then live updates.
@@ -508,7 +738,12 @@ function applyLibrary(games: readonly LibraryEntry[]): void {
   render(currentState);
 }
 window.api.onLibraryUpdate((library) => applyLibrary(library?.games ?? []));
-void window.api.requestLibrary().then((library) => applyLibrary(library?.games ?? []));
+void window.api.requestLibrary().then((library) => {
+  applyLibrary(library?.games ?? []);
+  // Even an empty list counts: it settles `data-screen`, which is what decides whether the strip's
+  // container is on at all. Waiting for it is what keeps the carousel from popping in afterwards.
+  noteBootSeed('library');
+});
 
 // Game Mode (gamescope) is static for the process — seed it once so the power menu shows "Close Playhook"
 // (full quit) instead of the no-op "Minimize Playhook".

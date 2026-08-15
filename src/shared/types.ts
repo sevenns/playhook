@@ -532,12 +532,6 @@ export interface AppSettings {
   /** Launcher UI sound-effects volume, 0..1. Default 1. */
   readonly sfxVolume: number;
   /**
-   * Custom Empty-screen wallpaper: the file name of the user's image copied into userData (e.g.
-   * `wallpaper-custom.png`), or `null` for the bundled default. We store only the file name — never the
-   * user's original path or the bytes (settings.json is rewritten whole on each patch). Default null.
-   */
-  readonly customWallpaper: string | null;
-  /**
    * Keep the launcher visible on the empty "no card" screen instead of hiding to the tray when no card
    * is present. Default false (the background-app behaviour: hidden until a card is detected). When true
    * the empty screen stays on card removal AND is shown at startup.
@@ -569,13 +563,14 @@ export interface AppSettings {
    * Name of the UI sound set used for navigation (the folder under `audio/ui/<set>/`) — the only source
    * of UI sounds there is. A plain string (not an enum): sets are enumerated dynamically from what ships
    * in the bundle, and a missing/incomplete folder falls back at read time (see AssetReader).
-   * Default 'winhanced'. `.default('winhanced')` migrates an older settings.json without the field.
+   * Default 'playhook-abyss'. `.default(…)` migrates an older settings.json without the field.
    */
   readonly soundSet: string;
   /**
    * Default background ambience track (a file name under `audio/ambience/`, extension included), played
    * only when the current card has no music of its own — the game's music always wins. `null` = no
-   * ambience. Default null. `.default(null)` migrates an older settings.json without the field.
+   * ambience. Default 'playhook-abyss.mp3'; `.default(…)` migrates an older settings.json without the
+   * field. A name that is no longer bundled simply doesn't play (checked before reading — AssetReader).
    */
   readonly ambientTrack: string | null;
   /**
@@ -587,22 +582,11 @@ export interface AppSettings {
 
 /** The bundled UI sound sets + ambience tracks available to pick in the settings window. */
 export interface AudioOptions {
-  /** Sound-set folder names under `audio/ui/` (e.g. `winhanced`, `ps5`); `winhanced` is always present. */
+  /** Sound-set folder names under `audio/ui/` (e.g. `playhook-abyss`, `ps5`); the default is always present. */
   readonly soundSets: readonly string[];
   /** Ambience file names under `audio/ambience/`, extension included (e.g. `ps5.mp3`). */
   readonly ambientTracks: readonly string[];
 }
-
-/**
- * Result of picking a custom Empty-screen wallpaper (wallpaper:pick). A discriminated union so the
- * settings renderer handles each outcome explicitly (untrusted external data → Result-union): the image
- * data URL on success, a localized message on rejection (too large / not an image / copy failed), or a
- * plain cancellation when the OS dialog was dismissed.
- */
-export type WallpaperResult =
-  | { readonly ok: true; readonly dataUrl: string }
-  | { readonly ok: false; readonly message: string }
-  | { readonly ok: false; readonly cancelled: true };
 
 /** Launcher audio volumes (0..1), applied in the game renderer's AudioController. */
 export interface AudioVolumes {
@@ -696,8 +680,8 @@ export const IPC = {
   actionSelect: 'action:select',
   /** renderer → main: request the fallback wallpaper data URL (for the idle / empty screen). */
   wallpaperRequest: 'wallpaper:request',
-  /** main → game-renderer: updated Empty-screen wallpaper data URL (pushed when changed in settings). */
-  wallpaperUpdate: 'wallpaper:update',
+  /** renderer → main (invoke): the bundled startup jingle as a data URL (played once, on boot). */
+  startupSoundRequest: 'audio:startup-request',
   /** game-renderer → main (invoke): request the current audio volumes (on window startup). */
   volumeRequest: 'volume:request',
   /** main → game-renderer: updated audio volumes (pushed when changed in the settings window). */
@@ -707,75 +691,56 @@ export const IPC = {
   /** main → game-renderer: updated effective UI locale (pushed when the language changes). */
   languageUpdate: 'app:language-update',
 
-  // ── Settings window: updates + app settings (separate namespace from the game channels) ──
-  /** main → settings-renderer: the current UpdateStatus snapshot (pushed on every change). */
+  // ── Updates + app settings (the launcher's Settings screen; own namespace) ──
+  /** main → game-renderer: the current UpdateStatus snapshot (pushed on every change). */
   updateStatusUpdate: 'update:status',
-  /** settings-renderer → main (invoke): request the current UpdateStatus. */
+  /** game-renderer → main (invoke): request the current UpdateStatus. */
   updateStatusRequest: 'update:request',
-  /** settings-renderer → main: run a manual update check. */
+  /** game-renderer → main: run a manual update check. */
   updateCheck: 'update:check',
-  /** settings-renderer → main: start downloading the available update (manual download). */
+  /** game-renderer → main: start downloading the available update (manual download). */
   updateDownload: 'update:download',
-  /** settings-renderer → main: install a downloaded update (quitAndInstall, guarded). */
+  /** game-renderer → main: install a downloaded update (quitAndInstall, guarded). */
   updateInstall: 'update:install',
-  /** settings-renderer → main (invoke): request the current AppSettings. */
+  /** game-renderer → main (invoke): request the current AppSettings. */
   settingsRequest: 'settings:request',
-  /** settings-renderer → main: change the auto-update mode (payload AutoUpdateMode). */
+  /** main → game-renderer: the full AppSettings after ANY change (including a reset) — the Settings
+   * screen's single source of truth, pushed from AppSettingsStore's one write point. */
+  settingsUpdate: 'settings:update',
+  /** game-renderer → main: change the auto-update mode (payload AutoUpdateMode). */
   settingsSetAutoUpdate: 'settings:set-auto-update',
-  /** settings-renderer → main: toggle keeping the empty "no card" screen visible (payload boolean). */
+  /** game-renderer → main: toggle keeping the empty "no card" screen visible (payload boolean). */
   settingsSetAlwaysShowEmptyScreen: 'settings:set-always-show-empty-screen',
-  /** settings-renderer → main: toggle disabling silent installer mode (payload boolean). */
+  /** game-renderer → main: toggle disabling silent installer mode (payload boolean). */
   settingsSetDisableSilentInstall: 'settings:set-disable-silent-install',
-  /** settings-renderer → main: toggle Game Mode auto-launch on card insertion (payload boolean). */
+  /** game-renderer → main: toggle Game Mode auto-launch on card insertion (payload boolean). */
   settingsSetSteamAutoLaunch: 'settings:set-steam-auto-launch',
-  /** settings-renderer → main (invoke): whether the Steam-shortcut feature exists here (linux AppImage). */
+  /** game-renderer → main (invoke): whether the Steam-shortcut feature exists here (linux AppImage). */
   settingsSteamAvailable: 'settings:steam-available',
-  /** settings-renderer → main: change the UI theme (payload ThemeMode). */
-  settingsSetTheme: 'settings:set-theme',
-  /** settings-renderer → main: toggle pre-release (beta) updates (payload boolean). */
+  /** game-renderer → main: toggle pre-release (beta) updates (payload boolean). */
   settingsSetPrerelease: 'settings:set-prerelease',
-  /** settings-renderer → main: toggle the Start+Back summon hotkey (payload boolean). */
+  /** game-renderer → main: toggle the Start+Back summon hotkey (payload boolean). */
   settingsSetSummonHotkey: 'settings:set-summon-hotkey',
-  /** settings-renderer → main: toggle keeping the display awake (no screensaver) (payload boolean). */
+  /** game-renderer → main: toggle keeping the display awake (no screensaver) (payload boolean). */
   settingsSetPreventScreensaver: 'settings:set-prevent-screensaver',
-  /** settings-renderer → main: set the background-music volume 0..1 (payload number). */
+  /** game-renderer → main: set the background-music volume 0..1 (payload number). */
   settingsSetMusicVolume: 'settings:set-music-volume',
-  /** settings-renderer → main: set the UI sound-effects volume 0..1 (payload number). */
+  /** game-renderer → main: set the UI sound-effects volume 0..1 (payload number). */
   settingsSetSfxVolume: 'settings:set-sfx-volume',
-  /** settings-renderer → main: change the UI language (payload LanguageMode). */
+  /** game-renderer → main: change the UI language (payload LanguageMode). */
   settingsSetLanguage: 'settings:set-language',
-  /** settings-renderer → main (invoke): request the current effective UI locale (on window startup). */
-  settingsLanguageRequest: 'settings:language-request',
-  /** main → settings-renderer: updated effective UI locale (pushed when the language changes). */
-  settingsLanguageUpdate: 'settings:language-update',
-  /** settings-renderer → main (invoke): reset all settings to defaults → returns the new AppSettings. */
+  /** game-renderer → main (invoke): reset all settings to defaults → returns the new AppSettings. */
   settingsReset: 'settings:reset',
-  /** settings-renderer → main (invoke): request the app version string. */
+  /** game-renderer → main (invoke): request the app version string. */
   appVersionRequest: 'app:version',
-  /** settings-renderer → main (invoke): request the app icon as a data URL (for the custom title bar). */
-  appIconRequest: 'app:icon',
-  /** settings-renderer → main (invoke): the "move" UI sound of a GIVEN set as a data URL (volume preview). */
-  moveSoundRequest: 'app:move-sound',
-  /** settings-renderer → main: change the navigation sound set (payload set name string). */
+  /** game-renderer → main: change the navigation sound set (payload set name string). */
   settingsSetSoundSet: 'settings:set-sound-set',
-  /** settings-renderer → main: change the default ambience track (payload file name string or null). */
+  /** game-renderer → main: change the default ambience track (payload file name string or null). */
   settingsSetAmbientTrack: 'settings:set-ambient-track',
-  /** settings-renderer → main: toggle using only the global ambience (payload boolean). */
+  /** game-renderer → main: toggle using only the global ambience (payload boolean). */
   settingsSetOnlyGlobalAmbient: 'settings:set-only-global-ambient',
-  /** settings-renderer → main (invoke): the bundled sound sets + ambience tracks to populate the dropdowns. */
+  /** game-renderer → main (invoke): the bundled sound sets + ambience tracks to populate the dropdowns. */
   audioOptionsRequest: 'app:audio-options',
-  /** settings-renderer → main: recolor the native title-bar overlay (caption buttons) for the theme. */
-  titleBarOverlayUpdate: 'settings:titlebar-overlay',
-  /** settings-renderer → main: open the log folder in the OS file manager. */
-  openLogs: 'app:open-logs',
-  /** settings-renderer → main: open the app-controlled games install folder in the OS file manager. */
-  openGamesFolder: 'app:open-games-folder',
-  /** settings-renderer → main (invoke): pick a custom Empty-screen wallpaper via a file dialog → WallpaperResult. */
-  wallpaperPick: 'wallpaper:pick',
-  /** settings-renderer → main (invoke): clear the custom Empty-screen wallpaper → the default data URL. */
-  wallpaperClear: 'wallpaper:clear',
-  /** settings-renderer → main (invoke): current Empty-screen wallpaper data URL (for the settings preview). */
-  wallpaperPreviewRequest: 'wallpaper:preview-request',
 
   // ── Configure-game window: edit/init a card's game.json (own namespace, own preload) ──
   /** configure-renderer → main (invoke): snapshot of removable-drive candidates (incl. blank drives). */
@@ -965,8 +930,12 @@ export interface RendererApi {
   requestLibrary(): Promise<GameLibrary | null>;
   /** The carousel card artwork of one game as a data URL (null when it has none). Cached per id. */
   requestGrid(id: string): Promise<string | null>;
-  /** Tell main which game the carousel is on — it answers with browse:update/hero/music. */
-  browseGame(id: string): void;
+  /**
+   * Tell main which game the carousel is on — it answers with browse:update/hero/music. `immediate` says
+   * the user COMMITTED to this game (opened its screen) rather than flipped onto it, so the heavy half
+   * (hero images, music) is read at once instead of waiting out main's debounce.
+   */
+  browseGame(id: string, immediate?: boolean): void;
   /** Drop a game from the play history. Refused by main for a game that is available right now (on the
    *  card or in the PC library) — that one is not history, it is a game you can play. */
   forgetGame(id: string): void;
@@ -985,72 +954,52 @@ export interface RendererApi {
   /** Pick a game by id (entering its detail screen) — switches to it on the ready screen. */
   selectGame(id: string): void;
   requestWallpaper(): Promise<string | null>;
-  /** Live Empty-screen wallpaper updates, pushed when the custom wallpaper changes in the settings window. */
-  onWallpaperUpdate(callback: (url: string) => void): void;
+  /** The bundled startup jingle as a data URL, or null when it can't be read. Played once, on boot. */
+  requestStartupSound(): Promise<string | null>;
   /** Current launcher audio volumes (on window startup). */
   requestVolumes(): Promise<AudioVolumes>;
-  /** Live audio-volume updates, pushed when changed in the settings window. */
+  /** Live audio-volume updates, pushed when a volume changes (the Settings screen or a reset). */
   onVolumesUpdate(callback: (volumes: AudioVolumes) => void): void;
   /** Current effective UI locale (on window startup). */
   getLanguage(): Promise<Locale>;
   /** Live UI-locale updates, pushed when the language changes. */
   onLanguageUpdate(callback: (locale: Locale) => void): void;
-}
 
-/** API that the settings preload exposes on `window.settingsApi` (separate from the game `api`). */
-export interface SettingsApi {
-  getAppVersion(): Promise<string>;
-  getAppIcon(): Promise<string>;
-  /**
-   * The "move" UI sound of a GIVEN set as a data URL, played as a volume preview on slider release. The
-   * set is passed explicitly (not read from settings in main) so a just-changed dropdown previews the new
-   * set without racing the on-disk settings write.
-   */
-  getMoveSound(set: string): Promise<string>;
+  // ── Settings screen (moved here with the window it used to live in) ──
+  /** The current AppSettings (seed for the Settings screen). */
+  getSettings(): Promise<AppSettings>;
+  /** Live AppSettings pushes — the screen's single source of truth, including after a reset. */
+  onSettingsUpdate(callback: (settings: AppSettings) => void): void;
+  /** Whether the Steam-related row exists at all — false on Windows and on a non-AppImage run. */
+  isSteamAvailable(): Promise<boolean>;
   /** The bundled sound sets + ambience tracks, to populate the Audio dropdowns. */
   getAudioOptions(): Promise<AudioOptions>;
-  /** Change the navigation sound set (applied live to the game window by main). */
-  setSoundSet(set: string): void;
-  /** Change the default ambience track (null = no ambience; applied live to the game window by main). */
-  setAmbientTrack(track: string | null): void;
-  /** Toggle using only the global ambience (a card's own music ignored when on). */
-  setOnlyGlobalAmbient(on: boolean): void;
-  getSettings(): Promise<AppSettings>;
+  /** The app version string, shown beside the screen title. */
+  getAppVersion(): Promise<string>;
   setAutoUpdate(mode: AutoUpdateMode): void;
+  setPrerelease(on: boolean): void;
+  setSummonHotkey(on: boolean): void;
+  /** Toggle keeping the display awake (no screensaver / display-sleep) while the launcher owns the session. */
+  setPreventScreensaver(on: boolean): void;
   /** Toggle keeping the empty "no card" screen visible instead of hiding to the tray. */
   setAlwaysShowEmptyScreen(on: boolean): void;
   /** Toggle disabling silent installer mode (installers show their wizard when on). */
   setDisableSilentInstall(on: boolean): void;
   /** Toggle the Game Mode card-insert auto-launch (Steam Deck only; see AppSettings.steamAutoLaunch). */
   setSteamAutoLaunch(on: boolean): void;
-  /** Whether to show the Steam-related settings at all — false on Windows and on a non-AppImage run. */
-  isSteamAvailable(): Promise<boolean>;
-  setTheme(mode: ThemeMode): void;
-  setPrerelease(on: boolean): void;
-  setSummonHotkey(on: boolean): void;
-  /** Toggle keeping the display awake (no screensaver / display-sleep) while the launcher owns the session. */
-  setPreventScreensaver(on: boolean): void;
+  /** Change the navigation sound set (applied live by main). */
+  setSoundSet(set: string): void;
+  /** Change the default ambience track (null = no ambience; applied live by main). */
+  setAmbientTrack(track: string | null): void;
+  /** Toggle using only the global ambience (a card's own music ignored when on). */
+  setOnlyGlobalAmbient(on: boolean): void;
   setMusicVolume(volume: number): void;
   setSfxVolume(volume: number): void;
   /** Change the UI language (the effective locale comes back via onLanguageUpdate). */
   setLanguage(mode: LanguageMode): void;
-  /** Current effective UI locale (on window startup). */
-  getLanguage(): Promise<Locale>;
-  /** Live UI-locale updates, pushed when the language changes. */
-  onLanguageUpdate(callback: (locale: Locale) => void): void;
-  /** Resets all settings to defaults; resolves with the new AppSettings so the UI can re-render. */
-  reset(): Promise<AppSettings>;
-  /** Tell main to recolor the native caption buttons to match the effective (dark/light) theme. */
-  setTitleBarDark(dark: boolean): void;
-  openLogs(): void;
-  openGamesFolder(): void;
-  /** Pick a custom Empty-screen wallpaper via a file dialog; resolves with the outcome (image / error / cancel). */
-  pickWallpaper(): Promise<WallpaperResult>;
-  /** Clear the custom Empty-screen wallpaper; resolves with the default wallpaper data URL for the preview. */
-  clearWallpaper(): Promise<{ dataUrl: string }>;
-  /** Current Empty-screen wallpaper data URL, for the settings preview (on open and after a general Reset). */
-  requestWallpaperPreview(): Promise<{ dataUrl: string }>;
-  onUpdateStatus(cb: (status: UpdateStatus) => void): void;
+  /** Resets all settings to defaults. The screen re-renders from the settings:update push instead. */
+  resetSettings(): Promise<AppSettings>;
+  onUpdateStatus(callback: (status: UpdateStatus) => void): void;
   requestUpdateStatus(): Promise<UpdateStatus>;
   checkForUpdates(): void;
   downloadUpdate(): void;
@@ -1104,7 +1053,6 @@ export interface ConfigureApi {
 declare global {
   interface Window {
     readonly api: RendererApi;
-    readonly settingsApi: SettingsApi;
     readonly configureApi: ConfigureApi;
   }
 }

@@ -1,4 +1,6 @@
 // Tray icon and context menu: "Show" / "Quit".
+// Settings are NOT here: the launcher's own Settings screen (More → Settings) is the single entrance,
+// so Game Mode — which has no tray at all — reaches them the same way the desktop does.
 // A background app lives in the tray; closing the window doesn't quit the program.
 import path from 'node:path';
 import { Tray, Menu, nativeImage } from 'electron';
@@ -8,7 +10,10 @@ import { type Translator } from '../shared/i18n/index';
 export interface TrayCallbacks {
   readonly onShow: () => void;
   readonly onOpenConfigureGame: () => void;
-  readonly onOpenSettings: () => void;
+  /** Opens the log folder in the OS file manager (moved here from the settings window). */
+  readonly onOpenLogs: () => void;
+  /** Opens the app-controlled games install folder (moved here from the settings window). */
+  readonly onOpenGamesFolder: () => void;
   /** Add-to-Steam / Remove-from-Steam, per the current `registered` state (Steam Deck only). */
   readonly onToggleSteamShortcut: () => void;
   readonly onQuit: () => void;
@@ -47,7 +52,8 @@ export function buildTrayMenu(t: Translator, callbacks: TrayCallbacks, steam: Tr
         ]
       : []),
     { label: t('tray.configureGame'), click: () => callbacks.onOpenConfigureGame() },
-    { label: t('tray.settings'), click: () => callbacks.onOpenSettings() },
+    { label: t('settings.openLogs'), click: () => callbacks.onOpenLogs() },
+    { label: t('settings.openGames'), click: () => callbacks.onOpenGamesFolder() },
     { type: 'separator' },
     { label: t('tray.quit'), click: () => callbacks.onQuit() },
   ]);

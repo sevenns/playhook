@@ -8,14 +8,19 @@
 // unit test (shared/types.ts is the single source of truth).
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
 import type {
+  AppSettings,
   AppState,
   SfxSet,
+  AudioOptions,
   AudioVolumes,
+  AutoUpdateMode,
   BrowseInfo,
   GameLibrary,
   HeroAssets,
+  LanguageMode,
   RendererApi,
   SfxName,
+  UpdateStatus,
 } from '../shared/types';
 import type { IPC } from '../shared/types';
 import type { Locale } from '../shared/i18n/index';
@@ -55,11 +60,36 @@ const CHANNELS = {
   sfxSetRequest: 'sfx:set-request',
   actionSelect: 'action:select',
   wallpaperRequest: 'wallpaper:request',
-  wallpaperUpdate: 'wallpaper:update',
+  startupSoundRequest: 'audio:startup-request',
   volumeRequest: 'volume:request',
   volumeUpdate: 'volume:update',
   languageRequest: 'app:language-request',
   languageUpdate: 'app:language-update',
+  // Settings screen (these lived in settings-preload.ts until the window became a launcher screen).
+  updateStatusUpdate: 'update:status',
+  updateStatusRequest: 'update:request',
+  updateCheck: 'update:check',
+  updateDownload: 'update:download',
+  updateInstall: 'update:install',
+  settingsRequest: 'settings:request',
+  settingsUpdate: 'settings:update',
+  settingsSteamAvailable: 'settings:steam-available',
+  settingsReset: 'settings:reset',
+  settingsSetAutoUpdate: 'settings:set-auto-update',
+  settingsSetPrerelease: 'settings:set-prerelease',
+  settingsSetSummonHotkey: 'settings:set-summon-hotkey',
+  settingsSetPreventScreensaver: 'settings:set-prevent-screensaver',
+  settingsSetAlwaysShowEmptyScreen: 'settings:set-always-show-empty-screen',
+  settingsSetDisableSilentInstall: 'settings:set-disable-silent-install',
+  settingsSetSteamAutoLaunch: 'settings:set-steam-auto-launch',
+  settingsSetMusicVolume: 'settings:set-music-volume',
+  settingsSetSfxVolume: 'settings:set-sfx-volume',
+  settingsSetSoundSet: 'settings:set-sound-set',
+  settingsSetAmbientTrack: 'settings:set-ambient-track',
+  settingsSetOnlyGlobalAmbient: 'settings:set-only-global-ambient',
+  settingsSetLanguage: 'settings:set-language',
+  appVersionRequest: 'app:version',
+  audioOptionsRequest: 'app:audio-options',
 } as const satisfies Partial<typeof IPC>;
 
 const api: RendererApi = {
@@ -151,8 +181,8 @@ const api: RendererApi = {
   requestGrid(id: string): Promise<string | null> {
     return ipcRenderer.invoke(CHANNELS.libraryGridRequest, id) as Promise<string | null>;
   },
-  browseGame(id: string): void {
-    ipcRenderer.send(CHANNELS.libraryBrowse, id);
+  browseGame(id: string, immediate = false): void {
+    ipcRenderer.send(CHANNELS.libraryBrowse, id, immediate);
   },
   forgetGame(id: string): void {
     ipcRenderer.send(CHANNELS.libraryForget, id);
@@ -189,10 +219,8 @@ const api: RendererApi = {
   requestWallpaper(): Promise<string | null> {
     return ipcRenderer.invoke(CHANNELS.wallpaperRequest) as Promise<string | null>;
   },
-  onWallpaperUpdate(callback: (url: string) => void): void {
-    ipcRenderer.on(CHANNELS.wallpaperUpdate, (_event: IpcRendererEvent, url: string) => {
-      callback(url);
-    });
+  requestStartupSound(): Promise<string | null> {
+    return ipcRenderer.invoke(CHANNELS.startupSoundRequest) as Promise<string | null>;
   },
   requestVolumes(): Promise<AudioVolumes> {
     return ipcRenderer.invoke(CHANNELS.volumeRequest) as Promise<AudioVolumes>;
@@ -209,6 +237,82 @@ const api: RendererApi = {
     ipcRenderer.on(CHANNELS.languageUpdate, (_event: IpcRendererEvent, locale: Locale) => {
       callback(locale);
     });
+  },
+  getSettings(): Promise<AppSettings> {
+    return ipcRenderer.invoke(CHANNELS.settingsRequest) as Promise<AppSettings>;
+  },
+  onSettingsUpdate(callback: (settings: AppSettings) => void): void {
+    ipcRenderer.on(CHANNELS.settingsUpdate, (_event: IpcRendererEvent, settings: AppSettings) => {
+      callback(settings);
+    });
+  },
+  isSteamAvailable(): Promise<boolean> {
+    return ipcRenderer.invoke(CHANNELS.settingsSteamAvailable) as Promise<boolean>;
+  },
+  getAudioOptions(): Promise<AudioOptions> {
+    return ipcRenderer.invoke(CHANNELS.audioOptionsRequest) as Promise<AudioOptions>;
+  },
+  getAppVersion(): Promise<string> {
+    return ipcRenderer.invoke(CHANNELS.appVersionRequest) as Promise<string>;
+  },
+  setAutoUpdate(mode: AutoUpdateMode): void {
+    ipcRenderer.send(CHANNELS.settingsSetAutoUpdate, mode);
+  },
+  setPrerelease(on: boolean): void {
+    ipcRenderer.send(CHANNELS.settingsSetPrerelease, on);
+  },
+  setSummonHotkey(on: boolean): void {
+    ipcRenderer.send(CHANNELS.settingsSetSummonHotkey, on);
+  },
+  setPreventScreensaver(on: boolean): void {
+    ipcRenderer.send(CHANNELS.settingsSetPreventScreensaver, on);
+  },
+  setAlwaysShowEmptyScreen(on: boolean): void {
+    ipcRenderer.send(CHANNELS.settingsSetAlwaysShowEmptyScreen, on);
+  },
+  setDisableSilentInstall(on: boolean): void {
+    ipcRenderer.send(CHANNELS.settingsSetDisableSilentInstall, on);
+  },
+  setSteamAutoLaunch(on: boolean): void {
+    ipcRenderer.send(CHANNELS.settingsSetSteamAutoLaunch, on);
+  },
+  setSoundSet(set: string): void {
+    ipcRenderer.send(CHANNELS.settingsSetSoundSet, set);
+  },
+  setAmbientTrack(track: string | null): void {
+    ipcRenderer.send(CHANNELS.settingsSetAmbientTrack, track);
+  },
+  setOnlyGlobalAmbient(on: boolean): void {
+    ipcRenderer.send(CHANNELS.settingsSetOnlyGlobalAmbient, on);
+  },
+  setMusicVolume(volume: number): void {
+    ipcRenderer.send(CHANNELS.settingsSetMusicVolume, volume);
+  },
+  setSfxVolume(volume: number): void {
+    ipcRenderer.send(CHANNELS.settingsSetSfxVolume, volume);
+  },
+  setLanguage(mode: LanguageMode): void {
+    ipcRenderer.send(CHANNELS.settingsSetLanguage, mode);
+  },
+  resetSettings(): Promise<AppSettings> {
+    return ipcRenderer.invoke(CHANNELS.settingsReset) as Promise<AppSettings>;
+  },
+  onUpdateStatus(callback: (status: UpdateStatus) => void): void {
+    ipcRenderer.on(CHANNELS.updateStatusUpdate, (_event: IpcRendererEvent, status: UpdateStatus) => {
+      callback(status);
+    });
+  },
+  requestUpdateStatus(): Promise<UpdateStatus> {
+    return ipcRenderer.invoke(CHANNELS.updateStatusRequest) as Promise<UpdateStatus>;
+  },
+  checkForUpdates(): void {
+    ipcRenderer.send(CHANNELS.updateCheck);
+  },
+  downloadUpdate(): void {
+    ipcRenderer.send(CHANNELS.updateDownload);
+  },
+  installUpdate(): void {
+    ipcRenderer.send(CHANNELS.updateInstall);
   },
 };
 

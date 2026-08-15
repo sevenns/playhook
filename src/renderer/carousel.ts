@@ -65,6 +65,19 @@ export interface Carousel {
   selected(): LibraryEntry | undefined;
   /** Marks the game AppState is busy with, so its card can pulse wherever it sits in the list. */
   setBusyGame(id: string | null): void;
+  /**
+   * Replays the staggered fan the strip uses when it comes back from a detail screen. Called once at
+   * startup, the moment the loading wallpaper hands over: the cards are built and laid out while the
+   * boot screen still covers them, so without this their entrance would have already happened, unseen.
+   */
+  playIntro(): void;
+  /**
+   * A direction is being HELD, i.e. the row is flipping on its own. Artwork loading pauses for the
+   * duration and resumes on release: each cover is a file read plus a base64 encode in main and a
+   * megabyte-ish string over IPC, and firing that per step is what makes a held flip stutter. The cards
+   * the flip ends on are the only ones anyone actually looks at.
+   */
+  setFlipping(flipping: boolean): void;
 }
 
 export function createCarousel(deps: CarouselDeps): Carousel {
@@ -82,6 +95,8 @@ export function createCarousel(deps: CarouselDeps): Carousel {
   let lockedUntil = 0;
   // Pending clear of `data-returning` (see markReturning); null when the strip is not returning.
   let returnTimer: number | null = null;
+  // A direction is being held (app.ts relays it) — artwork loading waits it out. See setFlipping.
+  let flipping = false;
   // Artwork, keyed by game id AND artwork revision. Decoded data URLs are heavy, so each is fetched at
   // most once; a game with no art at all is remembered as null so we don't ask again on every re-render.
   // The revision is what keeps that cache honest: editing gridImage in Configure re-copies the assets,
@@ -140,6 +155,7 @@ export function createCarousel(deps: CarouselDeps): Carousel {
 
   /** Loads the artwork of the cards near the selection (a 40-game history must not decode 40 covers). */
   function loadNearbyArt(): void {
+    if (flipping) return; // see setFlipping — the row is mid-flight, nobody is reading these cards yet
     games.forEach((game, i) => {
       const key = artKey(game);
       if (!isNearViewport(i, index) || art.has(key)) return;
@@ -355,6 +371,37 @@ export function createCarousel(deps: CarouselDeps): Carousel {
     setScreen,
     exists,
     selected,
+    setFlipping(next: boolean): void {
+      if (flipping === next) return;
+      flipping = next;
+      // Released: pick up the covers of wherever the row came to rest.
+      if (!flipping) loadNearbyArt();
+    },
+    playIntro(): void {
+      if (screen !== 'carousel') return;
+      // Pull the cards back to zero and flush BEFORE arming the fan, rather than trusting them to still
+      // be hidden. By the time the boot screen hands over, the strip has been through setGames and
+      // setScreen — either of which may already have run (and finished) a return of its own, leaving the
+      // row fully faded in. Starting the fan from that state is a no-op: an opacity that never changes
+      // has nothing to transition, which is exactly the "the carousel is just there" it was meant to fix.
+      // Suppressing the transition for that reset is not optional: the cards carry a DELAYED opacity
+      // transition, so a plain `opacity = 0` would animate its way there (350ms later) instead of taking
+      // effect now — leaving nothing to fade in from. The reflow makes the 0 the transition's start value.
+      for (const card of cards.values()) {
+        card.style.transition = 'none';
+        card.style.opacity = '0';
+      }
+      void strip.offsetWidth;
+      markReturning(true);
+      // Same fan, one difference: the selected card fades in with the rest. On a real hand-back it swaps
+      // in opaque because it takes over from a pixel-identical play button — at startup there is no button
+      // to take over from, and an opaque card appearing mid-wave is the one thing that breaks it.
+      app.dataset['returning'] = 'intro';
+      for (const card of cards.values()) {
+        card.style.removeProperty('transition');
+        card.style.removeProperty('opacity');
+      }
+    },
     setBusyGame(id: string | null): void {
       if (id === busyId) return;
       busyId = id;

@@ -4,7 +4,7 @@
 // and replicates AppState to the window. All FS/process work happens only here (in main).
 import path from 'node:path';
 import fse from 'fs-extra';
-import { app, BrowserWindow, dialog, ipcMain, type WebContents } from 'electron';
+import { app, ipcMain } from 'electron';
 import {
   IPC,
   type AppState,
@@ -20,7 +20,6 @@ import {
   type ResolvedManifest,
   type SfxName,
   type Stats,
-  type WallpaperResult,
 } from '../shared/types';
 import { type Translator } from '../shared/i18n/index';
 import { type StateManager } from './state';
@@ -358,16 +357,16 @@ export class GameController {
   // — which describes one game's process and cannot represent "a history game while no card is in", nor
   // "browsing game B while game A installs". Null only when there is neither a card nor any history.
   private currentBrowse: BrowseInfo | null = null;
+  // Monotonic ticket for browse-asset reads: only the newest may push (see pushBrowseAssets).
+  private browseAssetsSeq = 0;
   // Pending read of the browsed game's hero/music (see BROWSE_ASSETS_DEBOUNCE_MS).
   private browseAssetsTimer: ReturnType<typeof setTimeout> | null = null;
   // The reconciled Stats per game id, captured in loadCard so onSelectRequested can rebuild the selected
   // game's GameInfo without re-reading stats (buildGameInfo still re-reads the .acf for a steam game).
   private statsById = new Map<string, Stats>();
-  // Reads card assets (hero/audio/wallpaper) into data URLs; owns the effective-wallpaper cache and the
-  // custom Empty-screen wallpaper (needs userData + the live custom-file name from settings via DI).
+  // Reads card assets (hero/audio/wallpaper) into data URLs; owns the bundled-wallpaper cache and reads
+  // the live audio settings via DI.
   private readonly assets = new AssetReader({
-    userData: app.getPath('userData'),
-    getCustomWallpaperName: async () => (await this.deps.settings.read()).customWallpaper,
     getSoundSet: async () => (await this.deps.settings.read()).soundSet,
     getAmbientTrack: async () => (await this.deps.settings.read()).ambientTrack,
     getOnlyGlobalAmbient: async () => (await this.deps.settings.read()).onlyGlobalAmbient,
@@ -589,16 +588,16 @@ export class GameController {
       if (typeof id !== 'string') return Promise.resolve(null);
       return this.deps.library.readGridThumb(id);
     });
-    ipcMain.on(IPC.libraryBrowse, (_event, id: unknown) => void this.onBrowseRequested(id));
+    ipcMain.on(
+      IPC.libraryBrowse,
+      (_event, id: unknown, immediate: unknown) => void this.onBrowseRequested(id, immediate),
+    );
     ipcMain.on(IPC.libraryForget, (_event, id: unknown) => void this.onForgetRequested(id));
     ipcMain.handle(IPC.wallpaperRequest, (): Promise<string | null> => this.assets.readWallpaperDataUrl());
-    // Custom Empty-screen wallpaper (invoked from the settings window; the handlers live here because they
-    // own the AssetReader + the game window — see plan F2.2 p.6). preview-request feeds the settings preview.
-    ipcMain.handle(IPC.wallpaperPick, (event): Promise<WallpaperResult> => this.pickWallpaper(event.sender));
-    ipcMain.handle(IPC.wallpaperClear, (): Promise<{ dataUrl: string }> => this.clearWallpaper());
-    ipcMain.handle(IPC.wallpaperPreviewRequest, async (): Promise<{ dataUrl: string }> => ({
-      dataUrl: (await this.assets.readWallpaperDataUrl()) ?? '',
-    }));
+    ipcMain.handle(
+      IPC.startupSoundRequest,
+      (): Promise<string | null> => this.assets.readStartupSoundDataUrl(),
+    );
     ipcMain.on(IPC.actionLaunch, () => void this.onLaunchRequested());
     ipcMain.on(IPC.actionUninstall, () => void this.onUninstallRequested());
     // Game Mode: hiding is meaningless (no tray, and on Linux no summon hotkey) — ignore the Hide button
@@ -2079,68 +2078,6 @@ export class GameController {
     };
   }
 
-  // ── Custom Empty-screen wallpaper ────────────────────────────────────────
-
-  /**
-   * Picks an image via the OS file dialog (parented to the settings window), copies it in as the custom
-   * Empty-screen wallpaper, persists its file name, and pushes the new data URL to the launcher so the
-   * Empty screen updates live. Cancellation and validation failures come back as a Result-union.
-   */
-  private async pickWallpaper(sender: WebContents): Promise<WallpaperResult> {
-    const parent = BrowserWindow.fromWebContents(sender);
-    const options: Electron.OpenDialogOptions = {
-      properties: ['openFile'],
-      filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif'] }],
-    };
-    const result =
-      parent !== null ? await dialog.showOpenDialog(parent, options) : await dialog.showOpenDialog(options);
-    const sourcePath = result.filePaths[0];
-    if (result.canceled || sourcePath === undefined) return { ok: false, cancelled: true };
-    const set = await this.assets.setCustomWallpaper(sourcePath);
-    if (!set.ok) return { ok: false, message: this.wallpaperErrorMessage(set.reason) };
-    await this.deps.settings.patch({ customWallpaper: set.fileName });
-    this.pushWallpaper(set.dataUrl);
-    return { ok: true, dataUrl: set.dataUrl };
-  }
-
-  /** Clears the custom wallpaper (settings + file), returns and pushes the default wallpaper data URL. */
-  private async clearWallpaper(): Promise<{ dataUrl: string }> {
-    const { dataUrl } = await this.assets.clearCustomWallpaper();
-    await this.deps.settings.patch({ customWallpaper: null });
-    this.pushWallpaper(dataUrl);
-    return { dataUrl };
-  }
-
-  /**
-   * Removes the custom wallpaper file and pushes the default to the launcher, for the general settings
-   * Reset: reset() already wrote customWallpaper=null, but the FILE must still be deleted separately (see
-   * plan F2.2 p.7). Called from main via the UpdaterService onWallpaperReset callback.
-   */
-  async resetCustomWallpaper(): Promise<void> {
-    const { dataUrl } = await this.assets.clearCustomWallpaper();
-    this.pushWallpaper(dataUrl);
-  }
-
-  /** Pushes the Empty-screen wallpaper data URL to the game window so it repaints the Empty screen live. */
-  private pushWallpaper(dataUrl: string): void {
-    const browserWindow = this.deps.window.browserWindow;
-    if (browserWindow !== null && !browserWindow.isDestroyed()) {
-      browserWindow.webContents.send(IPC.wallpaperUpdate, dataUrl);
-    }
-  }
-
-  /** Maps an AssetReader failure reason to a localized, user-facing message for the settings window. */
-  private wallpaperErrorMessage(reason: 'too-large' | 'not-image' | 'io'): string {
-    switch (reason) {
-      case 'too-large':
-        return this.t('errors.wallpaperTooLarge');
-      case 'not-image':
-        return this.t('errors.wallpaperNotImage');
-      case 'io':
-        return this.t('errors.wallpaperFailed');
-    }
-  }
-
   // ── Hero images (delivered once per card, rotated in the renderer) ───────
 
   /** Stores the current hero images and pushes them to the window (null when no card / on error). */
@@ -2351,9 +2288,9 @@ export class GameController {
    * Deliberately does NOT touch `selectedIndex` or the AppState: looking at a game is not choosing it, so
    * this works while another game installs (and with no card at all).
    */
-  private async onBrowseRequested(idRaw: unknown): Promise<void> {
+  private async onBrowseRequested(idRaw: unknown, immediateRaw: unknown): Promise<void> {
     if (typeof idRaw !== 'string') return;
-    await this.browseTo(idRaw);
+    await this.browseTo(idRaw, immediateRaw === true);
   }
 
   /**
@@ -2383,13 +2320,13 @@ export class GameController {
    * music, which are megabytes each, are debounced so flipping through the strip doesn't read the disk
    * once per step.
    */
-  private async browseTo(id: string): Promise<void> {
+  private async browseTo(id: string, immediate = false): Promise<void> {
     const manifest = this.games.find((m) => m.raw.id === id) ?? null;
     if (manifest !== null) {
       const stats = this.statsById.get(id) ?? (await this.deps.stats.read(id));
       const info = await this.buildGameInfo(manifest, stats);
       this.pushBrowse({ id, title: manifest.raw.title, active: true, stats, game: info });
-      this.scheduleBrowseAssets(id);
+      this.scheduleBrowseAssets(id, immediate);
       return;
     }
     const entry = this.deps.library.entry(id);
@@ -2399,12 +2336,20 @@ export class GameController {
     }
     const stats = await this.deps.stats.read(id);
     this.pushBrowse({ id, title: entry.title, active: false, stats });
-    this.scheduleBrowseAssets(id);
+    this.scheduleBrowseAssets(id, immediate);
   }
 
   /** Debounced read+push of the browsed game's hero/music; a newer browse cancels the pending one. */
-  private scheduleBrowseAssets(id: string): void {
+  private scheduleBrowseAssets(id: string, immediate = false): void {
     if (this.browseAssetsTimer !== null) clearTimeout(this.browseAssetsTimer);
+    this.browseAssetsTimer = null;
+    // `immediate` is the renderer saying the user has COMMITTED to this game (opened its screen) rather
+    // than flipped onto it. Waiting out the debounce there means a quarter second of the previous game's
+    // background and music on a screen that is already the new game's.
+    if (immediate) {
+      void this.pushBrowseAssets(id);
+      return;
+    }
     this.browseAssetsTimer = setTimeout(() => {
       this.browseAssetsTimer = null;
       void this.pushBrowseAssets(id);
@@ -2412,20 +2357,35 @@ export class GameController {
   }
 
   private async pushBrowseAssets(id: string): Promise<void> {
-    // The selection moved on while we waited — the read would only fight the newer one.
-    if (this.currentBrowse?.id !== id) return;
+    const seq = ++this.browseAssetsSeq;
+    // Checked before EVERY push, not just on entry. Each read below is megabytes off the disk plus a
+    // base64 encode, and the selection keeps moving while it runs — so a read started for a game the user
+    // flipped past would otherwise land on the game they stopped on, dragging its background, its colours
+    // and its music along. The sequence covers the other half: two reads in flight at once (a debounced
+    // one and an immediate one) can finish out of order, and only the newest may speak.
+    const current = (): boolean => seq === this.browseAssetsSeq && this.currentBrowse?.id === id;
+    if (!current()) return;
     const manifest = this.games.find((m) => m.raw.id === id) ?? null;
     if (manifest !== null) {
-      this.pushBrowseHero(await this.assets.readHeroAssets(manifest));
-      this.pushBrowseMusic(await this.assets.readMusicDataUrl(manifest));
+      const hero = await this.assets.readHeroAssets(manifest);
+      if (!current()) return;
+      this.pushBrowseHero(hero);
+      const music = await this.assets.readMusicDataUrl(manifest);
+      if (!current()) return;
+      this.pushBrowseMusic(music);
       return;
     }
     const assets = await this.deps.library.readBrowseAssets(id);
+    if (!current()) return;
     // A history game with no hero of its own falls back to the wallpaper, exactly like a card game does
     // (readHeroAssets). Without it this push carried `null`, the renderer had nothing to paint, and the
     // PREVIOUS game's background stayed on screen under the new game's name.
-    this.pushBrowseHero(assets.hero ?? (await this.wallpaperHero()));
-    this.pushBrowseMusic(await this.browseMusicFor(id));
+    const hero = assets.hero ?? (await this.wallpaperHero());
+    if (!current()) return;
+    this.pushBrowseHero(hero);
+    const music = await this.browseMusicFor(id);
+    if (!current()) return;
+    this.pushBrowseMusic(music);
   }
 
   /** The wallpaper as a one-image hero payload — the per-game fallback shared by both browse paths. */

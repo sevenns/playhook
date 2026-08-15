@@ -10,7 +10,6 @@ import { IPC } from '../src/shared/types';
 
 const PRELOAD_FILES = [
   path.resolve(__dirname, '../src/preload/preload.ts'),
-  path.resolve(__dirname, '../src/preload/settings-preload.ts'),
   path.resolve(__dirname, '../src/preload/configure-preload.ts'),
 ];
 
