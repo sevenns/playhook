@@ -20,6 +20,7 @@
 //    surfaces on a stack inside it, and the six primitives are routed to whichever is on top.
 import type {
   BrowseInfo,
+  SfxName,
   ConfigPickKind,
   ConfigPickResult,
   ConfigSaveResult,
@@ -155,6 +156,8 @@ interface MenuEntry {
   readonly label: string;
   /** Marks the value a dropdown currently holds (underlined, like the Settings dropdown). */
   readonly current?: boolean;
+  /** Which sound this entry makes. One runner plays it, so a press and a click sound identical. */
+  readonly sound?: SfxName;
   readonly run: () => void;
 }
 
@@ -331,6 +334,20 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     rendered = [];
   }
 
+  /** How long the staggered section entrance runs — the class is dropped once it is over. */
+  const ENTRANCE_MS = 700;
+  let entranceTimer = 0;
+
+  /** Arms the one-shot entrance animation (see .settings-list.is-entering in styles.css). */
+  function armEntrance(): void {
+    if (entranceTimer !== 0) window.clearTimeout(entranceTimer);
+    listEl.classList.add('is-entering');
+    entranceTimer = window.setTimeout(() => {
+      entranceTimer = 0;
+      listEl.classList.remove('is-entering');
+    }, ENTRANCE_MS);
+  }
+
   /** A section that HAS a title — i.e. one the column can name and the pane can show. */
   interface TitledSection {
     readonly titleKey: MessageKey;
@@ -397,9 +414,15 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     ];
   }
 
+  /** What the status strip WOULD show — so it is only rebuilt when that actually changed. */
+  let statusSignature = '';
+
   /** The notes, under both columns. */
   function renderStatus(from: GameSettingsModel): void {
     const notes = trailingRows(from).flatMap((row) => (row.kind === 'note' ? [row] : []));
+    const signature = notes.map((note) => `${note.tone}:${rowLabelText(note.text, t())}`).join('|');
+    if (signature === statusSignature) return;
+    statusSignature = signature;
     statusEl.replaceChildren(
       ...notes.map((note) => {
         const el = document.createElement('div');
@@ -596,7 +619,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       button.addEventListener('click', () => {
         pressFlash(button);
         level.focus = index;
-        entry.run();
+        runEntry(entry);
       });
       return button;
     });
@@ -645,6 +668,12 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     }
   }
 
+  /** Plays an entry's sound exactly once, then runs it. The only way an entry is ever triggered. */
+  function runEntry(entry: MenuEntry): void {
+    deps.audio.play(entry.sound ?? 'button');
+    entry.run();
+  }
+
   function applyMenuFocus(instant = false): void {
     const level = menuTop();
     if (level === undefined) return;
@@ -666,13 +695,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   }): MenuLevel {
     const entries: MenuEntry[] = [
       ...level.entries,
-      {
-        label: t()('launcher.menu.close'),
-        run: () => {
-          deps.audio.play('back');
-          popMenu();
-        },
-      },
+      { label: t()('launcher.menu.close'), sound: 'back', run: () => popMenu() },
     ];
     return { kind: 'menu', title: level.title, entries, focus: entries.length - 1 };
   }
@@ -833,7 +856,6 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
         current: option.value === row.value,
         run: () => {
           closeMenus();
-          deps.audio.play('button');
           setSelect(row.id, option.value);
         },
       })),
@@ -892,7 +914,6 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
         label: t()('gameSettings.clear'),
         run: () => {
           closeMenus();
-          deps.audio.play('button');
           setField(row.id, '');
         },
       });
@@ -906,7 +927,6 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     if (root === undefined || relative === '') return;
     const url = await deps.api.imagePreview(root, relative);
     if (url === null) return;
-    deps.audio.play('button');
     lightboxImage.src = url;
     lightboxCaption.textContent = relative;
     lightboxOpen = true;
@@ -1437,8 +1457,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       const level = menuTop();
       const entry = level?.entries[level.focus];
       if (entry === undefined) return;
-      deps.audio.play('button');
-      entry.run();
+      runEntry(entry);
       return;
     }
     if (surface === 'form') {
@@ -1494,6 +1513,11 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     open = false;
     closeImage();
     closeMenus();
+    if (entranceTimer !== 0) {
+      window.clearTimeout(entranceTimer);
+      entranceTimer = 0;
+    }
+    listEl.classList.remove('is-entering');
     if (validateTimer !== 0) {
       window.clearTimeout(validateTimer);
       validateTimer = 0;
@@ -1582,9 +1606,12 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       open = true;
       app.dataset['overlay'] = 'game-settings';
       screen.setAttribute('aria-hidden', 'false');
+      armEntrance(); // the sections fade in once, on the way in — not on every pane rebuild
+      sidebar.reset(); // a re-opened screen starts at the first section, column and pane together
       sidebar.setFocused(true); // the screen opens on its table of contents, not inside a section
       sectionKey = null;
       columnSignature = '';
+      statusSignature = '';
       hover.arm();
       listScroller.to(0, true);
       focusIndex = 0;

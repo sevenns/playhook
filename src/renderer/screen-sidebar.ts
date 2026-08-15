@@ -48,6 +48,12 @@ export interface Sidebar {
   setFocused(focused: boolean): void;
   /** Selects a section by id without announcing it (used to restore a selection after a rebuild). */
   select(id: string): void;
+  /**
+   * Forgets the selection entirely, so the next render starts at the first entry. A re-opened screen
+   * must not resume where the last visit left the column while the pane falls back to section one —
+   * the two would then disagree about what is on screen.
+   */
+  reset(): void;
 }
 
 export function createSidebar(box: HTMLElement, deps: SidebarDeps): Sidebar {
@@ -124,6 +130,12 @@ export function createSidebar(box: HTMLElement, deps: SidebarDeps): Sidebar {
       if (at === -1) return;
       index = at;
       paintFocus();
+    },
+    reset: () => {
+      entries = [];
+      buttons = [];
+      index = 0;
+      box.replaceChildren();
     },
   };
 

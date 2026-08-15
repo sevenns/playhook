@@ -294,8 +294,18 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
     return ids(a) === ids(b);
   }
 
-  function rowsOf(next: SettingsModel): readonly SettingsRow[] {
-    return next.sections.flatMap((section) => section.rows);
+  /** How long the staggered section entrance runs — the class is dropped once it is over. */
+  const ENTRANCE_MS = 700;
+  let entranceTimer = 0;
+
+  /** Arms the one-shot entrance animation (see .settings-list.is-entering in styles.css). */
+  function armEntrance(): void {
+    if (entranceTimer !== 0) window.clearTimeout(entranceTimer);
+    listEl.classList.add('is-entering');
+    entranceTimer = window.setTimeout(() => {
+      entranceTimer = 0;
+      listEl.classList.remove('is-entering');
+    }, ENTRANCE_MS);
   }
 
   /** The titled sections — the ones the column offers. The title-less one is the action stack. */
@@ -485,7 +495,7 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
     const rowsNext = currentModel();
     const rendered_ = rendered[indexOfRow(row.id)];
     if (rowsNext !== null && rendered_ !== undefined) {
-      const nextRow = rowsOf(rowsNext)[indexOfRow(row.id)];
+      const nextRow = visibleRows(rowsNext)[indexOfRow(row.id)];
       if (nextRow !== undefined) patchRow(rendered_, nextRow, t());
       model = rowsNext;
     }
@@ -754,6 +764,11 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
     if (!open) return;
     open = false;
     closeOptions();
+    if (entranceTimer !== 0) {
+      window.clearTimeout(entranceTimer);
+      entranceTimer = 0;
+    }
+    listEl.classList.remove('is-entering');
     delete app.dataset['overlay'];
     screen.setAttribute('aria-hidden', 'true');
     deps.onClosed();
@@ -915,6 +930,9 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
       focusIndex = 0;
       app.dataset['overlay'] = 'settings';
       screen.setAttribute('aria-hidden', 'false');
+      armEntrance(); // the sections fade in once, on the way in — not on every pane rebuild
+      sidebar.reset(); // a re-opened screen starts at the first section, column and pane together
+      sectionKey = null;
       sidebar.setFocused(true); // the screen opens on its table of contents, not inside a section
       armHover(); // same as the dropdown: the screen appears under wherever the mouse happens to rest
       // Instant, not animated: a re-open must START at the top rather than glide there from wherever
