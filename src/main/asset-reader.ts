@@ -30,8 +30,8 @@ const AUDIO_MIME: Readonly<Record<string, string>> = {
 
 /**
  * Supported image / audio file extensions WITHOUT the leading dot, derived from the MIME maps above so
- * there is a single source of truth. The Configure-game window's file picker builds its dialog filters
- * from these (see game-config.ts pickPath) — keeping the "what can be a hero image / a sound" answer in
+ * there is a single source of truth. The manifest editor accepts a picked file against these (see
+ * game-config.ts acceptPickedPaths) — keeping the "what can be a hero image / a sound" answer in
  * lockstep with what this reader actually decodes.
  */
 export const IMAGE_EXTENSIONS: readonly string[] = Object.keys(IMAGE_MIME).map((ext) => ext.slice(1));
@@ -39,11 +39,20 @@ export const AUDIO_EXTENSIONS: readonly string[] = Object.keys(AUDIO_MIME).map((
 
 /**
  * Reads an image file into a base64 data URL (or undefined on any failure). A free function so both the
- * AssetReader instance (hero delivery) and the Configure window's hero-preview handler share one path.
+ * AssetReader instance (hero delivery) and the Customize screen's thumbnail handler share one path.
+ *
+ * An extension this reader does not know is REFUSED rather than served as `application/octet-stream`.
+ * That fallback used to be harmless (only manifest-referenced files reached it), but the in-launcher
+ * picker lets the renderer name the path — and "read any file on the machine as base64" is exactly what
+ * the octet-stream branch would have granted (see the plan, Р5.1).
  */
 export async function readImageDataUrl(filePath: string): Promise<string | undefined> {
+  const mime = IMAGE_MIME[path.extname(filePath).toLowerCase()];
+  if (mime === undefined) {
+    log.warn(`[image] refusing to read "${filePath}": not an image extension`);
+    return undefined;
+  }
   try {
-    const mime = IMAGE_MIME[path.extname(filePath).toLowerCase()] ?? 'application/octet-stream';
     const buffer = await fse.readFile(filePath);
     return `data:${mime};base64,${buffer.toString('base64')}`;
   } catch (cause) {

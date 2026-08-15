@@ -32,7 +32,7 @@ export type ManifestSource = 'card' | 'pc';
 
 /**
  * How many hero backgrounds one game may carry — a CARD-FORMAT limit (not a library budget), so it lives
- * in the shared contract: main enforces it (manifest.ts) and the Configure form caps its picker by it.
+ * in the shared contract: main enforces it (manifest.ts) and the Customize screen caps its list by it.
  *
  * Enforced with the same split as the "≥1 heroImage" policy: the EDITOR rejects a 4th image (it gates
  * Save), the runtime stays lenient — readManifests keeps the first three and logs a warn. A hard cap in
@@ -336,8 +336,9 @@ export interface LibraryEntry {
   readonly active: boolean;
   /**
    * Revision of this game's stored artwork — it changes whenever main re-copies the card's images. The
-   * renderer caches decoded covers by `id + artRev`, so editing `gridImage` in Configure and hitting
-   * Save & Apply shows the new cover immediately, instead of serving the cached one until a restart.
+   * renderer caches decoded covers by `id + artRev`, so editing `gridImage` on the Customize screen and
+   * hitting Save & Apply shows the new cover immediately, instead of serving the cached one until a
+   * restart.
    * Absent while the background copy hasn't produced a record yet.
    */
   readonly artRev?: string;
@@ -742,57 +743,35 @@ export const IPC = {
   /** game-renderer → main (invoke): the bundled sound sets + ambience tracks to populate the dropdowns. */
   audioOptionsRequest: 'app:audio-options',
 
-  // ── Configure-game window: edit/init a card's game.json (own namespace, own preload) ──
-  /** configure-renderer → main (invoke): snapshot of removable-drive candidates (incl. blank drives). */
-  configDrivesRequest: 'config:drives-request',
-  /** main → configure-renderer: pushed drive-candidate list (only while the window is visible). */
-  configDrivesUpdate: 'config:drives-update',
-  /** configure-renderer → main (invoke): read a card's game.json text (payload root). */
-  configRead: 'config:read',
-  /** configure-renderer → main (invoke): static validation of manifest text (payload text). */
-  configValidate: 'config:validate',
-  /** configure-renderer → main (invoke): write game.json + try to apply without a restart (payload {root,text}). */
-  configSave: 'config:save',
-  /** configure-renderer → main (invoke): the manifest JSON Schema for the editor's completions/hover. */
-  configSchemaRequest: 'config:schema-request',
-  /** configure-renderer → main (invoke): the current AppSettings (for the window theme). */
-  configSettingsRequest: 'config:settings-request',
-  /** configure-renderer → main (invoke): the app icon as a data URL (for the custom title bar). */
-  configIconRequest: 'config:icon',
-  /** configure-renderer → main (invoke): the app version string (for the custom title bar). */
-  configVersionRequest: 'config:version',
-  /** main → configure-renderer: run an editor command from the native context menu (format). */
-  configEditorCommand: 'config:editor-command',
-  /** configure-renderer → main: whether the JSON editor tab is active (gates the Format context-menu item). */
-  configEditorActive: 'config:editor-active',
-  /** configure-renderer → main: recolor THIS window's native title-bar overlay for the theme. */
-  configTitleBarOverlay: 'config:titlebar-overlay',
-  /** configure-renderer → main (invoke): request the current effective UI locale (on window startup). */
-  configLanguageRequest: 'config:language-request',
-  /** main → configure-renderer: updated effective UI locale (pushed when the language changes). */
-  configLanguageUpdate: 'config:language-update',
-  /** main → configure-renderer: updated UI theme, pushed live when the theme changes in settings so an
-   * open Configure window recolors without waiting for a hide/show. */
-  configThemeUpdate: 'config:theme-update',
-  /** configure-renderer → main (invoke): pick file(s)/a folder from the card via a native dialog →
-   * ConfigPickResult (paths card-relative). Payload ConfigPickRequest. */
-  configPickPath: 'config:pick-path',
-  /** configure-renderer → main (invoke): read a card-relative image into a data URL for the hero
-   * preview (or null when unreadable/outside root). Payload {root, path}. */
-  configImagePreview: 'config:image-preview',
-  /** configure-renderer → main: open an external https URL in the default browser (e.g. the SteamDB
-   * appid lookup). Payload the URL string; main whitelists https. */
-  configOpenExternal: 'config:open-external',
+  // ── Customize screen: per-game game.json editing INSIDE the launcher (own namespace) ──
+  // A namespace of its own rather than a move of `config:*`: the ipc-channels test requires a channel to
+  // belong to exactly one preload, so these were given names of their own rather than re-pointing the
+  // Configure window's `config:*` — which let that window keep working until its replacement was done.
+  /** game-renderer → main (invoke): the game.json TEXT of one game by id, plus which root/source it came
+   * from and the manifest's content signature (the swap guard for Save). Payload the game id. */
+  gameConfigRead: 'gameConfig:read',
+  /** game-renderer → main (invoke): static validation of manifest text against a root's source.
+   * Payload {root, text}. */
+  gameConfigValidate: 'gameConfig:validate',
+  /** game-renderer → main (invoke): write game.json + try to apply it without a restart. Payload
+   * {root, signature, text}; a signature mismatch means the media was swapped and the write is refused. */
+  gameConfigSave: 'gameConfig:save',
+  /** game-renderer → main (invoke): read a root-relative image into a data URL for a row's thumbnail
+   * (null when unreadable / outside the root / not an image). Payload {root, path}. */
+  gameConfigImagePreview: 'gameConfig:image-preview',
+  /** game-renderer → main (invoke): post-process path(s) the in-launcher file picker chose — the same
+   * card-relative / %PREFIX% / import-into-library conversions the native dialog used to feed. Payload
+   * GameConfigAcceptRequest; main re-checks the root, the file type and the size. */
+  gameConfigAcceptPath: 'gameConfig:accept-path',
+  /** game-renderer → main (invoke): list one directory for the in-launcher file picker, plus the
+   * starting points offered beside it. Read-only. Payload GameConfigListDirRequest. */
+  gameConfigListDir: 'gameConfig:list-dir',
 } as const;
 
-/** Editor commands dispatched from the Configure window's native right-click menu. Reset moved to a
- * visible button, so `format` is the only remaining command. */
-export type ConfigEditorCommand = 'format';
-
 /**
- * A removable-drive candidate for the Configure-game window (stage: init/edit game.json). Unlike
- * DriveWatcher.scan (which only sees cards WITH a game.json), this lists ALL removable/non-system
- * mountpoints so a BLANK drive can be initialized — `hasManifest` distinguishes them.
+ * A removable drive the editor may write to. Unlike DriveWatcher.scan (which only sees cards WITH a
+ * game.json), this lists ALL removable/non-system mountpoints, so a blank one is a candidate too —
+ * `hasManifest` distinguishes them. Main-internal now: it is what isAllowedRoot is checked against.
  */
 export interface DriveCandidate {
   /** Mountpoint / card root, e.g. "E:\\". */
@@ -811,8 +790,8 @@ export interface DriveCandidate {
   readonly label: string;
   /**
    * Content signature of this card's game.json — the sorted game ids (`''` blank, `'invalid'` unreadable).
-   * Identifies the MEDIA, not the slot: the Configure window compares it to detect a card swapped into the
-   * same mountpoint (the drive letter never changes) and to ignore cosmetic edits. Never displayed —
+   * Identifies the MEDIA, not the slot: a save compares it to detect a card swapped into the same
+   * mountpoint (the drive letter never changes) and to ignore cosmetic edits. Never displayed —
    * `label` may be a bare count ("3 games") that two different cards would share.
    */
   readonly signature: string;
@@ -853,8 +832,8 @@ export type ConfigSaveResult =
   | { readonly saved: false; readonly message: string };
 
 /**
- * What the Configure form's Browse button is picking — drives the dialog's filters and mode:
- * file pickers for exe/installer/image/audio (image is multi-select), a folder picker for `directory`
+ * What a Browse is picking — it decides what the picker filters to, and what main will accept back:
+ * files for exe/installer/image/audio (image is multi-select), a folder for `directory`
  * (card-relative), `pc-save` (a PC folder OUTSIDE the card, converted to a %PREFIX%\… save path) and
  * `pc-executable` (PC library only: any executable anywhere on this machine, kept ABSOLUTE).
  * `pc-save-local` is `pc-save` WITHOUT that conversion — the picked folder is kept absolute. It is for a
@@ -872,14 +851,8 @@ export type ConfigPickKind =
   | 'pc-save-local'
   | 'pc-executable';
 
-/** Request payload for config:pick-path: the card root (re-checked in main) and the pick kind. */
-export interface ConfigPickRequest {
-  readonly root: string;
-  readonly kind: ConfigPickKind;
-}
-
 /**
- * Result of picking path(s) from the card via the native dialog. On success `paths` are card-RELATIVE
+ * Result of picking path(s) for a manifest field. On success `paths` are card-RELATIVE
  * with forward slashes (ready to drop into game.json). A discriminated union (untrusted external action →
  * Result-union): success (one or more relative paths), a plain cancellation, or a rejection carrying a
  * localized message (a file outside the card root, the card root itself for a folder pick, …).
@@ -888,6 +861,86 @@ export type ConfigPickResult =
   | { readonly ok: true; readonly paths: readonly string[] }
   | { readonly ok: false; readonly cancelled: true }
   | { readonly ok: false; readonly message: string };
+
+// ── Customize screen (per-game editing in the launcher) ─────────────────────────
+
+/**
+ * One game's manifest, addressed BY ID. `root`/`source` say which file it lives in and which dialect it
+ * speaks; `signature` identifies the MEDIA (the same sorted-ids signature DriveCandidate carries), so a
+ * card swapped into the same mountpoint while the screen is open cannot receive the edit.
+ *
+ * `text` is the WHOLE file, not the one game: a card may carry several, and the screen edits its slot in
+ * place so the neighbours (including any that failed to resolve) survive the round trip verbatim.
+ */
+export type GameConfigReadResult =
+  | {
+      readonly ok: true;
+      readonly root: string;
+      readonly source: ManifestSource;
+      readonly signature: string;
+      readonly text: string;
+    }
+  | { readonly ok: false; readonly message: string };
+
+/** Payload for gameConfig:save — the manifest text plus the media signature read alongside it. */
+export interface GameConfigSaveRequest {
+  readonly root: string;
+  /** The signature from gameConfig:read; a mismatch means a different card is in the slot now. */
+  readonly signature: string;
+  readonly text: string;
+}
+
+/**
+ * Payload for gameConfig:accept-path: absolute path(s) the in-launcher picker chose, and what field they
+ * are for. Unlike the native dialog this comes FROM the renderer, so main re-checks everything the dialog
+ * used to guarantee — see GameConfigService.acceptPickedPaths.
+ */
+export interface GameConfigAcceptRequest {
+  readonly root: string;
+  readonly kind: ConfigPickKind;
+  readonly paths: readonly string[];
+}
+
+/**
+ * Payload for gameConfig:list-dir. With `path` it lists that directory; without one main picks the
+ * STARTING point for the field (`kind`) — the directory of `current` when it is already filled, else the
+ * card root / the home folder / %APPDATA% (see the plan, Р5.2).
+ */
+export interface GameConfigListDirRequest {
+  readonly path?: string;
+  readonly root?: string;
+  readonly kind?: ConfigPickKind;
+  /** The field's current value, so a filled field reopens where it points. */
+  readonly current?: string;
+}
+
+/** One entry of a listed directory. Symlinks are reported as what they point AT, or skipped when broken. */
+export interface DirEntry {
+  readonly name: string;
+  readonly kind: 'dir' | 'file';
+}
+
+/** A starting point offered in the picker's left column. Not a restriction — see the plan, Р5.2. */
+export interface DirRoot {
+  readonly path: string;
+  readonly label: string;
+  readonly kind: 'card' | 'pc' | 'home' | 'drive';
+}
+
+/**
+ * Result of one directory listing. The roots travel with every answer (including a failure) so the picker
+ * can always offer a way out of a directory it could not read.
+ */
+export type ListDirResult =
+  | {
+      readonly ok: true;
+      readonly path: string;
+      /** null at a filesystem root — there is nowhere further up. */
+      readonly parent: string | null;
+      readonly entries: readonly DirEntry[];
+      readonly roots: readonly DirRoot[];
+    }
+  | { readonly ok: false; readonly message: string; readonly roots: readonly DirRoot[] };
 
 /** API that preload exposes on `window.api`. */
 export interface RendererApi {
@@ -1004,55 +1057,24 @@ export interface RendererApi {
   checkForUpdates(): void;
   downloadUpdate(): void;
   installUpdate(): void;
-}
 
-/** API that the configure preload exposes on `window.configureApi` (separate from game/settings). */
-export interface ConfigureApi {
-  /** Snapshot of removable-drive candidates (incl. blank drives) for the picker. */
-  getDrives(): Promise<readonly DriveCandidate[]>;
-  /** Live candidate-list updates, pushed while the window is visible. */
-  onDrivesUpdate(callback: (drives: readonly DriveCandidate[]) => void): void;
-  /** Read a card's game.json text into the editor. */
-  readConfig(root: string): Promise<ConfigReadResult>;
-  /**
-   * Static (fs-free) validation of the current editor text — the Save verdict. The `root` decides WHICH
-   * manifest source the text is judged against (a card manifest and a PC-library one accept different
-   * blocks), so it travels with every live validation, exactly as it does with Save.
-   */
-  validateConfig(root: string, text: string): Promise<ConfigValidationResult>;
-  /** Write game.json to the card and try to apply it without a restart. */
-  saveConfig(root: string, text: string): Promise<ConfigSaveResult>;
-  /** Pick file(s)/a folder from the card via a native dialog; resolves with card-relative paths. */
-  pickPath(root: string, kind: ConfigPickKind): Promise<ConfigPickResult>;
-  /** Read a card-relative image into a data URL for the hero preview (null when unreadable). */
-  getImagePreview(root: string, path: string): Promise<string | null>;
-  /** Open an external https URL in the default browser (e.g. the SteamDB appid lookup). */
-  openExternal(url: string): void;
-  /** The manifest JSON Schema, fed to the editor for completions/hover. */
-  getSchema(): Promise<unknown>;
-  /** The current AppSettings (for the window theme). */
-  getSettings(): Promise<AppSettings>;
-  /** The app icon as a data URL, shown in the custom title bar (matches the settings window). */
-  getAppIcon(): Promise<string>;
-  /** The app version string, shown in the custom title bar (matches the settings window). */
-  getAppVersion(): Promise<string>;
-  /** Editor commands (format) triggered from the native right-click menu. */
-  onEditorCommand(callback: (command: ConfigEditorCommand) => void): void;
-  /** Tell main whether the JSON editor tab is active (gates the Format context-menu item). */
-  setJsonEditorActive(active: boolean): void;
-  /** Tell main to recolor THIS window's native caption buttons to match the effective theme. */
-  setTitleBarDark(dark: boolean): void;
-  /** Current effective UI locale (on window startup). */
-  getLanguage(): Promise<Locale>;
-  /** Live UI-locale updates, pushed when the language changes. */
-  onLanguageUpdate(callback: (locale: Locale) => void): void;
-  /** Live UI-theme updates, pushed when the theme changes in the settings window. */
-  onThemeUpdate(callback: (mode: ThemeMode) => void): void;
+  // ── Customize screen (per-game game.json editing; see the gameConfig:* channels) ──
+  /** The manifest text of one game by id, with the root/source/signature it was read against. */
+  readGameConfig(id: string): Promise<GameConfigReadResult>;
+  /** Static (fs-free) validation of the edited text — the Save verdict, debounced by the screen. */
+  validateGameConfig(root: string, text: string): Promise<ConfigValidationResult>;
+  /** Write game.json and try to apply it without a restart; refused when the media signature moved on. */
+  saveGameConfig(request: GameConfigSaveRequest): Promise<ConfigSaveResult>;
+  /** A root-relative image as a data URL for a row's thumbnail (null when unreadable). */
+  getGameConfigImage(root: string, path: string): Promise<string | null>;
+  /** Post-process path(s) the in-launcher picker chose into what the manifest field stores. */
+  acceptGameConfigPaths(request: GameConfigAcceptRequest): Promise<ConfigPickResult>;
+  /** List one directory for the in-launcher file picker (read-only). */
+  listGameConfigDir(request: GameConfigListDirRequest): Promise<ListDirResult>;
 }
 
 declare global {
   interface Window {
     readonly api: RendererApi;
-    readonly configureApi: ConfigureApi;
   }
 }

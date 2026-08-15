@@ -122,9 +122,7 @@ describe('translateIssueMessage', () => {
 // fallback text equal to that key's value — otherwise the two silently diverge. [data-i18n-aria-label]
 // keys are only checked for existence (the fallback lives in the aria-label attribute).
 describe('HTML data-i18n ↔ en dictionary', () => {
-  const HTML_FILES = ['index.html', 'configure.html'].map((f) =>
-    path.resolve(__dirname, '../src/renderer', f),
-  );
+  const HTML_FILES = ['index.html'].map((f) => path.resolve(__dirname, '../src/renderer', f));
 
   /** Collapse whitespace runs and decode the entities we use, so indentation/wrapping don't cause false
    * mismatches. */

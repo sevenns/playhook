@@ -19,6 +19,9 @@ import type {
 import type { Translator } from '../shared/i18n/index.js';
 import { type AudioController } from './audio.js';
 import { req } from './dom.js';
+import { createHoverGuard } from './hover-guard.js';
+import { clampIndex, wrapIndex } from './index-math.js';
+import { createScroller, pxUnit } from './screen-scroller.js';
 import {
   buildSettingsModel,
   volumePercent,
@@ -47,25 +50,8 @@ const VOLUME_STEP = 5;
 const DRAG_PERSIST_MS = 150;
 /** The SFX preview plays at most this often while a volume is being dragged. */
 const PREVIEW_THROTTLE_MS = 220;
-/**
- * How long the list takes to reach a new scroll target. The scroll is animated here rather than left to
- * `scrollIntoView({behavior:'smooth'})`: the native one picks its own duration per distance, so a held
- * direction produced a different (and visibly uneven) glide on every step. One fixed duration with one
- * easing, re-aimed from wherever the current animation is, reads as a single continuous movement.
- */
-const SCROLL_MS = 220;
-/** Standard ease-in-out — the same shape as the CSS transitions the focus highlight uses. */
-function easeInOut(t: number): number {
-  return t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2;
-}
 /** Marquee speed for a clipped option label, in DESIGN px per second (the 0.6 picker's own constant). */
 const MARQUEE_SPEED_PX_PER_S = 60;
-/** How much of the list is kept visible past the focused row, so the next one is always already in view. */
-const SCROLL_MARGIN_PX = 90;
-/** The mask's fade height at each edge (mirrors --fade-size in styles.css). */
-const EDGE_FADE_PX = 28;
-/** How far the pointer must travel before hover may take the focus again (see armHover). */
-const HOVER_WAKE_PX = 6;
 
 /** What the screen sends to main. A seam, so app.ts owns the window.api wiring (and tests can fake it). */
 export interface SettingsScreenApi {
@@ -225,84 +211,8 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
     window.setTimeout(() => el.classList.remove('is-pressed'), PRESS_MS);
   }
 
-  /**
-   * A self-animating scroll container: one fixed duration and easing (a re-aim continues from wherever
-   * the box currently is, so a burst of steps is one movement), plus the edge fades that soften a row
-   * cut by the clip. Both scrolling surfaces of this screen use it — the settings list and the expanded
-   * dropdown — so they behave identically.
-   */
-  interface Scroller {
-    /** Animates (or jumps) to a scrollTop. */
-    to(top: number, instant?: boolean): void;
-    /** Recomputes --fade-top / --fade-bottom for the current position. */
-    fades(): void;
-    /** Brings `target` into view, keeping SCROLL_MARGIN_PX of context beyond it. */
-    reveal(target: HTMLElement, instant?: boolean): void;
-  }
-
-  function createScroller(box: HTMLElement): Scroller {
-    let target = 0;
-    let from = 0;
-    let startedAt = 0;
-    let frame = 0;
-
-    const clamp = (top: number): number =>
-      Math.min(Math.max(0, top), Math.max(0, box.scrollHeight - box.clientHeight));
-
-    const fades = (): void => {
-      // A fade only belongs where there IS content beyond the edge — at the very top and the very bottom
-      // the corresponding one is switched off, or the first and last rows read as dimmed for no reason.
-      const top = box.scrollTop > 1 ? EDGE_FADE_PX : 0;
-      const bottom = box.scrollTop < box.scrollHeight - box.clientHeight - 1 ? EDGE_FADE_PX : 0;
-      box.style.setProperty('--fade-top', `calc(${top} * var(--px))`);
-      box.style.setProperty('--fade-bottom', `calc(${bottom} * var(--px))`);
-    };
-
-    const step = (): void => {
-      const progress = Math.min(1, (performance.now() - startedAt) / SCROLL_MS);
-      box.scrollTop = from + (target - from) * easeInOut(progress);
-      fades();
-      if (progress >= 1) {
-        box.scrollTop = target;
-        frame = 0;
-        fades();
-        return;
-      }
-      frame = requestAnimationFrame(step);
-    };
-
-    const to = (top: number, instant = false): void => {
-      const goal = clamp(top);
-      if (instant) {
-        if (frame !== 0) cancelAnimationFrame(frame);
-        frame = 0;
-        target = goal;
-        box.scrollTop = goal;
-        fades();
-        return;
-      }
-      if (frame !== 0 && Math.abs(goal - target) < 0.5) return; // already heading there
-      target = goal;
-      from = box.scrollTop;
-      startedAt = performance.now();
-      if (frame === 0) frame = requestAnimationFrame(step);
-    };
-
-    const reveal = (el: HTMLElement, instant = false): void => {
-      const margin = SCROLL_MARGIN_PX * pxUnit();
-      const top = el.offsetTop - box.offsetTop;
-      const bottom = top + el.offsetHeight;
-      const viewTop = box.scrollTop;
-      const viewBottom = viewTop + box.clientHeight;
-      if (top - margin < viewTop) to(top - margin, instant);
-      else if (bottom + margin > viewBottom) to(bottom + margin - box.clientHeight, instant);
-      else fades();
-    };
-
-    box.addEventListener('scroll', () => fades(), { passive: true });
-    return { to, fades, reveal };
-  }
-
+  // Both scrolling surfaces of this screen use the shared scroller (screen-scroller.ts) — the settings
+  // list and the expanded dropdown — so they behave identically, and so do the other screens.
   const listScroller = createScroller(listEl);
   const optionsScroller = createScroller(optionsListEl);
 
@@ -316,13 +226,6 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
     const target = focusedRow();
     if (target === undefined) return;
     listScroller.reveal(target.el, instant);
-  }
-
-  /** One design pixel in real px (--px is a vh unit, so it changes with the window). */
-  function pxUnit(): number {
-    const value = getComputedStyle(document.documentElement).getPropertyValue('--px');
-    const parsed = Number.parseFloat(value);
-    return Number.isFinite(parsed) ? (parsed * window.innerHeight) / 100 : 1;
   }
 
   /** The loading line, shown until the first snapshot lands (the settings window did the same). */
@@ -612,7 +515,7 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
 
   function moveRowFocus(delta: number): void {
     if (rendered.length === 0) return;
-    const next = Math.min(rendered.length - 1, Math.max(0, focusIndex + delta));
+    const next = clampIndex(focusIndex, delta, rendered.length);
     if (next === focusIndex) return;
     focusIndex = next;
     deps.audio.play('navigate');
@@ -621,8 +524,7 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
 
   function moveOptionFocus(delta: number): void {
     if (openSelect === null || openSelect.buttons.length === 0) return;
-    const count = openSelect.buttons.length;
-    const next = (optionIndex + delta + count) % count;
+    const next = wrapIndex(optionIndex, delta, openSelect.buttons.length);
     if (next === optionIndex) return;
     optionIndex = next;
     deps.audio.play('navigate');
@@ -827,35 +729,19 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
   });
 
   /**
-   * Hover, for both the row list and the expanded dropdown — and the whole point here is WHEN it is
-   * allowed to move the focus.
-   *
-   * A surface that opens under a resting cursor makes Chromium fire pointer events at it: the element
-   * moved, not the mouse. Taken as hover, that drags the focus off whatever the surface just focused
-   * (the current value, the bottom button) — the "it opened and blinked" stutter, reproducible by simply
-   * parking the mouse where an item will appear. Comparing against the previous event's coordinates is
-   * not enough on its own: the listener has to already KNOW where the pointer is, which is why this
-   * lives on the window and keeps running while everything is closed.
-   *
-   * So opening ARMS the guard at the pointer's current position, and hover stays asleep until the mouse
-   * has actually travelled HOVER_WAKE_PX from there. The gamepad's cursor-hide is a separate reason to
-   * ignore hover, and it is checked too — a hidden cursor must never fight the focus it is not driving.
+   * Hover, for both the row list and the expanded dropdown. WHEN it is allowed to move the focus is the
+   * shared hover guard's job (hover-guard.ts) — it keeps tracking the pointer while the screen is closed,
+   * so opening can arm it at wherever the cursor happens to rest. The gamepad's cursor-hide is a separate
+   * reason to ignore hover, and it is checked too: a hidden cursor must never fight the focus it is not
+   * driving.
    */
+  const hover = createHoverGuard();
   let pointerX = -1;
   let pointerY = -1;
-  let hoverArmedAt: { readonly x: number; readonly y: number } | null = null;
 
   /** Called whenever a surface opens: hover sleeps until the pointer leaves this spot. */
   function armHover(): void {
-    hoverArmedAt = { x: pointerX, y: pointerY };
-  }
-
-  /** Whether this move is the user's, rather than the UI arriving under a still pointer. */
-  function hoverAwake(x: number, y: number): boolean {
-    if (hoverArmedAt === null) return true;
-    if (Math.hypot(x - hoverArmedAt.x, y - hoverArmedAt.y) < HOVER_WAKE_PX) return false;
-    hoverArmedAt = null;
-    return true;
+    hover.arm();
   }
 
   window.addEventListener(
@@ -864,9 +750,10 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
       const moved = event.clientX !== pointerX || event.clientY !== pointerY;
       pointerX = event.clientX;
       pointerY = event.clientY;
+      hover.track(event.clientX, event.clientY);
       if (!moved || !open) return;
       if (document.documentElement.classList.contains('cursor-hidden')) return;
-      if (!hoverAwake(event.clientX, event.clientY)) return;
+      if (!hover.awake(event.clientX, event.clientY)) return;
       const target = event.target;
       if (!(target instanceof Element)) return;
       if (openSelect !== null) {

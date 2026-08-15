@@ -3,9 +3,16 @@
 // and rows out. The view renders this and the screen controller navigates it, so everything that decides
 // WHAT is on the screen — order, visibility, value mapping — is testable in vitest (the view and the
 // controller are DOM code, which the node-environment suite cannot reach). Mirrors the split that
-// configure-form-model.ts / configure-form-view.ts already established.
+// configure-form-model.ts established for the manifest form.
 import type { AppSettings, AudioOptions, UpdateStatus } from '../shared/types';
 import type { MessageKey } from '../shared/i18n/index';
+import type {
+  CoreActionRow,
+  CoreOption,
+  CoreSelectRow,
+  CoreSliderRow,
+  CoreToggleRow,
+} from './row-view-core';
 
 /** Every toggle row, keyed by the AppSettings field it writes. */
 export type ToggleId =
@@ -26,37 +33,19 @@ export type SliderId = 'sfxVolume' | 'musicVolume';
 /** Every plain action row (a `.text-button` inside the row). */
 export type ActionId = 'reset' | 'close';
 
-/**
- * One dropdown option. Its label is either a translation key (`system`, `No ambience`) or a literal —
- * sound sets and ambience tracks are proper names of bundled files and are never translated.
- */
-export type SettingsOption =
-  | { readonly value: string; readonly labelKey: MessageKey }
-  | { readonly value: string; readonly label: string };
+/** This screen's dropdown option — the shared one (see row-view-core), re-exported under its old name. */
+export type SettingsOption = CoreOption;
 
+/**
+ * A row of THIS screen. The four ordinary kinds are the shared ones (row-view-core) pinned to this
+ * screen's literal ids, so the controller's exhaustive switches keep working while the DOM stays generic;
+ * `update-status` is Settings' own — no other screen has a download bar in a row.
+ */
 export type SettingsRow =
-  | {
-      readonly kind: 'toggle';
-      readonly id: ToggleId;
-      readonly labelKey: MessageKey;
-      readonly value: boolean;
-      readonly hintKey?: MessageKey;
-    }
-  | {
-      readonly kind: 'select';
-      readonly id: SelectId;
-      readonly labelKey: MessageKey;
-      readonly value: string;
-      readonly options: readonly SettingsOption[];
-    }
-  | {
-      readonly kind: 'slider';
-      readonly id: SliderId;
-      readonly labelKey: MessageKey;
-      /** 0..100, rounded — the display unit; the controller divides by 100 before it persists. */
-      readonly percent: number;
-    }
-  | { readonly kind: 'action'; readonly id: ActionId; readonly labelKey: MessageKey }
+  | CoreToggleRow<ToggleId>
+  | CoreSelectRow<SelectId>
+  | CoreSliderRow<SliderId>
+  | CoreActionRow<ActionId>
   | { readonly kind: 'update-status'; readonly status: UpdateStatus };
 
 export interface SettingsSection {
@@ -136,26 +125,26 @@ export function buildSettingsModel(settings: AppSettings, env: SettingsEnv): Set
     {
       kind: 'toggle',
       id: 'summonHotkey',
-      labelKey: 'settings.summonHotkey',
+      label: { key: 'settings.summonHotkey' },
       value: settings.summonHotkeyEnabled,
-      hintKey: 'settings.summonHint',
+      hint: { key: 'settings.summonHint' },
     },
     {
       kind: 'toggle',
       id: 'preventScreensaver',
-      labelKey: 'settings.preventScreensaver',
+      label: { key: 'settings.preventScreensaver' },
       value: settings.preventScreensaver,
     },
     {
       kind: 'toggle',
       id: 'alwaysShowEmptyScreen',
-      labelKey: 'settings.alwaysShowEmpty',
+      label: { key: 'settings.alwaysShowEmpty' },
       value: settings.alwaysShowEmptyScreen,
     },
     {
       kind: 'toggle',
       id: 'disableSilentInstall',
-      labelKey: 'settings.disableSilentInstall',
+      label: { key: 'settings.disableSilentInstall' },
       value: settings.disableSilentInstall,
     },
     ...(env.steamAvailable
@@ -163,9 +152,9 @@ export function buildSettingsModel(settings: AppSettings, env: SettingsEnv): Set
           {
             kind: 'toggle',
             id: 'steamAutoLaunch',
-            labelKey: 'settings.steamAutoLaunch',
+            label: { key: 'settings.steamAutoLaunch' },
             value: settings.steamAutoLaunch,
-            hintKey: 'settings.steamAutoLaunchHint',
+            hint: { key: 'settings.steamAutoLaunchHint' },
           },
         ] as const)
       : []),
@@ -181,14 +170,14 @@ export function buildSettingsModel(settings: AppSettings, env: SettingsEnv): Set
           {
             kind: 'select',
             id: 'autoUpdate',
-            labelKey: 'settings.sectionAutoUpdate',
+            label: { key: 'settings.sectionAutoUpdate' },
             value: settings.autoUpdate,
             options: AUTO_UPDATE_OPTIONS,
           },
           {
             kind: 'toggle',
             id: 'prerelease',
-            labelKey: 'settings.prerelease',
+            label: { key: 'settings.prerelease' },
             value: settings.allowPrerelease,
           },
         ],
@@ -199,7 +188,7 @@ export function buildSettingsModel(settings: AppSettings, env: SettingsEnv): Set
           {
             kind: 'select',
             id: 'language',
-            labelKey: 'settings.language',
+            label: { key: 'settings.language' },
             value: settings.language,
             options: LANGUAGE_OPTIONS,
           },
@@ -212,34 +201,34 @@ export function buildSettingsModel(settings: AppSettings, env: SettingsEnv): Set
           {
             kind: 'select',
             id: 'soundSet',
-            labelKey: 'settings.soundSet',
+            label: { key: 'settings.soundSet' },
             value: settings.soundSet,
             options: soundSetOptions(env.audioOptions.soundSets),
           },
           {
             kind: 'slider',
             id: 'sfxVolume',
-            labelKey: 'settings.soundSetVolume',
+            label: { key: 'settings.soundSetVolume' },
             percent: volumePercent(settings.sfxVolume),
           },
           {
             kind: 'select',
             id: 'ambientTrack',
-            labelKey: 'settings.ambientTrack',
+            label: { key: 'settings.ambientTrack' },
             value: settings.ambientTrack ?? '',
             options: ambientOptions(env.audioOptions.ambientTracks),
           },
           {
             kind: 'toggle',
             id: 'onlyGlobalAmbient',
-            labelKey: 'settings.onlyGlobalAmbient',
+            label: { key: 'settings.onlyGlobalAmbient' },
             value: settings.onlyGlobalAmbient,
-            hintKey: 'settings.onlyGlobalAmbientHint',
+            hint: { key: 'settings.onlyGlobalAmbientHint' },
           },
           {
             kind: 'slider',
             id: 'musicVolume',
-            labelKey: 'settings.ambientVolume',
+            label: { key: 'settings.ambientVolume' },
             percent: volumePercent(settings.musicVolume),
           },
         ],
@@ -248,8 +237,8 @@ export function buildSettingsModel(settings: AppSettings, env: SettingsEnv): Set
         // No title: the last section is the screen's action stack — Reset over Close, bottom-aligned
         // like every popup stack, where Close is the default way out for the mouse.
         rows: [
-          { kind: 'action', id: 'reset', labelKey: 'settings.reset' },
-          { kind: 'action', id: 'close', labelKey: 'launcher.menu.close' },
+          { kind: 'action', id: 'reset', label: { key: 'settings.reset' } },
+          { kind: 'action', id: 'close', label: { key: 'launcher.menu.close' } },
         ],
       },
     ],

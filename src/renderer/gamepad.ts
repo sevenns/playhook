@@ -25,12 +25,28 @@ export interface GamepadHandlers {
   readonly onA: () => void;
   readonly onB: () => void;
   readonly onY: () => void;
+  /** X, and the two shoulder buttons. Claimed only by the on-screen keyboard (Backspace / layout
+   *  switching); everywhere else the handler is a no-op, so the buttons stay unassigned as before. */
+  readonly onX: () => void;
+  readonly onShoulderLeft: () => void;
+  readonly onShoulderRight: () => void;
   /** Every direction has just gone up — the edge, fired once, not on every idle frame. What ends a hold
    *  for consumers that treat holding as a state rather than as a stream of presses. */
   readonly onDirectionsReleased: () => void;
 }
 
-const BTN = { a: 0, b: 1, y: 3, dpadUp: 12, dpadDown: 13, dpadLeft: 14, dpadRight: 15 } as const;
+const BTN = {
+  a: 0,
+  b: 1,
+  x: 2,
+  y: 3,
+  shoulderLeft: 4,
+  shoulderRight: 5,
+  dpadUp: 12,
+  dpadDown: 13,
+  dpadLeft: 14,
+  dpadRight: 15,
+} as const;
 const STICK_X_AXIS = 0;
 const STICK_Y_AXIS = 1;
 const STICK_DEADZONE = 0.5;
@@ -52,7 +68,18 @@ export function createGamepadController(handlers: GamepadHandlers): GamepadContr
   let rafId = 0;
   let running = false;
   let paused = false;
-  const prev = { left: false, right: false, up: false, down: false, a: false, b: false, y: false };
+  const prev = {
+    left: false,
+    right: false,
+    up: false,
+    down: false,
+    a: false,
+    b: false,
+    x: false,
+    y: false,
+    shoulderLeft: false,
+    shoulderRight: false,
+  };
   // Auto-repeat bookkeeping. Horizontal: holding left/right flips through the carousel, where running
   // down a 40-game history one press at a time is the thing to avoid. Vertical: the same for the long
   // Settings list — the repeat is DELIVERED for up/down too, and the consumer decides whether it applies
@@ -150,6 +177,9 @@ export function createGamepadController(handlers: GamepadHandlers): GamepadContr
     const a = isDown(BTN.a);
     const b = isDown(BTN.b);
     const yButton = isDown(BTN.y);
+    const xButton = isDown(BTN.x);
+    const shoulderLeft = isDown(BTN.shoulderLeft);
+    const shoulderRight = isDown(BTN.shoulderRight);
 
     // While paused (launcher backgrounded), read inputs but don't act — prev is still updated below, so a
     // button held across resume won't fire a phantom edge.
@@ -161,6 +191,9 @@ export function createGamepadController(handlers: GamepadHandlers): GamepadContr
       if (a && !prev.a) handlers.onA();
       if (b && !prev.b) handlers.onB();
       if (yButton && !prev.y) handlers.onY();
+      if (xButton && !prev.x) handlers.onX();
+      if (shoulderLeft && !prev.shoulderLeft) handlers.onShoulderLeft();
+      if (shoulderRight && !prev.shoulderRight) handlers.onShoulderRight();
     } else {
       // Paused: forget any hold in progress, so resuming can't drop straight into a repeat burst.
       heldSince.left = 0;
@@ -182,6 +215,9 @@ export function createGamepadController(handlers: GamepadHandlers): GamepadContr
     prev.a = a;
     prev.b = b;
     prev.y = yButton;
+    prev.x = xButton;
+    prev.shoulderLeft = shoulderLeft;
+    prev.shoulderRight = shoulderRight;
     rafId = requestAnimationFrame(poll);
   };
 

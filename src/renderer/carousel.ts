@@ -99,7 +99,7 @@ export function createCarousel(deps: CarouselDeps): Carousel {
   let flipping = false;
   // Artwork, keyed by game id AND artwork revision. Decoded data URLs are heavy, so each is fetched at
   // most once; a game with no art at all is remembered as null so we don't ask again on every re-render.
-  // The revision is what keeps that cache honest: editing gridImage in Configure re-copies the assets,
+  // The revision is what keeps that cache honest: editing gridImage re-copies the assets,
   // main bumps `artRev`, and the new key misses the cache — no restart needed to see the new cover.
   const art = new Map<string, string | null>();
   const cards = new Map<string, HTMLElement>();

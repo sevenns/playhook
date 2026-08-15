@@ -40,6 +40,21 @@ export interface PcLibraryRead {
 /** Characters an imported asset's file name may keep. Everything else collapses into `-`. */
 const SAFE_ASSET_NAME = /[^A-Za-z0-9._-]+/g;
 
+/**
+ * What an import may be, and how big. Both were implicit while the only way in was a native dialog whose
+ * filters the OS enforced; the in-launcher picker names the path from the renderer instead, so the limits
+ * are stated here — the one place every import passes through (see the plan, Р5.1/Р5.2).
+ *
+ * The sizes are chosen with room to spare over what real artwork and music weigh: a 4K PNG cover is a few
+ * megabytes, a lossless album track tens of them. They exist to stop a disk image being copied into
+ * `<userData>` by a mistyped path, not to police the user's files.
+ */
+export type ImportKind = 'image' | 'audio';
+const MAX_IMPORT_BYTES: Readonly<Record<ImportKind, number>> = {
+  image: 32 * 1024 * 1024,
+  audio: 64 * 1024 * 1024,
+};
+
 export class PcLibraryStore {
   /** The library root — a card root in every respect but its manifest source. */
   readonly root: string;
@@ -60,8 +75,8 @@ export class PcLibraryStore {
    * Reads every local game. A structurally broken `game.json` (unparsable, or a top-level that is neither
    * an object nor an array) is warned about and yields an EMPTY library rather than an error: unlike a
    * card, this file is app state on the startup path — letting it fail would take the launcher's whole
-   * library, including the history, down with it. The user still sees the real reason when they open
-   * Configure, whose validation reports it against the text.
+   * library, including the history, down with it. The user still sees the real reason on the Customize
+   * screen, whose validation reports it against the text.
    */
   async read(env: ManifestEnv, resolveInstallDir: InstallDirResolver): Promise<PcLibraryRead> {
     const result = await readManifests(this.root, env, resolveInstallDir, { source: 'pc' });
@@ -72,7 +87,7 @@ export class PcLibraryStore {
     return { manifests: result.manifests, intact: true };
   }
 
-  /** Whether a `game.json` exists at all — the Configure picker shows a blank form when it does not. */
+  /** Whether a `game.json` exists at all — its absence is how "no local games yet" is spelled. */
   async hasManifest(): Promise<boolean> {
     return fse.pathExists(this.manifestPath());
   }
@@ -90,8 +105,31 @@ export class PcLibraryStore {
    *
    * The name is sanitized (it comes from the user's filesystem) and de-duplicated with a `-2`, `-3`…
    * suffix, so importing two different `hero.jpg` files never overwrites the first game's background.
+   *
+   * Three refusals before anything is copied — `kind` decides the allowed extensions, `lstat` rejects a
+   * symlink (it would copy whatever it points at, from anywhere), and the size cap keeps a mistyped path
+   * from filling `<userData>`. `allowedExtensions` comes from the caller so this module stays free of the
+   * asset-reader import (and of electron), per the daemon rule in CLAUDE.md.
    */
-  async importAsset(absolutePath: string): Promise<string> {
+  async importAsset(
+    absolutePath: string,
+    kind: ImportKind,
+    allowedExtensions: readonly string[],
+  ): Promise<string> {
+    const extension = path.extname(absolutePath).replace(/^\./, '').toLowerCase();
+    if (!allowedExtensions.includes(extension)) {
+      throw new Error(`refusing to import "${absolutePath}": not a ${kind} extension`);
+    }
+    const stats = await fse.lstat(absolutePath);
+    if (stats.isSymbolicLink()) {
+      throw new Error(`refusing to import "${absolutePath}": symbolic link`);
+    }
+    if (!stats.isFile()) {
+      throw new Error(`refusing to import "${absolutePath}": not a regular file`);
+    }
+    if (stats.size > MAX_IMPORT_BYTES[kind]) {
+      throw new Error(`refusing to import "${absolutePath}": larger than ${MAX_IMPORT_BYTES[kind]} bytes`);
+    }
     await fse.ensureDir(this.assetsDir);
     const name = await this.uniqueAssetName(path.basename(absolutePath));
     await fse.copy(absolutePath, path.join(this.assetsDir, name), { overwrite: false, errorOnExist: true });

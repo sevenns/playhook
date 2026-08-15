@@ -307,7 +307,7 @@ export function createHeroController(deps: HeroDeps): HeroController {
     heroImages = assets?.images ?? [];
     heroIndex = 0;
     // A fresh payload can carry the same per-game key `${id}#${index}` mapped to a DIFFERENT image — e.g.
-    // after the user reorders hero images in the Configure window and saves. The palette cache is keyed by
+    // after the user reorders hero images on the Customize screen and saves. The palette cache is keyed by
     // position, not content, so drop it here: the new first image must recompute --d1/--d2 rather than
     // reuse the previous image's colors. (Intra-card rotation still fills and reuses the cache.)
     paletteCache.clear();

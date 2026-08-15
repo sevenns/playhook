@@ -31,7 +31,7 @@ export function resolveLocale(mode: LanguageMode, candidates: readonly string[])
   return 'en';
 }
 
-// zod 4 ships built-in message locales; switch them globally so structural manifest errors (Configure
+// zod 4 ships built-in message locales; switch them globally so structural manifest errors (the
 // window / error popup) come out in the active language. The config is process-global (it also affects the
 // internal settings.json / stats.json schemas, harmlessly — their errors are not user-facing).
 function applyZodLocale(locale: Locale): void {

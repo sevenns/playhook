@@ -1,6 +1,7 @@
 // English dictionary — the SOURCE OF TRUTH for every user-facing string in the app (main + renderers).
 // Keys are flat with a dotted namespace per window/module: common.*, tray.*, menu.*, window.*,
-// launcher.*, format.*, settings.*, configure.*, errors.*, drive.*, manifest.*. `ru.ts` mirrors these
+// launcher.*, format.*, settings.*, gameConfig.*, gameSettings.*, errors.*, drive.*, manifest.*.
+// `ru.ts` mirrors these
 // as a Partial (fill in gradually); the translator falls back to this file for any missing key.
 //
 // `{name}` tokens are interpolation placeholders filled at call time (see createTranslator). A literal
@@ -8,7 +9,7 @@
 // because those messages are translated WITHOUT params — see translateIssueMessage.
 export const en = {
   // ── Common (shared across windows) ──────────────────────────────────────────
-  // The two answers used by EVERY confirmation dialog (game launcher + configure window). Any confirm,
+  // The two answers used by EVERY confirmation dialog. Any confirm,
   // present or future, must ask a yes/no question and use these — never a context-specific verb like
   // "Discard"/"Replace", which is easy to confuse with the neighbouring "Cancel".
   'common.yes': 'Yes',
@@ -16,7 +17,6 @@ export const en = {
 
   // ── Tray context menu (tray.ts) ─────────────────────────────────────────────
   'tray.showLauncher': 'Show launcher',
-  'tray.configureGame': 'Configure game',
   'tray.quit': 'Quit',
   // Steam Deck only: registering Playhook as a non-Steam game so it gets a Game Mode tile. The item is
   // hidden entirely on Windows and on any run that isn't a packaged AppImage.
@@ -24,7 +24,7 @@ export const en = {
   'tray.steamRemove': 'Remove from Steam',
   'tray.steamBusy': 'Working…',
 
-  // ── Steam shortcut (steam-shortcut.ts, shown as message boxes) ──────────────
+  // ── Steam shortcut (steam-shortcut.ts, shown as message boxes) ─────────────
   'steam.addedTitle': 'Added to Steam',
   'steam.added':
     'Playhook has been added to Steam. The tile appears the next time you enter Game Mode.',
@@ -35,17 +35,14 @@ export const en = {
   'steam.foreign':
     'Steam already has a shortcut pointing at Playhook ({names}). Remove it in Steam first, then try again — it was added by hand, so Playhook will not delete it for you.',
 
-  // ── Native context menus (window.ts / configure-window.ts) ──────────────────
+  // ── Native context menus (window.ts) ───────────────────────────────────────
   'menu.cut': 'Cut',
   'menu.copy': 'Copy',
   'menu.paste': 'Paste',
   'menu.selectAll': 'Select All',
-  'menu.format': 'Format',
-  'menu.reset': 'Reset',
 
-  // ── Window titles (settings-window.ts / configure-window.ts) ────────────────
+  // ── Window titles ──────────────────────────────────────────────────────────
   'window.settings': 'Settings',
-  'window.configureGame': 'Configure game',
 
   // ── Game launcher renderer (index.html + app.ts/state-view.ts/controls.ts/hero.ts) ──
   'launcher.emptyTitle': 'Insert a game card',
@@ -200,141 +197,133 @@ export const en = {
   'settings.action.restartInstall': 'Restart & install',
   'settings.action.retry': 'Retry',
 
-  // ── Configure-game window (configure.html + configure.ts) ───────────────────
-  'configure.card': 'Card',
-  'configure.insertCard': 'Insert an SD card or flash drive.',
-  // Multi-game picker (a card can carry several games).
-  'configure.game': 'Game',
-  'configure.addGame': 'Add game',
-  'configure.removeGame': 'Remove current',
-  'configure.confirmRemoveGame': 'Remove the current game from this card?',
-  // The local twin: nothing is deleted from disk, only the entry Playhook keeps.
-  'configure.confirmRemoveLocalGame':
-    'Remove this local game from Playhook? The game itself stays on your disk.',
-  // Dropdown option label: "1 / 3 · Hollow Knight".
-  'configure.gameOption': '{index} / {count} · {title}',
-  // An issue on another game (not the one being edited) shown in the panel: "Game 3 (Celeste): …".
-  'configure.otherGameIssue': 'Game {index} ({title}): {message}',
-  'configure.untitledGame': 'untitled',
-  'configure.save': 'Save & Apply',
-  'configure.titlebarVersion': '({version}) — Configure game',
-  'configure.configValid': 'Config is valid.',
-  'configure.idChangedWarning':
-    'Warning: id changed ({from} → {to}). Playtime stats are keyed by id and will reset for the new id.',
-  'configure.cardGone': 'The selected card is no longer available. Your text is kept.',
-  'configure.blankDrive': 'Blank drive — fill in the game and save.',
-  // The PC library, offered in the drive picker as one more "drive" (see game-config.ts candidates()).
-  'configure.thisPc': 'This PC',
-  'configure.blankPcLibrary': 'No local games yet — fill in the game and save.',
-  'configure.couldNotRead': 'Could not read game.json: {message}',
-  'configure.confirmSwitch': 'Discard unsaved changes and switch cards?',
-  'configure.confirmReset': 'Discard unsaved changes and reset from the card?',
-  'configure.fixSyntax': 'Fix the JSON syntax errors before formatting.',
-  'configure.saving': 'Saving…',
-  'configure.notSaved': 'Not saved: {message}',
-  'configure.applied': 'Applied. The launcher was updated.',
-  'configure.deferred': 'Saved. It will load shortly, or after the active card is removed.',
-  'configure.savedRejected': 'Saved, but the manifest was rejected: {message}',
-  'configure.unknownReason': 'unknown reason',
-
-  // ── Configure-game window: interactive form (configure-form-view.ts) ─────────
-  // The JSON tab label (the section tabs reuse the section headings below); "JSON" is a filename/format.
-  'configure.tabJson': 'JSON',
-  // A visible Reset button next to Save (re-reads game.json from the card, discarding edits).
-  'configure.reset': 'Reset',
-  // Section headings.
-  'configure.sectionBasics': 'Basics',
-  'configure.sectionLaunch': 'Launch',
-  'configure.sectionHero': 'Images',
-  'configure.sectionSaves': 'Saves',
-  'configure.sectionAudio': 'Audio',
-  'configure.sectionAdvanced': 'Advanced',
-  // Field labels.
-  'configure.fieldId': 'Game id',
-  'configure.idHint':
-    'Auto-filled from the name. Edit it to set your own; clear it to auto-fill again.',
-  'configure.fieldTitle': 'Title',
-  'configure.schemaVersion': 'Schema version: 1',
-  'configure.launchType': 'Launch type',
-  'configure.launchExecutable': 'Executable',
-  'configure.launchInstaller': 'Installer',
-  // PC mode — a game already installed on this machine (the PC library's only launch type).
-  'configure.launchPc': 'Local game on this PC',
-  'configure.fieldPcExecutable': 'Game executable (full path)',
-  'configure.pcExecutablePlaceholder': 'C:\\Games\\My Game\\game.exe',
-  'configure.pcExecutableHint':
-    'Full path to the game on this PC. If the game is later deleted, its card, artwork and stats stay — only Play is disabled.',
-  'configure.fieldExecutable': 'Executable path',
-  'configure.executableNote': 'Relative to the card root.',
-  'configure.fieldArgs': 'Arguments',
-  'configure.fieldRunAsAdmin': 'Run as administrator',
-  'configure.fieldCopyToPc': 'Move game to PC',
-  'configure.copyExecutableNote':
-    'Relative to the game directory below — the game is copied to the PC, and the executable is looked up inside the copy.',
-  'configure.fieldCopySource': 'Game directory on the card',
-  'configure.copySourceHint':
-    'The root of the game’s own folder on the card. It is copied to the PC on “Install”; the copy on the card is kept.',
-  'configure.copySourceOutside':
-    'That file is outside the game directory ({source}) — pick one inside it, or fix the directory first.',
-  'configure.fieldInstaller': 'Installer path',
-  'configure.fieldInstallType': 'Installer type',
-  'configure.fieldInstallArgs': 'Installer arguments',
-  'configure.installArgsDirHint':
-    'For a custom installer exactly one argument must contain the {dir} placeholder.',
-  'configure.installerExperimental':
-    '⚠ Experimental: the Installer type may behave unpredictably (especially on Linux).',
-  'configure.installerLinuxWarning':
-    'Installers are unpredictable on Linux/Steam Deck: they come in many flavours, and under Proton some fail or hang. Prefer “Move game to PC”, or a plain Executable.',
-  'configure.fieldWinetricks': 'Game winetricks (Linux)',
-  'configure.winetricksHint':
-    'Extra winetricks verbs/settings (e.g. d3dx9, or vd=1920x1080 for a virtual desktop) applied to the Wine prefix before the game launches, on top of the built-in set. Linux/Proton only; ignored on Windows.',
-  'configure.fieldInstallWinetricks': 'Installer winetricks (Linux)',
-  'configure.installWinetricksHint':
-    'Extra winetricks verbs provisioned before the installer runs, on top of the built-in set. Linux/Proton only; ignored on Windows.',
-  'configure.fieldUmuGameId': 'umu GAMEID (Linux)',
-  'configure.umuGameIdHint':
-    'A Steam appid or a custom UMU_ID — umu applies that game’s protonfix instead of the generic default. Leave empty for umu-default. Linux/Proton only.',
-  'configure.fieldAppid': 'Steam appid',
-  'configure.fieldWatchProcesses': 'Watched processes',
-  'configure.watchProcessesHint': '1–16 process image names ending in .exe.',
-  'configure.fieldHeroImages': 'Hero images',
-  'configure.heroImagesHint': 'Up to 3 backgrounds; several cross-fade every minute.',
-  'configure.fieldGridImage': 'Card image',
-  'configure.gridImageHint':
-    'The game’s card in the launcher’s history carousel. A 600x900 portrait cover is expected (the same format Steam uses). Optional — without it the card is cropped from the first hero image.',
-  // Helper link next to the card-image field (opens SteamGridDB in the default browser), mirroring the
-  // Steam appid link — a 600x900 cover is exactly what that site catalogues.
-  'configure.gridImageHelp': 'Find a 600x900 cover on SteamGridDB',
-  'configure.fieldSaveOnCard': 'Save folder on the card',
-  'configure.fieldPcSavePath': 'PC save path',
-  'configure.pcSavePathPlaceholder': '%APPDATA%/My Game',
-  'configure.pcSaveBackupHint':
-    'Playhook backs these saves up for you. When you insert a card carrying this game, the progress is copied onto it.',
-  'configure.fieldBackgroundMusic': 'Background music',
-  'configure.fieldLaunchTimeout': 'Launch timeout (seconds)',
-  'configure.fieldKillTimeout': 'Force-close timeout (seconds)',
-  // Audio Default/Custom selector (Default → the field is omitted from game.json).
-  'configure.musicNoneHint': 'No background music.',
-  // Steam appid helper link (opens SteamDB in the default browser).
-  'configure.appidHelp': 'Find the appid on SteamDB',
-  // Dynamic-list + picker buttons.
-  'configure.browse': 'Browse…',
-  'configure.add': 'Add',
-  'configure.addFile': 'Add…',
-  'configure.replace': 'Replace…',
-  'configure.remove': 'Remove',
-  'configure.dragReorder': 'Drag to reorder',
-  // Banners / hints.
-  'configure.corruptField': 'This field contains an invalid value; editing it replaces the value.',
-  'configure.fixSyntaxSwitch': 'Fix the JSON syntax errors before switching to the form.',
-  'configure.mixedLaunchModes':
-    'This manifest defines more than one launch type. Only “{mode}” stays active; saving removes the other blocks.',
-  // Picker rejections (main → renderer).
-  'configure.pickOutsideCard': 'The selected file is outside the card. Choose a file on the card.',
-  'configure.pickChooseSubfolder': 'Choose a subfolder of the card, not the card root.',
-  'configure.pickPcSaveOutside':
+  // ── Customize screen: the launcher's own per-game editor (gameConfig:* channels) ──
+  // The picker rejections main produces, in the launcher's namespace. They repeat the `configure.pick*`
+  // wording above on purpose: those belong to the window being dismantled and die with it, these belong
+  // to the screen replacing it. Everything the SCREEN itself says is below, in gameSettings.*.
+  'gameConfig.thisPc': 'This PC',
+  'gameConfig.homeFolder': 'Home folder',
+  'gameConfig.pickOutsideCard': 'The selected file is outside the card. Choose a file on the card.',
+  'gameConfig.pickChooseSubfolder': 'Choose a subfolder of the card, not the card root.',
+  'gameConfig.pickPcSaveOutside':
     'That folder is not under a known save location (%DOCUMENTS%, %APPDATA%, %LOCALAPPDATA%, %LOCALLOW% or %USERPROFILE%). Pick a folder inside one of those.',
-  'configure.pickImportFailed': 'Could not copy the selected file into the local library.',
+  'gameConfig.pickImportFailed': 'Could not copy the selected file into the local library.',
+  'gameConfig.pickMissing': 'That file is no longer there.',
+  'gameConfig.pickSymlink': 'That is a shortcut to somewhere else — pick the file itself.',
+  'gameConfig.pickNeedsFolder': 'Pick a folder for this field.',
+  'gameConfig.pickNeedsFile': 'Pick a file for this field.',
+  'gameConfig.pickWrongType': 'That file type does not fit this field.',
+  'gameConfig.listFailed': 'This folder could not be opened.',
+
+  // ── Customize screen: what the SCREEN itself says (game-settings-*.ts) ──────
+  'launcher.menu.customize': 'Customize',
+
+  // ── On-screen keyboard + file browser (osk.ts / file-picker.ts) ────────────
+  'osk.shift': 'Shift',
+  'osk.backspace': 'Delete',
+  'osk.space': 'Space',
+  'osk.done': 'Done',
+  'osk.cancel': 'Cancel',
+  'osk.legend': 'X - delete, Y - shift, LB/RB - layout, B - cancel',
+  'picker.title': 'Choose',
+  'picker.up': '.. up one level',
+  'picker.useThisFolder': 'Use this folder',
+  'picker.empty': 'Nothing here.',
+  'picker.legend': 'A - open or choose, B - up one level, left/right - switch column',
+  'picker.legendMulti': 'X - tick, A - choose, B - up one level, left/right - switch column',
+
+  'gameSettings.screenTitle': 'Customize',
+  'gameSettings.loading': 'Reading the manifest...',
+  'gameSettings.sectionBasics': 'Basics',
+  'gameSettings.sectionLaunch': 'Launch',
+  'gameSettings.sectionImages': 'Artwork',
+  'gameSettings.sectionSaves': 'Saves',
+  'gameSettings.sectionAudio': 'Audio',
+  'gameSettings.sectionAdvanced': 'Advanced',
+  'gameSettings.notSet': 'not set',
+  'gameSettings.listEmpty': 'empty',
+  'gameSettings.title': 'Title',
+  'gameSettings.id': 'Id',
+  'gameSettings.idHint': 'Latin letters, digits, dot, dash and underscore.',
+  'gameSettings.idChangedWarning':
+    'Changing the id detaches this game from its playtime, its save backups and its history entry on this PC.',
+  'gameSettings.schemaVersion': 'Manifest version',
+  'gameSettings.source': 'Comes from',
+  'gameSettings.launchMode': 'Launch type',
+  'gameSettings.modeExecutable': 'Run from the card',
+  'gameSettings.modeInstaller': 'Install from the card',
+  'gameSettings.modeSteam': 'Steam',
+  'gameSettings.modePc': 'Installed on this PC',
+  'gameSettings.mixedLaunchModes':
+    'This manifest describes more than one launch type. Only the selected one is kept; saving removes the others.',
+  'gameSettings.executable': 'Executable',
+  'gameSettings.executableHint': 'Relative to the card root.',
+  'gameSettings.pcExecutable': 'Executable on this PC',
+  'gameSettings.args': 'Launch arguments',
+  'gameSettings.runAsAdmin': 'Run as administrator',
+  'gameSettings.runAsAdminHint': 'For games whose executable requires elevation.',
+  'gameSettings.copyToPc': 'Move game to PC',
+  'gameSettings.copyToPcHint': 'The game is copied to this PC and runs from there; the card keeps its copy.',
+  'gameSettings.copyDirectory': 'Game folder on the card',
+  'gameSettings.copyDirectoryHint': 'The folder that is copied — the game’s own root, not the card root.',
+  'gameSettings.installer': 'Installer',
+  'gameSettings.installType': 'Installer type',
+  'gameSettings.installNsis': 'NSIS',
+  'gameSettings.installInno': 'Inno Setup',
+  'gameSettings.installCustom': 'Custom (run by hand)',
+  'gameSettings.installRunAsAdmin': 'Run the installer as administrator',
+  'gameSettings.installCustomHint': 'A custom installer is run by you, so elevation is not ours to request.',
+  'gameSettings.installArgs': 'Installer arguments',
+  'gameSettings.installWinetricks': 'Winetricks for the installer',
+  'gameSettings.steamAppid': 'Steam appid',
+  'gameSettings.steamAppidHint': 'The number in the game’s Steam store URL.',
+  'gameSettings.watchProcesses': 'Watched processes',
+  'gameSettings.watchProcessesHint':
+    'Process names to follow instead of the launched one (launchers, wrappers).',
+  'gameSettings.heroImage': 'Backgrounds',
+  'gameSettings.heroImageHint': 'Up to three; the launcher rotates through them.',
+  'gameSettings.gridImage': 'Card artwork',
+  'gameSettings.gridImageAuto': 'cropped from the first background',
+  'gameSettings.saveOnCard': 'Save folder on the card',
+  'gameSettings.saveOnCardHint': 'Where progress is copied back when you finish playing.',
+  'gameSettings.pcSavePath': 'Save folder on the PC',
+  'gameSettings.pcSavePathHint': 'Where the game itself keeps its progress.',
+  'gameSettings.backgroundMusic': 'Background music',
+  'gameSettings.musicNone': 'no music',
+  'gameSettings.launchTimeout': 'Launch timeout',
+  'gameSettings.killTimeout': 'Force-close timeout',
+  'gameSettings.defaultSeconds30': '30 s (default)',
+  'gameSettings.defaultSeconds60': '60 s (default)',
+  'gameSettings.winetricks': 'Winetricks',
+  'gameSettings.winetricksHint': 'Extra verbs provisioned into the prefix before the game runs (Linux).',
+  'gameSettings.umuGameId': 'umu GAMEID',
+  'gameSettings.umuGameIdAuto': 'automatic',
+  'gameSettings.umuGameIdHint': 'Applies that game’s protonfix instead of the generic one (Linux).',
+  'gameSettings.save': 'Save & Apply',
+  'gameSettings.reset': 'Discard changes',
+  'gameSettings.delete': 'Delete game',
+  'gameSettings.browse': 'Browse...',
+  'gameSettings.clear': 'Clear',
+  'gameSettings.listAdd': 'Add...',
+  'gameSettings.listReplace': 'Replace...',
+  'gameSettings.listMoveUp': 'Move up',
+  'gameSettings.listMoveDown': 'Move down',
+  'gameSettings.listRemove': 'Remove',
+  'gameSettings.saving': 'Saving...',
+  'gameSettings.savedApplied': 'Saved and applied.',
+  'gameSettings.savedDeferred': 'Saved. It applies when this card becomes the active one.',
+  'gameSettings.savedNotApplied': 'Saved. It applies once you are done playing.',
+  'gameSettings.slotUnreadable': 'This game cannot be shown as a form: {message}',
+  'gameSettings.slotNotFound': 'The manifest no longer describes a game with the id "{id}".',
+  'gameSettings.otherGameUnnamed': 'unnamed',
+  'gameSettings.otherGameIssue': 'Problem in game {number} ({game}): {field} - {message}',
+  'gameSettings.confirmReset': 'Discard the changes and re-read the manifest?',
+  'gameSettings.confirmDiscard': 'Leave without saving? The changes are lost.',
+  'gameSettings.confirmDelete': 'Delete "{title}" from the manifest?',
+  'gameSettings.confirmDeleteNote':
+    'The game files stay where they are. Unsaved changes on this screen are discarded.',
+  'gameSettings.confirmDeleteSavesNote':
+    'The game files stay where they are, and so do its save backups. Unsaved changes on this screen are discarded.',
 
   // ── User-facing errors from main (ipc.ts / game-config.ts / updater.ts) ─────
   // The wrapper is translated; the technical cause ({cause}) is inserted as-is (system messages, nested
@@ -359,6 +348,9 @@ export const en = {
   'errors.killFailed': 'could not force-close the game (some processes are still running)',
   'errors.finishBeforeInstall': 'Finish what’s running before installing the update.',
   'errors.driveUnavailable': 'the selected drive is no longer available',
+  'errors.gameNotFound': 'this game is not available right now',
+  'errors.mediaChanged':
+    'the card in this slot is not the one this game was read from — reopen the screen',
   'errors.cannotReadManifest': 'cannot read {file}: {cause}',
   'errors.cannotWriteManifest': 'failed to write {file}: {cause}',
   'errors.configInvalid': 'the config is invalid',

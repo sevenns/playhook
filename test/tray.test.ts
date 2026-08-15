@@ -17,7 +17,6 @@ const t = createTranslator('en');
 function callbacks(): TrayCallbacks & { readonly onToggleSteamShortcut: ReturnType<typeof vi.fn> } {
   return {
     onShow: vi.fn(),
-    onOpenConfigureGame: vi.fn(),
     onOpenLogs: vi.fn(),
     onOpenGamesFolder: vi.fn(),
     onToggleSteamShortcut: vi.fn(),
@@ -36,14 +35,7 @@ const labels = (steam: TraySteamState): readonly (string | undefined)[] =>
 describe('buildTrayMenu — Steam item visibility', () => {
   it('omits the item entirely when the feature is unavailable (Windows / non-AppImage run)', () => {
     const menu = labels({ visible: false, registered: false, busy: false });
-    expect(menu).toEqual([
-      'Show launcher',
-      'Configure game',
-      'Open logs',
-      'Open games folder',
-      undefined,
-      'Quit',
-    ]);
+    expect(menu).toEqual(['Show launcher', 'Open logs', 'Open games folder', undefined, 'Quit']);
     expect(menu).not.toContain('Add to Steam');
   });
 
@@ -51,7 +43,6 @@ describe('buildTrayMenu — Steam item visibility', () => {
     expect(labels({ visible: true, registered: false, busy: false })).toEqual([
       'Show launcher',
       'Add to Steam',
-      'Configure game',
       'Open logs',
       'Open games folder',
       undefined,

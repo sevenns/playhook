@@ -601,10 +601,31 @@ function buildManifestObject(
 // time; these two pure functions wrap/unwrap the array so the form's per-game model is reused verbatim.
 
 /** One game's serializable form state (model + preserved unknown/corrupt keys). */
-export interface GameFormState {
+export interface FormGameSlot {
   readonly model: ManifestFormModel;
   readonly rest: Readonly<Record<string, unknown>>;
   readonly corrupt: Readonly<Record<string, unknown>>;
+}
+
+/**
+ * A slot the form cannot represent at all (a non-object element — `textToGames` returns `ok:false` for
+ * it), kept as the VERBATIM parsed value so it can be written back untouched.
+ *
+ * It exists because of a case the per-game editor makes reachable and the old window never did: a card
+ * may carry several games, `readManifests` SKIPS the ones that do not resolve, and the rest stay
+ * perfectly playable — so the user edits game B while game A sits in the same file, unrepresentable. With
+ * only `FormGameSlot` to serialize from, saving B would have to drop A. Preserving it verbatim is not a
+ * nicety; it is the difference between editing a game and destroying its neighbour (see the plan, Р2).
+ */
+export interface RawGameSlot {
+  readonly raw: unknown;
+}
+
+export type GameFormState = FormGameSlot | RawGameSlot;
+
+/** Whether a slot is the verbatim kind (the form has nothing to show for it). */
+export function isRawSlot(slot: GameFormState): slot is RawGameSlot {
+  return 'raw' in slot;
 }
 
 export type ParseGamesResult =
@@ -612,6 +633,12 @@ export type ParseGamesResult =
       readonly ok: true;
       /** One parse result per game (each may individually be ok:false — a non-object element). */
       readonly games: readonly ParseFormResult[];
+      /**
+       * The parsed JSON value of each game, index-aligned with `games`. It is what a slot the form cannot
+       * represent is written back from (see RawGameSlot) — without it, an unrepresentable neighbour could
+       * only be dropped.
+       */
+      readonly values: readonly unknown[];
       /** Whether the source was an array (>1 games serialize back as an array; see gamesToText). */
       readonly isArray: boolean;
     }
@@ -631,10 +658,11 @@ export function textToGames(text: string): ParseGamesResult {
   }
   if (Array.isArray(parsed)) {
     if (parsed.length === 0) return { ok: false, message: 'the games array must not be empty' };
-    return { ok: true, isArray: true, games: parsed.map(valueToFormResult) };
+    const values: readonly unknown[] = parsed;
+    return { ok: true, isArray: true, games: values.map(valueToFormResult), values };
   }
   if (isRecord(parsed)) {
-    return { ok: true, isArray: false, games: [valueToFormResult(parsed)] };
+    return { ok: true, isArray: false, games: [valueToFormResult(parsed)], values: [parsed] };
   }
   return { ok: false, message: 'game.json must be a game object or a non-empty array of games' };
 }
@@ -648,7 +676,9 @@ export function textToGames(text: string): ParseGamesResult {
  */
 export function gamesToText(games: readonly GameFormState[]): string {
   if (games.length === 0) return '[]\n';
-  const objects = games.map((g) => buildManifestObject(g.model, g.rest, g.corrupt));
+  const objects = games.map((slot) =>
+    isRawSlot(slot) ? slot.raw : buildManifestObject(slot.model, slot.rest, slot.corrupt),
+  );
   const value: unknown = objects.length === 1 ? objects[0] : objects;
   return `${JSON.stringify(value, null, 2)}\n`;
 }

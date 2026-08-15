@@ -20,7 +20,6 @@ import { createSteamShortcutService } from './steam-shortcut';
 import { installDaemonUnit, removeDaemonUnit } from './daemon-unit';
 import { UpdaterService } from './updater';
 import { GameConfigService } from './game-config';
-import { ConfigureWindow } from './configure-window';
 import { LocaleService } from './locale';
 import { createPowerService } from './power';
 import { createKeepAwakeService, type KeepAwakeService } from './keep-awake';
@@ -44,7 +43,6 @@ const gameModeSession = isGamescopeSession();
 let trayRef: Tray | null = null;
 let controllerRef: GameController | null = null;
 let windowRef: GameWindow | null = null;
-let configureWindowRef: ConfigureWindow | null = null;
 let globalGamepadRef: GlobalGamepad | null = null;
 let keepAwakeRef: KeepAwakeService | null = null;
 let quitting = false;
@@ -122,7 +120,6 @@ function quit(): void {
   globalGamepadRef?.stop();
   keepAwakeRef?.dispose();
   windowRef?.allowClose();
-  configureWindowRef?.allowClose();
   app.quit();
 }
 
@@ -168,7 +165,7 @@ async function bootstrap(): Promise<void> {
 
   // The PC library: local games added from this machine's own disk, kept in `<userData>/pc-games` and
   // read as a card that is always inserted (see pc-library.ts). Its skeleton is created up front so the
-  // Configure window can offer "This PC" even before the first game exists.
+  // the editor can offer "This PC" even before the first local game exists.
   const pcLibrary = new PcLibraryStore({ baseDir: app.getPath('userData') });
   await pcLibrary.init().catch((cause: unknown) => log.warn('[pc-library] init failed:', cause));
 
@@ -245,7 +242,6 @@ async function bootstrap(): Promise<void> {
     beforeInstall: () => {
       quitting = true;
       window.allowClose();
-      configureWindow.allowClose();
     },
     onSummonHotkeyChanged: (enabled) => {
       summonHotkeyEnabled = enabled;
@@ -272,20 +268,18 @@ async function bootstrap(): Promise<void> {
     getTranslator,
   });
 
-  // Configure-game window + its backend. getActiveRoot / reloadManifest come from the controller/watcher
-  // (interface-DI); the theme comes from the same settings store the launcher uses.
+  // Backend of the launcher's Customize screen. getActiveRoot / reloadManifest / findGameSource come
+  // from the controller and the watcher (interface-DI).
   const gameConfig = new GameConfigService({
-    settings,
     getActiveRoot: () => watcher.getActiveRoot(),
     reloadManifest: (root) => controller.reloadManifest(root),
     pcLibrary,
     reloadPcLibrary: () => controller.reloadPcLibrary(),
     getTranslator,
     toManifestPcSavePath: (absolute) => platform.savePathResolver.toManifestPcSavePath(absolute),
+    findGameSource: (id) => controller.findGameSource(id),
   });
   gameConfig.init();
-  const configureWindow = new ConfigureWindow(gameConfig, getTranslator);
-  configureWindowRef = configureWindow;
 
   window.create(
     (shown) => {
@@ -358,7 +352,6 @@ async function bootstrap(): Promise<void> {
 
   const trayCallbacks: TrayCallbacks = {
     onShow: () => window.showAndFocus(),
-    onOpenConfigureGame: () => configureWindow.openOrFocus(),
     onOpenLogs: () => openLogs(),
     onOpenGamesFolder: () => openGamesFolder(),
     onToggleSteamShortcut: () => {
@@ -383,12 +376,10 @@ async function bootstrap(): Promise<void> {
       .catch((cause: unknown) => log.warn('[steam-shortcut] reconcile failed:', cause));
   }
 
-  // UI-locale wiring. Each window seeds via an invoke (effective Locale) and receives live pushes; the
-  // set-language SEND lives in UpdaterService (with the other settings:* writes). No did-finish-load hooks
-  // — the plain windows are created lazily, so there's nothing to hook; the invoke-seed covers startup
-  // instead. All three requests just return the current effective locale.
+  // UI-locale wiring. The launcher seeds via an invoke (effective Locale) and receives live pushes; the
+  // set-language SEND lives in UpdaterService (with the other settings:* writes). No did-finish-load hook
+  // — the invoke-seed covers startup instead.
   ipcMain.handle(IPC.languageRequest, (): Locale => localeService.current());
-  ipcMain.handle(IPC.configLanguageRequest, (): Locale => localeService.current());
 
   // Power menu (Shutdown/Reboot/Sleep). Wired here, NOT in GameController, so the game controller stays
   // free of power concerns. The renderer confirms each action before sending; shutdown/reboot quit via
@@ -410,20 +401,15 @@ async function bootstrap(): Promise<void> {
   ipcMain.on(IPC.actionQuit, () => quit());
 
   // Applies a language change everywhere: re-resolve the locale, rebuild the tray menu, re-title the
-  // Configure window, and push the effective locale to every live webContents (launcher/configure).
+  // and push the effective locale to the launcher.
   // Called from the settings set-language handler and from resetSettings (both via UpdaterService deps).
   function applyLanguage(mode: typeof initialSettings.language): void {
     localeService.setMode(mode);
     const locale = localeService.current();
     refreshTrayMenu();
-    configureWindow.refreshTitle();
     const gameBw = window.browserWindow;
     if (gameBw !== null && !gameBw.isDestroyed())
       gameBw.webContents.send(IPC.languageUpdate, locale);
-    const configureBw = configureWindow.browserWindow;
-    if (configureBw !== null && !configureBw.isDestroyed()) {
-      configureBw.webContents.send(IPC.configLanguageUpdate, locale);
-    }
   }
 
   // Global Start+Back hotkey: re-summon the launcher when it's hidden (e.g. minimized to the tray
@@ -467,7 +453,6 @@ if (!gotSingleInstanceLock) {
     globalGamepadRef?.stop();
     keepAwakeRef?.dispose();
     windowRef?.allowClose();
-    configureWindowRef?.allowClose();
   });
 
   app

@@ -15,9 +15,17 @@ import type {
   AudioVolumes,
   AutoUpdateMode,
   BrowseInfo,
+  ConfigPickResult,
+  ConfigSaveResult,
+  ConfigValidationResult,
+  GameConfigAcceptRequest,
+  GameConfigListDirRequest,
+  GameConfigReadResult,
+  GameConfigSaveRequest,
   GameLibrary,
   HeroAssets,
   LanguageMode,
+  ListDirResult,
   RendererApi,
   SfxName,
   UpdateStatus,
@@ -90,6 +98,13 @@ const CHANNELS = {
   settingsSetLanguage: 'settings:set-language',
   appVersionRequest: 'app:version',
   audioOptionsRequest: 'app:audio-options',
+  // Customize screen — per-game game.json editing, in the launcher's own namespace (see shared/types).
+  gameConfigRead: 'gameConfig:read',
+  gameConfigValidate: 'gameConfig:validate',
+  gameConfigSave: 'gameConfig:save',
+  gameConfigImagePreview: 'gameConfig:image-preview',
+  gameConfigAcceptPath: 'gameConfig:accept-path',
+  gameConfigListDir: 'gameConfig:list-dir',
 } as const satisfies Partial<typeof IPC>;
 
 const api: RendererApi = {
@@ -313,6 +328,29 @@ const api: RendererApi = {
   },
   installUpdate(): void {
     ipcRenderer.send(CHANNELS.updateInstall);
+  },
+  readGameConfig(id: string): Promise<GameConfigReadResult> {
+    return ipcRenderer.invoke(CHANNELS.gameConfigRead, id) as Promise<GameConfigReadResult>;
+  },
+  validateGameConfig(root: string, text: string): Promise<ConfigValidationResult> {
+    return ipcRenderer.invoke(CHANNELS.gameConfigValidate, {
+      root,
+      text,
+    }) as Promise<ConfigValidationResult>;
+  },
+  saveGameConfig(request: GameConfigSaveRequest): Promise<ConfigSaveResult> {
+    return ipcRenderer.invoke(CHANNELS.gameConfigSave, request) as Promise<ConfigSaveResult>;
+  },
+  getGameConfigImage(root: string, path: string): Promise<string | null> {
+    return ipcRenderer.invoke(CHANNELS.gameConfigImagePreview, { root, path }) as Promise<
+      string | null
+    >;
+  },
+  acceptGameConfigPaths(request: GameConfigAcceptRequest): Promise<ConfigPickResult> {
+    return ipcRenderer.invoke(CHANNELS.gameConfigAcceptPath, request) as Promise<ConfigPickResult>;
+  },
+  listGameConfigDir(request: GameConfigListDirRequest): Promise<ListDirResult> {
+    return ipcRenderer.invoke(CHANNELS.gameConfigListDir, request) as Promise<ListDirResult>;
   },
 };
 
