@@ -33,6 +33,13 @@ export interface AudioController {
   setSounds(set: SfxSet | null): void;
   /** Plays a one-shot UI sound; a no-op when that slot isn't configured. */
   play(name: SfxName): void;
+  /**
+   * Plays the bundled startup jingle, once. Resolves the moment playback actually STARTS — the boot
+   * sequence times the hand-over from the boot image to the UI off it, so the jingle's two halves line up
+   * with what is on screen (see the boot reveal in app.ts). Resolves right away when it can't play at
+   * all: a silent launcher must still boot.
+   */
+  playStartup(url: string): Promise<void>;
   /** Starts/stops the background music+ambience to match the desired playing state. */
   setMusicPlaying(shouldPlay: boolean): void;
   /** Sets the background-music/ambience volume (0..1), live. */
@@ -49,6 +56,8 @@ interface Player {
 
 export function createAudioController(): AudioController {
   const sfx = new Map<SfxName, HTMLAudioElement>();
+  // The startup jingle, kept only so a late volumes seed can still reach it while it plays.
+  let startup: HTMLAudioElement | null = null;
 
   /** Builds the <audio> elements for one sound set into `target` (cleared first). */
   const loadSounds = (target: Map<SfxName, HTMLAudioElement>, assets: SfxSet | null): void => {
@@ -248,9 +257,22 @@ export function createAudioController(): AudioController {
       if (fadeHandle === null && active !== null) active.el.volume = volume;
     },
 
+    async playStartup(url: string): Promise<void> {
+      const el = new Audio(url);
+      el.volume = sfxVolume;
+      startup = el;
+      // The volumes seed arrives over IPC and may land AFTER this, hence startup being kept around for
+      // setSfxVolume below — the jingle follows the SFX slider like every other one-shot.
+      try {
+        await el.play();
+      } catch {
+        // Playback refused (no output device, an autoplay policy): boot on in silence.
+      }
+    },
     setSfxVolume(volume: number): void {
       sfxVolume = volume;
       for (const el of sfx.values()) el.volume = volume;
+      if (startup !== null) startup.volume = volume;
     },
   };
 }

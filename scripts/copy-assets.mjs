@@ -60,11 +60,17 @@ await writeFile(
 // data-URI MIME in asset-reader.ts must match — keep the extension in sync with that constant.
 await cp(resolve(root, 'assets/playhook-wallpaper.jpg'), resolve(outDist, 'wallpaper.jpg'));
 
+// The startup jingle, played once while the boot screen is up (its first seconds are the boot image's,
+// the rest plays over the UI arriving — see the boot reveal in app.ts). Main reads it and hands it to the
+// renderer as a data URL, so the MIME in asset-reader.ts must match this extension.
+await cp(resolve(root, 'assets/playhook-startup.mp3'), resolve(outDist, 'startup.mp3'));
+
 // Steam library artwork for the non-Steam shortcut (Game Mode tile). Copied out to the user's
 // `userdata/<id>/config/grid/` when the shortcut is added — see steam-artwork.ts for the naming.
 await cp(resolve(root, 'assets/steam'), resolve(outDist, 'steam'), { recursive: true });
 
 console.log(
   `Copied ${files.length} file(s), ${dirs.length} dir(s), ${icons.length} icon(s), audio ` +
-    `(${soundSets.length} set(s), ${ambientTracks.length} ambience track(s)), wallpaper and Steam artwork to dist`,
+    `(${soundSets.length} set(s), ${ambientTracks.length} ambience track(s)), wallpaper, startup jingle ` +
+    'and Steam artwork to dist',
 );

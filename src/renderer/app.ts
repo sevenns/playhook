@@ -463,7 +463,9 @@ function render(state: AppState): void {
 /**
  * How long the bundled wallpaper owns the screen at startup. A hero arriving earlier is painted right
  * away but stays hidden under the backdrop, so the launcher always opens on the same picture for the
- * same beat instead of flashing whatever loaded first.
+ * same beat instead of flashing whatever loaded first. It is also the length of the startup jingle's
+ * FIRST half (assets/playhook-startup.mp3): the swell is the backdrop's, the tail plays over the UI
+ * arriving — which is why the countdown runs from the moment the sound starts, not from window load.
  */
 const WALLPAPER_HOLD_MS = 2000;
 /** The UI never appears before this — the hold plus the cross-fade it hands over to. */
@@ -477,6 +479,9 @@ let bootStateReady = false;
 let bootHeroReady = false;
 let bootLibraryReady = false;
 let bootRevealed = false;
+let revealTimer = 0;
+// When the startup jingle actually began playing; null until it does (or forever, if it can't).
+let jingleStartedAt: number | null = null;
 
 /**
  * Hands the screen over to the hero underneath: the backdrop fades out and, over the same beat, travels
@@ -507,16 +512,42 @@ function revealUi(): void {
   carousel.playIntro();
 }
 
-/** Reveals once every seed is in, waiting out the remainder of BOOT_MIN_MS if it is still running. */
+/**
+ * When the boot image's turn is up: BOOT_MIN_MS after the jingle started, or — when there is no jingle
+ * (unreadable file, muted output, a refused autoplay) — after the window itself opened. The jingle is
+ * fetched over IPC and can start a beat late; letting the hold slide with it is what keeps the swell and
+ * the picture in step, rather than the sound arriving over a UI that is already up.
+ */
+function bootHoldEndsAt(): number {
+  return (jingleStartedAt ?? bootStart) + BOOT_MIN_MS;
+}
+
+/** Arms (or re-arms) the reveal for the end of the hold. No-op until every seed is in. */
+function scheduleReveal(): void {
+  if (bootRevealed || !bootStateReady || !bootHeroReady || !bootLibraryReady) return;
+  if (revealTimer !== 0) window.clearTimeout(revealTimer);
+  revealTimer = window.setTimeout(revealUi, Math.max(0, bootHoldEndsAt() - performance.now()));
+}
+
 function noteBootSeed(seed: 'state' | 'hero' | 'library'): void {
   if (seed === 'state') bootStateReady = true;
   else if (seed === 'hero') bootHeroReady = true;
   else bootLibraryReady = true;
-  if (bootRevealed || !bootStateReady || !bootHeroReady || !bootLibraryReady) return;
-  window.setTimeout(revealUi, Math.max(0, BOOT_MIN_MS - (performance.now() - bootStart)));
+  scheduleReveal();
 }
 
 window.setTimeout(revealUi, BOOT_DEADLINE_MS);
+
+// The startup jingle, played once. Requested as early as everything else and started the moment it
+// lands; the boot hold is then re-armed around it (see bootHoldEndsAt). The deadline above is the
+// backstop: a jingle that arrives absurdly late can delay the reveal, but never hold it hostage.
+void window.api.requestStartupSound().then(async (url) => {
+  if (url === null || bootRevealed) return;
+  await audio.playStartup(url);
+  if (bootRevealed) return;
+  jingleStartedAt = performance.now();
+  scheduleReveal();
+});
 
 // The startup push on the backdrop (#hero-boot in styles.css): a wider, faster drift than the hero's
 // perpetual pan, and it never unwinds — the layer dissolves mid-travel instead. Two frames of delay

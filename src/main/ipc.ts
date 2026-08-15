@@ -589,6 +589,10 @@ export class GameController {
     ipcMain.on(IPC.libraryBrowse, (_event, id: unknown) => void this.onBrowseRequested(id));
     ipcMain.on(IPC.libraryForget, (_event, id: unknown) => void this.onForgetRequested(id));
     ipcMain.handle(IPC.wallpaperRequest, (): Promise<string | null> => this.assets.readWallpaperDataUrl());
+    ipcMain.handle(
+      IPC.startupSoundRequest,
+      (): Promise<string | null> => this.assets.readStartupSoundDataUrl(),
+    );
     ipcMain.on(IPC.actionLaunch, () => void this.onLaunchRequested());
     ipcMain.on(IPC.actionUninstall, () => void this.onUninstallRequested());
     // Game Mode: hiding is meaningless (no tray, and on Linux no summon hotkey) — ignore the Hide button

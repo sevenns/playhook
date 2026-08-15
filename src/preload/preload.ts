@@ -60,6 +60,7 @@ const CHANNELS = {
   sfxSetRequest: 'sfx:set-request',
   actionSelect: 'action:select',
   wallpaperRequest: 'wallpaper:request',
+  startupSoundRequest: 'audio:startup-request',
   volumeRequest: 'volume:request',
   volumeUpdate: 'volume:update',
   languageRequest: 'app:language-request',
@@ -217,6 +218,9 @@ const api: RendererApi = {
   },
   requestWallpaper(): Promise<string | null> {
     return ipcRenderer.invoke(CHANNELS.wallpaperRequest) as Promise<string | null>;
+  },
+  requestStartupSound(): Promise<string | null> {
+    return ipcRenderer.invoke(CHANNELS.startupSoundRequest) as Promise<string | null>;
   },
   requestVolumes(): Promise<AudioVolumes> {
     return ipcRenderer.invoke(CHANNELS.volumeRequest) as Promise<AudioVolumes>;

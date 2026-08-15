@@ -680,6 +680,8 @@ export const IPC = {
   actionSelect: 'action:select',
   /** renderer → main: request the fallback wallpaper data URL (for the idle / empty screen). */
   wallpaperRequest: 'wallpaper:request',
+  /** renderer → main (invoke): the bundled startup jingle as a data URL (played once, on boot). */
+  startupSoundRequest: 'audio:startup-request',
   /** game-renderer → main (invoke): request the current audio volumes (on window startup). */
   volumeRequest: 'volume:request',
   /** main → game-renderer: updated audio volumes (pushed when changed in the settings window). */
@@ -948,6 +950,8 @@ export interface RendererApi {
   /** Pick a game by id (entering its detail screen) — switches to it on the ready screen. */
   selectGame(id: string): void;
   requestWallpaper(): Promise<string | null>;
+  /** The bundled startup jingle as a data URL, or null when it can't be read. Played once, on boot. */
+  requestStartupSound(): Promise<string | null>;
   /** Current launcher audio volumes (on window startup). */
   requestVolumes(): Promise<AudioVolumes>;
   /** Live audio-volume updates, pushed when a volume changes (the Settings screen or a reset). */

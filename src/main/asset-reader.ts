@@ -117,6 +117,11 @@ export function isValidAmbientTrack(track: string): boolean {
 // it, so it must match what copy-assets.mjs actually copies (assets/playhook-wallpaper.jpg).
 const WALLPAPER_PATH = path.join(__dirname, '../wallpaper.jpg');
 
+// The startup jingle (bundled by copy-assets into dist/startup.mp3), played once while the boot screen
+// is up. Same rule as the wallpaper: the extension decides the data-URI MIME, so it must match what
+// copy-assets.mjs actually copies (assets/playhook-startup.mp3).
+const STARTUP_SOUND_PATH = path.join(__dirname, '../startup.mp3');
+
 /** Dependencies of the reader (kept electron-free: plain getters). */
 export interface AssetReaderDeps {
   /** The current navigation sound set from settings (folder under audio/ui/). Read live. */
@@ -146,6 +151,14 @@ export class AssetReader {
     const fallback = await this.readImageDataUrl(WALLPAPER_PATH);
     this.wallpaperDataUrl = fallback ?? null;
     return this.wallpaperDataUrl;
+  }
+
+  /**
+   * The bundled startup jingle as a data URL; null if it can't be read (the launcher then boots silently).
+   * Not cached: it is asked for exactly once per window, on boot.
+   */
+  async readStartupSoundDataUrl(): Promise<string | null> {
+    return (await readAudioDataUrl(STARTUP_SOUND_PATH)) ?? null;
   }
 
   /**
