@@ -17,6 +17,12 @@ const FADE_MS = 800;
 // Volume within this of the target counts as "arrived" (float ramps never land exactly).
 const FADE_EPSILON = 0.001;
 
+// Music is held while the startup jingle plays, so the release must be guaranteed — `ended` alone is
+// not. Once the jingle's real length is known the gate opens that long after it began, plus this margin;
+// until then (and if the metadata never arrives) the hard cap below is what frees the music.
+const JINGLE_GRACE_MS = 400;
+const JINGLE_MAX_MS = 20_000;
+
 export interface AudioController {
   /** Sets the inserted card's own background music (data URL), or clears it when null. */
   setCardMusic(url: string | null): void;
@@ -87,9 +93,15 @@ export function createAudioController(): AudioController {
   let outgoing: Player | null = null;
   let activeUrl: string | null = null;
 
-  // The gate result (visible && !running). NOT a short-circuit: a repeated `true` re-issues play() on the
-  // live element (resurrecting an OS-muted one after sleep) without restarting the fade.
+  // The gate result (visible && !running, AND the startup jingle has finished). NOT a short-circuit: a
+  // repeated `true` re-issues play() on the live element (resurrecting an OS-muted one after sleep)
+  // without restarting the fade.
   let wantPlay = false;
+  // What app.ts asked for, before the jingle gate below is applied to it.
+  let musicWanted = false;
+  // The startup jingle is still sounding. Music waits it out rather than playing underneath it: the two
+  // are unrelated pieces of audio and the overlap is just mush.
+  let jinglePlaying = false;
 
   let musicVolume = DEFAULT_MUSIC_VOLUME;
   let sfxVolume = DEFAULT_SFX_VOLUME;
@@ -190,6 +202,32 @@ export function createAudioController(): AudioController {
     ensureFade();
   };
 
+  /**
+   * Puts playback where the two gates say it should be: what app.ts asked for (visible && !running) and
+   * whether the startup jingle is still sounding. Called on every change to either, which is why it is
+   * NOT a short-circuit on an unchanged value: re-issuing play() on the live element is what resurrects
+   * one the OS muted while the machine slept.
+   */
+  const applyPlayback = (): void => {
+    wantPlay = musicWanted && !jinglePlaying;
+    if (wantPlay) {
+      // Always (re-)issue play() on the live elements. Then ramp only if we're not already at the target
+      // (a cold start from 0 fades in; an already-full resume from the tray just plays, no volume dip).
+      if (active !== null) void active.el.play().catch(() => undefined);
+      if (outgoing !== null) void outgoing.el.play().catch(() => undefined);
+      const activeSettled =
+        active === null || Math.abs(active.el.volume - musicVolume) <= FADE_EPSILON;
+      if (!activeSettled || outgoing !== null) ensureFade();
+      return;
+    }
+    stopFade();
+    if (active !== null) active.el.pause();
+    if (outgoing !== null) {
+      drop(outgoing);
+      outgoing = null;
+    }
+  };
+
   const applyEffective = (): void => {
     const target = browseMusic ?? gameMusic ?? ambient;
     if (target === activeUrl) return; // idempotent: same effective source → never restart playback
@@ -230,24 +268,8 @@ export function createAudioController(): AudioController {
     },
 
     setMusicPlaying(shouldPlay: boolean): void {
-      wantPlay = shouldPlay;
-      if (shouldPlay) {
-        // Always (re-)issue play() on the live elements — this is what resurrects an OS-muted element
-        // after sleep. Then ramp only if we're not already at the target (a cold start from 0 fades in;
-        // an already-full resume from the tray just plays, no volume dip).
-        if (active !== null) void active.el.play().catch(() => undefined);
-        if (outgoing !== null) void outgoing.el.play().catch(() => undefined);
-        const activeSettled =
-          active === null || Math.abs(active.el.volume - musicVolume) <= FADE_EPSILON;
-        if (!activeSettled || outgoing !== null) ensureFade();
-      } else {
-        stopFade();
-        if (active !== null) active.el.pause();
-        if (outgoing !== null) {
-          drop(outgoing);
-          outgoing = null;
-        }
-      }
+      musicWanted = shouldPlay;
+      applyPlayback();
     },
 
     setMusicVolume(volume: number): void {
@@ -261,12 +283,36 @@ export function createAudioController(): AudioController {
       const el = new Audio(url);
       el.volume = sfxVolume;
       startup = el;
+      // Music (and ambience) waits for the jingle to finish, so hold it here and release it below. Not
+      // just at startup: if a track had already begun — the seeds can land first — this stops it, which
+      // at that point is a barely-started fade-in, not an audible cut.
+      jinglePlaying = true;
+      applyPlayback();
+      let watchdog = 0;
+      const release = (): void => {
+        if (startup !== el) return; // superseded — whoever replaced it owns the gate now
+        if (watchdog !== 0) window.clearTimeout(watchdog);
+        startup = null;
+        jinglePlaying = false;
+        applyPlayback();
+      };
+      el.addEventListener('ended', release);
+      el.addEventListener('error', release);
+      // `ended` can never come (the output device disappears mid-play), and music that never returns is
+      // far worse than music that returns early — so the gate also opens on its own.
+      el.addEventListener('loadedmetadata', () => {
+        if (startup !== el || !Number.isFinite(el.duration)) return;
+        if (watchdog !== 0) window.clearTimeout(watchdog);
+        watchdog = window.setTimeout(release, el.duration * 1000 + JINGLE_GRACE_MS);
+      });
+      watchdog = window.setTimeout(release, JINGLE_MAX_MS);
       // The volumes seed arrives over IPC and may land AFTER this, hence startup being kept around for
       // setSfxVolume below — the jingle follows the SFX slider like every other one-shot.
       try {
         await el.play();
       } catch {
-        // Playback refused (no output device, an autoplay policy): boot on in silence.
+        // Playback refused (no output device, an autoplay policy): boot on in silence, music included.
+        release();
       }
     },
     setSfxVolume(volume: number): void {
