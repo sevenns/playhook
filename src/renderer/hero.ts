@@ -45,6 +45,13 @@ export interface HeroController {
   /** Parallax offset in DESIGN px: the background drifts with the carousel (see #hero in styles.css). */
   setParallax(designPx: number): void;
   /**
+   * Whether a direction is being HELD, i.e. the strip is flipping on its own. While it is, the image on
+   * screen stays exactly where it is — whatever heroes arrive meanwhile are remembered, not painted —
+   * and the last one lands as soon as the key/stick is let go. Interruptible: the request that arrives
+   * during the hold is the one that gets shown.
+   */
+  setFlipping(flipping: boolean): void;
+  /**
    * The COMPUTED transform (a matrix) of the layer currently on screen — its bg-pan caught mid-drift.
    * The boot backdrop converges on it as it dissolves, so the handover has no offset to give away; see
    * the boot reveal in app.ts.
@@ -138,6 +145,10 @@ export function createHeroController(deps: HeroDeps): HeroController {
   let desiredPaint: (() => void) | null = null;
   let swapTimer: number | null = null;
   let lastSwapAt = Number.NEGATIVE_INFINITY;
+  // A direction is being held (controls.ts tells us). SETTLE_MS alone almost covers this — the repeat is
+  // faster than it — but "almost" depends on the OS keyboard repeat rate, which is the user's setting,
+  // not ours. The held state says it outright: no swap at all until the flip stops.
+  let flipping = false;
 
   /**
    * Asks for an image (and the palette that goes with it). The swap is deferred twice over: until the
@@ -156,14 +167,33 @@ export function createHeroController(deps: HeroDeps): HeroController {
     desiredUrl = url;
     desiredPaint = paintPalette;
     // The session's FIRST image has nothing to cross-fade with and nobody waiting to see it settle.
-    if (shownUrl === null && swapTimer === null) runSwap();
+    if (shownUrl === null && swapTimer === null && !flipping) runSwap();
     else armSwap();
   }
 
   function armSwap(): void {
-    if (swapTimer !== null) window.clearTimeout(swapTimer);
+    if (swapTimer !== null) {
+      window.clearTimeout(swapTimer);
+      swapTimer = null;
+    }
+    // Held: the swap is re-armed by setFlipping when the direction is released, with whatever the last
+    // request turned out to be.
+    if (flipping) return;
     const waitForFade = lastSwapAt + CROSSFADE_MS - performance.now();
     swapTimer = window.setTimeout(runSwap, Math.max(SETTLE_MS, waitForFade));
+  }
+
+  function setFlipping(next: boolean): void {
+    if (flipping === next) return;
+    flipping = next;
+    if (flipping) {
+      if (swapTimer !== null) {
+        window.clearTimeout(swapTimer);
+        swapTimer = null;
+      }
+      return;
+    }
+    if (desiredUrl !== shownUrl) armSwap();
   }
 
   function runSwap(): void {
@@ -327,6 +357,7 @@ export function createHeroController(deps: HeroDeps): HeroController {
     showWallpaperBackdrop,
     setWallpaper,
     setParallax,
+    setFlipping,
     currentLayerTransform,
   };
 }

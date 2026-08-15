@@ -25,6 +25,9 @@ export interface GamepadHandlers {
   readonly onA: () => void;
   readonly onB: () => void;
   readonly onY: () => void;
+  /** Every direction has just gone up — the edge, fired once, not on every idle frame. What ends a hold
+   *  for consumers that treat holding as a state rather than as a stream of presses. */
+  readonly onDirectionsReleased: () => void;
 }
 
 const BTN = { a: 0, b: 1, y: 3, dpadUp: 12, dpadDown: 13, dpadLeft: 14, dpadRight: 15 } as const;
@@ -164,6 +167,12 @@ export function createGamepadController(handlers: GamepadHandlers): GamepadContr
       heldSince.right = 0;
       heldSince.up = 0;
       heldSince.down = 0;
+    }
+
+    // The release edge, reported whether or not we are acting on input: a pause must not leave a consumer
+    // believing a direction is still held (the launcher is backgrounded — nothing is being flipped).
+    if ((prev.left || prev.right || prev.up || prev.down) && !(left || right || up || down)) {
+      handlers.onDirectionsReleased();
     }
 
     prev.left = left;

@@ -99,6 +99,7 @@ const controls = createControls({
   audio,
   getTranslator,
   settings: settingsScreen,
+  onFlipping: (flipping) => hero.setFlipping(flipping),
   // Read lazily: the carousel is created below (it needs `controls` for its own callbacks), so the seam
   // is a set of thunks rather than the object itself.
   carousel: {

@@ -56,6 +56,11 @@ export interface ControlsDeps {
   carousel: CarouselNav;
   /** The Settings screen — the FOURTH surface, between the popup and the carousel (see navLeft…). */
   settings: SettingsNav;
+  /**
+   * A direction is being HELD, i.e. the strip is flipping on its own (true), or it has just been let go
+   * (false). The background subsystem holds its image for the duration — see hero.setFlipping.
+   */
+  onFlipping(flipping: boolean): void;
 }
 
 /**
@@ -980,8 +985,36 @@ export function createControls(deps: ControlsDeps): Controls {
    *  Y has handed the focus to the bar (then left/right/A belong to More, like on any other screen). */
   const stripActive = (): boolean => onCarousel() && !carouselBarFocus;
 
+  // ── Held directions ────────────────────────────────────────────────────────
+  // A repeat press means a direction is being held. It ends on an explicit release — the pad reports one
+  // (onDirectionsReleased), the keyboard has keyup — but neither is guaranteed to arrive: the window can
+  // lose focus mid-hold and swallow the keyup, and a pad can be unplugged. So a watchdog closes it too,
+  // renewed on every repeat; at the repeat cadence (NAV_REPEAT_MS) this silence can only mean a stop.
+  const FLIP_WATCHDOG_MS = 400;
+  let flipping = false;
+  let flipWatchdog = 0;
+
+  function noteFlip(): void {
+    if (flipWatchdog !== 0) window.clearTimeout(flipWatchdog);
+    flipWatchdog = window.setTimeout(endFlip, FLIP_WATCHDOG_MS);
+    if (flipping) return;
+    flipping = true;
+    deps.onFlipping(true);
+  }
+
+  function endFlip(): void {
+    if (flipWatchdog !== 0) {
+      window.clearTimeout(flipWatchdog);
+      flipWatchdog = 0;
+    }
+    if (!flipping) return;
+    flipping = false;
+    deps.onFlipping(false);
+  }
+
   function navLeft(repeat = false): void {
     noteGamepadActivity();
+    if (repeat) noteFlip();
     // Left is "out" of a popup, the same step B takes: the stacks live on the right edge of the screen,
     // so moving left off them means leaving — the reading the layout already suggests on the carousel
     // (where left walks from the More button back to the strip). Sub-views step up one level rather than
@@ -1012,6 +1045,7 @@ export function createControls(deps: ControlsDeps): Controls {
   }
   function navRight(repeat = false): void {
     noteGamepadActivity();
+    if (repeat) noteFlip();
     // Same early branch as navLeft — `repeat` is irrelevant here: a held right is exactly what a slider
     // wants, one step per repeat, and the screen has no "at the end, hand the focus over" rule.
     if (popupView === 'none' && deps.settings.isOpen()) {
@@ -1034,6 +1068,7 @@ export function createControls(deps: ControlsDeps): Controls {
   // stacks are short and cyclic — repeating there would spin them — so a repeat is dropped anywhere else.
   function navUp(repeat = false): void {
     noteGamepadActivity();
+    if (repeat) noteFlip();
     if (popupView !== 'none') {
       if (!repeat) moveStackFocus(-1);
       return;
@@ -1050,6 +1085,7 @@ export function createControls(deps: ControlsDeps): Controls {
   }
   function navDown(repeat = false): void {
     noteGamepadActivity();
+    if (repeat) noteFlip();
     if (popupView !== 'none') {
       if (!repeat) moveStackFocus(1);
       return;
@@ -1169,6 +1205,7 @@ export function createControls(deps: ControlsDeps): Controls {
     onA: navActivate,
     onB: navBack,
     onY: navToggleBar,
+    onDirectionsReleased: endFlip,
   });
 
   // Keyboard navigation (Desktop Mode / no gamepad): WASD + arrows move, Space/Enter activate, Tab/Backspace
@@ -1213,6 +1250,11 @@ export function createControls(deps: ControlsDeps): Controls {
       lastKeyRepeatAt = now;
     }
     handler(event.repeat);
+  });
+  // The keyboard's half of "the hold is over". A keyup can be missed (the window loses focus mid-hold and
+  // the release goes to whoever took it), which is what the watchdog in noteFlip covers.
+  window.addEventListener('keyup', (event) => {
+    if (REPEATABLE_KEYS.has(event.key.toLowerCase())) endFlip();
   });
 
   function applyGameButtons(): void {
