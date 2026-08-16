@@ -1978,6 +1978,35 @@ html:not(.cursor-hidden) .setting-row[data-kind='update-status']:hover {
   transform: none;
 }
 
+/* …and its options arrive behind it exactly as the popup stack's items do: the column slides in as a
+   whole, the entries follow one after another, BOTTOM-UP. Same reasoning as there — this list is pinned
+   to the bottom and opens with the bottom entry focused, so the item the user is already looking at is
+   the one that arrives first. Both dropdowns (Settings and Customize) share these classes, so this is
+   one rule for both. The buttons are rebuilt on every level of a nested menu, which is what replays it
+   when you step into a submenu. */
+.settings-options.is-open .settings-option {
+  animation: popup-item-in 0.3s cubic-bezier(0.2, 0, 0.2, 1) both;
+  animation-delay: calc(0.12s + var(--pop, 0) * 45ms);
+}
+.settings-options.is-open .settings-option:nth-last-child(2) {
+  --pop: 1;
+}
+.settings-options.is-open .settings-option:nth-last-child(3) {
+  --pop: 2;
+}
+.settings-options.is-open .settings-option:nth-last-child(4) {
+  --pop: 3;
+}
+.settings-options.is-open .settings-option:nth-last-child(5) {
+  --pop: 4;
+}
+.settings-options.is-open .settings-option:nth-last-child(6) {
+  --pop: 5;
+}
+.settings-options.is-open .settings-option:nth-last-child(n + 7) {
+  --pop: 6;
+}
+
 /* An option IS a .text-button, down to the focus inversion — only the alignment differs (a long label
    grows left, like every popup stack item). */
 .settings-option {
