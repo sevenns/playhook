@@ -313,6 +313,7 @@ async function bootstrap(): Promise<void> {
     getTranslator,
     toManifestPcSavePath: (absolute) => platform.savePathResolver.toManifestPcSavePath(absolute),
     findGameSource: (id) => controller.findGameSource(id),
+    notify: (input) => notifications.notify(input),
   });
   gameConfig.init();
 

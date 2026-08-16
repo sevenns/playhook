@@ -1044,9 +1044,13 @@ html:not(.cursor-hidden) .rect-button:hover,
 }
 
 /* Top content — inset 100 from the column top. Only the active view's block shows; each is a column
-   with a gap (info stats / confirm question+note / error title+detail). */
+   with a gap (info stats / confirm question+note / error title+detail).
+   `flex: 0 0 auto` states what it already was and now has to defend: the stats are the one thing in this
+   column that must never be squeezed or scrolled away — the action stack below takes whatever is left
+   and scrolls inside itself instead (see .popup-actions). */
 .popup-content {
   margin-top: calc(100 * var(--px));
+  flex: 0 0 auto;
 }
 .popup-content > * {
   display: none;
@@ -1201,13 +1205,16 @@ html:not(.cursor-hidden) .rect-button:hover,
 
 /* Deleting a game from its manifest: the detail carries the one thing the question does not — the game's
    files (and, for a local game, its save backups) are not going anywhere. */
-#popup[data-view='confirm'][data-mode='delete-game'] .popup-confirm .popup-detail {
+#popup[data-view='confirm'][data-mode='delete-game'] .popup-confirm .popup-detail,
+#popup[data-view='confirm'][data-mode='delete-game-history'] .popup-confirm .popup-detail {
   display: block;
 }
-#popup[data-mode='delete-game'] .note-installer {
+#popup[data-mode='delete-game'] .note-installer,
+#popup[data-mode='delete-game-history'] .note-installer {
   display: none;
 }
-#popup[data-mode='delete-game'] .note-delete {
+#popup[data-mode='delete-game'] .note-delete,
+#popup[data-mode='delete-game-history'] .note-delete {
   display: inline;
 }
 #popup[data-install-via='copy'] .note-installer {
@@ -1240,10 +1247,18 @@ html:not(.cursor-hidden) .rect-button:hover,
 /* A flex column (not a plain block): the active group must be a flex ITEM so a too-long one (the game
    list) can be constrained by the column and scroll internally. `min-height:0` lets this box shrink below
    its content height; without it — or as a block — the list overflows visibly past the column. */
+/* The lower half of the column: everything the top content leaves. It FILLS that space rather than
+   hugging its items (`flex: 1 1 auto`) and pushes them to the bottom from the inside — the anchoring
+   `margin-top: auto` used to do, now that there is space to be anchored within. The point of the change
+   is the overflow: with the box hugging its items, a stack too tall for the screen simply ran off it,
+   taking the stats with it (the column has no scroll of its own, so the focus ring's scrollIntoView
+   moved the whole APP instead). Now the group inside is what shrinks and scrolls. */
 .popup-actions {
   margin-top: auto;
   display: flex;
   flex-direction: column;
+  justify-content: flex-end;
+  flex: 1 1 auto;
   min-height: 0;
 }
 
@@ -1265,6 +1280,38 @@ html:not(.cursor-hidden) .rect-button:hover,
 #popup[data-view='confirm'] .actions-group[data-group='confirm'],
 #popup[data-view='error'] .actions-group[data-group='error'] {
   display: flex;
+}
+
+/* The Details stack scrolls when it is too tall for what the stats leave — the same arrangement the
+   notification list uses, and for the same reason: `min-height: 0` so the flex item may shrink below its
+   content, `flex: 0 1 auto` (the default) so a short stack still sits at the bottom rather than stretching,
+   and the edge fades so an item cut by the clip is faded instead of sliced. The scrolling is driven by the
+   shared scroller (screen-scroller.ts), which also keeps these two variables current. */
+.actions-group[data-group='details'] {
+  min-height: 0;
+  overflow-y: auto;
+  /* Hidden like every other scrolling surface here — the focus ring IS the position indicator. */
+  scrollbar-width: none;
+  --fade-top: 0px;
+  --fade-bottom: 0px;
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 var(--fade-top),
+    #000 calc(100% - var(--fade-bottom)),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 var(--fade-top),
+    #000 calc(100% - var(--fade-bottom)),
+    transparent 100%
+  );
+}
+
+.actions-group[data-group='details']::-webkit-scrollbar {
+  display: none;
 }
 
 /* ── TextButton — textual sibling of .rect-button ───────────────────────────

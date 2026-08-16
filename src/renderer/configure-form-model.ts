@@ -667,6 +667,38 @@ export function textToGames(text: string): ParseGamesResult {
   return { ok: false, message: 'game.json must be a game object or a non-empty array of games' };
 }
 
+export type NewGameSlotsResult =
+  | {
+      readonly ok: true;
+      readonly slots: readonly GameFormState[];
+      /** Where the new game sits — always last, so the neighbours keep the indices they were read at. */
+      readonly index: number;
+    }
+  | { readonly ok: false; readonly message: string };
+
+/**
+ * The slot list a screen ADDING a game starts from: everything the root already carries, plus one blank
+ * slot at the end for the game being written. `text` is null when the root has no game.json at all (a
+ * blank card, a PC library with no local game yet) — the normal case here, and the reason this cannot
+ * simply be `textToGames`, which rejects an empty games array.
+ *
+ * The new game is a real slot rather than a special case beside the list on purpose: `slotIndex` is what
+ * the validator's `games.<i>.<field>` paths are matched against, so a game held outside the list would
+ * have its own problems reported as somebody else's — and Save would go green on an empty form.
+ */
+export function slotsWithNewGame(text: string | null, launchMode: LaunchMode): NewGameSlotsResult {
+  const blank: GameFormState = { model: emptyFormModel(launchMode), rest: {}, corrupt: {} };
+  if (text === null || text.trim() === '') return { ok: true, slots: [blank], index: 0 };
+  const parsed = textToGames(text);
+  if (!parsed.ok) return { ok: false, message: parsed.message };
+  const existing: GameFormState[] = parsed.games.map((game, index) =>
+    game.ok
+      ? { model: game.model, rest: game.rest, corrupt: game.corrupt }
+      : { raw: parsed.values[index] },
+  );
+  return { ok: true, slots: [...existing, blank], index: existing.length };
+}
+
 /**
  * Serializes a LIST of game form states back to manifest TEXT: exactly one game → a single object (legacy
  * shape, maximal backwards compatibility), more than one → an array (see the plan, decision 2).

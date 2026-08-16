@@ -880,7 +880,15 @@ export class GameController {
       }
     } else if (!this.cardPresent) {
       await this.reseedBrowse();
+    } else if (this.browseIsStale()) {
+      // A card is in, so neither branch above applies — but a LOCAL game may have just been deleted from
+      // the manifest, and it may be the very one on screen. The cursor would go on claiming that game is
+      // available, and the Details menu is built from exactly that claim: Customize would still be
+      // offered for a game the file no longer has, while "Remove from history" — the item that game now
+      // needs — would stay missing until the user left the screen and came back.
+      await this.reseedBrowse();
     }
+    this.dropStateIfGameGone();
 
     // Same background copy a card gets: the artwork already lives in the library root, but the history is
     // what the carousel draws from, and it is also what keeps a local game's card on screen after the
@@ -2444,6 +2452,40 @@ export class GameController {
   private async wallpaperHero(): Promise<HeroAssets | null> {
     const wallpaper = await this.assets.readWallpaperDataUrl();
     return wallpaper === null ? null : { images: [wallpaper] };
+  }
+
+  /**
+   * Lets go of a `ready` state whose game this read no longer carries and which nothing can replace.
+   *
+   * `ready` is not merely a phase: it NAMES a GameInfo. Play launches that GameInfo, and the Details menu
+   * falls back to it whenever there is no game on screen at all (see screenGame in controls.ts) — so a
+   * state left pointing at a deleted game keeps offering "Install" for it, and Play would try to launch
+   * it. The retarget in reloadPcLibrary handles the ordinary case by moving the state onto another game;
+   * it cannot help with the case that leaves the ghost behind — deleting the LAST game, where there is no
+   * other game to move onto. Then the honest state is `idle`: the launcher is about nothing.
+   */
+  private dropStateIfGameGone(): void {
+    const snapshot = this.deps.state.get();
+    if (snapshot.kind !== 'ready') return;
+    if (this.games.some((manifest) => manifest.raw.id === snapshot.game.id)) return;
+    if (this.current() !== null) return; // there IS something to be about — the retarget names it
+    this.selectedId = null;
+    this.setHero(null);
+    this.setCardMusic(null);
+    this.steamWatch.stop();
+    this.deps.state.set({ kind: 'idle' });
+  }
+
+  /**
+   * Whether the browse cursor's `active` flag has stopped matching reality — the game on screen is named
+   * as available while it is no longer in any manifest, or the other way round. It is the one field of
+   * BrowseInfo that a reload can invalidate WITHOUT moving the cursor, and the renderer decides what the
+   * Details menu offers by it.
+   */
+  private browseIsStale(): boolean {
+    const browse = this.currentBrowse;
+    if (browse === null) return false;
+    return browse.active !== this.games.some((manifest) => manifest.raw.id === browse.id);
   }
 
   /**

@@ -18,8 +18,10 @@ import type {
   AutoUpdateMode,
   BrowseInfo,
   ConfigPickResult,
+  ConfigRootReadResult,
   ConfigSaveResult,
   ConfigValidationResult,
+  DriveCandidate,
   GameConfigAcceptRequest,
   GameConfigListDirRequest,
   GameConfigReadResult,
@@ -105,6 +107,8 @@ const CHANNELS = {
   gameConfigImagePreview: 'gameConfig:image-preview',
   gameConfigAcceptPath: 'gameConfig:accept-path',
   gameConfigListDir: 'gameConfig:list-dir',
+  gameConfigSources: 'gameConfig:sources',
+  gameConfigReadRoot: 'gameConfig:read-root',
   clipboardRead: 'clipboard:read',
   // Notifications — the inbox lives in main; these are its two surfaces in the renderer.
   notificationsUpdate: 'notifications:update',
@@ -354,6 +358,12 @@ const api: RendererApi = {
   },
   listGameConfigDir(request: GameConfigListDirRequest): Promise<ListDirResult> {
     return ipcRenderer.invoke(CHANNELS.gameConfigListDir, request) as Promise<ListDirResult>;
+  },
+  listGameConfigSources(): Promise<readonly DriveCandidate[]> {
+    return ipcRenderer.invoke(CHANNELS.gameConfigSources) as Promise<readonly DriveCandidate[]>;
+  },
+  readGameConfigRoot(root: string): Promise<ConfigRootReadResult> {
+    return ipcRenderer.invoke(CHANNELS.gameConfigReadRoot, root) as Promise<ConfigRootReadResult>;
   },
   readClipboard(): Promise<string> {
     return ipcRenderer.invoke(CHANNELS.clipboardRead) as Promise<string>;

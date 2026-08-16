@@ -23,8 +23,10 @@ import type {
   SfxName,
   ConfigPickKind,
   ConfigPickResult,
+  ConfigRootReadResult,
   ConfigSaveResult,
   ConfigValidationResult,
+  DriveCandidate,
   GameConfigReadResult,
   GameConfigSaveRequest,
   ManifestSource,
@@ -41,6 +43,7 @@ import {
   emptyFormModel,
   gamesToText,
   isRawSlot,
+  slotsWithNewGame,
   textToGames,
   type GameFormState,
   type InstallType,
@@ -49,7 +52,9 @@ import {
 } from './configure-form-model.js';
 import {
   buildGameSettingsModel,
+  carryFormAcrossSources,
   defaultLaunchMode,
+  hasSourceBoundValues,
   pickKindFor,
   withInstallType,
   withLaunchMode,
@@ -82,10 +87,28 @@ export interface GameSettingsScreenApi {
   validate(root: string, text: string): Promise<ConfigValidationResult>;
   save(request: GameConfigSaveRequest): Promise<ConfigSaveResult>;
   imagePreview(root: string, path: string): Promise<string | null>;
+  /** Where a new game may be added — the cards plus the PC library (add mode only). */
+  sources(): Promise<readonly DriveCandidate[]>;
+  /** One root's manifest, for adding a game to it — it may carry no game yet (add mode only). */
+  readRoot(root: string): Promise<ConfigRootReadResult>;
+  /**
+   * Drops the game's HISTORY record — its card in the carousel and the artwork copied to this PC. Only
+   * ever sent after the game has left the manifest: main refuses to forget a game that is available.
+   */
+  forgetHistory(id: string): void;
 }
 
-/** The three questions this screen asks through the launcher's shared confirm popup. */
-export type GameSettingsConfirm = 'reset' | 'delete' | 'discard';
+/**
+ * The questions this screen asks through the launcher's shared confirm popup. Deleting is TWO of them:
+ * `delete` removes the game from the manifest and leaves its card in the history, `delete-history` takes
+ * the card too. Which one arrives back is the user's answer to the second question — see controls.ts.
+ */
+export type GameSettingsConfirm =
+  | 'reset'
+  | 'delete'
+  | 'delete-history'
+  | 'discard'
+  | 'switch-source';
 
 /** A surface that opens ON TOP of the screen and hands a value back when it is done. */
 export interface TextEntrySurface extends NavSurface {
@@ -123,11 +146,15 @@ export interface GameSettingsScreenDeps {
   onConfirmRequested(kind: GameSettingsConfirm): void;
   /** Whether the game is running / installing / being force-closed — Delete is hidden then (Р3). */
   isBusy(): boolean;
+  /** A game was added AND applied: the launcher's library has it now, so the carousel goes to it. */
+  onAdded(id: string): void;
 }
 
 export interface GameSettingsScreen extends NavSurface {
   /** Opens the screen for one game, reading its manifest. */
   open(id: string): void;
+  /** Opens the same screen with no game behind it — the form CREATES one (see `mode`). */
+  openNew(): void;
   close(): void;
   /** browse:update arrived: the screen closes when its game is gone or no longer playable (Р6.2). */
   applyBrowse(browse: BrowseInfo | null): void;
@@ -181,6 +208,23 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
 
   let open = false;
   let gameId = '';
+  /**
+   * What this visit is doing: editing the game named by `gameId`, or creating one. It decides the
+   * heading, the Save wording, which actions the column offers, and — in a dozen small places below —
+   * which half of a branch runs. Explicit, because "no gameId" is true of a screen that is still loading.
+   */
+  let mode: 'edit' | 'add' = 'edit';
+  /** Where a new game may go. Loaded once per add visit; empty in edit mode. */
+  let sources: readonly DriveCandidate[] = [];
+  /** The root a pending "switch the source?" confirm is about — applied when the answer comes back. */
+  let pendingSource: string | null = null;
+  /**
+   * The root an adoptRoot is currently reading, and the guard that keeps a late answer from overwriting a
+   * newer one. Stepping the source row with the D-pad can start a second read before the first lands, and
+   * the two would otherwise race — the slower one wins and the form ends up describing another root.
+   */
+  let adoptingRoot: string | null = null;
+  let adoptToken = 0;
   // Where the manifest came from, and the media signature it was read against (the swap guard, Р6.2).
   let origin: {
     readonly root: string;
@@ -283,9 +327,18 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     return otherIssues.every((issue) => baselineOtherIssues.has(issue));
   }
 
+  /** The source row's options: one per candidate root, labelled the way the picker labels them. */
+  function sourceOptions(): readonly CoreOption[] {
+    return sources.map((candidate) => ({ value: candidate.root, label: candidate.label }));
+  }
+
   function currentModel(): GameSettingsModel | null {
     if (origin === null) return null;
+    const at = origin.root;
     return buildGameSettingsModel(form, {
+      mode,
+      sources: mode === 'add' ? sourceOptions() : [],
+      sourceLabel: sources.find((candidate) => candidate.root === at)?.label ?? null,
       source: origin.source,
       windows: origin.windows,
       root: origin.root,
@@ -296,7 +349,9 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       status,
       canSave: canSave(),
       dirty: dirty(),
-      canDelete: canDelete(),
+      // A game that does not exist yet cannot be deleted — and for the PC library canDelete() says yes
+      // to anything, so without this the column would offer "Delete game" on the Add screen.
+      canDelete: mode === 'edit' && canDelete(),
     });
   }
 
@@ -488,7 +543,11 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     // patching it against the new section's values would write them into the old section's rows.
     flushPreview();
     const next = currentModel();
-    headingEl.textContent = screenHeading(next, t());
+    headingEl.textContent = screenHeading(
+      next,
+      t(),
+      mode === 'add' ? 'gameSettings.addTitle' : undefined,
+    );
     // Source first, then the game — it reads as a location and its contents ("E:\ · Hades"). The
     // parentheses went with the swap: a parenthetical is an aside, and an aside cannot come first.
     sourceEl.textContent = next === null ? '' : `${rowLabelText(next.source, t())} ·`;
@@ -902,11 +961,46 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   }
 
   function setSelect(id: GameRowId, value: string): void {
+    if (id === 'source') {
+      requestSource(value);
+      return;
+    }
     if (id === 'launchMode') {
       updateForm(withLaunchMode(form, value as LaunchMode));
       return;
     }
     if (id === 'install.type') updateForm(withInstallType(form, value as InstallType));
+  }
+
+  /**
+   * Steps the source row by `delta`, wrapping like every other select. Measured from the root being
+   * ADOPTED when a read is still in flight, so a quick second press moves on rather than re-asking for
+   * the same neighbour. A step that would cost something still raises the confirm — and the popup takes
+   * the input while it is up, so a HELD direction cannot stack a queue of questions behind it.
+   */
+  function cycleSource(delta: number): void {
+    if (sources.length === 0) return;
+    const current = adoptingRoot ?? origin?.root ?? '';
+    const at = sources.findIndex((candidate) => candidate.root === current);
+    const next = sources[wrapIndex(at === -1 ? 0 : at, delta, sources.length)];
+    if (next === undefined || next.root === current) return;
+    deps.audio.play('navigate');
+    requestSource(next.root);
+  }
+
+  /**
+   * Moves the new game to another root, asking first only when the move would COST something: the paths
+   * and the install block are read against a root, so they cannot travel with it (see
+   * carryFormAcrossSources). With nothing but a name typed there is nothing to warn about.
+   */
+  function requestSource(root: string): void {
+    if (root === (adoptingRoot ?? origin?.root)) return;
+    if (hasSourceBoundValues(form)) {
+      pendingSource = root;
+      deps.onConfirmRequested('switch-source');
+      return;
+    }
+    void adoptRoot(root);
   }
 
   /** The title's slug, in the same shape configure-form-model's slugifyId produces. */
@@ -942,6 +1036,13 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   }
 
   function cycleSelect(row: Extract<GameSettingsRow, { kind: 'select' }>, delta: number): void {
+    // The source steps through the CANDIDATES, not through the row's own value: a step starts a root read,
+    // and until it lands the row still shows the previous root — so stepping again would keep landing on
+    // the same neighbour instead of walking down the list.
+    if (row.id === 'source') {
+      cycleSource(delta);
+      return;
+    }
     if (row.options.length === 0) return;
     const current = row.options.findIndex((option) => option.value === row.value);
     const next = wrapIndex(current === -1 ? 0 : current, delta, row.options.length);
@@ -1295,6 +1396,74 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     baselineOtherIssues = new Set(otherIssues);
   }
 
+  /**
+   * Add mode's counterpart of `load`: the roots a game may be added to, and then the one it starts on —
+   * the active card if a card is inserted, this PC otherwise. The card is where the user's attention
+   * already is (they just plugged it in); the library is the one root that is always there.
+   */
+  async function loadSources(): Promise<void> {
+    const list = await deps.api.sources();
+    if (!open || mode !== 'add') return; // closed (or reopened for a game) while main was listing
+    sources = list;
+    const card = list.find((candidate) => candidate.kind === 'card' && candidate.isActive);
+    const first = card ?? list.find((candidate) => candidate.kind === 'pc') ?? list[0];
+    if (first === undefined) {
+      setStatus(t()('errors.driveUnavailable'));
+      return;
+    }
+    await adoptRoot(first.root);
+  }
+
+  /**
+   * Points the add form at one root: reads what that root already carries, appends the new game as a slot
+   * of its own (see slotsWithNewGame) and re-validates. On a SWITCH the half-filled form travels with it,
+   * minus everything that was measured against the old root.
+   */
+  async function adoptRoot(root: string): Promise<void> {
+    const carried = origin === null ? null : form;
+    const token = ++adoptToken;
+    adoptingRoot = root;
+    setStatus(null);
+    const result = await deps.api.readRoot(root);
+    // A newer step already asked for another root — this answer describes a place the user has left.
+    if (!open || mode !== 'add' || token !== adoptToken) return;
+    adoptingRoot = null;
+    if (!result.ok) {
+      setStatus(result.message);
+      return;
+    }
+    origin = {
+      root: result.root,
+      source: result.source,
+      signature: result.signature,
+      windows: result.windows,
+    };
+    const blankMode = defaultLaunchMode(result.source);
+    const parsed = slotsWithNewGame(result.hasManifest ? result.text : null, blankMode);
+    if (!parsed.ok) {
+      unreadable = parsed.message;
+      render();
+      return;
+    }
+    slots = [...parsed.slots];
+    slotIndex = parsed.index;
+    form =
+      carried === null ? emptyFormModel(blankMode) : carryFormAcrossSources(carried, result.source);
+    rest = {};
+    corrupt = {};
+    mixed = false;
+    loadedId = '';
+    unreadable = null;
+    // Exactly as in edit mode: the baseline is the file as the screen would write it RIGHT NOW, so
+    // `dirty` means "the user typed something" rather than "the screen appended an empty game".
+    baseline = currentText();
+    focusIndex = 0;
+    model = null;
+    render();
+    await runValidate();
+    baselineOtherIssues = new Set(otherIssues);
+  }
+
   /** Parses a whole file into slots and picks OURS out by id. */
   function adoptText(text: string): void {
     baseline = text;
@@ -1350,11 +1519,73 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   }
 
   /**
+   * The Add button. The write is the same one Save makes — the difference is what happens after it, and
+   * that follows what main could DO with the file:
+   *
+   *  • `applied` — the manifest was re-read, so the game exists in the library now: leave the screen and
+   *    take the carousel to it;
+   *  • `deferred` — it went to a card that is not the active one, so there is nothing to go to. The
+   *    screen still closes (keeping the user on a form about a finished job says nothing), and main
+   *    posts the notification that says where the game went;
+   *  • `failed` — written, but the reload was refused. That is an error to read, so the screen stays.
+   */
+  async function runAdd(): Promise<void> {
+    const at = origin;
+    if (at === null || !canSave()) return;
+    const text = currentText();
+    const addedId = form.id;
+    setStatus(t()('gameSettings.saving'));
+    const result = await deps.api.save({ root: at.root, signature: at.signature, text });
+    if (!result.saved) {
+      setStatus(result.message);
+      return;
+    }
+    baseline = text;
+    if (result.applied === 'failed') {
+      setStatus(result.message ?? t()('gameSettings.savedNotApplied'));
+      await resyncAfterWrite(at.root, addedId);
+      return;
+    }
+    close();
+    if (result.applied === 'applied') deps.onAdded(addedId);
+  }
+
+  /**
+   * Re-reads the root after a write the launcher could not apply, so a second Add is possible at all: the
+   * root's signature carries the new id now, and the swap guard would refuse a retry against the one the
+   * screen opened with. The game that was just written comes back with the others and is dropped from
+   * them — it is the slot the form is still editing, and keeping both would write it twice.
+   */
+  async function resyncAfterWrite(root: string, writtenId: string): Promise<void> {
+    const token = ++adoptToken;
+    const result = await deps.api.readRoot(root);
+    // The same guard adoptRoot uses: the user may have moved the game to another root meanwhile, and
+    // this answer is about the one they left.
+    if (!open || mode !== 'add' || token !== adoptToken || !result.ok) return;
+    const parsed = slotsWithNewGame(result.hasManifest ? result.text : null, form.launchMode);
+    if (!parsed.ok) return;
+    const others = parsed.slots.filter(
+      (slot, index) => index !== parsed.index && (isRawSlot(slot) || slot.model.id !== writtenId),
+    );
+    origin = {
+      root: result.root,
+      source: result.source,
+      signature: result.signature,
+      windows: result.windows,
+    };
+    slots = [...others, { model: form, rest, corrupt }];
+    slotIndex = others.length;
+    baseline = currentText();
+    render();
+    await runValidate();
+  }
+
+  /**
    * Deleting is IMMEDIATE, unlike the old window's "remove the slot and save later": a confirmed deletion
    * that leaves the game on screen until some later Save reads as a bug. The slot is cut from the text as
    * READ, so unsaved edits are discarded with it — which the confirm says out loud.
    */
-  async function runDelete(): Promise<void> {
+  async function runDelete(forgetHistory: boolean): Promise<void> {
     const at = origin;
     if (at === null || slotIndex < 0) return;
     const remaining = slots.filter((_, index) => index !== slotIndex);
@@ -1365,6 +1596,9 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       return;
     }
     baseline = text;
+    // Only now: main refuses to forget a game it can still see in a manifest, and the save resolves once
+    // that manifest has been re-read — so this is the first moment the request can be honoured.
+    if (forgetHistory) deps.api.forgetHistory(gameId);
     close();
   }
 
@@ -1508,13 +1742,18 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     switch (id) {
       case 'save':
         deps.audio.play('button');
-        void runSave();
+        if (mode === 'add') void runAdd();
+        else void runSave();
         return;
       case 'reset':
+        // Neither action exists in add mode's column — but the column is not the only way in (a stale
+        // model, a click), and both would act on a game that does not exist.
+        if (mode === 'add') return;
         deps.audio.play('button');
         deps.onConfirmRequested('reset');
         return;
       case 'delete':
+        if (mode === 'add') return;
         deps.audio.play('button');
         deps.onConfirmRequested('delete');
         return;
@@ -1684,36 +1923,63 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     { passive: true },
   );
 
+  /**
+   * Everything a fresh visit starts from, whichever way the screen was opened. Extracted because
+   * `openNew` must repeat ALL of it — a visit that inherited half the previous one's state is the kind of
+   * bug that only shows up on the second open.
+   */
+  function resetScreenState(): void {
+    open = true;
+    app.dataset['overlay'] = 'game-settings';
+    screen.setAttribute('aria-hidden', 'false');
+    sidebar.reset(); // a re-opened screen starts at the first section, column and pane together
+    sidebar.setFocused(true); // the screen opens on its table of contents, not inside a section
+    sidebar.animateIn();
+    sectionKey = null;
+    paneKey = null;
+    // NOT '': an empty string is a real signature (a column with no entries, a strip with no notes),
+    // and starting a visit on it made the guards claim the screen already showed that. A game left with
+    // "fix the errors first" under it then kept that line for every game opened after — the strip was
+    // empty in the model and empty in the guard, so nothing ever rewrote the DOM.
+    columnSignature = null;
+    statusSignature = null;
+    hover.arm();
+    thumbnails.clear();
+    listScroller.to(0, true);
+    focusIndex = 0;
+    model = null;
+    rendered = [];
+    slots = [];
+    slotIndex = -1;
+    baseline = '';
+    baselineOtherIssues = new Set();
+    sources = [];
+    pendingSource = null;
+    adoptingRoot = null;
+    form = emptyFormModel(defaultLaunchMode('card'));
+  }
+
   return {
     isOpen: () => open,
     open: (id: string) => {
       if (open) return;
-      open = true;
-      app.dataset['overlay'] = 'game-settings';
-      screen.setAttribute('aria-hidden', 'false');
-      sidebar.reset(); // a re-opened screen starts at the first section, column and pane together
-      sidebar.setFocused(true); // the screen opens on its table of contents, not inside a section
-      sidebar.animateIn();
-      sectionKey = null;
-      paneKey = null;
-      // NOT '': an empty string is a real signature (a column with no entries, a strip with no notes),
-      // and starting a visit on it made the guards claim the screen already showed that. A game left with
-      // "fix the errors first" under it then kept that line for every game opened after — the strip was
-      // empty in the model and empty in the guard, so nothing ever rewrote the DOM.
-      columnSignature = null;
-      statusSignature = null;
-      hover.arm();
-      thumbnails.clear();
-      listScroller.to(0, true);
-      focusIndex = 0;
-      model = null;
-      rendered = [];
-      slots = [];
-      slotIndex = -1;
-      baseline = '';
-      baselineOtherIssues = new Set();
-      form = emptyFormModel(defaultLaunchMode('card'));
+      mode = 'edit';
+      resetScreenState();
       void load(id);
+    },
+    openNew: () => {
+      if (open) return;
+      mode = 'add';
+      gameId = '';
+      origin = null;
+      unreadable = null;
+      status = null;
+      issues = new Map();
+      otherIssues = [];
+      ownIssues = false;
+      resetScreenState();
+      render();
+      void loadSources();
     },
     close,
     navUp,
@@ -1745,16 +2011,27 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     },
     applyBrowse: (browse) => {
       if (!open) return;
+      // Add mode has no game of its own, so every browse push would match `gameId === ''` and close the
+      // screen the moment anything at all changed in the carousel.
+      if (mode === 'add') return;
       // The card was pulled, or swapped, or the game stopped being playable: the screen is about a file
       // that is no longer reachable, and everything under it (the carousel, the detail screen) has been
       // rebuilt already. Leaving would be worse than closing, so it closes — see the plan, Р6.2.
       if (browse !== null && browse.id === gameId && browse.active) return;
       close();
     },
+    // Spelled out one kind at a time: a catch-all `else close()` would silently turn any confirm added
+    // later into "leave the screen", and nothing in the types would object.
     confirmAccepted: (kind) => {
       if (kind === 'reset') runReset();
-      else if (kind === 'delete') void runDelete();
-      else close();
+      else if (kind === 'delete') void runDelete(false);
+      else if (kind === 'delete-history') void runDelete(true);
+      else if (kind === 'discard') close();
+      else if (kind === 'switch-source') {
+        const root = pendingSource;
+        pendingSource = null;
+        if (root !== null) void adoptRoot(root);
+      }
     },
     relocalize: () => {
       if (model !== null) {
