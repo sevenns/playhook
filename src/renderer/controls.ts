@@ -410,7 +410,10 @@ export function createControls(deps: ControlsDeps): Controls {
     // a beat later. Recreating the nodes for it would replay the whole staggered entrance under the
     // user's eyes, right after the list appeared; patching in place does not (the same reason the stats
     // panel in app.ts updates its rows rather than rebuilding them).
+    // `length > 0` guards the very first open of an EMPTY inbox: both sides are empty, every() is
+    // vacuously true, and the shortcut would return without ever putting the empty-state line in.
     if (
+      items.length > 0 &&
       notificationButtons.length === items.length &&
       items.every((item, at) => notificationButtons[at]?.dataset['notificationId'] === item.id)
     ) {

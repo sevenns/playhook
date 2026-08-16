@@ -689,6 +689,9 @@ function applyLocale(locale: Locale): void {
   // knows nothing about it. It keeps its focus and scroll position across the swap.
   settingsScreen.relocalize();
   gameSettingsScreen.relocalize();
+  // The notification list is built from JS too, and its text is ASSEMBLED from the kind rather than
+  // stored — which is the whole reason it is not stored: a language change rewrites it in place.
+  controls.applyNotifications();
 }
 window.api.onLanguageUpdate(applyLocale);
 void window.api.getLanguage().then(applyLocale);
