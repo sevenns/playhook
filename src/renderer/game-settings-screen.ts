@@ -186,6 +186,8 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     readonly root: string;
     readonly source: ManifestSource;
     readonly signature: string;
+    /** Read alongside the manifest — main answers it, the renderer never asks the OS itself. */
+    readonly windows: boolean;
   } | null = null;
   // Every game in the file. Ours is `slots[slotIndex]`; the others are only ever carried through.
   let slots: GameFormState[] = [];
@@ -285,6 +287,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     if (origin === null) return null;
     return buildGameSettingsModel(form, {
       source: origin.source,
+      windows: origin.windows,
       root: origin.root,
       loadedId,
       mixed,
@@ -807,7 +810,9 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
         return;
       }
       case 'id':
-        updateForm({ ...form, id: value });
+        // Lower case wherever it comes from, so the field agrees with the slug a title proposes — the
+        // keyboard already refuses to type anything else (osk.ts).
+        updateForm({ ...form, id: value.toLowerCase() });
         return;
       case 'executable':
         updateForm({ ...form, executable: value });
@@ -1275,7 +1280,12 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       render();
       return;
     }
-    origin = { root: result.root, source: result.source, signature: result.signature };
+    origin = {
+      root: result.root,
+      source: result.source,
+      signature: result.signature,
+      windows: result.windows,
+    };
     adoptText(result.text);
     await runValidate();
     baselineOtherIssues = new Set(otherIssues);
@@ -1409,12 +1419,9 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     const target = rendered[focusIndex];
     if (target === undefined) return;
     const row = target.row;
-    if (row.kind === 'toggle') {
-      if (row.disabled === true) return;
-      deps.audio.play('button');
-      toggleField(row.id);
-      return;
-    }
+    // A checkbox is NOT stepped through: left/right belong to the rows that have a range to move along
+    // (the selects, the steppers), and a two-state row answered them by flipping — so a walk across the
+    // form changed a setting on the way past. A checkbox is switched with A, and only with A.
     if (row.kind === 'select') {
       cycleSelect(row, delta);
       return;

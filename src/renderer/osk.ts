@@ -113,8 +113,9 @@ export function createOsk(deps: OskDeps): TextEntrySurface {
 
   function controlRow(): readonly Key[] {
     const keys: Key[] = [];
-    // Shift only where there is a case to shift; the symbol rows and the digits have none.
-    if (mode !== 'number' && layout !== 'symbols') keys.push({ kind: 'shift' });
+    // Shift only where there is a case to shift: the symbol rows and the digits have none, and an id is
+    // lower-case by rule (see `insert`), so offering the key there would be offering a key that lies.
+    if (mode !== 'number' && mode !== 'id' && layout !== 'symbols') keys.push({ kind: 'shift' });
     if (layoutsFor(mode).length > 1) keys.push({ kind: 'layout' });
     if (mode !== 'number') keys.push({ kind: 'space' });
     keys.push({ kind: 'backspace' }, { kind: 'cancel' }, { kind: 'done' });
@@ -207,8 +208,11 @@ export function createOsk(deps: OskDeps): TextEntrySurface {
 
   function insert(text: string): void {
     // `id` is the manifest's own key for this game on disk; a character the schema rejects would only be
-    // reported as an error later, so the keyboard simply does not produce one.
-    const filtered = mode === 'id' ? text.replace(/[^A-Za-z0-9._-]/g, '') : text;
+    // reported as an error later, so the keyboard simply does not produce one. Lower case on top of that:
+    // the id is compared as written wherever this PC remembers the game by it, so two ids differing only
+    // in case are two games — a distinction nobody means to draw. The slug the title proposes is
+    // lower-case already, and this makes typing one by hand agree with it.
+    const filtered = mode === 'id' ? text.toLowerCase().replace(/[^a-z0-9._-]/g, '') : text;
     if (filtered === '') return;
     value += filtered;
     // Shift is a one-shot, the way a phone keyboard treats it — a name is "Hades", not "HADES".

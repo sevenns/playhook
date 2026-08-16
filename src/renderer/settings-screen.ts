@@ -728,10 +728,9 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
     const target = focusedRow();
     if (target === undefined) return;
     const row = target.row;
-    if (row.kind === 'toggle') {
-      toggleRow(focusIndex, row);
-      return;
-    }
+    // A checkbox is NOT stepped through: left/right belong to the rows that have a range to move along
+    // (the sliders, the dropdowns), and a two-state row answered them by flipping — so a walk across the
+    // form changed a setting on the way past. A checkbox is switched with A, and only with A.
     if (row.kind === 'select') {
       cycleSelect(focusIndex, row, delta);
       return;

@@ -879,6 +879,13 @@ export type GameConfigReadResult =
       readonly source: ManifestSource;
       readonly signature: string;
       readonly text: string;
+      /**
+       * Whether the launcher is running on Windows. The renderer has no business asking the OS itself, and
+       * the screen needs it for one decision: a game installed on THIS PC under Windows will never be run
+       * through Proton, so its Linux section is not merely empty there but meaningless. A CARD keeps it on
+       * either OS — the card is the portable half, and its manifest is read on the Deck too.
+       */
+      readonly windows: boolean;
     }
   | { readonly ok: false; readonly message: string };
 

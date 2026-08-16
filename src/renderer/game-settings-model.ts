@@ -97,6 +97,8 @@ export interface GameSettingsModel {
 export interface GameSettingsEnv {
   /** Which dialect this manifest speaks — it decides the launch modes on offer. */
   readonly source: ManifestSource;
+  /** Whether the launcher runs on Windows — see the Linux section below, and GameConfigReadResult. */
+  readonly windows: boolean;
   /** The root the manifest was read from, shown as the game's origin (a mountpoint, or "This PC"). */
   readonly root: string;
   /**
@@ -225,7 +227,6 @@ export function buildGameSettingsModel(
       label: { key: 'gameSettings.id' },
       value: form.id,
       placeholder: { key: 'gameSettings.notSet' },
-      hint: { key: 'gameSettings.idHint' },
       ...error('id'),
     },
   ];
@@ -304,7 +305,6 @@ export function buildGameSettingsModel(
       id: 'runAsAdmin',
       label: { key: 'gameSettings.runAsAdmin' },
       value: form.runAsAdmin,
-      hint: { key: 'gameSettings.runAsAdminHint' },
       ...error('runAsAdmin'),
     });
   }
@@ -402,7 +402,6 @@ export function buildGameSettingsModel(
       max: MAX_HERO_IMAGES,
       placeholder: { key: 'gameSettings.listEmpty' },
       preview: 'wide',
-      hint: { key: 'gameSettings.heroImageHint' },
       ...error('heroImage'),
     },
     {
@@ -416,7 +415,17 @@ export function buildGameSettingsModel(
     },
   ];
 
-  const saves: GameSettingsRow[] = [];
+  // Where the game writes first, then where that gets copied — the order the progress itself travels in.
+  const saves: GameSettingsRow[] = [
+    {
+      kind: 'path',
+      id: 'pcSavePath',
+      label: { key: 'gameSettings.pcSavePath' },
+      value: form.pcSavePath,
+      placeholder: { key: 'gameSettings.notSet' },
+      ...error('pcSavePath'),
+    },
+  ];
   if (!isPcSource) {
     saves.push({
       kind: 'path',
@@ -428,15 +437,6 @@ export function buildGameSettingsModel(
       ...error('saveOnCard'),
     });
   }
-  saves.push({
-    kind: 'path',
-    id: 'pcSavePath',
-    label: { key: 'gameSettings.pcSavePath' },
-    value: form.pcSavePath,
-    placeholder: { key: 'gameSettings.notSet' },
-    hint: { key: 'gameSettings.pcSavePathHint' },
-    ...error('pcSavePath'),
-  });
 
   const advanced: GameSettingsRow[] = [
     {
@@ -448,6 +448,7 @@ export function buildGameSettingsModel(
       step: 5,
       min: 1,
       max: 3600,
+      hint: { key: 'gameSettings.launchTimeoutHint' },
       ...error('launchTimeoutSec'),
     },
     {
@@ -459,8 +460,14 @@ export function buildGameSettingsModel(
       step: 5,
       min: 1,
       max: 3600,
+      hint: { key: 'gameSettings.killTimeoutHint' },
       ...error('killTimeoutSec'),
     },
+  ];
+
+  // The Proton fields, in a section of their own rather than mixed into Advanced: they are a different
+  // subject, and on a Windows PC-library game they are not even a subject — see `windows` in the env.
+  const linux: GameSettingsRow[] = [
     {
       kind: 'list',
       id: 'winetricks',
@@ -473,7 +480,7 @@ export function buildGameSettingsModel(
     },
   ];
   if (mode === 'installer') {
-    advanced.push({
+    linux.push({
       kind: 'list',
       id: 'install.winetricks',
       label: { key: 'gameSettings.installWinetricks' },
@@ -483,7 +490,7 @@ export function buildGameSettingsModel(
       ...error('install.winetricks'),
     });
   }
-  advanced.push({
+  linux.push({
     kind: 'text',
     id: 'umuGameId',
     label: { key: 'gameSettings.umuGameId' },
@@ -492,6 +499,8 @@ export function buildGameSettingsModel(
     hint: { key: 'gameSettings.umuGameIdHint' },
     ...error('umuGameId'),
   });
+  /** A game installed on a Windows PC is never run through Proton, so it has no Linux side at all. */
+  const showsLinux = !(isPcSource && env.windows);
 
   const actions: GameSettingsRow[] = [];
   // A multi-game file's OTHER games are named but not editable from here — the user still has to know
@@ -556,6 +565,7 @@ export function buildGameSettingsModel(
         ],
       },
       { titleKey: 'gameSettings.sectionAdvanced', rows: advanced },
+      ...(showsLinux ? [{ titleKey: 'gameSettings.sectionLinux' as const, rows: linux }] : []),
       // No title: the last section is the screen's action stack, like the Settings screen's.
       { rows: actions },
     ],

@@ -256,8 +256,10 @@ Settings live in `settings.json` next to the rest of the app state (`%APPDATA%\p
 card, or a local one — so you never have to edit JSON by hand. It is offered only for a game that is
 available right now, because that is the only case where there is a file to reach.
 
-- a **form** with sections *Basics / Launch / Artwork / Saves / Audio / Advanced*, whose rows follow the
-  launch type you pick (a Steam game has no executable, an installer has no "move to PC" checkbox);
+- a **form** with sections *Basics / Launch / Artwork / Saves / Audio / Advanced / Linux*, whose rows
+  follow the launch type you pick (a Steam game has no executable, an installer has no "move to PC"
+  checkbox) — and *Linux* is dropped for a game installed on a Windows PC, which is never run through
+  Proton;
 - **Browse** for the executable, the installer, the hero backgrounds (up to 3), the 600x900 carousel
   card image, the background music and the save folders — through the launcher's own file browser, which
   a gamepad can drive (a picked PC save folder is converted back into a `%APPDATA%`-style prefix

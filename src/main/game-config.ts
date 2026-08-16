@@ -256,6 +256,7 @@ export class GameConfigService {
       source: found.source,
       signature: await this.signatureOf(found.root),
       text: read.text,
+      windows: process.platform === 'win32',
     };
   }
 
