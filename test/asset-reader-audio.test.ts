@@ -1,7 +1,12 @@
 // Pure audio helpers in asset-reader.ts: the UI-slot→file mapping and the ambience anti-traversal guard.
 // The rest of AssetReader touches the filesystem / electron and isn't unit-tested here.
 import { describe, expect, it } from 'vitest';
-import { isValidAmbientTrack, sfxFileName } from '../src/main/asset-reader';
+import {
+  DEFAULT_SOUND_SET,
+  isValidAmbientTrack,
+  sfxFileName,
+  sfxSetsForSlot,
+} from '../src/main/asset-reader';
 import type { SfxName } from '../src/shared/types';
 
 describe('sfxFileName — UI slot → set file basename', () => {
@@ -11,9 +16,26 @@ describe('sfxFileName — UI slot → set file basename', () => {
       navigate: 'move',
       button: 'button',
       back: 'back',
+      notify: 'notify',
     };
     for (const [slot, file] of Object.entries(expected) as [SfxName, string][]) {
       expect(sfxFileName(slot)).toBe(file);
+    }
+  });
+});
+
+describe('sfxSetsForSlot — the notify-only fallback to the default set', () => {
+  it('falls back to the default set for notify, which the older sets do not carry yet', () => {
+    expect(sfxSetsForSlot('notify', 'ps2')).toEqual(['ps2', DEFAULT_SOUND_SET]);
+  });
+
+  it('does not duplicate the default set when it is the chosen one', () => {
+    expect(sfxSetsForSlot('notify', DEFAULT_SOUND_SET)).toEqual([DEFAULT_SOUND_SET]);
+  });
+
+  it('leaves every other slot on "missing file ⇒ silence" — no borrowing across sets', () => {
+    for (const slot of ['play', 'navigate', 'button', 'back'] as const) {
+      expect(sfxSetsForSlot(slot, 'ps2')).toEqual(['ps2']);
     }
   });
 });

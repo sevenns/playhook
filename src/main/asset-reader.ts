@@ -77,7 +77,7 @@ export async function readAudioDataUrl(filePath: string): Promise<string | undef
   }
 }
 
-const SFX_NAMES: readonly SfxName[] = ['play', 'navigate', 'button', 'back'];
+const SFX_NAMES: readonly SfxName[] = ['play', 'navigate', 'button', 'back', 'notify'];
 
 // The sound set shipped as the default, and the fallback whenever the chosen set's folder is missing.
 // Mirrors DEFAULT_SETTINGS.soundSet in app-settings.ts (kept in sync by hand — importing that module
@@ -91,11 +91,31 @@ const SFX_SLOT_FILE: Readonly<Record<SfxName, string>> = {
   navigate: 'move',
   button: 'button',
   back: 'back',
+  notify: 'notify',
 };
+
+/**
+ * The one slot that falls back to the DEFAULT set's file when the chosen set doesn't carry it. The rule
+ * for every other slot is "missing file ⇒ silence" (see readSfxSet), and that is deliberate: borrowing a
+ * sound from another set mixes two sound identities. `notify` is the documented exception — a
+ * notification that arrives silently is a notification the user misses — and the sets that predate it
+ * have no file of their own yet (they are generated in sfxsmith, set by set).
+ */
+const SLOT_FALLS_BACK_TO_DEFAULT_SET: SfxName = 'notify';
 
 /** The file basename (no extension) for a UI sound slot inside a set folder. Pure — unit-tested. */
 export function sfxFileName(name: SfxName): string {
   return SFX_SLOT_FILE[name];
+}
+
+/**
+ * The sets a slot's file is looked for in, in order: the chosen one, and — for the single borrowing slot
+ * — the default set behind it. Every other slot gets a one-element list, which is what keeps "missing
+ * file ⇒ silence" true for them. Pure — unit-tested.
+ */
+export function sfxSetsForSlot(name: SfxName, set: string): readonly string[] {
+  if (name !== SLOT_FALLS_BACK_TO_DEFAULT_SET || set === DEFAULT_SOUND_SET) return [set];
+  return [set, DEFAULT_SOUND_SET];
 }
 
 // Absolute path to a set's folder. __dirname at runtime is dist/main; the sets live in dist/audio/ui.
@@ -202,7 +222,8 @@ export class AssetReader {
 
   /**
    * The chosen set's UI sounds — every sound the app plays, on every screen (the card cannot supply its
-   * own). A slot whose file is missing within the set simply stays silent.
+   * own). A slot whose file is missing within the set simply stays silent, except for the one slot that
+   * borrows the default set's file (see SLOT_FALLS_BACK_TO_DEFAULT_SET).
    */
   async readSfxSet(): Promise<SfxSet> {
     const set = await this.effectiveSoundSet();
@@ -211,8 +232,13 @@ export class AssetReader {
     if (this.sfxSetCache?.set === set) return this.sfxSetCache.assets;
     const sounds: Record<string, string> = {};
     for (const name of SFX_NAMES) {
-      const url = await this.readAudioDataUrl(defaultSfxPath(set, name));
-      if (url !== undefined) sounds[name] = url;
+      for (const candidate of sfxSetsForSlot(name, set)) {
+        const url = await this.readAudioDataUrl(defaultSfxPath(candidate, name));
+        if (url !== undefined) {
+          sounds[name] = url;
+          break;
+        }
+      }
     }
     const assets: SfxSet = { sounds };
     this.sfxSetCache = { set, assets };

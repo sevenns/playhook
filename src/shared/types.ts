@@ -238,7 +238,7 @@ export interface GameManifest {
 
 /** UI sound-effect slots. Each maps to a file in the bundled set chosen in Settings → Audio; a card
  *  cannot supply its own (the `sounds` block in an old game.json is ignored, not rejected). */
-export type SfxName = 'play' | 'navigate' | 'button' | 'back';
+export type SfxName = 'play' | 'navigate' | 'button' | 'back' | 'notify';
 
 /**
  * Manifest with already-resolved and security-checked paths.
@@ -595,6 +595,52 @@ export interface AudioVolumes {
   readonly sfx: number;
 }
 
+// ── Notifications (main owns the inbox; the renderer only shows it) ─────────────
+
+/** What every notification carries, whatever it is about. */
+interface NotificationBase {
+  /** crypto.randomUUID(), assigned in main — the renderer addresses a notification by it. */
+  readonly id: string;
+  /** epoch ms, the sort key (ascending: the newest sits at the END of a snapshot). */
+  readonly at: number;
+  readonly read: boolean;
+}
+
+/**
+ * One entry of the notification inbox, discriminated by `kind` so the renderer's text assembly is
+ * checked by the compiler. The TEXT is deliberately not stored: it is built in the renderer from the
+ * kind plus these fields, because the UI language changes live (app:language-update) and a stored
+ * string would freeze at the language of the moment it was written.
+ */
+export type AppNotification =
+  | (NotificationBase & { readonly kind: 'update-ready'; readonly version: string })
+  | (NotificationBase & {
+      readonly kind: 'game-installed';
+      readonly gameId: string;
+      readonly gameTitle: string;
+    })
+  | (NotificationBase & {
+      readonly kind: 'game-uninstalled';
+      readonly gameId: string;
+      readonly gameTitle: string;
+    });
+
+// Distributes over the union so each member loses the base fields on its own (a plain Omit would
+// collapse the three into one non-discriminated object).
+type WithoutNotificationBase<T> = T extends unknown ? Omit<T, keyof NotificationBase> : never;
+
+/** What a source of events hands to NotificationsService.notify — the base fields are main's to fill. */
+export type NotificationInput = WithoutNotificationBase<AppNotification>;
+
+/**
+ * What the renderer must show OVER the UI (the toast plate, top right, 3s). `live` says the user was at
+ * the keyboard when it happened, which is the only case where showing it also marks it read.
+ * `unread-summary` is the single plate shown after a game ends / after a long absence instead of a queue.
+ */
+export type NotificationToast =
+  | { readonly kind: 'item'; readonly item: AppNotification; readonly live: boolean }
+  | { readonly kind: 'unread-summary'; readonly count: number };
+
 /** IPC channels (the preload typed bridge). */
 export const IPC = {
   /** main → renderer: replica of the current AppState. */
@@ -770,6 +816,25 @@ export const IPC = {
    * Reading it belongs to main like every other environment fact; the renderer is sandboxed and its own
    * clipboard API would need a permission prompt that Game Mode has nowhere to show. No payload. */
   clipboardRead: 'clipboard:read',
+
+  // ── Notifications (main owns the inbox; the renderer owns the two surfaces) ──
+  /** main → game-renderer: the whole inbox, oldest first. The unread COUNT is not sent — it is derived
+   * from the list, and a second source of truth would have to be kept in step in four places. */
+  notificationsUpdate: 'notifications:update',
+  /** main → game-renderer: show a plate (one notification, or the "N unread" summary). */
+  notificationsToast: 'notifications:toast',
+  /** game-renderer → main (invoke): the current inbox (seed on window startup / after a reload). */
+  notificationsRequest: 'notifications:request',
+  /** game-renderer → main: the user pressed a notification — drop it from the inbox. Payload id. */
+  notificationsDismiss: 'notifications:dismiss',
+  /** game-renderer → main: "Clear all" in the notifications popup. */
+  notificationsClear: 'notifications:clear',
+  /** game-renderer → main: mark as read. Payload `ids?: string[]` — WITHOUT ids (the popup was opened)
+   * everything, WITH ids only the live toasts the renderer actually got on screen. */
+  notificationsMarkRead: 'notifications:mark-read',
+  /** game-renderer → main: whether the user is AT the launcher (input seen < 5s ago and the UI shown).
+   * Sent only when the value flips; main combines it with the window/game state — see PresenceInput. */
+  uiPresence: 'ui:presence',
 } as const;
 
 /**
@@ -1093,6 +1158,22 @@ export interface RendererApi {
   listGameConfigDir(request: GameConfigListDirRequest): Promise<ListDirResult>;
   /** The clipboard as text, for the on-screen keyboard's Paste key. Empty when there is nothing to paste. */
   readClipboard(): Promise<string>;
+
+  // ── Notifications (the toast + the "Notifications" popup; see the notifications:* channels) ──
+  /** Live inbox pushes — the popup list is drawn from the latest snapshot, never from local edits. */
+  onNotifications(callback: (items: readonly AppNotification[]) => void): void;
+  /** Show a plate over the UI (one notification, or the "N unread" summary). */
+  onNotificationToast(callback: (toast: NotificationToast) => void): void;
+  /** The current inbox (seed on window startup). */
+  requestNotifications(): Promise<readonly AppNotification[]>;
+  /** The user pressed a notification — it leaves the inbox (pressing one is what removes it). */
+  dismissNotification(id: string): void;
+  /** "Clear all" — empties the inbox. */
+  clearNotifications(): void;
+  /** Mark read: no ids = the popup was opened (all of them), ids = only those toasts were really shown. */
+  markNotificationsRead(ids?: readonly string[]): void;
+  /** Whether the user is at the launcher (input < 5s ago and the UI revealed). Sent on change only. */
+  setPresence(active: boolean): void;
 }
 
 declare global {
