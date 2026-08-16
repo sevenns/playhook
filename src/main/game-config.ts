@@ -1,82 +1,65 @@
-// Configure-game window backend (IPC handlers + drive polling). Owns everything the window needs:
-// listing removable drives (incl. blank ones), reading/validating/saving a card's game.json and the
-// manifest JSON Schema. Interface-DI (like UpdaterService/StatsService): the active-root accessor and the
-// no-restart reload come from GameController, the theme from AppSettingsStore.
+// Backend of the launcher's Customize screen: reading, validating and writing one game's game.json,
+// listing directories for the in-launcher file browser, and turning a picked path into what the manifest
+// field stores. Interface-DI (like UpdaterService/StatsService): the active-root accessor, the no-restart
+// reload and the id→root lookup all come from GameController.
 //
 // Two security stances mirror manifest.ts's paranoia about untrusted paths:
 //  • the renderer's `root` is NEVER trusted — every read/save re-checks it against a fresh
 //    listDriveCandidates() (removable, non-system) PLUS the app's own PC-library root, so a compromised
 //    renderer can't write game.json to an arbitrary filesystem location;
-//  • Save re-runs the static validation server-side (a race guard against the UI enabling it wrongly).
+//  • Save re-runs the static validation server-side (a race guard against the UI enabling it wrongly),
+//    and compares the media SIGNATURE it was read against — a card swapped into the same slot keeps the
+//    root valid while the file underneath is somebody else's.
 //
-// The PC library DELIBERATELY widens the first stance, and it is worth being explicit about: the
-// Configure renderer may now write `<userData>/pc-games/game.json`, whose `pc.executable` is any binary
-// on the machine, with arbitrary `args` and `runAsAdmin`. Before, it could only point at a file that
+// The PC library DELIBERATELY widens the first stance, and it is worth being explicit about: the renderer
+// may write `<userData>/pc-games/game.json`, whose `pc.executable` is any binary on the machine, with
+// arbitrary `args` and `runAsAdmin`. Before the PC library existed, it could only point at a file that
 // physically sat on a removable drive. The feature does not exist without that — picking an arbitrary
-// .exe IS the feature — and the widening is bounded: the set of writable ROOTS is still closed (this
-// one path plus the removable candidates), every write still goes through config:save with server-side
-// validation, and the window loads no external content (contextIsolation + sandbox).
+// .exe IS the feature — and the widening is bounded: the set of writable ROOTS is still closed (this one
+// path plus the removable candidates) and every write still goes through the same server-side validation.
+//
+// A third stance arrived with the in-launcher file browser, which replaced the native dialog. That dialog
+// used to be the CONSENT GATE: an absolute path could only reach this file because the OS handed it over.
+// Now the renderer names it, so acceptPickedPaths re-checks what the dialog used to guarantee — the path
+// exists, is not a symlink, and its type matches the field (see the plan, Р5.1).
 import path from 'node:path';
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import fse from 'fs-extra';
-import { app, dialog, ipcMain, shell, BrowserWindow, type WebContents } from 'electron';
+import { app, ipcMain } from 'electron';
 import {
   IPC,
   MANIFEST_FILENAME,
-  type AppSettings,
   type ConfigPickKind,
-  type ConfigPickRequest,
   type ConfigPickResult,
   type ConfigReadResult,
   type ConfigSaveResult,
   type ConfigValidationResult,
+  type DirEntry,
+  type DirRoot,
   type DriveCandidate,
+  type GameConfigAcceptRequest,
+  type GameConfigListDirRequest,
+  type GameConfigReadResult,
+  type GameConfigSaveRequest,
+  type ListDirResult,
   type ManifestSource,
 } from '../shared/types';
 import { type Translator } from '../shared/i18n/index';
-import { type AppSettingsStore } from './app-settings';
 import { AUDIO_EXTENSIONS, IMAGE_EXTENSIONS, readImageDataUrl } from './asset-reader';
-import { describeManifestContent, listDriveCandidates } from './drive-watcher';
+import {
+  acceptsExtensions,
+  checkPickedType,
+  startDirFor,
+  toCardRelative,
+  type PickRejection,
+} from './config-paths';
+import { describeManifestContent, listAllMountpoints, listDriveCandidates } from './drive-watcher';
 import { type PcLibraryStore } from './pc-library';
-import { resolveInside, validateManifestText, manifestJsonSchema } from './manifest';
+import { resolveInside, validateManifestText } from './manifest';
 import { writeFileAtomic } from './save-sync';
 import { describe } from './util';
 import { log } from './logger';
-
-/** OS-dialog `properties` for a pick kind: a folder picker for `directory`/`pc-save`, multi-file for images. */
-function pickProperties(kind: ConfigPickKind): Electron.OpenDialogOptions['properties'] {
-  if (kind === 'directory' || kind === 'pc-save' || kind === 'pc-save-local') return ['openDirectory'];
-  if (kind === 'image') return ['openFile', 'multiSelections'];
-  return ['openFile'];
-}
-
-/** Extension filters for a file pick, from the AssetReader single source of truth (dot-less names).
- * The filter NAMES are shown by the OS as-is; kept in English like the wallpaper picker (ipc.ts). */
-function pickFilters(kind: ConfigPickKind): Electron.FileFilter[] {
-  switch (kind) {
-    case 'image':
-      return [{ name: 'Images', extensions: [...IMAGE_EXTENSIONS] }];
-    case 'audio':
-      return [{ name: 'Audio', extensions: [...AUDIO_EXTENSIONS] }];
-    case 'executable':
-    case 'installer':
-      return [{ name: 'Executable', extensions: ['exe'] }];
-    // A local game is whatever the user actually launches it with — a `.bat`, a `.cmd`, a shortcut, or
-    // (on Linux) a native binary with no extension at all. The hard `['exe']` filter above is right for a
-    // CARD (a Windows dictionary by definition) and wrong here, so this one only nudges.
-    case 'pc-executable':
-      return process.platform === 'win32'
-        ? [
-            { name: 'Programs', extensions: ['exe', 'bat', 'cmd', 'lnk'] },
-            { name: 'All files', extensions: ['*'] },
-          ]
-        : [];
-    case 'directory':
-    case 'pc-save':
-    case 'pc-save-local':
-      return [];
-  }
-}
 
 /**
  * Whether the editor's text is an EMPTY game list — the PC library's way of saying "the last local game
@@ -92,19 +75,47 @@ function isEmptyManifestList(text: string): boolean {
   }
 }
 
-// Blank-drive insertion is only visible via enumeration (DriveWatcher events fire for cards WITH a
-// game.json only), so we poll while the window is visible. 2s is a fine cost for a foreground window.
-const DRIVE_POLL_INTERVAL_MS = 2000;
+/**
+ * How long a candidates() snapshot may be reused. Every call enumerates the machine's drives through the
+ * native `drivelist` — "slow on some readers", by this file's own admission — and then reads a game.json
+ * per candidate. That was a rare cost while only a window's picker paid it; the Customize screen puts
+ * `isAllowedRoot` behind a thumbnail per hero row and a listing per directory step, where it would be
+ * paid dozens of times a second. The snapshot is dropped early whenever the ACTIVE CARD changes (which is
+ * what a DriveWatcher insert/removal amounts to for this service) and after any save.
+ */
+const CANDIDATES_TTL_MS = 2000;
+
+/** The extensions a field accepts, with the two asset lists filled in from the AssetReader. */
+function extensionsFor(kind: ConfigPickKind): readonly string[] | null {
+  if (kind === 'image') return IMAGE_EXTENSIONS;
+  if (kind === 'audio') return AUDIO_EXTENSIONS;
+  return acceptsExtensions(kind);
+}
+
+/** The localized wording of a refusal from checkPickedType. */
+function rejectionMessage(rejection: PickRejection, t: Translator): string {
+  switch (rejection) {
+    case 'missing':
+      return t('gameConfig.pickMissing');
+    case 'symlink':
+      return t('gameConfig.pickSymlink');
+    case 'needs-folder':
+      return t('gameConfig.pickNeedsFolder');
+    case 'needs-file':
+      return t('gameConfig.pickNeedsFile');
+    case 'wrong-type':
+      return t('gameConfig.pickWrongType');
+  }
+}
 
 export interface GameConfigDeps {
-  readonly settings: AppSettingsStore;
   /** The launcher's currently-active card root (DriveWatcher.getActiveRoot). */
   readonly getActiveRoot: () => string | null;
   /** Applies an edited game.json to the active card without a restart (GameController.reloadManifest). */
   readonly reloadManifest: (root: string) => Promise<{ ok: true } | { ok: false; message: string }>;
   /**
-   * The PC library — offered in the picker as one more "drive" (`kind: 'pc'`), so a local game is added
-   * through the same editor a card's game is. See the threat-model note at the top of this file.
+   * The PC library — a root of its own alongside the card's, so a local game is edited through the same
+   * screen a card's game is. See the threat-model note at the top of this file.
    */
   readonly pcLibrary: PcLibraryStore;
   /** Re-reads the PC library after a save (GameController.reloadPcLibrary) — the local reloadManifest. */
@@ -112,90 +123,54 @@ export interface GameConfigDeps {
   /** The current translator (read live so a language change applies to labels/validation/errors). */
   readonly getTranslator: () => Translator;
   /**
-   * Reverse-maps an absolute PC folder (from the pcSavePath Browse dialog) to a `%PREFIX%/…` manifest
+   * Reverse-maps an absolute PC folder (from the pcSavePath browse) to a `%PREFIX%/…` manifest
    * string via the platform SavePathResolver (Р5), or null when it lives under none of the allowed bases.
    * win32 uses the env-based table; linux returns null (the user types the Windows-dictionary string).
    */
   readonly toManifestPcSavePath: (absolute: string) => string | null;
+  /**
+   * Where one game's manifest lives, BY ID (GameController.findGameSource) — the bridge from what the
+   * carousel shows to the file the Customize screen edits. An index is deliberately not part of the
+   * answer: the controller's list is a filtered, reordered union of two sources, so its position says
+   * nothing about the slot's position in the text (see the plan, Р2).
+   */
+  readonly findGameSource: (
+    id: string,
+  ) => { readonly root: string; readonly source: ManifestSource } | null;
 }
 
 export class GameConfigService {
-  private window: BrowserWindow | null = null;
-  private pollTimer: ReturnType<typeof setInterval> | null = null;
-  private polling = false;
-
   constructor(private readonly deps: GameConfigDeps) {}
 
-  /** Registers all config:* invoke handlers once (the service is a singleton). */
+  /** Registers all gameConfig:* invoke handlers once (the service is a singleton). */
   init(): void {
-    ipcMain.handle(IPC.configDrivesRequest, (): Promise<readonly DriveCandidate[]> => this.candidates());
-    ipcMain.handle(IPC.configRead, (_event, root: string): Promise<ConfigReadResult> =>
-      this.readConfig(root),
+    ipcMain.handle(IPC.gameConfigRead, (_event, id: unknown): Promise<GameConfigReadResult> =>
+      this.readGame(typeof id === 'string' ? id : ''),
     );
     ipcMain.handle(
-      IPC.configValidate,
-      (
-        _event,
-        payload: { readonly root: string; readonly text: string },
-      ): ConfigValidationResult =>
+      IPC.gameConfigValidate,
+      (_event, payload: { readonly root: string; readonly text: string }): ConfigValidationResult =>
         validateManifestText(payload.text, this.deps.getTranslator(), this.sourceOf(payload.root)),
     );
     ipcMain.handle(
-      IPC.configSave,
-      (
-        _event,
-        payload: { readonly root: string; readonly text: string },
-      ): Promise<ConfigSaveResult> => this.save(payload.root, payload.text),
+      IPC.gameConfigSave,
+      (_event, payload: GameConfigSaveRequest): Promise<ConfigSaveResult> =>
+        this.saveChecked(payload),
     );
     ipcMain.handle(
-      IPC.configPickPath,
-      (event, payload: ConfigPickRequest): Promise<ConfigPickResult> =>
-        this.pickPath(event.sender, payload.root, payload.kind),
-    );
-    ipcMain.handle(
-      IPC.configImagePreview,
+      IPC.gameConfigImagePreview,
       (_event, payload: { readonly root: string; readonly path: string }): Promise<string | null> =>
         this.imagePreview(payload.root, payload.path),
     );
-    // Fire-and-forget: open a whitelisted https URL (e.g. the SteamDB appid lookup) in the default browser.
-    ipcMain.on(IPC.configOpenExternal, (_event, url: unknown) => {
-      if (typeof url === 'string' && /^https:\/\//i.test(url)) {
-        void shell.openExternal(url).catch((cause) => log.warn('[game-config] openExternal failed:', describe(cause)));
-      }
-    });
-    ipcMain.handle(IPC.configSchemaRequest, (): unknown => manifestJsonSchema());
-    ipcMain.handle(IPC.configSettingsRequest, (): Promise<AppSettings> =>
-      this.deps.settings.read(),
+    ipcMain.handle(
+      IPC.gameConfigAcceptPath,
+      (_event, payload: GameConfigAcceptRequest): Promise<ConfigPickResult> =>
+        this.acceptPickedPaths(payload.root, payload.kind, payload.paths, payload.base),
     );
-    ipcMain.handle(IPC.configIconRequest, (): Promise<string> => this.readIconDataUrl());
-    ipcMain.handle(IPC.configVersionRequest, (): string => app.getVersion());
-  }
-
-  // The window shows the app icon in its custom title bar. CSP there is `img-src data:`, so we hand the
-  // icon over as a data URL rather than a file path (mirrors UpdaterService.readIconDataUrl). Read once.
-  private iconDataUrl: string | null = null;
-  private async readIconDataUrl(): Promise<string> {
-    if (this.iconDataUrl !== null) return this.iconDataUrl;
-    try {
-      const buffer = await fs.readFile(path.join(__dirname, '../icon.png'));
-      this.iconDataUrl = `data:image/png;base64,${buffer.toString('base64')}`;
-    } catch (cause) {
-      log.error('[game-config] failed to read app icon:', cause);
-      this.iconDataUrl = ''; // empty → the renderer just hides the <img>
-    }
-    return this.iconDataUrl;
-  }
-
-  /** Attaches the window and starts the visible-only drive poll (called on window show). */
-  attachWindow(window: BrowserWindow): void {
-    this.window = window;
-    this.startPolling();
-  }
-
-  /** Detaches the window and stops the poll (called on window hide/close). */
-  detachWindow(): void {
-    this.window = null;
-    this.stopPolling();
+    ipcMain.handle(
+      IPC.gameConfigListDir,
+      (_event, payload: GameConfigListDirRequest): Promise<ListDirResult> => this.listDir(payload),
+    );
   }
 
   // ── Drive + PC-library candidates ──────────────────────────────────────────
@@ -206,7 +181,33 @@ export class GameConfigService {
    * `hasManifest: false` (no local game yet) lands the renderer in the SAME blank-drive branch a fresh
    * card takes, so adding the first local game needs no new UI state at all.
    */
+  private candidatesCache: {
+    readonly at: number;
+    readonly activeRoot: string | null;
+    readonly value: readonly DriveCandidate[];
+  } | null = null;
+
   private async candidates(): Promise<readonly DriveCandidate[]> {
+    const activeRoot = this.deps.getActiveRoot();
+    const cached = this.candidatesCache;
+    if (
+      cached !== null &&
+      cached.activeRoot === activeRoot &&
+      Date.now() - cached.at < CANDIDATES_TTL_MS
+    ) {
+      return cached.value;
+    }
+    const value = await this.readCandidates();
+    this.candidatesCache = { at: Date.now(), activeRoot, value };
+    return value;
+  }
+
+  /** Drops the snapshot: our own write changed a manifest the labels/signatures are derived from. */
+  private invalidateCandidates(): void {
+    this.candidatesCache = null;
+  }
+
+  private async readCandidates(): Promise<readonly DriveCandidate[]> {
     const t = this.deps.getTranslator();
     const drives = await listDriveCandidates(this.deps.getActiveRoot(), t);
     const root = this.deps.pcLibrary.root;
@@ -223,7 +224,7 @@ export class GameConfigService {
     const pc: DriveCandidate = {
       root,
       kind: 'pc',
-      label: `${t('configure.thisPc')} — ${suffix}`,
+      label: `${t('gameConfig.thisPc')} — ${suffix}`,
       signature,
       hasManifest,
       isActive: true,
@@ -234,6 +235,60 @@ export class GameConfigService {
   /** Which manifest dialect `root` speaks — the PC library's, or a card's (see ManifestSource). */
   private sourceOf(root: string): ManifestSource {
     return root === this.deps.pcLibrary.root ? 'pc' : 'card';
+  }
+
+  // ── Per-game access for the launcher's Customize screen ────────────────────
+
+  /**
+   * The manifest a game lives in, addressed by id. Returns the WHOLE file's text: a card may carry
+   * several games, and the screen edits its own slot in place so the neighbours survive verbatim — the
+   * ones that failed to resolve included, which are exactly the ones a naive rewrite would destroy.
+   */
+  private async readGame(id: string): Promise<GameConfigReadResult> {
+    const t = this.deps.getTranslator();
+    const found = this.deps.findGameSource(id);
+    if (found === null) return { ok: false, message: t('errors.gameNotFound') };
+    const read = await this.readConfig(found.root);
+    if (!read.ok) return read;
+    return {
+      ok: true,
+      root: found.root,
+      source: found.source,
+      signature: await this.signatureOf(found.root),
+      text: read.text,
+      windows: process.platform === 'win32',
+    };
+  }
+
+  /**
+   * The media's identity — the same sorted-ids signature a DriveCandidate carries. It answers the one
+   * question `isAllowedRoot` cannot: a card swapped into the same mountpoint keeps the root valid while
+   * the FILE underneath is someone else's (see the plan, Р6.2). Our own edits do not move it (the ids
+   * stay), so a second save after the first still goes through.
+   */
+  private async signatureOf(root: string): Promise<string> {
+    const manifestPath = path.join(root, MANIFEST_FILENAME);
+    const { signature } = await describeManifestContent(
+      manifestPath,
+      await fse.pathExists(manifestPath),
+      this.deps.getTranslator(),
+      '',
+    );
+    return signature;
+  }
+
+  /** Save with the swap guard in front of it — everything else is the shared save() path. */
+  private async saveChecked(request: GameConfigSaveRequest): Promise<ConfigSaveResult> {
+    const t = this.deps.getTranslator();
+    if (!(await this.isAllowedRoot(request.root))) {
+      return { saved: false, message: t('errors.driveUnavailable') };
+    }
+    if ((await this.signatureOf(request.root)) !== request.signature) {
+      return { saved: false, message: t('errors.mediaChanged') };
+    }
+    const result = await this.save(request.root, request.text);
+    this.invalidateCandidates();
+    return result;
   }
 
   // ── Reading / saving game.json ─────────────────────────────────────────────
@@ -249,7 +304,10 @@ export class GameConfigService {
     } catch (cause) {
       return {
         ok: false,
-        message: t('errors.cannotReadManifest', { file: MANIFEST_FILENAME, cause: describe(cause) }),
+        message: t('errors.cannotReadManifest', {
+          file: MANIFEST_FILENAME,
+          cause: describe(cause),
+        }),
       };
     }
   }
@@ -267,7 +325,8 @@ export class GameConfigService {
       const first = validation.issues[0];
       return {
         saved: false,
-        message: first !== undefined ? `${first.path}: ${first.message}` : t('errors.configInvalid'),
+        message:
+          first !== undefined ? `${first.path}: ${first.message}` : t('errors.configInvalid'),
       };
     }
     if (source === 'pc') return this.savePcLibrary(text, t);
@@ -278,7 +337,10 @@ export class GameConfigService {
     } catch (cause) {
       return {
         saved: false,
-        message: t('errors.cannotWriteManifest', { file: MANIFEST_FILENAME, cause: describe(cause) }),
+        message: t('errors.cannotWriteManifest', {
+          file: MANIFEST_FILENAME,
+          cause: describe(cause),
+        }),
       };
     }
     // 4. apply. Active card → reload in place; any other (blank/second) card → DriveWatcher handles it
@@ -309,7 +371,10 @@ export class GameConfigService {
     } catch (cause) {
       return {
         saved: false,
-        message: t('errors.cannotWriteManifest', { file: MANIFEST_FILENAME, cause: describe(cause) }),
+        message: t('errors.cannotWriteManifest', {
+          file: MANIFEST_FILENAME,
+          cause: describe(cause),
+        }),
       };
     }
     const applied = await this.deps.reloadPcLibrary();
@@ -318,117 +383,191 @@ export class GameConfigService {
       : { saved: true, applied: 'failed', message: applied.message };
   }
 
-  // ── File/folder picker for the Configure form (paths card-relative) ─────────
-
   /**
-   * Picks file(s)/a folder from the card via the native dialog (parented to the Configure window) and
-   * returns card-RELATIVE paths with forward slashes. Mirrors pickWallpaper's shape (ipc.ts) but adds the
-   * two manifest guarantees: the `root` is re-checked against the live candidates (never trusted), and
-   * every picked path is verified to stay INSIDE the root (path.relative without `..`/absolute) — a file
-   * chosen elsewhere is rejected rather than turned into a `..`-escape. For a `directory` pick the card
-   * root itself yields an empty relative, which the manifest's `min(1)` would reject, so it is refused too.
+   * Turns absolute path(s) into what the manifest field actually stores: card-RELATIVE with forward
+   * slashes, a `%PREFIX%/…` save path, a verbatim absolute, or a library-relative asset that was copied
+   * in. Shared by the native dialog and the in-launcher picker.
+   *
+   * The dialog used to be the consent gate for all of this: an absolute path could only arrive because
+   * the OS handed it over, which is why this file could say "main never trusts the renderer's path" and
+   * still copy whatever it was given. The in-launcher picker takes that gate away, so the checks are
+   * stated here instead (see the plan, Р5.1) — the root must be a live candidate, the path must exist and
+   * not be a symlink, and its TYPE must match the field: an `~/.ssh/id_rsa` offered as a hero image is
+   * refused before anything reads or copies it.
    */
-  private async pickPath(
-    sender: WebContents,
+  private async acceptPickedPaths(
     root: string,
     kind: ConfigPickKind,
+    absolutePaths: readonly string[],
+    base?: string,
   ): Promise<ConfigPickResult> {
     const t = this.deps.getTranslator();
     if (!(await this.isAllowedRoot(root))) {
       return { ok: false, message: t('errors.driveUnavailable') };
     }
-    const parent = BrowserWindow.fromWebContents(sender);
+    // A field measured from a sub-directory (see GameConfigAcceptRequest.base) still lives inside the
+    // root, and `resolveInside` is what proves it: the renderer names the sub-path, so it gets the same
+    // anti-traversal treatment every other manifest path does.
+    const measureFrom = base === undefined || base === '' ? root : resolveInside(root, base);
+    if (measureFrom === null) return { ok: false, message: t('gameConfig.pickOutsideCard') };
+    if (absolutePaths.length === 0) return { ok: false, cancelled: true };
     const isPcLibrary = this.sourceOf(root) === 'pc';
-    // pcSavePath points at a PC folder OUTSIDE the card (env-prefixed), so it has its own dialog: no card
-    // root restriction, and the absolute result is converted back to a %PREFIX%/… form the validator accepts.
-    // A local game running from this machine's own disk keeps the absolute path VERBATIM (`pc-save-local`).
-    // Converting it would be actively wrong there: on Linux the reverse mapping only knows folders inside a
-    // Wine prefix and rejects everything else, so the typical local save folder (`~/Games/Hades/Saves`)
-    // could not be picked at all — and pc mode accepts an absolute path precisely because a %PREFIX% cannot
-    // express it. It is the form that decides which of the two kinds applies, by launch mode: a local STEAM
-    // game keeps `pc-save`, because ITS saves sit inside Steam's Proton prefix and only the %PREFIX% form
-    // maps onto compatdata (an absolute path there would also be read with containerExists: true, which
-    // would let a deleted prefix be mistaken for deleted saves).
-    if (kind === 'pc-save-local') {
-      if (!isPcLibrary) return { ok: false, message: t('errors.driveUnavailable') };
-      const options: Electron.OpenDialogOptions = { properties: ['openDirectory'] };
-      const picked =
-        parent !== null ? await dialog.showOpenDialog(parent, options) : await dialog.showOpenDialog(options);
-      const chosen = picked.filePaths[0];
-      if (picked.canceled || chosen === undefined) return { ok: false, cancelled: true };
-      return { ok: true, paths: [chosen] };
+    // A local game's own executable and its host-side save folder only exist in the PC library.
+    if ((kind === 'pc-executable' || kind === 'pc-save-local') && !isPcLibrary) {
+      return { ok: false, message: t('errors.driveUnavailable') };
     }
+    for (const absolute of absolutePaths) {
+      const rejection = await this.checkPickedType(absolute, kind);
+      if (rejection !== null) return { ok: false, message: rejection };
+    }
+
+    // pcSavePath points at a PC folder OUTSIDE the card (env-prefixed), so the absolute result is
+    // converted back to a %PREFIX%/… form the validator accepts. A local game running from this machine's
+    // own disk keeps the absolute path VERBATIM (`pc-save-local`). Converting it would be actively wrong
+    // there: on Linux the reverse mapping only knows folders inside a Wine prefix and rejects everything
+    // else, so the typical local save folder (`~/Games/Hades/Saves`) could not be picked at all — and pc
+    // mode accepts an absolute path precisely because a %PREFIX% cannot express it. It is the form that
+    // decides which of the two kinds applies, by launch mode: a local STEAM game keeps `pc-save`, because
+    // ITS saves sit inside Steam's Proton prefix and only the %PREFIX% form maps onto compatdata (an
+    // absolute path there would also be read with containerExists: true, which would let a deleted prefix
+    // be mistaken for deleted saves).
+    const first = absolutePaths[0];
+    if (first === undefined) return { ok: false, cancelled: true };
+    if (kind === 'pc-save-local' || kind === 'pc-executable') return { ok: true, paths: [first] };
     if (kind === 'pc-save') {
-      const options: Electron.OpenDialogOptions = { properties: ['openDirectory'] };
-      const picked =
-        parent !== null ? await dialog.showOpenDialog(parent, options) : await dialog.showOpenDialog(options);
-      const chosen = picked.filePaths[0];
-      if (picked.canceled || chosen === undefined) return { ok: false, cancelled: true };
-      const pcSavePath = this.deps.toManifestPcSavePath(chosen);
-      if (pcSavePath === null) return { ok: false, message: t('configure.pickPcSaveOutside') };
+      const pcSavePath = this.deps.toManifestPcSavePath(first);
+      if (pcSavePath === null) return { ok: false, message: t('gameConfig.pickPcSaveOutside') };
       return { ok: true, paths: [pcSavePath] };
-    }
-    // A local game's executable lives wherever the user installed it — an absolute path is the point.
-    if (kind === 'pc-executable') {
-      if (!isPcLibrary) return { ok: false, message: t('errors.driveUnavailable') };
-      const options: Electron.OpenDialogOptions = { properties: ['openFile'] };
-      const filters = pickFilters(kind);
-      const picked =
-        parent !== null
-          ? await dialog.showOpenDialog(parent, { ...options, ...(filters.length > 0 ? { filters } : {}) })
-          : await dialog.showOpenDialog({ ...options, ...(filters.length > 0 ? { filters } : {}) });
-      const chosen = picked.filePaths[0];
-      if (picked.canceled || chosen === undefined) return { ok: false, cancelled: true };
-      return { ok: true, paths: [chosen] };
     }
     // Art and music for a local game are picked from anywhere and COPIED into the library, so what the
     // manifest stores is a library-relative path — the same shape a card's asset has, which is what keeps
     // resolveInside and the AssetReader free of any PC-specific branch (and the art alive after the user
     // deletes the original).
     if (isPcLibrary && (kind === 'image' || kind === 'audio')) {
-      const filters = pickFilters(kind);
-      const options: Electron.OpenDialogOptions = {
-        properties: pickProperties(kind),
-        ...(filters.length > 0 ? { filters } : {}),
-      };
-      const picked =
-        parent !== null ? await dialog.showOpenDialog(parent, options) : await dialog.showOpenDialog(options);
-      if (picked.canceled || picked.filePaths.length === 0) return { ok: false, cancelled: true };
+      const extensions = kind === 'image' ? IMAGE_EXTENSIONS : AUDIO_EXTENSIONS;
       const relatives: string[] = [];
-      for (const absolute of picked.filePaths) {
+      for (const absolute of absolutePaths) {
         try {
-          relatives.push(await this.deps.pcLibrary.importAsset(absolute));
+          relatives.push(await this.deps.pcLibrary.importAsset(absolute, kind, extensions));
         } catch (cause) {
           log.warn('[game-config] importing a local asset failed:', describe(cause));
-          return { ok: false, message: t('configure.pickImportFailed') };
+          return { ok: false, message: t('gameConfig.pickImportFailed') };
         }
       }
       return { ok: true, paths: relatives };
     }
-    const filters = pickFilters(kind);
-    const options: Electron.OpenDialogOptions = {
-      defaultPath: root,
-      properties: pickProperties(kind),
-      ...(filters.length > 0 ? { filters } : {}),
-    };
-    const result =
-      parent !== null ? await dialog.showOpenDialog(parent, options) : await dialog.showOpenDialog(options);
-    if (result.canceled || result.filePaths.length === 0) return { ok: false, cancelled: true };
 
     const relatives: string[] = [];
-    for (const absolute of result.filePaths) {
-      const relative = path.relative(root, absolute);
-      // Outside the card (a `..`-leading or absolute relative) — or the root itself for a folder pick
-      // (empty relative) — is rejected: we never emit an escaping or empty manifest path.
-      if (relative === '' || relative.startsWith('..') || path.isAbsolute(relative)) {
+    for (const absolute of absolutePaths) {
+      const relative = toCardRelative(measureFrom, absolute);
+      if (relative === null) {
         return {
           ok: false,
-          message: t(kind === 'directory' ? 'configure.pickChooseSubfolder' : 'configure.pickOutsideCard'),
+          message: t(
+            kind === 'directory' ? 'gameConfig.pickChooseSubfolder' : 'gameConfig.pickOutsideCard',
+          ),
         };
       }
-      relatives.push(relative.split(path.sep).join('/'));
+      relatives.push(relative);
     }
     return { ok: true, paths: relatives };
+  }
+
+  /** Whether one picked path may be used for `kind`; a localized reason when it may not, else null. */
+  private async checkPickedType(absolute: string, kind: ConfigPickKind): Promise<string | null> {
+    const t = this.deps.getTranslator();
+    let stat: Parameters<typeof checkPickedType>[2] = null;
+    try {
+      const stats = await fs.lstat(absolute);
+      stat = {
+        isSymbolicLink: stats.isSymbolicLink(),
+        isDirectory: stats.isDirectory(),
+        isFile: stats.isFile(),
+      };
+    } catch {
+      stat = null;
+    }
+    const rejection = checkPickedType(absolute, kind, stat, extensionsFor(kind));
+    return rejection === null ? null : rejectionMessage(rejection, t);
+  }
+
+  // ── Directory listing for the in-launcher file picker ──────────────────────
+
+  /**
+   * One directory's contents, plus the starting points offered beside it. READ-ONLY and deliberately
+   * unrestricted: where to browse is the user's business (the most common install path of all,
+   * `C:\Program Files (x86)\Steam\steamapps\common\…`, is a system directory by any definition). What is
+   * guarded is the ACCEPTANCE of a path, not the looking — see acceptPickedPaths.
+   */
+  private async listDir(request: GameConfigListDirRequest): Promise<ListDirResult> {
+    const t = this.deps.getTranslator();
+    const roots = await this.pickerRoots();
+    // A field measured from a sub-directory browses from there; an unresolvable one falls back to the
+    // root rather than failing — this is where the picker OPENS, not what it will accept.
+    const baseDir =
+      request.root !== undefined && request.base !== undefined && request.base !== ''
+        ? resolveInside(request.root, request.base)
+        : null;
+    const target =
+      request.path ??
+      startDirFor(
+        { ...request, ...(baseDir !== null ? { baseDir } : {}) },
+        {
+          homeDir: os.homedir(),
+          appDataDir: app.getPath('appData'),
+          downloadsDir: app.getPath('downloads'),
+          rootIsCard: request.root !== undefined && this.sourceOf(request.root) === 'card',
+        },
+      );
+    let names: readonly string[];
+    try {
+      names = await fs.readdir(target);
+    } catch (cause) {
+      log.warn(`[game-config] cannot list "${target}":`, describe(cause));
+      return { ok: false, message: t('gameConfig.listFailed'), roots };
+    }
+    const entries: DirEntry[] = [];
+    for (const name of names) {
+      if (name.startsWith('.')) continue; // dotfiles are noise in a picker for games and artwork
+      try {
+        // stat, not lstat: a symlinked folder is a folder to browse. Accepting what is INSIDE it is a
+        // separate decision, made by acceptPickedPaths, which refuses symlinks on its own.
+        const stats = await fs.stat(path.join(target, name));
+        entries.push({ name, kind: stats.isDirectory() ? 'dir' : 'file' });
+      } catch {
+        continue; // a dangling link or an unreadable entry — simply not offered
+      }
+    }
+    entries.sort((a, b) =>
+      a.kind === b.kind ? a.name.localeCompare(b.name) : a.kind === 'dir' ? -1 : 1,
+    );
+    const parent = path.dirname(target);
+    return {
+      ok: true,
+      path: target,
+      parent: parent === target ? null : parent,
+      entries,
+      roots,
+    };
+  }
+
+  /** The left column: the card, this machine's library, the home folder and every mounted volume. */
+  private async pickerRoots(): Promise<readonly DirRoot[]> {
+    const t = this.deps.getTranslator();
+    const roots: DirRoot[] = [];
+    const card = this.deps.getActiveRoot();
+    if (card !== null) roots.push({ path: card, label: card, kind: 'card' });
+    roots.push({ path: this.deps.pcLibrary.root, label: t('gameConfig.thisPc'), kind: 'pc' });
+    roots.push({ path: os.homedir(), label: t('gameConfig.homeFolder'), kind: 'home' });
+    try {
+      for (const mount of await listAllMountpoints()) {
+        if (roots.some((entry) => entry.path === mount)) continue;
+        roots.push({ path: mount, label: mount, kind: 'drive' });
+      }
+    } catch (cause) {
+      log.warn('[game-config] enumerating volumes for the picker failed:', describe(cause));
+    }
+    return roots;
   }
 
   /**
@@ -451,36 +590,5 @@ export class GameConfigService {
   private async isAllowedRoot(root: string): Promise<boolean> {
     const candidates = await this.candidates();
     return candidates.some((candidate) => candidate.root === root);
-  }
-
-  // ── Drive polling (only while the window is visible) ───────────────────────
-
-  private startPolling(): void {
-    if (this.pollTimer !== null) return;
-    void this.pushDrives(); // an immediate snapshot so the picker doesn't wait a full interval
-    this.pollTimer = setInterval(() => void this.pushDrives(), DRIVE_POLL_INTERVAL_MS);
-  }
-
-  private stopPolling(): void {
-    if (this.pollTimer !== null) {
-      clearInterval(this.pollTimer);
-      this.pollTimer = null;
-    }
-  }
-
-  private async pushDrives(): Promise<void> {
-    if (this.polling) return; // skip overlapping ticks (drivelist can be slow on some readers)
-    this.polling = true;
-    try {
-      const drives = await this.candidates();
-      const window = this.window;
-      if (window !== null && !window.isDestroyed()) {
-        window.webContents.send(IPC.configDrivesUpdate, drives);
-      }
-    } catch (cause) {
-      log.warn('[game-config] drive poll failed:', describe(cause));
-    } finally {
-      this.polling = false;
-    }
   }
 }

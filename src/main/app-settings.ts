@@ -17,8 +17,8 @@ const settingsSchema = z.object({
   autoUpdate: z.enum(['download', 'download-install', 'off']).default('download-install'),
   // Kept in the schema so an older settings.json that still carries a chosen theme parses (and so the
   // key survives a round trip), but the value is NORMALIZED to 'system' on read: the Settings screen has
-  // no theme selector any more, and the only remaining consumer — the Configure window — must not stay
-  // frozen on whatever was picked before. The choice returns when Configure moves into the launcher.
+  // no theme selector any more, and no window left that reads one: the launcher paints itself from the
+  // card's own palette.
   theme: z.enum(['system', 'light', 'dark']).default('system'),
   // Language mirrors theme: `.default('system')` so an older settings.json without the field stays valid
   // (no schemaVersion bump / migration needed).

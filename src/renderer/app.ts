@@ -12,6 +12,12 @@ import { createAudioController } from './audio.js';
 import { createHeroController } from './hero.js';
 import { createControls } from './controls.js';
 import { createSettingsScreen, type SettingsScreenApi } from './settings-screen.js';
+import {
+  createGameSettingsScreen,
+  type GameSettingsScreenApi,
+} from './game-settings-screen.js';
+import { createOsk } from './osk.js';
+import { createFilePicker } from './file-picker.js';
 import { createCarousel } from './carousel.js';
 import { formatDate, formatPlaytime } from './format.js';
 import { busyKindOf, gameOf, phaseOf, statusOf, steamBusy } from './state-view.js';
@@ -93,12 +99,49 @@ const settingsScreen = createSettingsScreen({
   onResetRequested: () => controls.confirmResetSettings(),
 });
 
+// ── Customize screen (the fifth surface, see game-settings-screen.ts) ────────
+// Its two sub-surfaces are built first because the screen takes them as dependencies: the keyboard is the
+// only way to type anything here, and the file browser the only way to name a path with a gamepad.
+const osk = createOsk({ audio, getTranslator });
+const gameSettingsApi: GameSettingsScreenApi = {
+  read: (id) => window.api.readGameConfig(id),
+  validate: (root, text) => window.api.validateGameConfig(root, text),
+  save: (request) => window.api.saveGameConfig(request),
+  imagePreview: (root, path) => window.api.getGameConfigImage(root, path),
+};
+const filePicker = createFilePicker({
+  audio,
+  getTranslator,
+  api: {
+    listDir: (request) => window.api.listGameConfigDir(request),
+    acceptPaths: (request) => window.api.acceptGameConfigPaths(request),
+  },
+});
+const gameSettingsScreen = createGameSettingsScreen({
+  audio,
+  getTranslator,
+  api: gameSettingsApi,
+  keyboard: osk,
+  picker: filePicker,
+  // Read lazily for the same reason the carousel seam is: `controls` is created just below.
+  onClosed: () => controls.settingsClosed(),
+  onConfirmRequested: (kind) => controls.confirmGameSettings(kind),
+  // Editing while the game runs is legal (Р3); DELETING it is not — the launcher would be left holding a
+  // manifest the file no longer has.
+  isBusy: () =>
+    currentState.kind === 'running' ||
+    currentState.kind === 'installing' ||
+    currentState.kind === 'uninstalling' ||
+    steamBusy(currentState),
+});
+
 const controls = createControls({
   getState: () => currentState,
   getBrowse: () => currentBrowse,
   audio,
   getTranslator,
   settings: settingsScreen,
+  gameSettings: gameSettingsScreen,
   onFlipping: (flipping) => {
     hero.setFlipping(flipping);
     carousel.setFlipping(flipping);
@@ -594,6 +637,7 @@ function applyLocale(locale: Locale): void {
   // The Settings screen builds its rows from JS, so localizeDocument doesn't reach them — and render()
   // knows nothing about it. It keeps its focus and scroll position across the swap.
   settingsScreen.relocalize();
+  gameSettingsScreen.relocalize();
 }
 window.api.onLanguageUpdate(applyLocale);
 void window.api.getLanguage().then(applyLocale);
@@ -608,6 +652,10 @@ void window.api.requestState().then((state) => {
 // channel here, so a push arriving in between isn't lost.
 function applyBrowse(browse: BrowseInfo | null): void {
   currentBrowse = browse;
+  // The Customize screen is about ONE game's file. When the card carrying it is pulled or swapped —
+  // everything under the screen is rebuilt by then — there is nothing left to edit, so it closes rather
+  // than staying open over a game that is gone (see the plan, Р6.2).
+  gameSettingsScreen.applyBrowse(browse);
   // Main moved the screen onto a game we didn't ask for — inserting a card switches to ITS game — so the
   // strip must follow, or the title/background belong to one game while the highlighted card is another.
   // Guarded by the requested id: while flipping, a late answer must NOT drag the selection backwards.

@@ -71,6 +71,12 @@ describe('PcLibraryStore.read', () => {
   });
 });
 
+// The extension list is the caller's (game-config passes the AssetReader's), so the tests pass the same
+// shape rather than importing it — this module stays electron-free and so does its suite.
+const IMAGE_EXT = ['jpg', 'jpeg', 'png', 'webp', 'gif'];
+const importImage = (absolute: string): Promise<string> =>
+  library.importAsset(absolute, 'image', IMAGE_EXT);
+
 describe('PcLibraryStore.importAsset', () => {
   let source: string;
 
@@ -80,7 +86,7 @@ describe('PcLibraryStore.importAsset', () => {
   });
 
   it('copies the file into assets/ and returns a root-relative path with forward slashes', async () => {
-    const relative = await library.importAsset(source);
+    const relative = await importImage(source);
     expect(relative).toBe('assets/hero-image.jpg');
     expect(await fs.readFile(path.join(library.root, 'assets', 'hero-image.jpg'), 'utf8')).toBe('IMG');
   });
@@ -90,8 +96,8 @@ describe('PcLibraryStore.importAsset', () => {
     await fs.mkdir(path.dirname(other), { recursive: true });
     await fs.writeFile(other, 'OTHER');
 
-    expect(await library.importAsset(source)).toBe('assets/hero-image.jpg');
-    expect(await library.importAsset(other)).toBe('assets/hero-image-2.jpg');
+    expect(await importImage(source)).toBe('assets/hero-image.jpg');
+    expect(await importImage(other)).toBe('assets/hero-image-2.jpg');
     expect(await fs.readFile(path.join(library.root, 'assets', 'hero-image.jpg'), 'utf8')).toBe('IMG');
     expect(await fs.readFile(path.join(library.root, 'assets', 'hero-image-2.jpg'), 'utf8')).toBe('OTHER');
   });
@@ -99,16 +105,41 @@ describe('PcLibraryStore.importAsset', () => {
   it('sanitizes a name that would escape or hide (traversal, leading dots)', async () => {
     const nasty = path.join(baseDir, '..hidden .jpg');
     await fs.writeFile(nasty, 'IMG');
-    const relative = await library.importAsset(nasty);
+    const relative = await importImage(nasty);
     expect(relative.startsWith('assets/')).toBe(true);
     expect(relative).not.toContain('..');
+  });
+
+  // The three refusals that replace the native dialog's filters, now that the in-launcher picker names
+  // the path from the renderer (see the plan, Р5.1).
+  it('refuses a file whose extension does not match the kind', async () => {
+    const key = path.join(baseDir, 'id_rsa');
+    await fs.writeFile(key, 'PRIVATE KEY');
+    await expect(importImage(key)).rejects.toThrow(/not a image extension/);
+    expect(await fs.readdir(path.join(library.root, 'assets'))).toEqual([]);
+  });
+
+  it('refuses a symlink instead of copying whatever it points at', async () => {
+    const link = path.join(baseDir, 'link.jpg');
+    await fs.symlink(source, link);
+    await expect(importImage(link)).rejects.toThrow(/symbolic link/);
+    expect(await fs.readdir(path.join(library.root, 'assets'))).toEqual([]);
+  });
+
+  it('refuses a file past the size cap', async () => {
+    const huge = path.join(baseDir, 'huge.png');
+    await fs.writeFile(huge, Buffer.alloc(1024));
+    await expect(library.importAsset(huge, 'image', IMAGE_EXT)).resolves.toBe('assets/huge.png');
+    const bigger = path.join(baseDir, 'bigger.png');
+    await fs.writeFile(bigger, Buffer.alloc(33 * 1024 * 1024));
+    await expect(importImage(bigger)).rejects.toThrow(/larger than/);
   });
 });
 
 describe('PcLibraryStore.gcOrphans', () => {
   it('removes unreferenced assets and keeps the referenced ones', async () => {
-    const kept = await library.importAsset(await file('keep.jpg'));
-    await library.importAsset(await file('drop.jpg'));
+    const kept = await importImage(await file('keep.jpg'));
+    await importImage(await file('drop.jpg'));
 
     await library.gcOrphans([kept]);
 

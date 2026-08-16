@@ -775,10 +775,18 @@ html:not(.cursor-hidden) .rect-button:hover,
 /* The launcher drives its own focus indicator via .is-focused (gamepad / arrow-key nav), so the native
    keyboard focus ring is redundant. It also lingered as a stray outline after closing a popup with Esc:
    the button kept DOM focus from the opening mouse click, and Esc flipped Chromium into keyboard
-   modality, painting the :focus-visible ring. Suppress it — .is-focused is the single focus visual. */
+   modality, painting the :focus-visible ring. Suppress it — .is-focused is the single focus visual.
+   EVERY button the launcher draws belongs on this list: a click leaves DOM focus behind wherever it
+   lands, and the very next key press paints a ring on it that has nothing to do with where our own focus
+   now is. The settings screens' buttons were missing here, which is how the column kept a stray ring
+   after a click. */
 .play-button,
 .rect-button,
-.text-button {
+.text-button,
+.settings-nav-item,
+.settings-option,
+.osk-key,
+.picker-item {
   outline: none;
 }
 
@@ -1178,8 +1186,21 @@ html:not(.cursor-hidden) .rect-button:hover,
    the copy one for data-install-via='copy'. Copying runs unattended and needs no path from the user, so
    the installer note would be actively misleading there. */
 .note-copy,
-.note-prefix {
+.note-prefix,
+.note-delete {
   display: none;
+}
+
+/* Deleting a game from its manifest: the detail carries the one thing the question does not — the game's
+   files (and, for a local game, its save backups) are not going anywhere. */
+#popup[data-view='confirm'][data-mode='delete-game'] .popup-confirm .popup-detail {
+  display: block;
+}
+#popup[data-mode='delete-game'] .note-installer {
+  display: none;
+}
+#popup[data-mode='delete-game'] .note-delete {
+  display: inline;
 }
 #popup[data-install-via='copy'] .note-installer {
   display: none;
@@ -1303,11 +1324,18 @@ html:not(.cursor-hidden) .text-button:hover,
   pointer-events: none;
 }
 
-/* ── Settings screen (the fourth surface) ───────────────────────────────────
-   Not a carousel screen: the strip keeps its layout underneath, so returning lands exactly where the
-   user left. Openness is #app[data-overlay='settings']; the hidden state is opacity + pointer-events,
-   never display:none — that keeps everything animatable, keeps the bar's own mouse handlers from firing
-   through a hidden bar, and never collapses the carousel's measured layout. */
+/* ── Full-screen overlays: Settings, and Customize ──────────────────────────
+   Not carousel screens: the strip keeps its layout underneath, so returning lands exactly where the user
+   left. Openness is #app[data-overlay=<name>]; the hidden state is opacity + pointer-events, never
+   display:none — that keeps everything animatable, keeps the bar's own mouse handlers from firing through
+   a hidden bar, and never collapses the carousel's measured layout.
+
+   TWO kinds of rule live below, and mixing them up is how the second screen would have broken the first:
+    • what happens to the launcher UNDERNEATH an overlay (the hero fades, the bar leaves, the strip goes)
+      is the same for every overlay, so those rules key off the ATTRIBUTE — `#app[data-overlay]`;
+    • what makes ONE screen visible must name that screen, or opening Customize would fade Settings in on
+      top of it. `.settings-open` below is the shorthand for "the screen whose name is the current value",
+      written out per screen because CSS has no parent selector. */
 
 .settings {
   position: absolute;
@@ -1320,7 +1348,8 @@ html:not(.cursor-hidden) .text-button:hover,
   transition: opacity 0.35s ease;
 }
 
-#app[data-overlay='settings'] .settings {
+#app[data-overlay='settings'] #settings,
+#app[data-overlay='game-settings'] #game-settings {
   opacity: 1;
   pointer-events: auto;
 }
@@ -1339,12 +1368,13 @@ html:not(.cursor-hidden) .text-button:hover,
 }
 
 /* The hero goes with it — faded out, and its pan animation PAUSED so nothing keeps painting behind a
-   screen that no longer shows it. Both come back on the way out, in the same beat as everything else. */
-#app[data-overlay='settings'] #hero {
+   screen that no longer shows it. Both come back on the way out, in the same beat as everything else.
+   Any overlay, hence the bare attribute. */
+#app[data-overlay] #hero {
   opacity: 0;
 }
 
-#app[data-overlay='settings'] .hero-layer {
+#app[data-overlay] .hero-layer {
   animation-play-state: paused;
 }
 
@@ -1352,7 +1382,8 @@ html:not(.cursor-hidden) .text-button:hover,
   transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.35s ease;
 }
 
-#app[data-overlay='settings'] .settings-veil {
+#app[data-overlay='settings'] #settings .settings-veil,
+#app[data-overlay='game-settings'] #game-settings .settings-veil {
   opacity: 1;
 }
 
@@ -1370,7 +1401,8 @@ html:not(.cursor-hidden) .text-button:hover,
   transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.35s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-#app[data-overlay='settings'] .settings-column {
+#app[data-overlay='settings'] #settings .settings-column,
+#app[data-overlay='game-settings'] #game-settings .settings-column {
   opacity: 1;
   transform: none;
 }
@@ -1379,6 +1411,7 @@ html:not(.cursor-hidden) .text-button:hover,
   display: flex;
   align-items: baseline;
   justify-content: space-between;
+  gap: calc(16 * var(--px));
   padding: calc(30 * var(--px)) calc(32 * var(--px)) calc(20 * var(--px));
 }
 
@@ -1396,6 +1429,132 @@ html:not(.cursor-hidden) .text-button:hover,
   color: color-mix(in srgb, var(--fg) 55%, transparent);
 }
 
+/* The trailing half of the header: the game's name and, after a single space, where its manifest lives.
+   A flex row with a gap rather than two header children — space-between would fling them apart. */
+.settings-heading {
+  display: flex;
+  align-items: baseline;
+  gap: calc(8 * var(--px));
+  min-width: 0;
+}
+
+/* Quieter than the name itself: it answers a question the user asks once ("whose file is this?"), not
+   one they keep asking. */
+.settings-source {
+  font-weight: 300;
+  font-size: calc(20 * var(--px));
+  color: color-mix(in srgb, var(--fg) 40%, transparent);
+}
+
+/* The two columns: the section list on the left, the selected section's rows on the right. */
+.settings-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  gap: calc(40 * var(--px));
+}
+
+/* The section column. Narrow and fixed: it is a table of contents, not a second form.
+   The padding is what puts the BUTTONS' edge under the screen title rather than their text: the filled
+   entry is the shape the eye tracks down the screen, so it is the shape that has to line up with the
+   heading above it. */
+.settings-nav {
+  flex: 0 0 calc(380 * var(--px));
+  padding-left: calc(32 * var(--px));
+  display: flex;
+  flex-direction: column;
+  gap: calc(4 * var(--px));
+  overflow-y: auto;
+  scrollbar-width: none;
+  --fade-top: 0px;
+  --fade-bottom: 0px;
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 var(--fade-top),
+    #000 calc(100% - var(--fade-bottom)),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 var(--fade-top),
+    #000 calc(100% - var(--fade-bottom)),
+    transparent 100%
+  );
+}
+
+.settings-nav::-webkit-scrollbar {
+  display: none;
+}
+
+.settings-nav-item {
+  flex: 0 0 auto;
+  min-height: calc(72 * var(--px));
+  display: flex;
+  align-items: center;
+  /* Inset from the button's own edge — that edge is what carries the alignment (see .settings-nav). */
+  padding: 0 calc(22 * var(--px));
+  border: none;
+  border-radius: calc(10 * var(--px));
+  background: transparent;
+  color: var(--d2);
+  font-family: inherit;
+  font-weight: 500;
+  font-size: calc(28 * var(--px));
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease;
+}
+
+html:not(.cursor-hidden) .settings-nav-item:hover,
+.settings-nav-item.is-focused {
+  background: var(--d2);
+  color: var(--d1);
+}
+
+/* The section the pane is showing, while the focus is over in the pane: underlined rather than filled,
+   so "where I am" and "what has the focus" never claim the same highlight. */
+.settings-nav-item.is-current {
+  text-decoration: underline;
+  text-underline-offset: calc(8 * var(--px));
+}
+
+/* The actions that end the column, set apart from the sections above them. */
+.settings-nav-item[data-kind='action'] {
+  font-weight: 400;
+}
+
+.settings-nav-item[data-kind='section'] + .settings-nav-item[data-kind='action'] {
+  margin-top: calc(20 * var(--px));
+}
+
+.settings-nav-item.is-disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* The column arrives the way the popup's items do — one after another, top-down, which is the order they
+   are read in. Driven by a class rather than by the overlay state, because the buttons are REUSED between
+   visits (screen-sidebar.ts): the animation has to be re-armed, not re-triggered by a state change. */
+.settings-nav.is-entering .settings-nav-item {
+  animation: popup-item-in 0.3s cubic-bezier(0.2, 0, 0.2, 1) both;
+  animation-delay: calc(var(--nav-index, 0) * 40ms);
+}
+
+/* Save's own feedback, under both columns — see the note in index.html. */
+.settings-status {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: calc(6 * var(--px));
+  padding: calc(12 * var(--px)) calc(32 * var(--px)) 0;
+}
+
+.settings-status:empty {
+  display: none;
+}
+
 /* The scrolling list. The native scrollbar is hidden — the focus ring is the position indicator, exactly
    as it is on every other surface here. Smooth scrolling is safe: vertical navigation is one step per
    press (only left/right hold-to-repeat), so the steps can't pile up into a lagging scroll. */
@@ -1404,6 +1563,12 @@ html:not(.cursor-hidden) .text-button:hover,
   min-height: 0;
   overflow-y: auto;
   scrollbar-width: none;
+  /* The pane sits narrow while the COLUMN has the focus and opens out to the left when the focus steps
+     into it — its right edge never moves, so the rows stay aligned and only the entrance widens. That
+     sideways move is what says "you are in here now"; replaying the rows' own entrance said "here is a
+     different section", which is a different sentence and was read as one. */
+  margin-left: calc(20 * var(--px));
+  transition: margin-left 0.25s cubic-bezier(0.4, 0, 0.2, 1);
   /* NOT scroll-behavior: smooth — the screen animates scrollTop itself (settings-screen.ts) with one
      fixed duration and easing; leaving the native smoothing on would fight it frame for frame. */
   /* Each edge fades rather than cuts, so a row crossing the clip is half-transparent instead of sliced.
@@ -1427,6 +1592,10 @@ html:not(.cursor-hidden) .text-button:hover,
   );
 }
 
+.settings-list.is-active {
+  margin-left: 0;
+}
+
 .settings-list::-webkit-scrollbar {
   display: none;
 }
@@ -1436,16 +1605,16 @@ html:not(.cursor-hidden) .text-button:hover,
   flex-direction: column;
   gap: calc(4 * var(--px));
   padding-bottom: calc(24 * var(--px));
-  /* Staggered entrance, capped at three steps by the view (--section-index). */
-  transition: opacity 0.35s cubic-bezier(0.4, 0, 0.2, 1) calc(var(--section-index, 0) * 40ms),
-    transform 0.35s cubic-bezier(0.4, 0, 0.2, 1) calc(var(--section-index, 0) * 40ms);
-  opacity: 0;
-  transform: translateY(calc(16 * var(--px)));
 }
 
-#app[data-overlay='settings'] .settings-section {
-  opacity: 1;
-  transform: none;
+/* The pane's rows arrive the same way the column's entries do — the two halves of the screen behave
+   alike. Armed by the screen (settings-screen.ts) when the pane changes SECTION, and only then: NOT on a
+   value patch, not on the rebuilds a held direction used to cause (those are debounced away before they
+   reach here), and not when the focus merely steps in — that one is the width change above, because
+   "you moved in here" and "this is another section" must not look like the same event. */
+.settings-list.is-entering .setting-row {
+  animation: popup-item-in 0.28s cubic-bezier(0.2, 0, 0.2, 1) both;
+  animation-delay: calc(var(--row-index, 0) * 30ms);
 }
 
 .settings-section-title {
@@ -1481,11 +1650,17 @@ html:not(.cursor-hidden) .setting-row:hover,
   transform: scale(0.98);
 }
 
+/* Capped at 60% of the row, the same share .setting-value-wide takes on the other side: a hint is free to
+   run onto a second line, but never to push the value out of the column the rest of the rows keep it in.
+   The cap is what makes that a WRAP rather than a shove — without it the box is sized by its longest line
+   and the value gets whatever is left. */
 .setting-label-box {
   display: flex;
   flex-direction: column;
   gap: calc(2 * var(--px));
+  flex: 1 1 auto;
   min-width: 0;
+  max-width: 60%;
 }
 
 .setting-label {
@@ -1763,7 +1938,7 @@ html:not(.cursor-hidden) .setting-row[data-kind='update-status']:hover {
   will-change: transform; /* same layer pinning as .popup-blur */
 }
 
-#settings.is-options-open .settings-options-blur {
+.settings.is-options-open .settings-options-blur {
   opacity: 1;
 }
 
@@ -1815,6 +1990,35 @@ html:not(.cursor-hidden) .setting-row[data-kind='update-status']:hover {
 
 .settings-options.is-open .settings-options-list {
   transform: none;
+}
+
+/* …and its options arrive behind it exactly as the popup stack's items do: the column slides in as a
+   whole, the entries follow one after another, BOTTOM-UP. Same reasoning as there — this list is pinned
+   to the bottom and opens with the bottom entry focused, so the item the user is already looking at is
+   the one that arrives first. Both dropdowns (Settings and Customize) share these classes, so this is
+   one rule for both. The buttons are rebuilt on every level of a nested menu, which is what replays it
+   when you step into a submenu. */
+.settings-options.is-open .settings-option {
+  animation: popup-item-in 0.3s cubic-bezier(0.2, 0, 0.2, 1) both;
+  animation-delay: calc(0.12s + var(--pop, 0) * 45ms);
+}
+.settings-options.is-open .settings-option:nth-last-child(2) {
+  --pop: 1;
+}
+.settings-options.is-open .settings-option:nth-last-child(3) {
+  --pop: 2;
+}
+.settings-options.is-open .settings-option:nth-last-child(4) {
+  --pop: 3;
+}
+.settings-options.is-open .settings-option:nth-last-child(5) {
+  --pop: 4;
+}
+.settings-options.is-open .settings-option:nth-last-child(6) {
+  --pop: 5;
+}
+.settings-options.is-open .settings-option:nth-last-child(n + 7) {
+  --pop: 6;
 }
 
 /* An option IS a .text-button, down to the focus inversion — only the alignment differs (a long label
@@ -1917,9 +2121,9 @@ html:not(.cursor-hidden) .settings-option:hover,
   text-underline-offset: calc(8 * var(--px));
 }
 
-/* With the screen open the bar leaves downwards (where it came from) and the strip fades out. The strip
+/* With ANY overlay open the bar leaves downwards (where it came from) and the strip fades out. The strip
    is faded ONLY — it owns transform transitions of its own, and joining in risks desyncing its position. */
-#app[data-overlay='settings'] #bottom-bar {
+#app[data-overlay] #bottom-bar {
   opacity: 0;
   pointer-events: none;
   transform: translateY(calc(20 * var(--px)));
@@ -1932,13 +2136,494 @@ html:not(.cursor-hidden) .settings-option:hover,
    the way out, as if it had been display:none. The strip's own `opacity 0.25s` is untouched by the morph
    and runs in BOTH directions, which is exactly what the return needs. The [data-bar-focus] pair beats
    that state's dim (0.45), which is on by definition here: this screen is entered from the More button. */
-#app[data-overlay='settings'] #carousel-strip,
-#app[data-overlay='settings'][data-bar-focus] #carousel-strip {
+#app[data-overlay] #carousel-strip,
+#app[data-overlay][data-bar-focus] #carousel-strip {
   opacity: 0;
 }
 
-#app[data-overlay='settings'] #carousel {
+#app[data-overlay] #carousel {
   pointer-events: none;
+}
+
+/* ── Customize screen: the row kinds Settings does not have ─────────────────
+   The skeleton (.settings-*, .setting-row and its focus inversion) is shared verbatim; only the controls
+   below are new. They all follow the same rule as the originals: everything is drawn in currentColor, so
+   the row's focus inversion carries them with it and no control needs a second set of rules. */
+
+/* A value that is a PATH or a sentence, not a word: it takes the right half of the row and wraps rather
+   than being clipped — a path you cannot read is a path you cannot check. */
+.setting-value-wide {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 60%;
+  text-align: right;
+  overflow-wrap: anywhere;
+  font-weight: 400;
+  font-size: calc(24 * var(--px));
+  line-height: calc(32 * var(--px));
+}
+
+/* An unset value is present but quiet — the row still reads as a row, and the placeholder says what
+   would happen if it stays empty ("cropped from the first background"). */
+.setting-value.is-empty {
+  opacity: 0.5;
+  font-style: italic;
+}
+
+/* The field's own validation problem, under its label. It is a per-game form of thirty fields: a list of
+   messages at the bottom would name paths the user cannot point at.
+
+   NO fixed red anywhere below. The palette here is computed from the game's own hero art (--d1/--d2), so
+   a hard-coded accent is a colour that will sooner or later land on a background it cannot be read
+   against — including a red one. Emphasis is carried by WEIGHT and by an inset bar in currentColor
+   instead, which is legible in every palette by construction. */
+.setting-error {
+  font-weight: 500;
+  font-size: calc(20 * var(--px));
+  line-height: calc(28 * var(--px));
+  color: inherit;
+}
+
+/* A marker on the row itself, so a problem scrolled past is still findable — currentColor, so it
+   survives the focus inversion along with everything else in the row. */
+.setting-row.has-error {
+  box-shadow: inset calc(4 * var(--px)) 0 0 currentColor;
+}
+
+/* A forced control (install.runAsAdmin under a custom installer) and an action that cannot run yet
+   (Save with nothing to save) are SHOWN, not hidden: hiding them hides the reason too. */
+.setting-row.is-disabled {
+  opacity: 0.4;
+}
+
+.setting-row.is-disabled .text-button {
+  cursor: default;
+}
+
+/* Artwork thumbnails, on the row itself: a hero list is unreadable as three file names. */
+.setting-thumbs {
+  display: flex;
+  align-items: center;
+  gap: calc(8 * var(--px));
+  flex: 0 0 auto;
+}
+
+/* 16:9 for a hero background, 2:3 for the carousel card (a 600x900 portrait) — the artwork's own shape,
+   so a cover squeezed into a landscape box can't read as "that's how it will look". */
+.setting-thumb {
+  height: calc(54 * var(--px));
+  width: calc(96 * var(--px));
+  object-fit: cover;
+  border-radius: calc(6 * var(--px));
+  cursor: pointer;
+}
+
+.setting-thumbs.is-portrait .setting-thumb {
+  height: calc(72 * var(--px));
+  width: calc(48 * var(--px));
+}
+
+/* A note is text inside the list, not a control — no focus, no inversion, and a tone that says how much
+   it matters (the mixed-modes banner, the id-change warning, a neighbour's error). */
+/* A note is text inside the list, and its three tones are told apart WITHOUT a colour of their own:
+   info is a quiet tinted block, warning gains an outline, error inverts to the accent — the same
+   inversion a focused row uses, so it is the loudest thing on screen in any palette. */
+.setting-row-note {
+  display: block;
+  min-height: 0;
+  padding: calc(12 * var(--px)) calc(32 * var(--px));
+  border: calc(2 * var(--px)) solid transparent;
+  border-radius: calc(10 * var(--px));
+  background: color-mix(in srgb, var(--d2) 12%, transparent);
+}
+
+.setting-row-note .setting-note-text {
+  font-weight: 400;
+  font-size: calc(22 * var(--px));
+  line-height: calc(30 * var(--px));
+  color: var(--d2);
+}
+
+.setting-row-note.is-warning {
+  border-color: var(--d2);
+  background: transparent;
+}
+
+.setting-row-note.is-warning .setting-note-text {
+  font-weight: 500;
+}
+
+.setting-row-note.is-error {
+  background: var(--d2);
+}
+
+.setting-row-note.is-error .setting-note-text {
+  color: var(--d1);
+  font-weight: 500;
+}
+
+/* An inert row (a static line, a note) must never light up under the mouse — it cannot be activated. */
+.setting-row.is-inert {
+  pointer-events: none;
+}
+
+html:not(.cursor-hidden) .setting-row.is-inert:hover {
+  background: transparent;
+  color: var(--d2);
+}
+
+/* ── On-screen keyboard ─────────────────────────────────────────────────────
+   A surface INSIDE the Customize screen (see index.html), so it inherits the screen's own visibility and
+   only needs its own fade. It is the only way to type on a gamepad: the launcher has no <input> anywhere,
+   and the Deck's system keyboard is out of reach outside Steam-launched games. */
+
+.osk {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s ease;
+  z-index: 1;
+}
+
+.osk.is-open {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* Fully opaque, not a tint: the form behind the keyboard is unreadable at 12% anyway, and showing it
+   through only competes with the keys for attention. */
+.osk-veil {
+  position: absolute;
+  inset: 0;
+  background: var(--d1);
+}
+
+/* The panel comes UP from the edge it is anchored to and leaves the same way — the movement a keyboard
+   makes. A transition off the open state, not an animation: the panel itself is never rebuilt (only the
+   keys inside it are), so there is nothing here for a rebuild to replay. The X half of the transform is
+   the centring and must be repeated in both states, or the panel would slide in from the left as well. */
+.osk-panel {
+  position: absolute;
+  left: 50%;
+  bottom: calc(60 * var(--px));
+  transform: translateX(-50%) translateY(calc(28 * var(--px)));
+  width: calc(1100 * var(--px));
+  max-width: calc(100% - 80 * var(--px));
+  display: flex;
+  flex-direction: column;
+  gap: calc(16 * var(--px));
+  transition: transform 0.28s cubic-bezier(0.2, 0, 0.2, 1);
+}
+
+.osk.is-open .osk-panel {
+  transform: translateX(-50%);
+}
+
+/* …and the rows arrive behind it, in the order they are read. Armed by the keyboard (osk.ts) on open —
+   see the note there for why this cannot key off .is-open like the popup's items do. */
+.osk.is-entering .osk-row {
+  animation: popup-item-in 0.26s cubic-bezier(0.2, 0, 0.2, 1) both;
+  animation-delay: calc(0.08s + var(--osk-row, 0) * 35ms);
+}
+
+.osk-title {
+  font-weight: 500;
+  font-size: calc(26 * var(--px));
+  color: color-mix(in srgb, var(--d2) 70%, transparent);
+}
+
+/* The value being edited. Not an <input>: the UI forbids a caret globally (and a real one would let the
+   OS focus wander), so the caret is drawn — one element, blinking, always at the end. */
+.osk-field {
+  display: flex;
+  align-items: center;
+  min-height: calc(72 * var(--px));
+  padding: calc(8 * var(--px)) calc(24 * var(--px));
+  border-radius: calc(10 * var(--px));
+  background: color-mix(in srgb, var(--d2) 14%, transparent);
+  color: var(--d2);
+  font-weight: 500;
+  font-size: calc(30 * var(--px));
+  overflow-wrap: anywhere;
+}
+
+.osk-caret {
+  display: inline-block;
+  width: calc(3 * var(--px));
+  height: calc(34 * var(--px));
+  margin-left: calc(2 * var(--px));
+  background: currentColor;
+  animation: osk-caret 1s steps(1) infinite;
+}
+
+@keyframes osk-caret {
+  0%,
+  50% {
+    opacity: 1;
+  }
+  50.01%,
+  100% {
+    opacity: 0;
+  }
+}
+
+.osk-keys {
+  display: flex;
+  flex-direction: column;
+  gap: calc(8 * var(--px));
+}
+
+.osk-row {
+  display: flex;
+  gap: calc(8 * var(--px));
+  justify-content: center;
+}
+
+.osk-key {
+  flex: 0 0 auto;
+  min-width: calc(76 * var(--px));
+  height: calc(76 * var(--px));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 calc(16 * var(--px));
+  border: none;
+  border-radius: calc(10 * var(--px));
+  background: color-mix(in srgb, var(--d2) 14%, transparent);
+  color: var(--d2);
+  font-family: inherit;
+  font-weight: 500;
+  font-size: calc(30 * var(--px));
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, transform 0.12s ease;
+}
+
+.osk-key.is-wide {
+  min-width: calc(168 * var(--px));
+  font-size: calc(24 * var(--px));
+}
+
+html:not(.cursor-hidden) .osk-key:hover,
+.osk-key.is-focused {
+  background: var(--d2);
+  color: var(--d1);
+}
+
+.osk-key.is-pressed {
+  transform: scale(0.92);
+}
+
+.osk-key.is-active {
+  outline: calc(2 * var(--px)) solid var(--d2);
+  outline-offset: calc(-2 * var(--px));
+}
+
+.osk-legend,
+.picker-legend {
+  font-weight: 300;
+  font-size: calc(20 * var(--px));
+  color: color-mix(in srgb, var(--d2) 55%, transparent);
+  text-align: center;
+}
+
+/* ── File browser ───────────────────────────────────────────────────────────
+   Read-only, and unrestricted on purpose: where to browse is the user's business (the commonest install
+   path there is, `…/steamapps/common`, is a system directory by any definition). What is guarded is what
+   main ACCEPTS back — see the plan, Р5.2. */
+
+.picker {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s ease;
+  z-index: 1;
+}
+
+.picker.is-open {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.picker-veil {
+  position: absolute;
+  inset: 0;
+  background: var(--d1);
+}
+
+.picker-panel {
+  position: absolute;
+  inset: calc(60 * var(--px));
+  display: flex;
+  flex-direction: column;
+  gap: calc(12 * var(--px));
+}
+
+.picker-title {
+  font-weight: 800;
+  font-size: calc(36 * var(--px));
+  color: var(--d2);
+}
+
+.picker-path {
+  font-weight: 300;
+  font-size: calc(22 * var(--px));
+  color: color-mix(in srgb, var(--d2) 65%, transparent);
+  overflow-wrap: anywhere;
+}
+
+.picker-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  gap: calc(24 * var(--px));
+}
+
+.picker-roots {
+  flex: 0 0 calc(360 * var(--px));
+  overflow-y: auto;
+  scrollbar-width: none;
+  display: flex;
+  flex-direction: column;
+  gap: calc(4 * var(--px));
+}
+
+.picker-entries {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-y: auto;
+  scrollbar-width: none;
+  display: flex;
+  flex-direction: column;
+  gap: calc(4 * var(--px));
+  --fade-top: 0px;
+  --fade-bottom: 0px;
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 var(--fade-top),
+    #000 calc(100% - var(--fade-bottom)),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 var(--fade-top),
+    #000 calc(100% - var(--fade-bottom)),
+    transparent 100%
+  );
+}
+
+.picker-roots::-webkit-scrollbar,
+.picker-entries::-webkit-scrollbar {
+  display: none;
+}
+
+.picker-item {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: calc(12 * var(--px));
+  min-height: calc(58 * var(--px));
+  padding: 0 calc(20 * var(--px));
+  border: none;
+  border-radius: calc(8 * var(--px));
+  background: transparent;
+  color: var(--d2);
+  font-family: inherit;
+  font-weight: 400;
+  font-size: calc(26 * var(--px));
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+html:not(.cursor-hidden) .picker-item:hover,
+.picker-item.is-focused {
+  background: var(--d2);
+  color: var(--d1);
+}
+
+/* A folder reads differently from a file at a glance — the browser is used at arm's length on a Deck.
+   The ACTION rows (cancel, up, use this folder) deliberately carry no glyph: they are not part of the
+   tree, and a marker would put them in it. */
+.picker-item.is-dir::before {
+  content: '/';
+  opacity: 0.6;
+}
+
+.picker-item.is-action {
+  font-weight: 500;
+}
+
+/* …and a rule of its own between them and the tree. A separate element, not a border on the last
+   button: a bottom border there squares one corner of a rounded, invertible button. */
+.picker-divider {
+  flex: 0 0 auto;
+  height: calc(2 * var(--px));
+  margin: calc(8 * var(--px)) calc(20 * var(--px));
+  background: color-mix(in srgb, var(--d2) 25%, transparent);
+}
+
+.picker-item.is-picked {
+  text-decoration: underline;
+  text-underline-offset: calc(6 * var(--px));
+}
+
+.picker-empty {
+  padding: calc(20 * var(--px));
+  font-weight: 300;
+  font-size: calc(24 * var(--px));
+  color: color-mix(in srgb, var(--d2) 55%, transparent);
+}
+
+/* ── Artwork lightbox ───────────────────────────────────────────────────────
+   Inside the Customize screen, above the keyboard and the picker: the artwork at full size, which is the
+   only way to answer "is this the right picture?" from a 96px thumbnail. */
+
+.lightbox {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: calc(16 * var(--px));
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s ease;
+}
+
+.lightbox.is-open {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.lightbox-veil {
+  position: absolute;
+  inset: 0;
+  background: var(--d1);
+}
+
+/* `contain`, never `cover`: the whole point is to see the picture as it IS, borders and all. */
+.lightbox-image {
+  position: relative;
+  max-width: calc(100% - 120 * var(--px));
+  max-height: calc(100% - 200 * var(--px));
+  object-fit: contain;
+  border-radius: calc(10 * var(--px));
+}
+
+.lightbox-caption {
+  position: relative;
+  max-width: calc(100% - 120 * var(--px));
+  font-weight: 300;
+  font-size: calc(22 * var(--px));
+  color: color-mix(in srgb, var(--d2) 65%, transparent);
+  text-align: center;
+  overflow-wrap: anywhere;
 }
 
 /* ── Boot ──────────────────────────────────────────────────────────────────

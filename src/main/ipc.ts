@@ -17,6 +17,7 @@ import {
   type ResolvedInstallerRun,
   type ResolvedCopyInstall,
   type LaunchTarget,
+  type ManifestSource,
   type ResolvedManifest,
   type SfxName,
   type Stats,
@@ -310,7 +311,7 @@ export class GameController {
   // window): when true the launcher stays on the empty "no card" screen instead of hiding to the tray.
   private alwaysShowEmptyScreen = false;
   private launchInFlight = false;
-  // A manifest reload from the Configure-game window is in flight. Unlike launchInFlight it does NOT
+  // A manifest reload from the Customize screen is in flight. Unlike launchInFlight it does NOT
   // gate on state kind (the reload runs from `ready`), so onLaunchRequested/onUninstallRequested check
   // it explicitly: during the reload's awaits (readManifest + hero/audio on a slow SD — hundreds of ms)
   // the state stays `ready`, and a gamepad Play would otherwise start a game mid-reload (enterReady over
@@ -701,10 +702,10 @@ export class GameController {
 
   /**
    * Reads a card at `root` and drives the launcher to `ready` for the selected game (single- or
-   * multi-game card), or to `error` — the shared body of an ordinary insert AND a Configure-window reload.
+   * multi-game card), or to `error` — the shared body of an ordinary insert AND a Customize save.
    * A multi-game card exposes its other games through the history carousel (the light game list). `focus`
    * controls whether the launcher pops to the front: true for a real insertion (unchanged behaviour), false
-   * for a reload so an Apply from the Configure window doesn't steal focus from the editor. Returns the
+   * for a reload so a Save from the Customize screen doesn't raise the window over what is on top. Returns the
    * readManifests verdict so the caller (reloadManifest) can report it; onInsert ignores it.
    */
   private async loadCard(
@@ -869,7 +870,7 @@ export class GameController {
   }
 
   /**
-   * Re-reads the PC library after the Configure window saved it (the local twin of reloadManifest). Same
+   * Re-reads the PC library after the Customize screen saved it (the local twin of reloadManifest). Same
    * busy guards: a reload during a launch/install would swap the manifest under the running sequence.
    */
   async reloadPcLibrary(): Promise<{ ok: true } | { ok: false; message: string }> {
@@ -909,6 +910,22 @@ export class GameController {
     await this.browseTo(manifest.raw.id);
   }
 
+  /**
+   * Where one game's manifest lives, by id — the bridge the Customize screen crosses from "the game I am
+   * looking at" to "the file that describes it". Only games that can be acted on right now are answered
+   * for (`games`), which is the same rule the screen's menu item is gated on.
+   *
+   * The INDEX is deliberately not part of the answer: `games` is a filtered, reordered union of the card
+   * and the library (a shadowed local game is hidden, the carousel order is applied elsewhere), so a
+   * position here says nothing about the slot's position inside game.json. The screen finds its slot by
+   * `id` instead — see the plan, Р2.
+   */
+  findGameSource(id: string): { readonly root: string; readonly source: ManifestSource } | null {
+    const manifest = this.games.find((game) => game.raw.id === id);
+    if (manifest === undefined) return null;
+    return { root: manifest.root, source: manifest.source };
+  }
+
   /** Logs the local games the inserted card currently shadows (same id — the card wins, see `games`). */
   private warnShadowedLocalGames(): void {
     const cardIds = new Set(this.cardGames.map((manifest) => manifest.raw.id));
@@ -920,10 +937,10 @@ export class GameController {
   }
 
   /**
-   * Applies an edited game.json to the ACTIVE card without restarting the app (Configure-game window).
+   * Applies an edited game.json to the ACTIVE card without restarting the app (the Customize screen).
    * Re-reads the manifest through the same loadCard path an insert uses (readManifest → stats reconcile
    * → audio/hero → buildGameInfo → enterReady | error), so nothing is duplicated and the steam poller's
-   * stale-guard still holds. Focus is NOT taken (opts.focus=false), so the editor keeps it.
+   * stale-guard still holds. Focus is NOT taken (opts.focus=false) — the launcher is already in front.
    *
    * Two guards: (1) on ENTRY — refuse unless idle/ready/error and not launchInFlight (busy guard, like
    * UpdaterService.install; also prevents killing an in-flight sequence, since onInsert would abort it);

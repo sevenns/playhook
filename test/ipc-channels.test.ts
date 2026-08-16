@@ -8,10 +8,10 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { IPC } from '../src/shared/types';
 
-const PRELOAD_FILES = [
-  path.resolve(__dirname, '../src/preload/preload.ts'),
-  path.resolve(__dirname, '../src/preload/configure-preload.ts'),
-];
+// One preload again, now that the Configure window's is gone — but the test stays written for a LIST.
+// The invariant it guards ("every channel is exposed by exactly one preload") is what a second window
+// would put at risk, and the pairwise check below costs nothing while there is only one.
+const PRELOAD_FILES = [path.resolve(__dirname, '../src/preload/preload.ts')];
 
 /** Extracts the string values of the `const CHANNELS = { … }` object literal from a preload source. */
 function readChannelValues(file: string): string[] {

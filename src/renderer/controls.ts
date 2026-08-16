@@ -13,6 +13,7 @@
 import type { AppState, BrowseInfo, GameInfo } from '../shared/types';
 import type { Translator } from '../shared/i18n/index.js';
 import { NAV_REPEAT_MS, createGamepadController } from './gamepad.js';
+import type { NavSurface } from './nav-surface.js';
 import type { MoveResult } from './carousel.js';
 import { type AudioController } from './audio.js';
 import { gameOf, phaseOf, steamBusy } from './state-view.js';
@@ -29,7 +30,10 @@ type ConfirmMode =
   | 'shutdown'
   | 'reboot'
   | 'sleep'
-  | 'reset-settings';
+  | 'reset-settings'
+  | 'reset-game-settings'
+  | 'delete-game'
+  | 'discard-game-settings';
 // Gamepad A doesn't trigger :active, so flash a press class to play the scale-down animation.
 const PRESS_MS = 130;
 /** How far the pointer must travel before hover may take the focus again (see armHover). */
@@ -56,6 +60,8 @@ export interface ControlsDeps {
   carousel: CarouselNav;
   /** The Settings screen — the FOURTH surface, between the popup and the carousel (see navLeft…). */
   settings: SettingsNav;
+  /** The Customize screen — the fifth surface, at the same level as Settings (see `overlays` below). */
+  gameSettings: GameSettingsNav;
   /**
    * A direction is being HELD, i.e. the strip is flipping on its own (true), or it has just been let go
    * (false). The background subsystem holds its image for the duration — see hero.setFlipping.
@@ -68,19 +74,27 @@ export interface ControlsDeps {
  * (settings-screen.ts); this module only routes the six primitives to it and guards the mechanisms that
  * would otherwise keep running underneath (idle timer, wheel, Y).
  */
-export interface SettingsNav {
-  isOpen(): boolean;
+export interface SettingsNav extends NavSurface {
   open(): void;
   close(): void;
-  navUp(): void;
-  navDown(): void;
-  /** `repeat` marks a hold auto-repeat — see the screen's own navLeft. */
-  navLeft(repeat?: boolean): void;
-  navRight(): void;
-  navActivate(): void;
-  navBack(): void;
   /** Runs the reset once the shared confirm popup says yes. */
   resetSettings(): void;
+}
+
+/**
+ * The same seam for the Customize screen. It is an OVERLAY like Settings — same level, never both open —
+ * which is why the routing below asks "which overlay is up?" rather than naming one: a third screen
+ * (adding a game) then costs one line here instead of a rewrite of every primitive.
+ */
+export interface GameSettingsNav extends NavSurface {
+  open(id: string): void;
+  close(): void;
+  /** Whether there are unsaved edits — decides whether leaving asks first. */
+  isDirty(): boolean;
+  /** Whether the game about to be deleted is a LOCAL one, whose save backups survive the deletion. */
+  deletesLocalGame(): boolean;
+  /** The shared confirm popup said yes to one of the screen's three questions. */
+  confirmAccepted(kind: 'reset' | 'delete' | 'discard'): void;
 }
 
 /**
@@ -107,6 +121,8 @@ export interface Controls {
   settingsClosed(): void;
   /** The Settings screen asked to reset — opens the shared confirm popup (No returns to Settings). */
   confirmResetSettings(): void;
+  /** The Customize screen asked one of its three questions — opens the same shared confirm popup. */
+  confirmGameSettings(kind: 'reset' | 'delete' | 'discard'): void;
   /** Clears the game-dependent menu item for the idle/no-game screen. */
   clearGameButtons(): void;
   /** Per-render refresh: force-close the popup off the ready screen (or while steam-busy), then re-apply focus. */
@@ -163,6 +179,25 @@ export function createControls(deps: ControlsDeps): Controls {
   // Seeded once at startup (setGameMode); false until then — the power menu isn't reachable that early.
   let gameMode = false;
 
+  /**
+   * The full-screen overlays, as a set rather than as a named one. Every mechanism that has to stand down
+   * while a screen is up — the idle timer, the wheel, Y, and all six primitives — asks THESE two
+   * questions instead of `settings.isOpen()`, so the next screen is one entry in this list rather than an
+   * eleventh edit in every primitive (see the plan, Р1).
+   *
+   * At most one is ever open: a screen is entered from the Details menu, which closes on the way in, and
+   * a surface that opens on top of a screen (the keyboard, the file picker) belongs to that screen's own
+   * stack rather than to this list.
+   */
+  const overlays = {
+    active: (): NavSurface | null => {
+      if (deps.settings.isOpen()) return deps.settings;
+      if (deps.gameSettings.isOpen()) return deps.gameSettings;
+      return null;
+    },
+    isAnyOpen: (): boolean => deps.settings.isOpen() || deps.gameSettings.isOpen(),
+  };
+
   // The app shell — carries the attributes CSS keys the screen-level states on (see setCarouselBarFocus).
   const app = req('app');
 
@@ -176,12 +211,14 @@ export function createControls(deps: ControlsDeps): Controls {
   const confirmMessage = req('confirm-message');
   const confirmPath = req('confirm-path');
   const errorMessageEl = req('error-message');
+  const deleteNote = req('delete-note');
 
   // Action-stack buttons (grouped by view in the HTML).
   const menuShutdown = req<HTMLButtonElement>('menu-shutdown');
   const menuInstallToggle = req<HTMLButtonElement>('menu-install-toggle');
   const menuKill = req<HTMLButtonElement>('menu-kill');
   const menuHome = req<HTMLButtonElement>('menu-home');
+  const menuCustomize = req<HTMLButtonElement>('menu-customize');
   const menuForget = req<HTMLButtonElement>('menu-forget');
   const menuSettings = req<HTMLButtonElement>('menu-settings');
   const menuClose = req<HTMLButtonElement>('menu-close');
@@ -199,7 +236,7 @@ export function createControls(deps: ControlsDeps): Controls {
   let confirmMode: ConfirmMode = 'uninstall';
   // Where B/Esc/veil returns FROM the confirm view: install/uninstall come from Details, the power
   // actions come from Power.
-  let confirmReturnTo: 'details' | 'power' | 'settings' = 'details';
+  let confirmReturnTo: 'details' | 'power' | 'settings' | 'game-settings' = 'details';
   /** The game the open remove-from-history confirm is about — captured when it opens (see openConfirm). */
   let forgetId: string | null = null;
 
@@ -263,6 +300,7 @@ export function createControls(deps: ControlsDeps): Controls {
     applyMenuInstallToggle(); // keep the toggle's text/visibility fresh for the current game
     applyMenuKill(); // keep the force-close item's visibility fresh (running-only)
     applyMenuHome(); // keep the "Home" item fresh (only when there is a carousel to go back to)
+    applyMenuCustomize(); // …and "Customize", which only applies to a game we can reach the file of
     applyMenuForget(); // keep the "Remove from history" item fresh (history-only games)
     applyMenuSystem(); // …and System, which belongs to the carousel level, not to a game
     applyMenuSettings(); // …and Settings, which belongs to that level too
@@ -297,7 +335,8 @@ export function createControls(deps: ControlsDeps): Controls {
       else if (mode === 'install' && isCopy) popup.dataset['installVia'] = 'copy';
       else delete popup.dataset['installVia'];
       // Prefix-cleanup uninstall shows its own note in the detail (CSS) — the heading stays a short question.
-      if (mode === 'uninstall' && game.prefixCleanupOnly === true) popup.dataset['uninstallVia'] = 'prefix';
+      if (mode === 'uninstall' && game.prefixCleanupOnly === true)
+        popup.dataset['uninstallVia'] = 'prefix';
       else delete popup.dataset['uninstallVia'];
       if (isSteam) {
         confirmMessage.textContent = t()(
@@ -337,6 +376,32 @@ export function createControls(deps: ControlsDeps): Controls {
       popup.dataset['mode'] = mode;
       delete popup.dataset['installVia'];
       confirmMessage.textContent = t()('settings.confirmReset');
+    } else if (
+      mode === 'reset-game-settings' ||
+      mode === 'delete-game' ||
+      mode === 'discard-game-settings'
+    ) {
+      // The Customize screen's three questions. Same shape as the Settings reset: the screen stays open
+      // underneath, so "No" simply closes the popup and hands control back to it.
+      confirmReturnTo = 'game-settings';
+      popup.dataset['mode'] = mode;
+      delete popup.dataset['installVia'];
+      const browse = deps.getBrowse();
+      confirmMessage.textContent =
+        mode === 'reset-game-settings'
+          ? t()('gameSettings.confirmReset')
+          : mode === 'discard-game-settings'
+            ? t()('gameSettings.confirmDiscard')
+            : t()('gameSettings.confirmDelete', { title: browse?.title ?? '' });
+      if (mode === 'delete-game') {
+        // A local game's save backups survive the deletion — gcOrphans sweeps artwork and never touches
+        // saves/ — and a confirm that stayed silent about it would read as "everything goes".
+        deleteNote.textContent = t()(
+          deps.gameSettings.deletesLocalGame()
+            ? 'gameSettings.confirmDeleteSavesNote'
+            : 'gameSettings.confirmDeleteNote',
+        );
+      }
     } else if (mode === 'kill') {
       // Force-close confirm (from Details): no path note; returns to Details. The message warns about
       // unsaved progress. data-mode ≠ 'install' hides the path note (styles.css).
@@ -382,8 +447,9 @@ export function createControls(deps: ControlsDeps): Controls {
         break;
       case 'confirm':
         audio.play('back');
-        // 'settings' is not a popup view: the screen is already open underneath, so the popup just goes.
-        if (confirmReturnTo === 'settings') {
+        // Neither 'settings' nor 'game-settings' is a popup view: that screen is already open
+        // underneath, so the popup just goes and the screen has the focus again.
+        if (confirmReturnTo === 'settings' || confirmReturnTo === 'game-settings') {
           closePopup();
           break;
         }
@@ -407,6 +473,13 @@ export function createControls(deps: ControlsDeps): Controls {
   function openSettings(): void {
     deps.settings.open();
     applyFocus(); // the bar highlight clears (focusActive is false with the screen open)
+  }
+
+  function openCustomize(): void {
+    const browse = deps.getBrowse();
+    if (browse === null || !browse.active) return; // the item's own rule, re-checked at the press
+    deps.gameSettings.open(browse.id);
+    applyFocus();
   }
 
   /** The screen closed itself (B / Esc / veil): put the highlight back on the More button it came from. */
@@ -466,7 +539,9 @@ export function createControls(deps: ControlsDeps): Controls {
     const show = showInstall || showUninstall;
     menuInstallToggle.classList.toggle('is-hidden', !show);
     if (show) {
-      menuInstallToggle.textContent = t()(showInstall ? 'launcher.menu.install' : 'launcher.menu.uninstall');
+      menuInstallToggle.textContent = t()(
+        showInstall ? 'launcher.menu.install' : 'launcher.menu.uninstall',
+      );
       // Which action Yes will run — read back in the stack trigger.
       menuInstallToggle.dataset['action'] = showInstall ? 'install' : 'uninstall';
     }
@@ -500,6 +575,19 @@ export function createControls(deps: ControlsDeps): Controls {
   // Offered ONLY for a game that is not available right now — `active` is main's word for "on the card or
   // in the PC library". Those games are rebuilt from their manifests on every insert, so removing one
   // would be a lie the next refresh undoes; what CAN be removed is the record of a game you no longer have.
+  // ── Menu item: Customize (the per-game manifest editor) ──────────────────────
+  // The MIRROR of "Remove from history": that one is for a game we no longer have, this one for a game we
+  // do — `active` is main's word for "on the card or in the PC library", and it is exactly the condition
+  // under which a game.json to edit exists at all. The two are mutually exclusive by construction, so
+  // they never appear together.
+  function applyMenuCustomize(): void {
+    if (menuFrozen()) return;
+    const browse = deps.getBrowse();
+    const show = onGameScreen() && browse !== null && browse.active;
+    menuCustomize.classList.toggle('is-hidden', !show);
+    if (show) menuCustomize.textContent = t()('launcher.menu.customize');
+  }
+
   function applyMenuForget(): void {
     if (menuFrozen()) return;
     const browse = deps.getBrowse();
@@ -515,7 +603,6 @@ export function createControls(deps: ControlsDeps): Controls {
   function applyPowerItems(): void {
     powerMinimize.classList.toggle('is-hidden', gameMode);
   }
-
 
   // ── Main bar focus (gamepad / mouse) ─────────────────────────────────────────
 
@@ -547,7 +634,8 @@ export function createControls(deps: ControlsDeps): Controls {
     // Running with the launcher summoned over the game: Play returns to the game, so it's focusable too —
     // EXCEPT while a force-close is in flight (killing), when Play is a non-interactive loading spinner.
     const running = state();
-    if (running.kind === 'running') return running.killing === true ? [moreButton] : [playButton, moreButton];
+    if (running.kind === 'running')
+      return running.killing === true ? [moreButton] : [playButton, moreButton];
     // Hard busy (install / uninstall / launch / save-sync): the Play button is a non-interactive activity
     // indicator (spinner/gear), so only More is focusable — it still opens Details.
     if (phaseOf(state()) === 'busy') return [moreButton];
@@ -564,7 +652,7 @@ export function createControls(deps: ControlsDeps): Controls {
   function focusActive(): boolean {
     if (popupView !== 'none') return false;
     // The Settings screen covers the bar (which is faded out and pointer-events:none underneath).
-    if (deps.settings.isOpen()) return false;
+    if (overlays.isAnyOpen()) return false;
     return deps.carousel.screen() === 'detail' || carouselBarFocus;
   }
 
@@ -586,7 +674,10 @@ export function createControls(deps: ControlsDeps): Controls {
     // default "Play" label fits better than an action it won't perform).
     const s = state();
     const returnToGame = s.kind === 'running' && s.killing !== true;
-    playButton.setAttribute('aria-label', t()(returnToGame ? 'launcher.aria.returnToGame' : 'launcher.aria.play'));
+    playButton.setAttribute(
+      'aria-label',
+      t()(returnToGame ? 'launcher.aria.returnToGame' : 'launcher.aria.play'),
+    );
   }
 
   function setCursorHidden(hidden: boolean): void {
@@ -601,7 +692,7 @@ export function createControls(deps: ControlsDeps): Controls {
     if (idleTimer !== 0) window.clearTimeout(idleTimer);
     // With the Settings screen up there is no bar highlight to retire and no carousel to hand back to:
     // firing would strip the return point on More and light the strip up under the veil.
-    if (deps.settings.isOpen()) return;
+    if (overlays.isAnyOpen()) return;
     idleTimer = window.setTimeout(() => {
       idleTimer = 0;
       setCursorHidden(true);
@@ -677,11 +768,12 @@ export function createControls(deps: ControlsDeps): Controls {
   // A single dynamic group covering all four views; the visible buttons depend on the view (and, for
   // Details, whether the Install/Uninstall item is present). Default focus is the BOTTOM button.
   const ALL_STACK_BUTTONS: readonly HTMLButtonElement[] = [
-    menuShutdown,
-    menuHome,
     menuInstallToggle,
     menuKill,
     menuForget,
+    menuShutdown,
+    menuHome,
+    menuCustomize,
     menuSettings,
     menuClose,
     powerShutdown,
@@ -699,12 +791,16 @@ export function createControls(deps: ControlsDeps): Controls {
   function stackFocusables(): readonly HTMLButtonElement[] {
     switch (popupView) {
       case 'details': {
+        // MUST match the DOM order in index.html — this list IS the up/down order, and a mismatch would
+        // move the highlight somewhere other than where the eye follows. Volatile items first (they come
+        // and go with the game's phase), then the fixed block that ends at Close: see the note there.
         const items: HTMLButtonElement[] = [];
-        if (!menuShutdown.classList.contains('is-hidden')) items.push(menuShutdown);
-        if (!menuHome.classList.contains('is-hidden')) items.push(menuHome);
         if (!menuInstallToggle.classList.contains('is-hidden')) items.push(menuInstallToggle);
         if (!menuKill.classList.contains('is-hidden')) items.push(menuKill);
         if (!menuForget.classList.contains('is-hidden')) items.push(menuForget);
+        if (!menuShutdown.classList.contains('is-hidden')) items.push(menuShutdown);
+        if (!menuHome.classList.contains('is-hidden')) items.push(menuHome);
+        if (!menuCustomize.classList.contains('is-hidden')) items.push(menuCustomize);
         if (!menuSettings.classList.contains('is-hidden')) items.push(menuSettings);
         items.push(menuClose);
         return items;
@@ -824,6 +920,11 @@ export function createControls(deps: ControlsDeps): Controls {
       audio.play('button');
       closePopup();
       openSettings();
+    } else if (btn === menuCustomize) {
+      // Like Settings: the menu it was opened from closes first — the screen is a surface of its own.
+      audio.play('button');
+      closePopup();
+      openCustomize();
     } else if (btn === menuHome) {
       // Non-destructive, so no confirm: close the popup and hand control back to the strip.
       audio.play('back');
@@ -909,6 +1010,18 @@ export function createControls(deps: ControlsDeps): Controls {
       case 'reset-settings':
         audio.play('button'); // neutral sound for the destructive confirm
         deps.settings.resetSettings();
+        break;
+      case 'reset-game-settings':
+        audio.play('button'); // neutral sound for the destructive confirm
+        deps.gameSettings.confirmAccepted('reset');
+        break;
+      case 'delete-game':
+        audio.play('button'); // neutral sound for the destructive confirm
+        deps.gameSettings.confirmAccepted('delete');
+        break;
+      case 'discard-game-settings':
+        audio.play('back');
+        deps.gameSettings.confirmAccepted('discard');
         break;
     }
   }
@@ -1026,8 +1139,9 @@ export function createControls(deps: ControlsDeps): Controls {
     }
     // BEFORE stripActive(): left/right are the slider's own gesture (and the dropdown's fast path), and
     // holding one on the Settings screen must never flip through the carousel underneath.
-    if (deps.settings.isOpen()) {
-      deps.settings.navLeft(repeat);
+    const overlay = overlays.active();
+    if (overlay !== null) {
+      overlay.navLeft(repeat);
       return;
     }
     if (stripActive()) {
@@ -1048,8 +1162,9 @@ export function createControls(deps: ControlsDeps): Controls {
     if (repeat) noteFlip();
     // Same early branch as navLeft — `repeat` is irrelevant here: a held right is exactly what a slider
     // wants, one step per repeat, and the screen has no "at the end, hand the focus over" rule.
-    if (popupView === 'none' && deps.settings.isOpen()) {
-      deps.settings.navRight();
+    const overlay = popupView === 'none' ? overlays.active() : null;
+    if (overlay !== null) {
+      overlay.navRight();
       return;
     }
     if (stripActive()) {
@@ -1073,8 +1188,9 @@ export function createControls(deps: ControlsDeps): Controls {
       if (!repeat) moveStackFocus(-1);
       return;
     }
-    if (deps.settings.isOpen()) {
-      deps.settings.navUp();
+    const overlay = overlays.active();
+    if (overlay !== null) {
+      overlay.navUp();
       return;
     }
     // Nothing sits above the bar on the detail screen, so up leaves it: the strip the game was picked
@@ -1090,8 +1206,9 @@ export function createControls(deps: ControlsDeps): Controls {
       if (!repeat) moveStackFocus(1);
       return;
     }
-    if (deps.settings.isOpen()) {
-      deps.settings.navDown();
+    const overlay = overlays.active();
+    if (overlay !== null) {
+      overlay.navDown();
       return;
     }
     // The other half of the vertical pair: down opens the selected card (what A does), up on the detail
@@ -1103,7 +1220,7 @@ export function createControls(deps: ControlsDeps): Controls {
   function navActivate(): void {
     noteGamepadActivity();
     if (popupView !== 'none') activateStack();
-    else if (deps.settings.isOpen()) deps.settings.navActivate();
+    else if (overlays.active() !== null) overlays.active()?.navActivate();
     else if (stripActive()) deps.carousel.activate();
     else activateFocused();
   }
@@ -1115,8 +1232,9 @@ export function createControls(deps: ControlsDeps): Controls {
       back();
       return;
     }
-    if (deps.settings.isOpen()) {
-      deps.settings.navBack();
+    const overlay = overlays.active();
+    if (overlay !== null) {
+      overlay.navBack();
       return;
     }
     if (deps.carousel.screen() === 'carousel') {
@@ -1131,18 +1249,61 @@ export function createControls(deps: ControlsDeps): Controls {
   }
 
   /**
-   * Y: hands the focus between the strip and the bar's More button, and only on the carousel screen —
-   * everywhere else the bar already has it, and there is nothing to swap with. The highlight is woken
-   * along with it: the press IS the user pointing at where it should be. Coming BACK there are two more
-   * ways out, both meaning what they usually mean: B (back) and left (More is right of the strip).
+   * Y: "put me on More". On the carousel that means handing the focus between the strip and the bar; on a
+   * detail screen, where both buttons are already in the same bar, it means jumping between Play and More
+   * — which is the same promise the button makes on home, and the reason it is worth having here: the
+   * hand that learned Y-then-A on the carousel was launching games with it on the detail screen instead.
+   * The highlight is woken along with it: the press IS the user pointing at where it should be. Coming
+   * BACK there are two more ways out, both meaning what they usually mean: B (back) and left.
    */
   function navToggleBar(): void {
     noteGamepadActivity();
-    // Not a no-op by itself: with the Settings screen up it would hand the focus to a bar nobody can see.
-    if (deps.settings.isOpen()) return;
-    if (popupView !== 'none' || deps.carousel.screen() !== 'carousel') return;
+    // With an overlay up, Y belongs to whatever is open there (the keyboard's Shift) — and if that
+    // surface has no use for it, it stays unassigned rather than handing the focus to a hidden bar.
+    const overlay = overlays.active();
+    if (overlay !== null) {
+      overlay.navTertiary?.();
+      return;
+    }
+    if (popupView !== 'none') return;
+    if (deps.carousel.screen() !== 'carousel') {
+      toggleMoreFocus();
+      return;
+    }
     audio.play('navigate');
     setCarouselBarFocus(!carouselBarFocus);
+  }
+
+  /** The detail screen's half of Y: the focus swaps between More and whatever else the bar offers. */
+  function toggleMoreFocus(): void {
+    if (!focusActive()) return;
+    const items = mainFocusables();
+    const more = items.indexOf(moreButton);
+    if (more === -1) return;
+    // Only More is focusable (a busy game, an installer): there is nothing to swap with, so Y wakes the
+    // highlight where it is rather than moving it somewhere that does not exist.
+    const next = focusRevealed && focusIndex === more ? (items.length > 1 ? 0 : more) : more;
+    if (focusRevealed && next === focusIndex) return;
+    focusIndex = next;
+    focusRevealed = true;
+    audio.play('navigate');
+    applyFocus();
+  }
+
+  /** X and the shoulders: overlay-only, and only when the surface on top claims them. */
+  function navSecondary(): void {
+    if (popupView !== 'none') return;
+    overlays.active()?.navSecondary?.();
+  }
+
+  function navShoulder(direction: -1 | 1): void {
+    if (popupView !== 'none') return;
+    overlays.active()?.navShoulder?.(direction);
+  }
+
+  function navCommit(): void {
+    if (popupView !== 'none') return;
+    overlays.active()?.navCommit?.();
   }
 
   function setCarouselBarFocus(onBar: boolean): void {
@@ -1167,7 +1328,7 @@ export function createControls(deps: ControlsDeps): Controls {
     (event) => {
       // onCarousel() stays true under the Settings screen — without this the wheel would flip through the
       // strip behind the veil. Inside the screen the wheel scrolls its own list natively.
-      if (deps.settings.isOpen()) return;
+      if (overlays.isAnyOpen()) return;
       if (!onCarousel()) return;
       noteMouseActivity();
       const delta = event.deltaY !== 0 ? event.deltaY : event.deltaX;
@@ -1205,6 +1366,10 @@ export function createControls(deps: ControlsDeps): Controls {
     onA: navActivate,
     onB: navBack,
     onY: navToggleBar,
+    onX: navSecondary,
+    onShoulderLeft: () => navShoulder(-1),
+    onShoulderRight: () => navShoulder(1),
+    onTriggerRight: navCommit,
     onDirectionsReleased: endFlip,
   });
 
@@ -1236,7 +1401,16 @@ export function createControls(deps: ControlsDeps): Controls {
   // stack is dropped by navUp/navDown themselves). The OS auto-repeat supplies the events (its own
   // initial delay is close enough to the pad's), but its rate is far too fast, so it is throttled to the
   // same NAV_REPEAT_MS cadence. Every other key stays one action per press.
-  const REPEATABLE_KEYS = new Set(['a', 'arrowleft', 'd', 'arrowright', 'w', 'arrowup', 's', 'arrowdown']);
+  const REPEATABLE_KEYS = new Set([
+    'a',
+    'arrowleft',
+    'd',
+    'arrowright',
+    'w',
+    'arrowup',
+    's',
+    'arrowdown',
+  ]);
   let lastKeyRepeatAt = 0;
   window.addEventListener('keydown', (event) => {
     const key = event.key.toLowerCase();
@@ -1264,6 +1438,7 @@ export function createControls(deps: ControlsDeps): Controls {
     applyMenuInstallToggle();
     applyMenuKill();
     applyMenuHome();
+    applyMenuCustomize();
     applyMenuForget();
     applyMenuSystem();
     applyMenuSettings();
@@ -1275,6 +1450,7 @@ export function createControls(deps: ControlsDeps): Controls {
     // screen anyway; no-game is never `running`).
     menuInstallToggle.classList.add('is-hidden');
     menuKill.classList.add('is-hidden');
+    menuCustomize.classList.add('is-hidden'); // no game on screen → no manifest to customize
     menuForget.classList.add('is-hidden'); // no game on screen → nothing to remove from the history
     applyMenuHome(); // the carousel can still be there with no game on screen (history only)
     applyMenuSystem();
@@ -1307,12 +1483,19 @@ export function createControls(deps: ControlsDeps): Controls {
     applyPlayAria();
   }
 
-
   return {
     applyGameButtons,
     clearGameButtons,
     settingsClosed,
     confirmResetSettings: () => openConfirm('reset-settings'),
+    confirmGameSettings: (kind) =>
+      openConfirm(
+        kind === 'reset'
+          ? 'reset-game-settings'
+          : kind === 'delete'
+            ? 'delete-game'
+            : 'discard-game-settings',
+      ),
     refresh,
     showError: openError,
     setGameMode: (value: boolean) => {

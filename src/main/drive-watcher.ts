@@ -81,6 +81,24 @@ export async function listDriveCandidates(
   return candidates;
 }
 
+/**
+ * Every mounted volume on the machine, as plain paths — the STARTING points the in-launcher file picker
+ * offers in its left column. Deliberately unfiltered, unlike listDriveCandidates: a game is installed
+ * wherever the user installed it (the usual `C:\Program Files (x86)\Steam\steamapps\common\…` is a system
+ * disk by any definition), and where to browse is the user's call, not ours. See the plan, Р5.2.
+ */
+export async function listAllMountpoints(): Promise<readonly string[]> {
+  const drives = await list();
+  const paths: string[] = [];
+  for (const drive of drives) {
+    if (drive.isVirtual === true) continue;
+    for (const mount of drive.mountpoints) {
+      if (typeof mount.path === 'string' && mount.path.length > 0) paths.push(mount.path);
+    }
+  }
+  return [...new Set(paths)].sort();
+}
+
 /** What one read of a candidate's game.json yields: what to say about it, and its content signature. */
 export interface ManifestDescription {
   /**

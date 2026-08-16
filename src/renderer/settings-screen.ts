@@ -16,9 +16,13 @@ import type {
   LanguageMode,
   UpdateStatus,
 } from '../shared/types';
-import type { Translator } from '../shared/i18n/index.js';
+import type { MessageKey, Translator } from '../shared/i18n/index.js';
 import { type AudioController } from './audio.js';
 import { req } from './dom.js';
+import { createHoverGuard } from './hover-guard.js';
+import { clampIndex, wrapIndex } from './index-math.js';
+import { createScroller, pxUnit } from './screen-scroller.js';
+import { createSidebar } from './screen-sidebar.js';
 import {
   buildSettingsModel,
   volumePercent,
@@ -28,6 +32,7 @@ import {
   type SettingsRow,
   type ToggleId,
 } from './settings-form-model.js';
+import { rowLabelText } from './row-view-core.js';
 import {
   optionLabel,
   optionLabelNode,
@@ -47,25 +52,8 @@ const VOLUME_STEP = 5;
 const DRAG_PERSIST_MS = 150;
 /** The SFX preview plays at most this often while a volume is being dragged. */
 const PREVIEW_THROTTLE_MS = 220;
-/**
- * How long the list takes to reach a new scroll target. The scroll is animated here rather than left to
- * `scrollIntoView({behavior:'smooth'})`: the native one picks its own duration per distance, so a held
- * direction produced a different (and visibly uneven) glide on every step. One fixed duration with one
- * easing, re-aimed from wherever the current animation is, reads as a single continuous movement.
- */
-const SCROLL_MS = 220;
-/** Standard ease-in-out — the same shape as the CSS transitions the focus highlight uses. */
-function easeInOut(t: number): number {
-  return t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2;
-}
 /** Marquee speed for a clipped option label, in DESIGN px per second (the 0.6 picker's own constant). */
 const MARQUEE_SPEED_PX_PER_S = 60;
-/** How much of the list is kept visible past the focused row, so the next one is always already in view. */
-const SCROLL_MARGIN_PX = 90;
-/** The mask's fade height at each edge (mirrors --fade-size in styles.css). */
-const EDGE_FADE_PX = 28;
-/** How far the pointer must travel before hover may take the focus again (see armHover). */
-const HOVER_WAKE_PX = 6;
 
 /** What the screen sends to main. A seam, so app.ts owns the window.api wiring (and tests can fake it). */
 export interface SettingsScreenApi {
@@ -172,6 +160,12 @@ function withSelect(settings: AppSettings, id: SelectId, value: string): AppSett
   }
 }
 
+/** A section that HAS a title — i.e. one the column can name and the pane can show. */
+interface TitledSection {
+  readonly titleKey: MessageKey;
+  readonly rows: readonly SettingsRow[];
+}
+
 function clampPercent(percent: number): number {
   return Math.min(100, Math.max(0, Math.round(percent)));
 }
@@ -181,6 +175,7 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
   const screen = req('settings');
   const veil = screen.querySelector<HTMLElement>('.settings-veil');
   const listEl = req('settings-list');
+  const navEl = req('settings-nav');
   const versionEl = req('settings-version');
   const optionsEl = req('settings-options');
   const optionsListEl = req('settings-options-list');
@@ -197,8 +192,13 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
   let appVersion = '';
 
   let model: SettingsModel | null = null;
+  /** The rows of the SELECTED section only — the pane shows one section at a time (screen-sidebar.ts). */
   let rendered: readonly RenderedRow[] = [];
   let focusIndex = 0;
+  /** Which titled section the column has SELECTED, by its translation key. */
+  let sectionKey: MessageKey | null = null;
+  /** …and which one the pane is actually showing. The two differ for as long as a preview is pending. */
+  let paneKey: MessageKey | null = null;
 
   // The expanded dropdown: which row it belongs to, its option buttons and the focused option.
   let openSelect: {
@@ -225,85 +225,31 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
     window.setTimeout(() => el.classList.remove('is-pressed'), PRESS_MS);
   }
 
-  /**
-   * A self-animating scroll container: one fixed duration and easing (a re-aim continues from wherever
-   * the box currently is, so a burst of steps is one movement), plus the edge fades that soften a row
-   * cut by the clip. Both scrolling surfaces of this screen use it — the settings list and the expanded
-   * dropdown — so they behave identically.
-   */
-  interface Scroller {
-    /** Animates (or jumps) to a scrollTop. */
-    to(top: number, instant?: boolean): void;
-    /** Recomputes --fade-top / --fade-bottom for the current position. */
-    fades(): void;
-    /** Brings `target` into view, keeping SCROLL_MARGIN_PX of context beyond it. */
-    reveal(target: HTMLElement, instant?: boolean): void;
-  }
-
-  function createScroller(box: HTMLElement): Scroller {
-    let target = 0;
-    let from = 0;
-    let startedAt = 0;
-    let frame = 0;
-
-    const clamp = (top: number): number =>
-      Math.min(Math.max(0, top), Math.max(0, box.scrollHeight - box.clientHeight));
-
-    const fades = (): void => {
-      // A fade only belongs where there IS content beyond the edge — at the very top and the very bottom
-      // the corresponding one is switched off, or the first and last rows read as dimmed for no reason.
-      const top = box.scrollTop > 1 ? EDGE_FADE_PX : 0;
-      const bottom = box.scrollTop < box.scrollHeight - box.clientHeight - 1 ? EDGE_FADE_PX : 0;
-      box.style.setProperty('--fade-top', `calc(${top} * var(--px))`);
-      box.style.setProperty('--fade-bottom', `calc(${bottom} * var(--px))`);
-    };
-
-    const step = (): void => {
-      const progress = Math.min(1, (performance.now() - startedAt) / SCROLL_MS);
-      box.scrollTop = from + (target - from) * easeInOut(progress);
-      fades();
-      if (progress >= 1) {
-        box.scrollTop = target;
-        frame = 0;
-        fades();
-        return;
-      }
-      frame = requestAnimationFrame(step);
-    };
-
-    const to = (top: number, instant = false): void => {
-      const goal = clamp(top);
-      if (instant) {
-        if (frame !== 0) cancelAnimationFrame(frame);
-        frame = 0;
-        target = goal;
-        box.scrollTop = goal;
-        fades();
-        return;
-      }
-      if (frame !== 0 && Math.abs(goal - target) < 0.5) return; // already heading there
-      target = goal;
-      from = box.scrollTop;
-      startedAt = performance.now();
-      if (frame === 0) frame = requestAnimationFrame(step);
-    };
-
-    const reveal = (el: HTMLElement, instant = false): void => {
-      const margin = SCROLL_MARGIN_PX * pxUnit();
-      const top = el.offsetTop - box.offsetTop;
-      const bottom = top + el.offsetHeight;
-      const viewTop = box.scrollTop;
-      const viewBottom = viewTop + box.clientHeight;
-      if (top - margin < viewTop) to(top - margin, instant);
-      else if (bottom + margin > viewBottom) to(bottom + margin - box.clientHeight, instant);
-      else fades();
-    };
-
-    box.addEventListener('scroll', () => fades(), { passive: true });
-    return { to, fades, reveal };
-  }
-
+  // Both scrolling surfaces of this screen use the shared scroller (screen-scroller.ts) — the settings
+  // list and the expanded dropdown — so they behave identically, and so do the other screens.
   const listScroller = createScroller(listEl);
+
+  /**
+   * The section column. Selecting a section shows it in the pane; ACTIVATING one moves the focus there,
+   * which is the only way in — so B is always "back to the column", and the way out of the screen is
+   * from the column alone.
+   */
+  const sidebar = createSidebar(navEl, {
+    audio: deps.audio,
+    onSection: (id, entered) => {
+      sectionKey = id as MessageKey;
+      if (entered) {
+        enterPane();
+        return;
+      }
+      schedulePreview();
+    },
+    onAction: (id) => {
+      deps.audio.play('button');
+      if (id === 'reset') deps.onResetRequested();
+      else navBack();
+    },
+  });
   const optionsScroller = createScroller(optionsListEl);
 
   /**
@@ -312,17 +258,16 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
    * rather than a jump per step at the boundary.
    */
   function applyRowFocus(instant = false): void {
-    rendered.forEach((row, index) => row.el.classList.toggle('is-focused', index === focusIndex));
+    const active = !sidebar.hasFocus();
+    // The pane widens to the left while it holds the focus (see .settings-list in styles.css).
+    listEl.classList.toggle('is-active', active);
+    rendered.forEach((row, index) =>
+      row.el.classList.toggle('is-focused', active && index === focusIndex),
+    );
+    if (!active) return;
     const target = focusedRow();
     if (target === undefined) return;
     listScroller.reveal(target.el, instant);
-  }
-
-  /** One design pixel in real px (--px is a vh unit, so it changes with the window). */
-  function pxUnit(): number {
-    const value = getComputedStyle(document.documentElement).getPropertyValue('--px');
-    const parsed = Number.parseFloat(value);
-    return Number.isFinite(parsed) ? (parsed * window.innerHeight) / 100 : 1;
   }
 
   /** The loading line, shown until the first snapshot lands (the settings window did the same). */
@@ -356,12 +301,75 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
     return ids(a) === ids(b);
   }
 
-  function rowsOf(next: SettingsModel): readonly SettingsRow[] {
-    return next.sections.flatMap((section) => section.rows);
+  /** How long the staggered row entrance runs — the class is dropped once it is over. */
+  const ENTRANCE_MS = 700;
+  /** The stagger stops counting here: past a handful of rows the wave is a wait, not a wave. */
+  const ENTRANCE_STEPS = 8;
+  let entranceTimer = 0;
+
+  /** Arms the one-shot entrance animation (see .settings-list.is-entering in styles.css). */
+  function armEntrance(): void {
+    if (entranceTimer !== 0) window.clearTimeout(entranceTimer);
+    // Off and on around a forced reflow, so a caller that did not rebuild the rows still gets a replay.
+    listEl.classList.remove('is-entering');
+    void listEl.offsetWidth;
+    listEl.classList.add('is-entering');
+    entranceTimer = window.setTimeout(() => {
+      entranceTimer = 0;
+      listEl.classList.remove('is-entering');
+    }, ENTRANCE_MS);
   }
 
-  /** Rebuilds or patches the list for the current state, keeping the focus index in range. */
+  /**
+   * How long the pane waits before showing the section the column moved onto. A held direction walks
+   * through the column faster than that, so the pane is drawn ONCE, when the movement stops, instead of
+   * being torn down and rebuilt at every step — which is what made the whole screen flicker under a hold.
+   * Short enough that a single press still reads as instant.
+   */
+  const PREVIEW_MS = 120;
+  let previewTimer = 0;
+
+  function schedulePreview(): void {
+    if (previewTimer !== 0) window.clearTimeout(previewTimer);
+    previewTimer = window.setTimeout(() => {
+      previewTimer = 0;
+      renderPane();
+    }, PREVIEW_MS);
+  }
+
+  /**
+   * Brings the pane up to date with the selected section NOW, cancelling a pending preview. Anything that
+   * reads the rendered rows has to call this first — including the paths that never scheduled a preview
+   * at all: a MOUSE click on a section activates it without ever moving onto it, and that used to leave
+   * the focus stepping into the section the pane was showing before.
+   */
+  function flushPreview(): void {
+    if (previewTimer !== 0) {
+      window.clearTimeout(previewTimer);
+      previewTimer = 0;
+    }
+    if (paneKey !== sectionKey) renderPane();
+  }
+
+  /** The titled sections — the ones the column offers. The title-less one is the action stack. */
+  function titledSections(from: SettingsModel): readonly TitledSection[] {
+    return from.sections.flatMap((section) => {
+      const key = section.titleKey;
+      return key === undefined ? [] : [{ titleKey: key, rows: section.rows }];
+    });
+  }
+
+  /** The section the pane is showing, falling back to the first one. */
+  function currentSection(from: SettingsModel): TitledSection | undefined {
+    const titled = titledSections(from);
+    return titled.find((section) => section.titleKey === sectionKey) ?? titled[0];
+  }
+
+  /** Rebuilds or patches the screen for the current state, keeping the focus index in range. */
   function render(): void {
+    // A pending preview means `rendered` belongs to the section BEFORE the one sectionKey now names —
+    // patching it against the new section's values would write them into the old section's rows.
+    flushPreview();
     const next = currentModel();
     versionEl.textContent = appVersion;
     if (next === null) {
@@ -369,24 +377,90 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
       renderLoading();
       return;
     }
-    if (model !== null && sameComposition(model, next) && rendered.length > 0) {
-      const rows = rowsOf(next);
+    const previous = model;
+    model = next;
+    renderColumn(next);
+    if (previous !== null && sameComposition(previous, next) && rendered.length > 0) {
+      const rows = visibleRows(next);
       rendered.forEach((row, index) => {
         const nextRow = rows[index];
         // A field being dragged owns its value until the pointer is released — see the module note.
         if (nextRow === undefined || (dragging !== null && dragging.rowIndex === index)) return;
         patchRow(row, nextRow, t());
       });
-      model = next;
       return;
     }
-    model = next;
-    rendered = renderSettings(listEl, next, t()).rows;
+    renderPane();
+  }
+
+  /**
+   * The column: one entry per titled section, then the screen's actions. The actions come from the
+   * title-less section the model already ends with — the same one that used to sit at the bottom of the
+   * scroll, which is exactly what made them hard to reach.
+   */
+  function renderColumn(from: SettingsModel): void {
+    sidebar.render([
+      ...titledSections(from).map((section) => ({
+        id: section.titleKey,
+        label: t()(section.titleKey),
+        kind: 'section' as const,
+      })),
+      ...from.sections
+        .filter((section) => section.titleKey === undefined)
+        .flatMap((section) => section.rows)
+        .flatMap((row) =>
+          row.kind === 'action'
+            ? [{ id: row.id, label: rowLabelText(row.label, t()), kind: 'action' as const }]
+            : [],
+        ),
+    ]);
+  }
+
+  /** The rows the pane currently shows — one section's worth. */
+  function visibleRows(from: SettingsModel): readonly SettingsRow[] {
+    return currentSection(from)?.rows ?? [];
+  }
+
+  /** Draws the selected section into the pane. The column is rebuilt separately (its entries change far
+   *  less often than the values inside a section do). */
+  function renderPane(): void {
+    const from = model;
+    if (from === null) return;
+    const section = currentSection(from);
+    if (section === undefined) return;
+    sectionKey = section.titleKey;
+    paneKey = section.titleKey;
+    // WITHOUT its title: the column beside it already names the section, and printing the name again at
+    // the top of the pane says the same thing twice.
+    rendered = renderSettings(listEl, { ...from, sections: [{ rows: section.rows }] }, t()).rows;
+    rendered.forEach((row, at) =>
+      row.el.style.setProperty('--row-index', String(Math.min(at, ENTRANCE_STEPS))),
+    );
+    armEntrance();
     focusIndex = Math.min(Math.max(focusIndex, 0), Math.max(0, rendered.length - 1));
     applyRowFocus(true);
+    listScroller.to(0, true);
     // The rows were inserted THIS tick, so scrollHeight is still the pre-layout value — the fades would
     // be computed against a list that "doesn't scroll yet". Re-run them once the layout has settled.
     requestAnimationFrame(() => listScroller.fades());
+  }
+
+  /** Hands the focus from the column to the pane, at its first row. */
+  function enterPane(): void {
+    flushPreview(); // whatever the column last moved onto is what the focus is stepping into
+    if (rendered.length === 0) return;
+    sidebar.setFocused(false);
+    focusIndex = 0;
+    armHover();
+    applyRowFocus();
+  }
+
+  /** …and back. The column is the only place the screen can be left from. */
+  function leavePane(): void {
+    closeOptions();
+    sidebar.setFocused(true);
+    armHover();
+    applyRowFocus();
   }
 
   // ── Value changes ──────────────────────────────────────────────────────────
@@ -475,7 +549,7 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
     const rowsNext = currentModel();
     const rendered_ = rendered[indexOfRow(row.id)];
     if (rowsNext !== null && rendered_ !== undefined) {
-      const nextRow = rowsOf(rowsNext)[indexOfRow(row.id)];
+      const nextRow = visibleRows(rowsNext)[indexOfRow(row.id)];
       if (nextRow !== undefined) patchRow(rendered_, nextRow, t());
       model = rowsNext;
     }
@@ -612,7 +686,7 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
 
   function moveRowFocus(delta: number): void {
     if (rendered.length === 0) return;
-    const next = Math.min(rendered.length - 1, Math.max(0, focusIndex + delta));
+    const next = clampIndex(focusIndex, delta, rendered.length);
     if (next === focusIndex) return;
     focusIndex = next;
     deps.audio.play('navigate');
@@ -621,8 +695,7 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
 
   function moveOptionFocus(delta: number): void {
     if (openSelect === null || openSelect.buttons.length === 0) return;
-    const count = openSelect.buttons.length;
-    const next = (optionIndex + delta + count) % count;
+    const next = wrapIndex(optionIndex, delta, openSelect.buttons.length);
     if (next === optionIndex) return;
     optionIndex = next;
     deps.audio.play('navigate');
@@ -632,25 +705,32 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
   function navUp(): void {
     armHover(); // last input wins — see the mousemove handler
     if (openSelect !== null) moveOptionFocus(-1);
+    else if (sidebar.hasFocus()) sidebar.move(-1);
     else moveRowFocus(-1);
   }
 
   function navDown(): void {
     armHover();
     if (openSelect !== null) moveOptionFocus(1);
+    else if (sidebar.hasFocus()) sidebar.move(1);
     else moveRowFocus(1);
   }
 
   function navHorizontal(delta: number): void {
     armHover();
     if (openSelect !== null) return; // handled by navLeft — the expanded list is otherwise vertical
+    // From the column, RIGHT steps into the pane — the direction the layout already suggests. Left is
+    // NOT its mirror inside the pane: there it belongs to the sliders and the dropdowns, so leaving is B.
+    if (sidebar.hasFocus()) {
+      if (delta > 0 && sidebar.selected()?.kind === 'section') enterPane();
+      return;
+    }
     const target = focusedRow();
     if (target === undefined) return;
     const row = target.row;
-    if (row.kind === 'toggle') {
-      toggleRow(focusIndex, row);
-      return;
-    }
+    // A checkbox is NOT stepped through: left/right belong to the rows that have a range to move along
+    // (the sliders, the dropdowns), and a two-state row answered them by flipping — so a walk across the
+    // form changed a setting on the way past. A checkbox is switched with A, and only with A.
     if (row.kind === 'select') {
       cycleSelect(focusIndex, row, delta);
       return;
@@ -715,6 +795,10 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
 
   function navActivate(): void {
     armHover();
+    if (openSelect === null && sidebar.hasFocus()) {
+      sidebar.activate();
+      return;
+    }
     if (openSelect !== null) {
       const row = rendered[openSelect.rowIndex]?.row;
       if (row === undefined || row.kind !== 'select') return;
@@ -733,6 +817,15 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
     if (!open) return;
     open = false;
     closeOptions();
+    if (entranceTimer !== 0) {
+      window.clearTimeout(entranceTimer);
+      entranceTimer = 0;
+    }
+    if (previewTimer !== 0) {
+      window.clearTimeout(previewTimer);
+      previewTimer = 0;
+    }
+    listEl.classList.remove('is-entering');
     delete app.dataset['overlay'];
     screen.setAttribute('aria-hidden', 'true');
     deps.onClosed();
@@ -746,6 +839,12 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
       return;
     }
     deps.audio.play('back');
+    // Out of the pane, back to the column; out of the column, off the screen. The screen can only be
+    // left from the column, which is also where Reset and Close live — so leaving is never a surprise.
+    if (!sidebar.hasFocus()) {
+      leavePane();
+      return;
+    }
     close();
   }
 
@@ -761,6 +860,7 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
     if (index === -1) return;
     const entry = rendered[index];
     if (entry === undefined) return;
+    sidebar.setFocused(false);
     focusIndex = index;
     applyRowFocus();
     const chevronEl = target.closest<HTMLElement>('.setting-chevron');
@@ -827,35 +927,19 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
   });
 
   /**
-   * Hover, for both the row list and the expanded dropdown — and the whole point here is WHEN it is
-   * allowed to move the focus.
-   *
-   * A surface that opens under a resting cursor makes Chromium fire pointer events at it: the element
-   * moved, not the mouse. Taken as hover, that drags the focus off whatever the surface just focused
-   * (the current value, the bottom button) — the "it opened and blinked" stutter, reproducible by simply
-   * parking the mouse where an item will appear. Comparing against the previous event's coordinates is
-   * not enough on its own: the listener has to already KNOW where the pointer is, which is why this
-   * lives on the window and keeps running while everything is closed.
-   *
-   * So opening ARMS the guard at the pointer's current position, and hover stays asleep until the mouse
-   * has actually travelled HOVER_WAKE_PX from there. The gamepad's cursor-hide is a separate reason to
-   * ignore hover, and it is checked too — a hidden cursor must never fight the focus it is not driving.
+   * Hover, for both the row list and the expanded dropdown. WHEN it is allowed to move the focus is the
+   * shared hover guard's job (hover-guard.ts) — it keeps tracking the pointer while the screen is closed,
+   * so opening can arm it at wherever the cursor happens to rest. The gamepad's cursor-hide is a separate
+   * reason to ignore hover, and it is checked too: a hidden cursor must never fight the focus it is not
+   * driving.
    */
+  const hover = createHoverGuard();
   let pointerX = -1;
   let pointerY = -1;
-  let hoverArmedAt: { readonly x: number; readonly y: number } | null = null;
 
   /** Called whenever a surface opens: hover sleeps until the pointer leaves this spot. */
   function armHover(): void {
-    hoverArmedAt = { x: pointerX, y: pointerY };
-  }
-
-  /** Whether this move is the user's, rather than the UI arriving under a still pointer. */
-  function hoverAwake(x: number, y: number): boolean {
-    if (hoverArmedAt === null) return true;
-    if (Math.hypot(x - hoverArmedAt.x, y - hoverArmedAt.y) < HOVER_WAKE_PX) return false;
-    hoverArmedAt = null;
-    return true;
+    hover.arm();
   }
 
   window.addEventListener(
@@ -864,9 +948,10 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
       const moved = event.clientX !== pointerX || event.clientY !== pointerY;
       pointerX = event.clientX;
       pointerY = event.clientY;
+      hover.track(event.clientX, event.clientY);
       if (!moved || !open) return;
       if (document.documentElement.classList.contains('cursor-hidden')) return;
-      if (!hoverAwake(event.clientX, event.clientY)) return;
+      if (!hover.awake(event.clientX, event.clientY)) return;
       const target = event.target;
       if (!(target instanceof Element)) return;
       if (openSelect !== null) {
@@ -881,7 +966,8 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
       const rowEl = target.closest<HTMLElement>('.setting-row');
       if (rowEl === null) return;
       const index = rendered.findIndex((row) => row.el === rowEl);
-      if (index === -1 || index === focusIndex) return;
+      if (index === -1 || (index === focusIndex && !sidebar.hasFocus())) return;
+      sidebar.setFocused(false);
       focusIndex = index;
       applyRowFocus();
     },
@@ -901,6 +987,14 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
       focusIndex = 0;
       app.dataset['overlay'] = 'settings';
       screen.setAttribute('aria-hidden', 'false');
+      sidebar.reset(); // a re-opened screen starts at the first section, column and pane together
+      sectionKey = null;
+      paneKey = null;
+      // …and the pane is REBUILT rather than patched: the rows still in it belong to whichever section
+      // the last visit ended on, and patching those with section one's values crosses the two.
+      rendered = [];
+      sidebar.setFocused(true); // the screen opens on its table of contents, not inside a section
+      sidebar.animateIn();
       armHover(); // same as the dropdown: the screen appears under wherever the mouse happens to rest
       // Instant, not animated: a re-open must START at the top rather than glide there from wherever
       // the previous visit left the list (which showed as a half-cropped first row).
@@ -935,7 +1029,13 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
         renderLoading();
         return;
       }
-      if (model !== null) relocalizeSections(listEl, model, t());
+      if (model !== null) {
+        const section = currentSection(model);
+        if (section !== undefined)
+          relocalizeSections(listEl, { ...model, sections: [section] }, t());
+        // The column IS labels, so it is rebuilt rather than patched — it keeps its selection by id.
+        renderColumn(model);
+      }
       for (const row of rendered) relocalizeRow(row, t());
       // The expanded list, if any, carries labels too.
       if (openSelect !== null) {

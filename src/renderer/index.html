@@ -118,6 +118,10 @@
                 <span class="note-prefix" data-i18n="launcher.confirm.uninstallPrefixNote"
                   >The game stays on the card - only the prefix is removed (saves inside it too).</span
                 >
+                <!-- Deleting a game from its manifest. Text from JS: a LOCAL game's save backups outlive
+                     the deletion (gcOrphans sweeps artwork, never saves/), and saying so is the whole
+                     point of the note — so the two wordings differ by source. -->
+                <span class="note-delete" id="delete-note"></span>
               </div>
             </div>
             <!-- error: title + detail (arbitrary error text from main). -->
@@ -131,13 +135,13 @@
                Each group is a vertical stack (align-items: flex-end): a longer localized label grows
                to the LEFT, the right edge stays fixed. -->
           <div class="popup-actions">
+            <!-- ORDER MATTERS, and it is not thematic: the items that APPEAR AND DISAPPEAR with the
+                 game's phase (install/uninstall, force close, remove from history) are at the TOP, and
+                 the ones that are always there sit in a fixed block just above Close. The stack is
+                 bottom-focused and bottom-anchored, so anything volatile near the bottom shifts the
+                 stable items under the user's thumb between visits — which is how "Customize" got
+                 mis-pressed as "Uninstall". -->
             <div class="actions-group" data-group="details">
-              <button id="menu-shutdown" class="text-button" type="button" data-i18n="launcher.menu.system">System</button>
-              <!-- Back to the history carousel — the mouse counterpart of the B button (shown only on a
-                   detail screen that HAS a carousel to return to). Text from JS, like its neighbours.
-                   Sits ABOVE the game's own actions: leaving is navigation, and navigation belongs over
-                   the things that act on the game (install, uninstall, force close, forget). -->
-              <button id="menu-home" class="text-button" type="button"></button>
               <!-- Install/Uninstall — one button; its text + visibility come from JS (executable games
                    have no install block, so the button is hidden entirely). -->
               <button id="menu-install-toggle" class="text-button" type="button"></button>
@@ -147,6 +151,13 @@
               <!-- Drop this game from the history — shown only for a game that is NOT on the card and not
                    in the PC library (those are playable, not history). Text from JS, like its neighbours. -->
               <button id="menu-forget" class="text-button" type="button"></button>
+              <button id="menu-shutdown" class="text-button" type="button" data-i18n="launcher.menu.system">System</button>
+              <!-- Back to the history carousel — the mouse counterpart of the B button (shown only on a
+                   detail screen that HAS a carousel to return to). Text from JS, like its neighbours. -->
+              <button id="menu-home" class="text-button" type="button"></button>
+              <!-- Customize — the per-game manifest editor, offered only for a game that is on the card
+                   or in the local library (an `active` game is the only one whose file we can reach). -->
+              <button id="menu-customize" class="text-button" type="button"></button>
               <!-- The ONLY way into Settings (the tray item is gone), so it shows on every screen —
                    including the empty one, where More is still there. -->
               <button id="menu-settings" class="text-button" type="button" data-i18n="launcher.menu.settings">Settings</button>
@@ -186,7 +197,13 @@
             <div class="settings-title" data-i18n="window.settings">Settings</div>
             <div class="settings-version" id="settings-version"></div>
           </div>
-          <div class="settings-list" id="settings-list"></div>
+          <!-- TWO columns: the screen's sections (and the actions that end it) on the left, the rows of
+               the selected section on the right. One long scroll put Reset and Close behind the whole
+               form — see screen-sidebar.ts. -->
+          <div class="settings-body">
+            <div class="settings-nav" id="settings-nav"></div>
+            <div class="settings-list" id="settings-list"></div>
+          </div>
         </div>
         <!-- The dropdown's frost lives OUTSIDE the fading container: its own opacity animation would
              otherwise fade the blur along with everything else, which is the cost we are avoiding. -->
@@ -195,6 +212,82 @@
         <div class="settings-options" id="settings-options" aria-hidden="true">
           <div class="settings-options-veil"></div>
           <div class="settings-options-list" id="settings-options-list"></div>
+        </div>
+      </section>
+
+      <!-- Customize: the per-game manifest editor, the fifth surface. Structurally a twin of #settings
+           (same .settings-* skeleton, same veil + column), because it IS the same kind of screen — only
+           its rows and its data differ. Its own openness value is #app[data-overlay="game-settings"];
+           every CSS rule that makes an overlay visible keys off the ATTRIBUTE, not off one value, so
+           adding this screen needed no second copy of them (see styles.css).
+           The keyboard and the file browser below live INSIDE it: data-overlay holds one value at a time,
+           so a surface with a value of its own would extinguish the screen underneath it. -->
+      <section id="game-settings" class="settings" aria-hidden="true">
+        <div class="settings-veil"></div>
+        <div class="settings-column">
+          <div class="settings-header">
+            <div class="settings-title" data-i18n="gameSettings.screenTitle">Customize</div>
+            <!-- The game's own name, from JS: it says WHOSE settings these are, which matters the moment
+                 a card carries more than one game — followed, in the same breath, by where its manifest
+                 lives. ONE group, so the two read as a phrase ("Hades (E:\)") instead of drifting to
+                 opposite ends of a space-between header. The source used to be a row in the form, which
+                 put a read-only fact among the editable ones. -->
+            <div class="settings-heading">
+              <span class="settings-source" id="game-settings-source"></span>
+              <span class="settings-version" id="game-settings-heading"></span>
+            </div>
+          </div>
+          <div class="settings-body">
+            <div class="settings-nav" id="game-settings-nav"></div>
+            <div class="settings-list" id="game-settings-list"></div>
+          </div>
+          <!-- Save's own feedback and the validation summary: they belong to the SCREEN, not to any one
+               section, so they sit under both columns and stay readable wherever the focus is. -->
+          <div class="settings-status" id="game-settings-status"></div>
+        </div>
+        <div class="settings-options-blur"></div>
+        <!-- One column menu for three jobs: an expanded dropdown, a path row's Browse/Clear, and the list
+             editor (whose levels stack inside it). -->
+        <div class="settings-options" id="game-settings-options" aria-hidden="true">
+          <div class="settings-options-veil"></div>
+          <div class="settings-options-list" id="game-settings-options-list"></div>
+        </div>
+
+        <!-- On-screen keyboard. There is no <input> anywhere else in this UI (the CSS forbids a caret at
+             all), and the Steam Deck's system keyboard is only available to games launched FROM Steam —
+             so on a gamepad this is the only way to type. -->
+        <div class="osk" id="osk" aria-hidden="true">
+          <div class="osk-veil"></div>
+          <div class="osk-panel">
+            <div class="osk-title" id="osk-title"></div>
+            <div class="osk-field"><span id="osk-value"></span><span class="osk-caret"></span></div>
+            <div class="osk-keys" id="osk-keys"></div>
+            <div class="osk-legend" id="osk-legend"></div>
+          </div>
+        </div>
+
+        <!-- File browser. The native dialog cannot be driven with a gamepad over a fullscreen window, and
+             in Game Mode it is a dead end — so browsing lives here, read-only, with the acceptance checks
+             in main (see the plan, Р5). -->
+        <div class="picker" id="file-picker" aria-hidden="true">
+          <div class="picker-veil"></div>
+          <div class="picker-panel">
+            <div class="picker-title" id="picker-title"></div>
+            <div class="picker-path" id="picker-path"></div>
+            <div class="picker-body">
+              <div class="picker-roots" id="picker-roots"></div>
+              <div class="picker-entries" id="picker-entries"></div>
+            </div>
+            <div class="picker-legend" id="picker-legend"></div>
+          </div>
+        </div>
+
+        <!-- Artwork at full size. A row's thumbnail is 96px wide — enough to see that a background is
+             set, nowhere near enough to see WHICH one, which is the question the user actually has. -->
+        <div class="lightbox" id="lightbox" aria-hidden="true">
+          <div class="lightbox-veil"></div>
+          <img class="lightbox-image" id="lightbox-image" alt="" />
+          <div class="lightbox-caption" id="lightbox-caption"></div>
         </div>
       </section>
     </main>

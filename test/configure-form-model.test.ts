@@ -552,6 +552,32 @@ describe('multi-game wrapper (textToGames / gamesToText)', () => {
       expect(parsed.games[1]?.ok).toBe(false);
     }
   });
+
+  // The per-game editor makes this reachable: readManifests SKIPS a game that does not resolve, the rest
+  // of the card stays playable, and the user edits one of them. Saving must not take the broken neighbour
+  // with it — hence the raw slot (see the plan, Р2).
+  it('writes an unrepresentable neighbour back VERBATIM instead of dropping it', () => {
+    const source = `[${gameText('a')}, ["not", "a game"]]`;
+    const parsed = textToGames(source);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) throw new Error('unreachable');
+
+    const rebuilt: GameFormState[] = parsed.games.map((game, index) => {
+      if (!game.ok) return { raw: parsed.values[index] };
+      return { model: game.model, rest: game.rest, corrupt: game.corrupt };
+    });
+    // The editable slot even changes, exactly as a real edit would.
+    const first = rebuilt[0];
+    if (first === undefined || !('model' in first)) throw new Error('unreachable');
+    rebuilt[0] = { ...first, model: { ...first.model, title: 'Renamed' } };
+
+    const out = JSON.parse(gamesToText(rebuilt)) as unknown;
+    expect(Array.isArray(out)).toBe(true);
+    const games = out as readonly Record<string, unknown>[];
+    expect(games).toHaveLength(2);
+    expect(games[0]?.title).toBe('Renamed');
+    expect(games[1]).toEqual(['not', 'a game']);
+  });
 });
 
 describe('drift guard: form keys vs the zod schema', () => {

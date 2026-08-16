@@ -9,7 +9,6 @@ import { type Translator } from '../shared/i18n/index';
 
 export interface TrayCallbacks {
   readonly onShow: () => void;
-  readonly onOpenConfigureGame: () => void;
   /** Opens the log folder in the OS file manager (moved here from the settings window). */
   readonly onOpenLogs: () => void;
   /** Opens the app-controlled games install folder (moved here from the settings window). */
@@ -51,7 +50,6 @@ export function buildTrayMenu(t: Translator, callbacks: TrayCallbacks, steam: Tr
           },
         ]
       : []),
-    { label: t('tray.configureGame'), click: () => callbacks.onOpenConfigureGame() },
     { label: t('settings.openLogs'), click: () => callbacks.onOpenLogs() },
     { label: t('settings.openGames'), click: () => callbacks.onOpenGamesFolder() },
     { type: 'separator' },

@@ -21,7 +21,7 @@
 //      game, because quitAndInstall's app.quit() would also tear down a save-sync or a game install.
 //
 // Window-guard lifecycle: quitAndInstall() closes ALL app windows BEFORE emitting `before-quit`
-// (AppUpdater docs), bypassing main.ts.quit(). GameWindow (and the Configure window) hold a
+// (AppUpdater docs), bypassing main.ts.quit(). GameWindow holds a
 // close→preventDefault+hide guard, so the install could hang on those guards. Hence beforeInstall() is
 // called SYNCHRONOUSLY right before quitAndInstall() to drop those guards first.
 import path from 'node:path';
