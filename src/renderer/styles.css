@@ -1345,6 +1345,18 @@ html:not(.cursor-hidden) .text-button:hover,
 /* The scrolling half of the group. `min-height: 0` is load-bearing: .popup-actions has it, .actions-group
    does not, and without it this flex column refuses to shrink below its content and the list overflows
    the popup column instead of scrolling inside it. */
+/* The group that holds the scrolling list needs `min-height: 0` of its OWN. .popup-actions has it,
+   .actions-group does not — and a flex item's default `min-height: auto` means it refuses to shrink
+   below its content. Without this the group simply grew as tall as thirty notifications, the list inside
+   it never got a bounded height, `overflow-y` had nothing to overflow, and the whole stack ran off the
+   bottom of the screen taking the buttons with it. */
+.actions-group[data-group='notifications'] {
+  min-height: 0;
+}
+
+/* `flex: 0 1 auto` (the default) on purpose, NOT `1 1 auto`: with a handful of notifications the list
+   stays its content's height and sits just above the buttons, keeping the stack bottom-anchored like
+   every other view; only when there are too many does it shrink and start scrolling. */
 .notification-list {
   display: flex;
   flex-direction: column;
@@ -1356,6 +1368,26 @@ html:not(.cursor-hidden) .text-button:hover,
   scrollbar-width: none;
   min-height: 0;
   margin-bottom: calc(8 * var(--px));
+  /* Each edge fades rather than cuts, so an entry crossing the clip is half-transparent instead of
+     sliced — the same treatment the Settings list gets, driven by the same scroller (screen-scroller.ts).
+     An edge with nothing beyond it has NO fade, or the first and last entries would sit dimmed under a
+     gradient that hides nothing. */
+  --fade-top: 0px;
+  --fade-bottom: 0px;
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 var(--fade-top),
+    #000 calc(100% - var(--fade-bottom)),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 var(--fade-top),
+    #000 calc(100% - var(--fade-bottom)),
+    transparent 100%
+  );
 }
 
 .notification-list::-webkit-scrollbar {

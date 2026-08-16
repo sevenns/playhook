@@ -13,6 +13,7 @@
 import type { AppNotification, AppState, BrowseInfo, GameInfo } from '../shared/types';
 import type { Locale, MessageKey, Translator } from '../shared/i18n/index.js';
 import { formatNotification, formatNotificationTime } from './format.js';
+import { createScroller } from './screen-scroller.js';
 import { NAV_REPEAT_MS, createGamepadController } from './gamepad.js';
 import type { NavSurface } from './nav-surface.js';
 import type { MoveResult } from './carousel.js';
@@ -245,6 +246,10 @@ export function createControls(deps: ControlsDeps): Controls {
   const powerQuit = req<HTMLButtonElement>('power-quit');
   const powerClose = req<HTMLButtonElement>('power-close');
   const notificationList = req('notification-list');
+  // The same scroller every full-screen surface uses: one fixed duration and easing for the glide, plus
+  // the edge fades. Reused rather than reinvented — a list that scrolls differently from the Settings
+  // list would be the only one in the app that does.
+  const notificationScroller = createScroller(notificationList);
   const notificationsClear = req<HTMLButtonElement>('notifications-clear');
   const notificationsClose = req<HTMLButtonElement>('notifications-close');
   const confirmYes = req<HTMLButtonElement>('confirm-yes');
@@ -347,6 +352,13 @@ export function createControls(deps: ControlsDeps): Controls {
     renderNotificationList();
     focusStackBottom(); // default focus: Close, as in every other view
     applyFocus();
+    // Open at the BOTTOM of the list: the freshest notifications are the last ones (the stack reads
+    // oldest-first, like every other one here), and those are what the user came for. Instant — a list
+    // that opens at the top and then glides down is showing the wrong end first either way.
+    // Next frame, because the entries were inserted this tick and the box has not been laid out yet.
+    requestAnimationFrame(() => {
+      notificationScroller.to(notificationList.scrollHeight, true);
+    });
   }
 
   /** The notification whose entry currently holds the focus — the anchor a repaint restores. */
@@ -432,6 +444,8 @@ export function createControls(deps: ControlsDeps): Controls {
     // Nothing to clear when there is nothing there — the button would be an action with no effect, sitting
     // right where the eye lands. It folds away like every other volatile item in a stack.
     notificationsClear.classList.toggle('is-hidden', items.length === 0);
+    // The fades are computed from the laid-out box, which this tick's insertions have not produced yet.
+    requestAnimationFrame(() => notificationScroller.fades());
     if (popupView === 'notifications') {
       const stack = stackFocusables();
       const at =
@@ -1020,7 +1034,11 @@ export function createControls(deps: ControlsDeps): Controls {
     // they are cleared alongside it, or a stale highlight would sit on two buttons at once.
     for (const btn of [...ALL_STACK_BUTTONS, ...notificationButtons])
       btn.classList.toggle('is-focused', btn === focused);
-    if (focused !== undefined) focused.scrollIntoView({ block: 'nearest' });
+    if (focused === undefined) return;
+    // An entry lives inside the scrolling list, so it is revealed BY that list — which also keeps its
+    // edge fades in step. Everything else is a plain stack button with nothing to scroll.
+    if (focused.classList.contains('notification-item')) notificationScroller.reveal(focused);
+    else focused.scrollIntoView({ block: 'nearest' });
   }
 
   function focusStackBottom(): void {
