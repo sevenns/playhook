@@ -2285,16 +2285,32 @@ html:not(.cursor-hidden) .setting-row.is-inert:hover {
   background: var(--d1);
 }
 
+/* The panel comes UP from the edge it is anchored to and leaves the same way — the movement a keyboard
+   makes. A transition off the open state, not an animation: the panel itself is never rebuilt (only the
+   keys inside it are), so there is nothing here for a rebuild to replay. The X half of the transform is
+   the centring and must be repeated in both states, or the panel would slide in from the left as well. */
 .osk-panel {
   position: absolute;
   left: 50%;
   bottom: calc(60 * var(--px));
-  transform: translateX(-50%);
+  transform: translateX(-50%) translateY(calc(28 * var(--px)));
   width: calc(1100 * var(--px));
   max-width: calc(100% - 80 * var(--px));
   display: flex;
   flex-direction: column;
   gap: calc(16 * var(--px));
+  transition: transform 0.28s cubic-bezier(0.2, 0, 0.2, 1);
+}
+
+.osk.is-open .osk-panel {
+  transform: translateX(-50%);
+}
+
+/* …and the rows arrive behind it, in the order they are read. Armed by the keyboard (osk.ts) on open —
+   see the note there for why this cannot key off .is-open like the popup's items do. */
+.osk.is-entering .osk-row {
+  animation: popup-item-in 0.26s cubic-bezier(0.2, 0, 0.2, 1) both;
+  animation-delay: calc(0.08s + var(--osk-row, 0) * 35ms);
 }
 
 .osk-title {

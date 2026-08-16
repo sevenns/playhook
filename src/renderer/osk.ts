@@ -157,6 +157,7 @@ export function createOsk(deps: OskDeps): TextEntrySurface {
     buttons = rows.map((row, r) => {
       const rowEl = document.createElement('div');
       rowEl.className = 'osk-row';
+      rowEl.style.setProperty('--osk-row', String(r));
       const rowButtons = row.map((key, c) => {
         const button = document.createElement('button');
         button.type = 'button';
@@ -298,8 +299,34 @@ export function createOsk(deps: OskDeps): TextEntrySurface {
   function hide(): void {
     if (!open) return;
     open = false;
+    if (entranceTimer !== 0) {
+      window.clearTimeout(entranceTimer);
+      entranceTimer = 0;
+    }
+    root.classList.remove('is-entering');
     root.classList.remove('is-open');
     root.setAttribute('aria-hidden', 'true');
+  }
+
+  /** How long the rows' staggered arrival runs before the class that drives it is dropped. */
+  const ENTRANCE_MS = 600;
+  let entranceTimer = 0;
+
+  /**
+   * Arms the rows' entrance. It has to be a class the keyboard switches on and off rather than a rule off
+   * `.is-open`, because the rows are REBUILT far more often than the keyboard opens — every shift, and
+   * every shifted character types one and rebuilds them back — and an animation the elements simply
+   * inherit on creation would replay through all of that.
+   */
+  function armEntrance(): void {
+    if (entranceTimer !== 0) window.clearTimeout(entranceTimer);
+    root.classList.remove('is-entering');
+    void root.offsetWidth;
+    root.classList.add('is-entering');
+    entranceTimer = window.setTimeout(() => {
+      entranceTimer = 0;
+      root.classList.remove('is-entering');
+    }, ENTRANCE_MS);
   }
 
   function move(rowDelta: number, colDelta: number): void {
@@ -417,6 +444,7 @@ export function createOsk(deps: OskDeps): TextEntrySurface {
       rebuild();
       hover.arm();
       root.classList.add('is-open');
+      armEntrance();
       root.setAttribute('aria-hidden', 'false');
     },
     navUp: () => move(-1, 0),
