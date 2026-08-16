@@ -7,7 +7,7 @@
 // Unlike the Settings view there is no screen-specific row kind here: every kind this screen draws lives
 // in row-view-core, which is why this module is as short as it is.
 import type { GameSettingsModel, GameSettingsRow } from './game-settings-model';
-import type { Translator } from '../shared/i18n/index';
+import type { MessageKey, Translator } from '../shared/i18n/index';
 import {
   buildCoreRow,
   div,
@@ -136,10 +136,20 @@ export function applyThumbnails(
   box.classList.toggle('is-hidden', thumbs.length === 0);
 }
 
-/** The screen's heading: the game's own title, or a placeholder while nothing is loaded yet. */
-export function screenHeading(model: GameSettingsModel | null, t: Translator): string {
-  if (model === null) return t('gameSettings.screenTitle');
-  return model.title === '' ? t('gameSettings.screenTitle') : model.title;
+/**
+ * The screen's heading: the game's own title, or what the screen is called while there is no title to
+ * show. That fallback is the model's when it names one — a game being ADDED has no title until it is
+ * typed, and "Customize" is precisely the wrong word for it. `pending` is the same answer for the moment
+ * BEFORE there is a model at all (listing the drives takes as long as the drives take).
+ */
+export function screenHeading(
+  model: GameSettingsModel | null,
+  t: Translator,
+  pending?: MessageKey,
+): string {
+  if (model === null) return t(pending ?? 'gameSettings.screenTitle');
+  if (model.title !== '') return model.title;
+  return t(model.headingKey ?? 'gameSettings.screenTitle');
 }
 
 /** Exported for the controller's own re-localization pass of an expanded dropdown. */

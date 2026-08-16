@@ -9,6 +9,7 @@
 // intact. This module only decides how that state is PRESENTED.
 import { MAX_HERO_IMAGES, type ConfigPickKind, type ManifestSource } from '../shared/types';
 import type { MessageKey } from '../shared/i18n/index';
+import { emptyFormModel } from './configure-form-model';
 import type { InstallType, LaunchMode, ManifestFormModel } from './configure-form-model';
 import type {
   RowLabel,
@@ -30,6 +31,7 @@ import type {
  * so mapping an issue onto a row is a lookup rather than a translation table.
  */
 export type GameRowId =
+  | 'source'
   | 'title'
   | 'id'
   | 'launchMode'
@@ -86,6 +88,12 @@ export interface GameSettingsModel {
   /** Shown beside the screen title — the game's own name, so the screen says whose settings these are. */
   readonly title: string;
   /**
+   * What the screen is CALLED, when it is not the default "Customize" — add mode names itself instead.
+   * The heading is the model's to decide for the same reason the rows are: the controller would
+   * otherwise write a second copy of the same condition into the DOM.
+   */
+  readonly headingKey?: MessageKey;
+  /**
    * Where the manifest came from, for the header line beside the title. It used to be a row of its own,
    * which put a read-only fact in the middle of the editable ones; up in the header it answers "whose
    * file am I editing?" at a glance, which is the only question it was ever there to answer.
@@ -95,6 +103,20 @@ export interface GameSettingsModel {
 
 /** Everything the model needs beyond the form state itself. */
 export interface GameSettingsEnv {
+  /**
+   * What the screen is doing with this form: editing a game that exists (`edit`), or creating one
+   * (`add`). An explicit discriminant rather than "sources is non-empty": the mode decides the heading,
+   * the Save wording, whether Discard/Delete exist and whether the source row is there at all, and
+   * inferring all of that from the length of a list reads like a puzzle.
+   */
+  readonly mode: 'edit' | 'add';
+  /** Where a NEW game may go — the roots offered by the source row. Empty in edit mode (no such row). */
+  readonly sources: readonly CoreOption[];
+  /**
+   * The label of the chosen source, for the header line. Null in edit mode, where the header falls back
+   * to the root itself — a candidate's label ("E:\\ — 3 games") only exists while the list is loaded.
+   */
+  readonly sourceLabel: string | null;
   /** Which dialect this manifest speaks — it decides the launch modes on offer. */
   readonly source: ManifestSource;
   /** Whether the launcher runs on Windows — see the Linux section below, and GameConfigReadResult. */
@@ -212,7 +234,21 @@ export function buildGameSettingsModel(
     return message === undefined ? {} : { error: message };
   };
 
-  const basics: GameSettingsRow[] = [
+  const basics: GameSettingsRow[] = [];
+  // Add mode asks WHERE first: every path below is read against that root, and the launch modes on offer
+  // come from it. It is a row rather than a wizard step — the screen already knows how to show a select,
+  // and reading order is enough to say "this one first".
+  if (env.mode === 'add') {
+    basics.push({
+      kind: 'select',
+      id: 'source',
+      label: { key: 'gameSettings.source' },
+      value: env.root,
+      options: env.sources,
+      hint: { key: 'gameSettings.sourceHint' },
+    });
+  }
+  basics.push(
     {
       kind: 'text',
       id: 'title',
@@ -229,7 +265,7 @@ export function buildGameSettingsModel(
       placeholder: { key: 'gameSettings.notSet' },
       ...error('id'),
     },
-  ];
+  );
   // The id is the key of everything this PC remembers about the game; changing it orphans all of it.
   if (env.loadedId !== '' && form.id !== env.loadedId) {
     basics.push({
@@ -524,15 +560,19 @@ export function buildGameSettingsModel(
   actions.push({
     kind: 'action',
     id: 'save',
-    label: { key: 'gameSettings.save' },
+    label: { key: env.mode === 'add' ? 'gameSettings.add' : 'gameSettings.save' },
     disabled: !env.canSave || !env.dirty,
   });
-  actions.push({
-    kind: 'action',
-    id: 'reset',
-    label: { key: 'gameSettings.reset' },
-    disabled: !env.dirty,
-  });
+  // "Discard edits" re-reads the manifest to get the game back as it was — in add mode there is no such
+  // game, so the action has nothing to mean. Close is still there, which is how one leaves.
+  if (env.mode === 'edit') {
+    actions.push({
+      kind: 'action',
+      id: 'reset',
+      label: { key: 'gameSettings.reset' },
+      disabled: !env.dirty,
+    });
+  }
   if (env.canDelete) {
     actions.push({
       kind: 'action',
@@ -545,7 +585,15 @@ export function buildGameSettingsModel(
 
   return {
     title: form.title,
-    source: isPcSource ? { key: 'gameConfig.thisPc' } : { text: env.root },
+    ...(env.mode === 'add' ? { headingKey: 'gameSettings.addTitle' as const } : {}),
+    // The candidate's own label when there is one ("E:\\ — 3 games"), so the header says the same thing
+    // the source row does; a bare mountpoint is what it falls back to, as in edit mode.
+    source:
+      env.sourceLabel !== null
+        ? { text: env.sourceLabel }
+        : isPcSource
+          ? { key: 'gameConfig.thisPc' }
+          : { text: env.root },
     sections: [
       { titleKey: 'gameSettings.sectionBasics', rows: basics },
       { titleKey: 'gameSettings.sectionLaunch', rows: launch },
@@ -581,4 +629,67 @@ export function withLaunchMode(form: ManifestFormModel, mode: LaunchMode): Manif
 export function withInstallType(form: ManifestFormModel, type: InstallType): ManifestFormModel {
   const runAsAdmin = type === 'custom' ? false : form.install.runAsAdmin;
   return { ...form, install: { ...form.install, type, runAsAdmin } };
+}
+
+/**
+ * Whether anything in the form would be LOST by moving the new game to another source — the paths and the
+ * install block below. It is what decides whether switching the source asks first: a form where only the
+ * name has been typed has nothing to lose, and a confirm there is a question about nothing.
+ */
+export function hasSourceBoundValues(form: ManifestFormModel): boolean {
+  return (
+    form.executable !== '' ||
+    form.pc.executable !== '' ||
+    form.install.installer !== '' ||
+    form.install.args.length > 0 ||
+    form.install.winetricks.length > 0 ||
+    form.install.runAsAdmin ||
+    form.copyToPc ||
+    form.copyInstall.installer !== '' ||
+    form.heroImage.length > 0 ||
+    form.gridImage !== '' ||
+    form.backgroundMusic !== '' ||
+    form.saveOnCard !== '' ||
+    form.pcSavePath !== ''
+  );
+}
+
+/**
+ * Moves a half-filled ADD form to another source. What survives is what the source has no say over — the
+ * name, the arguments, the timeouts, the Steam appid, the Linux fields; what goes is everything measured
+ * against the old root or meaningless on the new one:
+ *
+ *  • the executables and the artwork/music paths — relative to a root that is not this one any more
+ *    (a card path on this PC, or the reverse, points at nothing);
+ *  • the whole install block and "move to PC" — an installer is something a CARD carries;
+ *  • `saveOnCard`, which the PC library forbids outright, and `pcSavePath`, which is a `%PREFIX%/…`
+ *    string for a card game and an absolute host path for a local one;
+ *  • the launch mode, but ONLY when the new source does not allow it — in practice `steam` is the one
+ *    mode that survives the move in either direction.
+ *
+ * Wiping the lot would be simpler, and would mean re-typing the title on a gamepad keyboard because a
+ * radio button was changed.
+ */
+export function carryFormAcrossSources(
+  form: ManifestFormModel,
+  next: ManifestSource,
+): ManifestFormModel {
+  const blank = emptyFormModel(defaultLaunchMode(next));
+  const launchMode = launchModesFor(next).includes(form.launchMode)
+    ? form.launchMode
+    : defaultLaunchMode(next);
+  return {
+    ...blank,
+    launchMode,
+    id: form.id,
+    title: form.title,
+    args: form.args,
+    runAsAdmin: form.runAsAdmin,
+    watchProcesses: form.watchProcesses,
+    launchTimeoutSec: form.launchTimeoutSec,
+    killTimeoutSec: form.killTimeoutSec,
+    winetricks: form.winetricks,
+    umuGameId: form.umuGameId,
+    steam: form.steam,
+  };
 }

@@ -57,6 +57,7 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'launcher.menu.home': 'Главная',
   'launcher.menu.forget': 'Убрать из истории',
   'launcher.menu.notifications': 'Уведомления',
+  'launcher.menu.addGame': 'Добавить игру',
   'launcher.menu.settings': 'Настройки',
   'launcher.confirm.install': 'Установить игру?',
   'launcher.confirm.uninstall': 'Удалить игру с компьютера?',
@@ -189,6 +190,8 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'notifications.updateReady': 'Обновление {version} готово - установится при перезапуске',
   'notifications.gameInstalled': '{title} установлена',
   'notifications.gameUninstalled': '{title} удалена',
+  'notifications.gameAddedDeferred':
+    '{title} записана на карту. Появится, когда эта карта станет активной.',
   'notifications.empty': 'Уведомлений нет',
   'notifications.clearAll': 'Очистить всё',
   'notifications.yesterday': 'вчера, {time}',
@@ -216,6 +219,7 @@ export const ru: Partial<Record<MessageKey, string>> = {
     'X - отметить, A - выбрать, B - на уровень выше, Y - действия, влево/вправо - сменить колонку',
 
   'gameSettings.screenTitle': 'Настройки игры',
+  'gameSettings.addTitle': 'Добавление игры',
   'gameSettings.loading': 'Читаем манифест...',
   'gameSettings.sectionBasics': 'Основное',
   'gameSettings.sectionLaunch': 'Запуск',
@@ -226,6 +230,9 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'gameSettings.sectionLinux': 'Linux',
   'gameSettings.notSet': 'не задано',
   'gameSettings.listEmpty': 'пусто',
+  'gameSettings.source': 'Куда добавить',
+  'gameSettings.sourceHint':
+    'Карта носит игру с собой; игра, добавленная на этот ПК, остаётся на этой машине.',
   'gameSettings.title': 'Название',
   'gameSettings.id': 'Идентификатор',
   'gameSettings.idChangedWarning':
@@ -288,6 +295,7 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'gameSettings.umuGameIdAuto': 'автоматически',
   'gameSettings.umuGameIdHint': 'Применяет protonfix конкретной игры вместо общего (Linux).',
   'gameSettings.save': 'Сохранить',
+  'gameSettings.add': 'Добавить',
   'gameSettings.reset': 'Отменить правки',
   'gameSettings.delete': 'Удалить игру',
   'gameSettings.viewImage': 'Посмотреть',
@@ -310,6 +318,8 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'gameSettings.otherGameIssue': 'Ошибка в игре {number} ({game}): {field} - {message}',
   'gameSettings.confirmReset': 'Отменить правки этой игры и перечитать манифест?',
   'gameSettings.confirmDiscard': 'Выйти без сохранения? Изменения будут потеряны.',
+  'gameSettings.confirmSwitchSource':
+    'Добавить игру в другое место? Пути и настройки установщика будут очищены - название и остальное останутся.',
   'gameSettings.confirmDelete': 'Удалить "{title}" из манифеста?',
   'gameSettings.confirmDeleteNote':
     'Файлы игры останутся на месте. Несохранённые изменения на этом экране будут отброшены.',

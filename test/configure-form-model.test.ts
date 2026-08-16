@@ -7,6 +7,8 @@ import {
   textToFormModel,
   textToGames,
   gamesToText,
+  isRawSlot,
+  slotsWithNewGame,
   launchModeOf,
   KNOWN_MANIFEST_KEYS,
   type GameFormState,
@@ -577,6 +579,69 @@ describe('multi-game wrapper (textToGames / gamesToText)', () => {
     expect(games).toHaveLength(2);
     expect(games[0]?.title).toBe('Renamed');
     expect(games[1]).toEqual(['not', 'a game']);
+  });
+});
+
+// Adding a game to a root the launcher has never written to is the case the multi-game wrapper alone
+// cannot express: `textToGames` rejects an empty list, so a blank card would look like a broken file.
+describe('slotsWithNewGame (the Add-game screen\'s starting point)', () => {
+  const gameText = (id: string): string =>
+    `{"schemaVersion":1,"id":"${id}","title":"${id}","executable":"g.exe","heroImage":"h.jpg"}`;
+
+  it('starts a root with NO game.json on a single blank slot', () => {
+    const result = slotsWithNewGame(null, 'pc');
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('unreachable');
+    expect(result.slots).toHaveLength(1);
+    expect(result.index).toBe(0);
+    const slot = result.slots[0];
+    if (slot === undefined || isRawSlot(slot)) throw new Error('unreachable');
+    expect(slot.model.launchMode).toBe('pc');
+    expect(slot.model.id).toBe('');
+  });
+
+  it('treats an empty file the same way (nothing to carry over)', () => {
+    const result = slotsWithNewGame('   ', 'executable');
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('unreachable');
+    expect(result.slots).toHaveLength(1);
+  });
+
+  it('appends the new game AFTER a single-object manifest', () => {
+    const result = slotsWithNewGame(gameText('hades'), 'executable');
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('unreachable');
+    expect(result.slots).toHaveLength(2);
+    expect(result.index).toBe(1);
+    const first = result.slots[0];
+    if (first === undefined || isRawSlot(first)) throw new Error('unreachable');
+    expect(first.model.id).toBe('hades');
+  });
+
+  it('appends the new game AFTER an array manifest', () => {
+    const result = slotsWithNewGame(`[${gameText('a')},${gameText('b')}]`, 'executable');
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('unreachable');
+    expect(result.slots).toHaveLength(3);
+    expect(result.index).toBe(2);
+  });
+
+  // The neighbour a naive rewrite destroys: an element the form cannot represent is carried verbatim.
+  it('keeps a slot the form cannot represent, verbatim', () => {
+    const result = slotsWithNewGame(`[${gameText('a')},42]`, 'executable');
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('unreachable');
+    const raw = result.slots[1];
+    if (raw === undefined || !isRawSlot(raw)) throw new Error('unreachable');
+    expect(raw.raw).toBe(42);
+    expect(JSON.parse(gamesToText(result.slots.slice(0, 2)))).toEqual([
+      expect.objectContaining({ id: 'a' }),
+      42,
+    ]);
+  });
+
+  it('reports an unreadable manifest rather than starting from a blank one', () => {
+    expect(slotsWithNewGame('{ not json', 'executable').ok).toBe(false);
   });
 });
 

@@ -119,6 +119,8 @@ const gameSettingsApi: GameSettingsScreenApi = {
   validate: (root, text) => window.api.validateGameConfig(root, text),
   save: (request) => window.api.saveGameConfig(request),
   imagePreview: (root, path) => window.api.getGameConfigImage(root, path),
+  sources: () => window.api.listGameConfigSources(),
+  readRoot: (root) => window.api.readGameConfigRoot(root),
 };
 const filePicker = createFilePicker({
   audio,
@@ -137,6 +139,7 @@ const gameSettingsScreen = createGameSettingsScreen({
   // Read lazily for the same reason the carousel seam is: `controls` is created just below.
   onClosed: () => controls.settingsClosed(),
   onConfirmRequested: (kind) => controls.confirmGameSettings(kind),
+  onAdded: (id) => showAddedGame(id),
   // Editing while the game runs is legal (Р3); DELETING it is not — the launcher would be left holding a
   // manifest the file no longer has.
   isBusy: () =>
@@ -260,6 +263,25 @@ function openGameDetail(id: string): void {
   // A no-op when the strip is already on it (the carousel path), and the whole point when it is not.
   carousel.focusGame(id);
   carousel.setScreen('detail');
+}
+
+/**
+ * A game was just added AND applied: put the user in front of it. Not `openGameDetail` — that one looks
+ * the game up in `currentGames`, and the library push that will carry it has not arrived yet, so it would
+ * find nothing and silently do nothing.
+ *
+ * `focusGame` is written for exactly this race: an unknown id is remembered and honoured when the list
+ * arrives. Clearing `userChoseDetail` is what lets `applyLibrary` raise the strip once it does — the flag
+ * is set by opening a detail screen, and it exists to stop the launcher yanking the user out of one.
+ * With a single game there IS no carousel, and staying on that game's detail screen is the right answer.
+ */
+function showAddedGame(id: string): void {
+  userChoseDetail = false;
+  carousel.focusGame(id);
+  // setScreen('carousel') with no carousel is not refused — it quietly becomes 'detail' — so it is only
+  // asked for when there is a strip to show.
+  if (carousel.exists()) carousel.setScreen('carousel');
+  controls.focusStrip();
 }
 
 /** Back out of a detail screen to the carousel (B). False when there is no carousel to return to. */

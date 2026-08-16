@@ -6,7 +6,9 @@ import { describe, expect, it } from 'vitest';
 import { emptyFormModel, type ManifestFormModel } from '../src/renderer/configure-form-model';
 import {
   buildGameSettingsModel,
+  carryFormAcrossSources,
   defaultLaunchMode,
+  hasSourceBoundValues,
   launchModesFor,
   pickKindFor,
   withInstallType,
@@ -16,6 +18,9 @@ import {
 } from '../src/renderer/game-settings-model';
 
 const baseEnv: GameSettingsEnv = {
+  mode: 'edit',
+  sources: [],
+  sourceLabel: null,
   source: 'card',
   windows: false,
   root: 'E:\\',
@@ -184,6 +189,56 @@ describe('the rules that are not visibility', () => {
   });
 });
 
+// The SAME builder, asked to describe a game that does not exist yet. What separates the two modes is
+// small and easy to get wrong in one direction only: a source row leaking into Customize would put an
+// editable "move this game elsewhere" control on a screen that cannot honour it.
+describe('add mode', () => {
+  const addEnv: Partial<GameSettingsEnv> = {
+    mode: 'add',
+    sources: [
+      { value: 'E:\\', label: 'E:\\ — 3 games' },
+      { value: '/pc', label: 'This PC — no games yet' },
+    ],
+    sourceLabel: 'E:\\ — 3 games',
+  };
+
+  it('asks where the game goes FIRST, before anything measured against that answer', () => {
+    const first = ids(model({}, addEnv))[0];
+    expect(first).toBe('source');
+  });
+
+  it('offers the roots it was given, and marks the current one', () => {
+    const built = row(model({}, addEnv), 'source');
+    if (built?.kind !== 'select') throw new Error('unreachable');
+    expect(built.value).toBe('E:\\');
+    expect(built.options).toHaveLength(2);
+  });
+
+  it('names the button Add, and drops the actions a non-existent game has no use for', () => {
+    const built = model({}, { ...addEnv, dirty: true, canSave: true, canDelete: false });
+    const save = row(built, 'save');
+    if (save?.kind !== 'action') throw new Error('unreachable');
+    expect(save.label).toEqual({ key: 'gameSettings.add' });
+    expect(ids(built)).not.toContain('reset');
+    expect(ids(built)).not.toContain('delete');
+    // Close stays: without it the screen could not be left with a mouse.
+    expect(ids(built)).toContain('close');
+  });
+
+  it('titles the screen after what it does, and labels the source as the picker does', () => {
+    const built = model({}, addEnv);
+    expect(built.headingKey).toBe('gameSettings.addTitle');
+    expect(built.source).toEqual({ text: 'E:\\ — 3 games' });
+  });
+
+  it('leaves Customize exactly as it was', () => {
+    const built = model({});
+    expect(ids(built)).not.toContain('source');
+    expect(ids(built)).toContain('reset');
+    expect(built.headingKey).toBeUndefined();
+  });
+});
+
 describe('the Linux section', () => {
   // The Proton fields describe how a game is run under Wine. A card is read on the Deck too, whatever
   // machine it is being edited on, so it keeps them everywhere; a game installed on a Windows PC is only
@@ -228,5 +283,100 @@ describe('pickKindFor', () => {
   it('has nothing to browse for a field that is not a path', () => {
     expect(pickKindFor('title', 'executable', 'card')).toBeNull();
     expect(pickKindFor('args', 'executable', 'card')).toBeNull();
+  });
+});
+
+// What a half-filled Add form loses when the user changes their mind about WHERE the game goes. The rule
+// is easy to let drift away from the validator's: a field kept across the move points at a root that no
+// longer holds it, and the failure shows up as a validation error the user cannot explain.
+describe('carryFormAcrossSources / hasSourceBoundValues', () => {
+  const filled = (over: Partial<ManifestFormModel> = {}): ManifestFormModel => ({
+    ...emptyFormModel('executable'),
+    id: 'hades',
+    title: 'Hades',
+    executable: 'game/hades.exe',
+    args: ['-windowed'],
+    runAsAdmin: true,
+    watchProcesses: ['hades.exe'],
+    heroImage: ['art/hero.jpg'],
+    gridImage: 'art/grid.jpg',
+    backgroundMusic: 'music/theme.mp3',
+    saveOnCard: 'saves',
+    pcSavePath: '%APPDATA%/Hades',
+    launchTimeoutSec: '45',
+    killTimeoutSec: '90',
+    winetricks: ['corefonts'],
+    umuGameId: '1145360',
+    ...over,
+  });
+
+  it('keeps the name and everything the root has no say over', () => {
+    const moved = carryFormAcrossSources(filled(), 'pc');
+    expect(moved.title).toBe('Hades');
+    expect(moved.id).toBe('hades');
+    expect(moved.args).toEqual(['-windowed']);
+    expect(moved.runAsAdmin).toBe(true);
+    expect(moved.watchProcesses).toEqual(['hades.exe']);
+    expect(moved.launchTimeoutSec).toBe('45');
+    expect(moved.killTimeoutSec).toBe('90');
+    expect(moved.winetricks).toEqual(['corefonts']);
+    expect(moved.umuGameId).toBe('1145360');
+  });
+
+  it('drops every path and the whole install block — they were measured against the old root', () => {
+    const moved = carryFormAcrossSources(
+      filled({
+        launchMode: 'installer',
+        install: {
+          installer: 'setup.exe',
+          type: 'inno',
+          runAsAdmin: true,
+          args: ['/S'],
+          winetricks: [],
+          rest: {},
+        },
+      }),
+      'pc',
+    );
+    expect(moved.executable).toBe('');
+    expect(moved.pc.executable).toBe('');
+    expect(moved.install.installer).toBe('');
+    expect(moved.install.args).toEqual([]);
+    expect(moved.copyToPc).toBe(false);
+    expect(moved.copyInstall.installer).toBe('');
+    expect(moved.heroImage).toEqual([]);
+    expect(moved.gridImage).toBe('');
+    expect(moved.backgroundMusic).toBe('');
+    expect(moved.saveOnCard).toBe('');
+    expect(moved.pcSavePath).toBe('');
+  });
+
+  it('moves the launch mode only when the new source will not have it', () => {
+    expect(carryFormAcrossSources(filled(), 'pc').launchMode).toBe('pc');
+    expect(carryFormAcrossSources(filled({ launchMode: 'pc' }), 'card').launchMode).toBe(
+      'executable',
+    );
+  });
+
+  // Steam is the one mode both sources accept — and its appid names a game, not a place on a disk.
+  it('lets a Steam game travel in either direction, appid included', () => {
+    const steam = filled({ launchMode: 'steam', steam: { appid: '1145360', rest: {} } });
+    const toPc = carryFormAcrossSources(steam, 'pc');
+    expect(toPc.launchMode).toBe('steam');
+    expect(toPc.steam.appid).toBe('1145360');
+    const backToCard = carryFormAcrossSources(toPc, 'card');
+    expect(backToCard.launchMode).toBe('steam');
+    expect(backToCard.steam.appid).toBe('1145360');
+  });
+
+  it('asks before the move only when the move would cost something', () => {
+    expect(hasSourceBoundValues(emptyFormModel('executable'))).toBe(false);
+    expect(
+      hasSourceBoundValues({ ...emptyFormModel('executable'), title: 'Hades', id: 'hades' }),
+    ).toBe(false);
+    expect(hasSourceBoundValues(filled())).toBe(true);
+    expect(
+      hasSourceBoundValues({ ...emptyFormModel('executable'), heroImage: ['art/hero.jpg'] }),
+    ).toBe(true);
   });
 });

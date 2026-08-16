@@ -36,6 +36,13 @@ const notificationSchema = z.discriminatedUnion('kind', [
     gameId: z.string(),
     gameTitle: z.string(),
   }),
+  z.object({
+    kind: z.literal('game-added-deferred'),
+    id: z.string(),
+    at: z.number(),
+    read: z.boolean(),
+    gameTitle: z.string(),
+  }),
 ]);
 
 const inboxSchema = z.object({

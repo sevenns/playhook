@@ -623,7 +623,13 @@ export type AppNotification =
       readonly kind: 'game-uninstalled';
       readonly gameId: string;
       readonly gameTitle: string;
-    });
+    })
+  /**
+   * A game was added to a card that is NOT the active one, so it was written to disk and nothing else
+   * happened: the launcher's library cannot show it until that card becomes active. There is no `gameId`
+   * on purpose — the id names nothing the launcher can open, so pressing this entry only dismisses it.
+   */
+  | (NotificationBase & { readonly kind: 'game-added-deferred'; readonly gameTitle: string });
 
 // Distributes over the union so each member loses the base fields on its own (a plain Omit would
 // collapse the three into one non-discriminated object).
@@ -811,6 +817,13 @@ export const IPC = {
   /** game-renderer → main (invoke): list one directory for the in-launcher file picker, plus the
    * starting points offered beside it. Read-only. Payload GameConfigListDirRequest. */
   gameConfigListDir: 'gameConfig:list-dir',
+  /** game-renderer → main (invoke): every root a new game may be added to — the removable candidates
+   * plus the PC library. No payload; answers with DriveCandidate[]. */
+  gameConfigSources: 'gameConfig:sources',
+  /** game-renderer → main (invoke): the game.json TEXT of one ROOT (not one game), for the Add-game
+   * screen — the chosen root may not carry a single game yet, which `hasManifest` states outright.
+   * Payload the root; answers with ConfigRootReadResult. */
+  gameConfigReadRoot: 'gameConfig:read-root',
   /** game-renderer → main (invoke): the system clipboard as text, for the on-screen keyboard's Paste.
    * Reading it belongs to main like every other environment fact; the renderer is sandboxed and its own
    * clipboard API would need a permission prompt that Game Mode has nowhere to show. No payload. */
@@ -836,7 +849,10 @@ export const IPC = {
 /**
  * A removable drive the editor may write to. Unlike DriveWatcher.scan (which only sees cards WITH a
  * game.json), this lists ALL removable/non-system mountpoints, so a blank one is a candidate too —
- * `hasManifest` distinguishes them. Main-internal now: it is what isAllowedRoot is checked against.
+ * `hasManifest` distinguishes them. It is what isAllowedRoot is checked against in main, and it also
+ * crosses to the renderer over gameConfig:sources: the Add-game screen asks the user WHERE the new game
+ * goes, and every field of this shape answers part of that question (`root` is the value it stores,
+ * `label` what it shows, `isActive` which entry is preselected).
  */
 export interface DriveCandidate {
   /** Mountpoint / card root, e.g. "E:\\". */
@@ -950,6 +966,29 @@ export type GameConfigReadResult =
        * through Proton, so its Linux section is not merely empty there but meaningless. A CARD keeps it on
        * either OS — the card is the portable half, and its manifest is read on the Deck too.
        */
+      readonly windows: boolean;
+    }
+  | { readonly ok: false; readonly message: string };
+
+/**
+ * One ROOT's manifest, addressed by the root itself — what the Add-game screen reads once the user has
+ * picked where the game goes. It is deliberately not gameConfig:read with a different payload: that
+ * channel's question is "which file does game X live in", and here there may be no game X yet.
+ *
+ * `hasManifest` is the field ConfigReadResult cannot express: a root with no game.json is the normal
+ * case here (a blank card, a first local game), and it must not be confused with a file that exists but
+ * cannot be read. When it is false, `text` is `''` and the screen starts from an empty slot list —
+ * sending `'[]'` instead would trip textToGames, which rejects an empty games array.
+ */
+export type ConfigRootReadResult =
+  | {
+      readonly ok: true;
+      readonly root: string;
+      readonly source: ManifestSource;
+      readonly signature: string;
+      readonly hasManifest: boolean;
+      readonly text: string;
+      /** Whether the launcher is running on Windows — see GameConfigReadResult.windows. */
       readonly windows: boolean;
     }
   | { readonly ok: false; readonly message: string };
@@ -1150,6 +1189,10 @@ export interface RendererApi {
   acceptGameConfigPaths(request: GameConfigAcceptRequest): Promise<ConfigPickResult>;
   /** List one directory for the in-launcher file picker (read-only). */
   listGameConfigDir(request: GameConfigListDirRequest): Promise<ListDirResult>;
+  /** Every root a new game may be added to — the cards plus the PC library (the Add-game screen). */
+  listGameConfigSources(): Promise<readonly DriveCandidate[]>;
+  /** The manifest text of one ROOT, for adding a game to it (the root may carry no game yet). */
+  readGameConfigRoot(root: string): Promise<ConfigRootReadResult>;
   /** The clipboard as text, for the on-screen keyboard's Paste key. Empty when there is nothing to paste. */
   readClipboard(): Promise<string>;
 

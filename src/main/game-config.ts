@@ -33,6 +33,7 @@ import {
   type ConfigPickKind,
   type ConfigPickResult,
   type ConfigReadResult,
+  type ConfigRootReadResult,
   type ConfigSaveResult,
   type ConfigValidationResult,
   type DirEntry,
@@ -44,6 +45,7 @@ import {
   type GameConfigSaveRequest,
   type ListDirResult,
   type ManifestSource,
+  type NotificationInput,
 } from '../shared/types';
 import { type Translator } from '../shared/i18n/index';
 import { AUDIO_EXTENSIONS, IMAGE_EXTENSIONS, readImageDataUrl } from './asset-reader';
@@ -55,6 +57,7 @@ import {
   type PickRejection,
 } from './config-paths';
 import { describeManifestContent, listAllMountpoints, listDriveCandidates } from './drive-watcher';
+import { addedGamesOf, rootReadResult } from './game-config-add';
 import { type PcLibraryStore } from './pc-library';
 import { resolveInside, validateManifestText } from './manifest';
 import { writeFileAtomic } from './save-sync';
@@ -137,6 +140,13 @@ export interface GameConfigDeps {
   readonly findGameSource: (
     id: string,
   ) => { readonly root: string; readonly source: ManifestSource } | null;
+  /**
+   * Files a notification (NotificationsService.notify). Used for the one write whose result the user
+   * cannot see anywhere else: a game added to a card that is not the active one exists on disk and
+   * nowhere in the library. The inbox belongs to main, and so does the decision to post — the renderer
+   * asks for a save, not for a notification.
+   */
+  readonly notify: (input: NotificationInput) => void;
 }
 
 export class GameConfigService {
@@ -170,6 +180,12 @@ export class GameConfigService {
     ipcMain.handle(
       IPC.gameConfigListDir,
       (_event, payload: GameConfigListDirRequest): Promise<ListDirResult> => this.listDir(payload),
+    );
+    ipcMain.handle(IPC.gameConfigSources, (): Promise<readonly DriveCandidate[]> =>
+      this.candidates(),
+    );
+    ipcMain.handle(IPC.gameConfigReadRoot, (_event, root: unknown): Promise<ConfigRootReadResult> =>
+      this.readRoot(typeof root === 'string' ? root : ''),
     );
   }
 
@@ -261,6 +277,38 @@ export class GameConfigService {
   }
 
   /**
+   * The manifest of one ROOT rather than of one game — what the Add-game screen reads once the user has
+   * chosen where the new game goes. `readGame` cannot answer this: it starts from an id, and the whole
+   * point here is that the root may not carry a single game yet. A missing game.json is a normal answer
+   * (`hasManifest: false`), not an error — only a file that exists and cannot be read is one.
+   */
+  private async readRoot(root: string): Promise<ConfigRootReadResult> {
+    const t = this.deps.getTranslator();
+    if (!(await this.isAllowedRoot(root))) {
+      return { ok: false, message: t('errors.driveUnavailable') };
+    }
+    const base = {
+      root,
+      source: this.sourceOf(root),
+      signature: await this.signatureOf(root),
+      windows: process.platform === 'win32',
+    };
+    const manifestPath = path.join(root, MANIFEST_FILENAME);
+    if (!(await fse.pathExists(manifestPath))) return rootReadResult(base, null);
+    try {
+      return rootReadResult(base, await fse.readFile(manifestPath, 'utf8'));
+    } catch (cause) {
+      return {
+        ok: false,
+        message: t('errors.cannotReadManifest', {
+          file: MANIFEST_FILENAME,
+          cause: describe(cause),
+        }),
+      };
+    }
+  }
+
+  /**
    * The media's identity — the same sorted-ids signature a DriveCandidate carries. It answers the one
    * question `isAllowedRoot` cannot: a card swapped into the same mountpoint keeps the root valid while
    * the FILE underneath is someone else's (see the plan, Р6.2). Our own edits do not move it (the ids
@@ -286,7 +334,9 @@ export class GameConfigService {
     if ((await this.signatureOf(request.root)) !== request.signature) {
       return { saved: false, message: t('errors.mediaChanged') };
     }
-    const result = await this.save(request.root, request.text);
+    // The signature just checked IS the "before" picture of the file — sorted ids — so what a write adds
+    // can be told from it without reading the manifest a second time.
+    const result = await this.save(request.root, request.text, request.signature);
     this.invalidateCandidates();
     return result;
   }
@@ -312,7 +362,11 @@ export class GameConfigService {
     }
   }
 
-  private async save(root: string, text: string): Promise<ConfigSaveResult> {
+  private async save(
+    root: string,
+    text: string,
+    signatureBefore: string,
+  ): Promise<ConfigSaveResult> {
     const t = this.deps.getTranslator();
     // 1. main never trusts the renderer's path — it must be a live removable candidate (or the PC library).
     if (!(await this.isAllowedRoot(root))) {
@@ -350,6 +404,12 @@ export class GameConfigService {
       return applied.ok
         ? { saved: true, applied: 'applied' }
         : { saved: true, applied: 'failed', message: applied.message };
+    }
+    // A deferred write is the one outcome with nothing to show for it: the file is on the card, the card
+    // is not the active one, and the library will not mention the game until it becomes active. Say so,
+    // from here — the notification follows the WRITE, whoever asked for it and for whatever reason.
+    for (const added of addedGamesOf(signatureBefore, text)) {
+      this.deps.notify({ kind: 'game-added-deferred', gameTitle: added.title });
     }
     return { saved: true, applied: 'deferred' };
   }

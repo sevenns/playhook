@@ -35,7 +35,8 @@ type ConfirmMode =
   | 'reset-settings'
   | 'reset-game-settings'
   | 'delete-game'
-  | 'discard-game-settings';
+  | 'discard-game-settings'
+  | 'switch-game-source';
 // Gamepad A doesn't trigger :active, so flash a press class to play the scale-down animation.
 const PRESS_MS = 130;
 /** How far the pointer must travel before hover may take the focus again (see armHover). */
@@ -99,13 +100,15 @@ export interface SettingsNav extends NavSurface {
  */
 export interface GameSettingsNav extends NavSurface {
   open(id: string): void;
+  /** Opens the same screen to CREATE a game — the "Add game" item of the Details menu. */
+  openNew(): void;
   close(): void;
   /** Whether there are unsaved edits — decides whether leaving asks first. */
   isDirty(): boolean;
   /** Whether the game about to be deleted is a LOCAL one, whose save backups survive the deletion. */
   deletesLocalGame(): boolean;
-  /** The shared confirm popup said yes to one of the screen's three questions. */
-  confirmAccepted(kind: 'reset' | 'delete' | 'discard'): void;
+  /** The shared confirm popup said yes to one of the screen's questions. */
+  confirmAccepted(kind: 'reset' | 'delete' | 'discard' | 'switch-source'): void;
 }
 
 /**
@@ -132,8 +135,13 @@ export interface Controls {
   settingsClosed(): void;
   /** The Settings screen asked to reset — opens the shared confirm popup (No returns to Settings). */
   confirmResetSettings(): void;
-  /** The Customize screen asked one of its three questions — opens the same shared confirm popup. */
-  confirmGameSettings(kind: 'reset' | 'delete' | 'discard'): void;
+  /** The Customize screen asked one of its questions — opens the same shared confirm popup. */
+  confirmGameSettings(kind: 'reset' | 'delete' | 'discard' | 'switch-source'): void;
+  /**
+   * Puts the focus back on the launcher's own strip — used after a game is added from the Details menu,
+   * where the highlight would otherwise stay on the More button the screen was opened from.
+   */
+  focusStrip(): void;
   /** Clears the game-dependent menu item for the idle/no-game screen. */
   clearGameButtons(): void;
   /** Per-render refresh: force-close the popup off the ready screen (or while steam-busy), then re-apply focus. */
@@ -237,6 +245,7 @@ export function createControls(deps: ControlsDeps): Controls {
   const menuForget = req<HTMLButtonElement>('menu-forget');
   const menuNotifications = req<HTMLButtonElement>('menu-notifications');
   const menuNotificationsLabel = req('menu-notifications-label');
+  const menuAddGame = req<HTMLButtonElement>('menu-add-game');
   const menuSettings = req<HTMLButtonElement>('menu-settings');
   const menuClose = req<HTMLButtonElement>('menu-close');
   const powerShutdown = req<HTMLButtonElement>('power-shutdown');
@@ -334,6 +343,7 @@ export function createControls(deps: ControlsDeps): Controls {
     applyMenuCustomize(); // …and "Customize", which only applies to a game we can reach the file of
     applyMenuForget(); // keep the "Remove from history" item fresh (history-only games)
     applyMenuSystem(); // …and System, which belongs to the carousel level, not to a game
+    applyMenuAddGame(); // …and "Add game", which belongs to the launcher level, not to a game
     applyMenuSettings(); // …and Settings, which belongs to that level too
     applyMenuNotifications(); // …and the inbox item, whose dot follows the unread count
     setView('details');
@@ -495,6 +505,9 @@ export function createControls(deps: ControlsDeps): Controls {
       openSettings('settings.sectionUpdates');
       return;
     }
+    // A game written to a card that is not active has no entry in the library to open — the notification
+    // says where it went, and pressing it does nothing beyond dismissing it.
+    if (item.kind === 'game-added-deferred') return;
     deps.openGameDetail(item.gameId);
   }
 
@@ -568,7 +581,8 @@ export function createControls(deps: ControlsDeps): Controls {
     } else if (
       mode === 'reset-game-settings' ||
       mode === 'delete-game' ||
-      mode === 'discard-game-settings'
+      mode === 'discard-game-settings' ||
+      mode === 'switch-game-source'
     ) {
       // The Customize screen's three questions. Same shape as the Settings reset: the screen stays open
       // underneath, so "No" simply closes the popup and hands control back to it.
@@ -581,7 +595,9 @@ export function createControls(deps: ControlsDeps): Controls {
           ? t()('gameSettings.confirmReset')
           : mode === 'discard-game-settings'
             ? t()('gameSettings.confirmDiscard')
-            : t()('gameSettings.confirmDelete', { title: browse?.title ?? '' });
+            : mode === 'switch-game-source'
+              ? t()('gameSettings.confirmSwitchSource')
+              : t()('gameSettings.confirmDelete', { title: browse?.title ?? '' });
       if (mode === 'delete-game') {
         // A local game's save backups survive the deletion — gcOrphans sweeps artwork and never touches
         // saves/ — and a confirm that stayed silent about it would read as "everything goes".
@@ -712,6 +728,17 @@ export function createControls(deps: ControlsDeps): Controls {
   function applyMenuSettings(): void {
     if (menuFrozen()) return;
     menuSettings.classList.toggle('is-hidden', onGameScreen() && deps.carousel.exists());
+  }
+
+  /**
+   * Adding a game is about the LIBRARY, not about the game on screen — the same level Settings and System
+   * live at, and hidden by the same rule: on a game's own menu, when there is a carousel to go up to.
+   */
+  function applyMenuAddGame(): void {
+    if (menuFrozen()) return;
+    const show = !(onGameScreen() && deps.carousel.exists());
+    menuAddGame.classList.toggle('is-hidden', !show);
+    if (show) menuAddGame.textContent = t()('launcher.menu.addGame');
   }
 
   function applyMenuInstallToggle(): void {
@@ -965,6 +992,7 @@ export function createControls(deps: ControlsDeps): Controls {
     menuHome,
     menuCustomize,
     menuNotifications,
+    menuAddGame,
     menuSettings,
     menuClose,
     notificationsClear,
@@ -994,6 +1022,7 @@ export function createControls(deps: ControlsDeps): Controls {
         if (!menuShutdown.classList.contains('is-hidden')) items.push(menuShutdown);
         if (!menuHome.classList.contains('is-hidden')) items.push(menuHome);
         if (!menuCustomize.classList.contains('is-hidden')) items.push(menuCustomize);
+        if (!menuAddGame.classList.contains('is-hidden')) items.push(menuAddGame);
         if (!menuSettings.classList.contains('is-hidden')) items.push(menuSettings);
         if (!menuNotifications.classList.contains('is-hidden')) items.push(menuNotifications);
         items.push(menuClose);
@@ -1144,6 +1173,12 @@ export function createControls(deps: ControlsDeps): Controls {
       audio.play('button');
       closePopup();
       openCustomize();
+    } else if (btn === menuAddGame) {
+      // The same screen as Customize, opened with no game behind it (see GameSettingsNav.openNew).
+      audio.play('button');
+      closePopup();
+      deps.gameSettings.openNew();
+      applyFocus();
     } else if (btn === menuHome) {
       // Non-destructive, so no confirm: close the popup and hand control back to the strip.
       audio.play('back');
@@ -1241,6 +1276,10 @@ export function createControls(deps: ControlsDeps): Controls {
       case 'discard-game-settings':
         audio.play('back');
         deps.gameSettings.confirmAccepted('discard');
+        break;
+      case 'switch-game-source':
+        audio.play('button');
+        deps.gameSettings.confirmAccepted('switch-source');
         break;
     }
   }
@@ -1551,6 +1590,15 @@ export function createControls(deps: ControlsDeps): Controls {
     applyFocus();
   }
 
+  /**
+   * Hands the focus back to the strip. Used after a game is added: the screen was opened from the Details
+   * menu, so the bar highlight is still sitting on More while the carousel now shows the new game.
+   */
+  function focusStrip(): void {
+    setCarouselBarFocus(false);
+    applyFocus();
+  }
+
   // The wheel flips through the carousel. Throttled: one notch of a mouse wheel is one event, but a
   // trackpad emits a stream of them, which would fly past a dozen cards per gesture.
   const WHEEL_THROTTLE_MS = 120;
@@ -1673,6 +1721,7 @@ export function createControls(deps: ControlsDeps): Controls {
     applyMenuCustomize();
     applyMenuForget();
     applyMenuSystem();
+    applyMenuAddGame();
     applyMenuSettings();
     applyMenuNotifications();
   }
@@ -1687,6 +1736,7 @@ export function createControls(deps: ControlsDeps): Controls {
     menuForget.classList.add('is-hidden'); // no game on screen → nothing to remove from the history
     applyMenuHome(); // the carousel can still be there with no game on screen (history only)
     applyMenuSystem();
+    applyMenuAddGame();
     applyMenuSettings();
     applyMenuNotifications();
   }
@@ -1728,8 +1778,11 @@ export function createControls(deps: ControlsDeps): Controls {
           ? 'reset-game-settings'
           : kind === 'delete'
             ? 'delete-game'
-            : 'discard-game-settings',
+            : kind === 'switch-source'
+              ? 'switch-game-source'
+              : 'discard-game-settings',
       ),
+    focusStrip,
     refresh,
     showError: openError,
     setGameMode: (value: boolean) => {

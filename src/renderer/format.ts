@@ -37,6 +37,8 @@ export function formatNotification(item: AppNotification, t: Translator): string
       return t('notifications.gameInstalled', { title: item.gameTitle });
     case 'game-uninstalled':
       return t('notifications.gameUninstalled', { title: item.gameTitle });
+    case 'game-added-deferred':
+      return t('notifications.gameAddedDeferred', { title: item.gameTitle });
   }
 }
 

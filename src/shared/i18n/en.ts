@@ -73,6 +73,9 @@ export const en = {
   'launcher.menu.home': 'Home',
   'launcher.menu.forget': 'Remove from history',
   'launcher.menu.notifications': 'Notifications',
+  // Details menu entry that opens the Customize screen with no game behind it — the one way to CREATE a
+  // game from inside the launcher.
+  'launcher.menu.addGame': 'Add game',
   'launcher.menu.settings': 'Settings',
   // Confirmation popup copy (controls.ts). The Yes/No buttons use the shared common.* keys.
   'launcher.confirm.install': 'Do you want to install game?',
@@ -225,6 +228,8 @@ export const en = {
   'notifications.updateReady': 'Update {version} is ready — it will be installed on restart',
   'notifications.gameInstalled': '{title} is installed',
   'notifications.gameUninstalled': '{title} has been removed',
+  'notifications.gameAddedDeferred':
+    '{title} was written to the card. It shows up once that card is the active one.',
   'notifications.empty': 'No notifications',
   'notifications.clearAll': 'Clear all',
   // Timestamp of a list entry: today shows the time alone, yesterday is named, older gets a date.
@@ -251,6 +256,8 @@ export const en = {
   'picker.legendMulti': 'X - tick, A - choose, B - up one level, Y - actions, left/right - switch column',
 
   'gameSettings.screenTitle': 'Customize',
+  // The same screen opened with no game behind it: it adds one instead of editing one.
+  'gameSettings.addTitle': 'Add game',
   'gameSettings.loading': 'Reading the manifest...',
   'gameSettings.sectionBasics': 'Basics',
   'gameSettings.sectionLaunch': 'Launch',
@@ -261,6 +268,11 @@ export const en = {
   'gameSettings.sectionLinux': 'Linux',
   'gameSettings.notSet': 'not set',
   'gameSettings.listEmpty': 'empty',
+  // Add-game only: WHERE the new game goes — a card, or this machine's own library. It is the first row
+  // of the form because everything below it is read against the answer.
+  'gameSettings.source': 'Add to',
+  'gameSettings.sourceHint':
+    'A card carries the game with it; a game added to this PC stays on this machine.',
   'gameSettings.title': 'Title',
   'gameSettings.id': 'Id',
   'gameSettings.idChangedWarning':
@@ -320,6 +332,8 @@ export const en = {
   'gameSettings.umuGameIdAuto': 'automatic',
   'gameSettings.umuGameIdHint': 'Applies that game’s protonfix instead of the generic one (Linux).',
   'gameSettings.save': 'Save',
+  // The Save button in add mode: nothing is being saved back, a game is being created.
+  'gameSettings.add': 'Add',
   'gameSettings.reset': 'Discard edits',
   'gameSettings.delete': 'Delete game',
   'gameSettings.viewImage': 'View',
@@ -342,6 +356,8 @@ export const en = {
   'gameSettings.otherGameIssue': 'Problem in game {number} ({game}): {field} - {message}',
   'gameSettings.confirmReset': 'Discard the edits to this game and re-read the manifest?',
   'gameSettings.confirmDiscard': 'Leave without saving? The changes are lost.',
+  'gameSettings.confirmSwitchSource':
+    'Add the game somewhere else? The paths and the install settings are cleared — the name and the rest stay.',
   'gameSettings.confirmDelete': 'Delete "{title}" from the manifest?',
   'gameSettings.confirmDeleteNote':
     'The game files stay where they are. Unsaved changes on this screen are discarded.',
