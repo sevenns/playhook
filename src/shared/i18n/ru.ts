@@ -321,6 +321,9 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'gameSettings.confirmSwitchSource':
     'Добавить игру в другое место? Пути и настройки установщика будут очищены - название и остальное останутся.',
   'gameSettings.confirmDelete': 'Удалить "{title}" из манифеста?',
+  'gameSettings.confirmDeleteHistory': 'Убрать "{title}" ещё и из истории?',
+  'gameSettings.confirmDeleteHistoryNote':
+    'Да - карточка игры пропадёт из карусели вместе со скопированными на этот ПК картинками. Нет - игра удалится, карточка останется. Закрыть вопрос - отменить удаление; наигранное время сохранится в любом случае.',
   'gameSettings.confirmDeleteNote':
     'Файлы игры останутся на месте. Несохранённые изменения на этом экране будут отброшены.',
   'gameSettings.confirmDeleteSavesNote':

@@ -121,6 +121,7 @@ const gameSettingsApi: GameSettingsScreenApi = {
   imagePreview: (root, path) => window.api.getGameConfigImage(root, path),
   sources: () => window.api.listGameConfigSources(),
   readRoot: (root) => window.api.readGameConfigRoot(root),
+  forgetHistory: (id) => window.api.forgetGame(id),
 };
 const filePicker = createFilePicker({
   audio,

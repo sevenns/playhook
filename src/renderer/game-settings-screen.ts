@@ -91,10 +91,24 @@ export interface GameSettingsScreenApi {
   sources(): Promise<readonly DriveCandidate[]>;
   /** One root's manifest, for adding a game to it — it may carry no game yet (add mode only). */
   readRoot(root: string): Promise<ConfigRootReadResult>;
+  /**
+   * Drops the game's HISTORY record — its card in the carousel and the artwork copied to this PC. Only
+   * ever sent after the game has left the manifest: main refuses to forget a game that is available.
+   */
+  forgetHistory(id: string): void;
 }
 
-/** The questions this screen asks through the launcher's shared confirm popup. */
-export type GameSettingsConfirm = 'reset' | 'delete' | 'discard' | 'switch-source';
+/**
+ * The questions this screen asks through the launcher's shared confirm popup. Deleting is TWO of them:
+ * `delete` removes the game from the manifest and leaves its card in the history, `delete-history` takes
+ * the card too. Which one arrives back is the user's answer to the second question — see controls.ts.
+ */
+export type GameSettingsConfirm =
+  | 'reset'
+  | 'delete'
+  | 'delete-history'
+  | 'discard'
+  | 'switch-source';
 
 /** A surface that opens ON TOP of the screen and hands a value back when it is done. */
 export interface TextEntrySurface extends NavSurface {
@@ -1571,7 +1585,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
    * that leaves the game on screen until some later Save reads as a bug. The slot is cut from the text as
    * READ, so unsaved edits are discarded with it — which the confirm says out loud.
    */
-  async function runDelete(): Promise<void> {
+  async function runDelete(forgetHistory: boolean): Promise<void> {
     const at = origin;
     if (at === null || slotIndex < 0) return;
     const remaining = slots.filter((_, index) => index !== slotIndex);
@@ -1582,6 +1596,9 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       return;
     }
     baseline = text;
+    // Only now: main refuses to forget a game it can still see in a manifest, and the save resolves once
+    // that manifest has been re-read — so this is the first moment the request can be honoured.
+    if (forgetHistory) deps.api.forgetHistory(gameId);
     close();
   }
 
@@ -2007,7 +2024,8 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     // later into "leave the screen", and nothing in the types would object.
     confirmAccepted: (kind) => {
       if (kind === 'reset') runReset();
-      else if (kind === 'delete') void runDelete();
+      else if (kind === 'delete') void runDelete(false);
+      else if (kind === 'delete-history') void runDelete(true);
       else if (kind === 'discard') close();
       else if (kind === 'switch-source') {
         const root = pendingSource;

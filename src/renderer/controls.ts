@@ -35,6 +35,9 @@ type ConfirmMode =
   | 'reset-settings'
   | 'reset-game-settings'
   | 'delete-game'
+  // The second half of the delete question: whether the game's HISTORY record goes with it. Its "No" is
+  // an answer rather than a cancel — see the confirmNo branch in triggerStackButton.
+  | 'delete-game-history'
   | 'discard-game-settings'
   | 'switch-game-source';
 // Gamepad A doesn't trigger :active, so flash a press class to play the scale-down animation.
@@ -108,7 +111,9 @@ export interface GameSettingsNav extends NavSurface {
   /** Whether the game about to be deleted is a LOCAL one, whose save backups survive the deletion. */
   deletesLocalGame(): boolean;
   /** The shared confirm popup said yes to one of the screen's questions. */
-  confirmAccepted(kind: 'reset' | 'delete' | 'discard' | 'switch-source'): void;
+  confirmAccepted(
+    kind: 'reset' | 'delete' | 'delete-history' | 'discard' | 'switch-source',
+  ): void;
 }
 
 /**
@@ -136,7 +141,7 @@ export interface Controls {
   /** The Settings screen asked to reset — opens the shared confirm popup (No returns to Settings). */
   confirmResetSettings(): void;
   /** The Customize screen asked one of its questions — opens the same shared confirm popup. */
-  confirmGameSettings(kind: 'reset' | 'delete' | 'discard' | 'switch-source'): void;
+  confirmGameSettings(kind: 'reset' | 'delete' | 'delete-history' | 'discard' | 'switch-source'): void;
   /**
    * Puts the focus back on the launcher's own strip — used after a game is added from the Details menu,
    * where the highlight would otherwise stay on the More button the screen was opened from.
@@ -581,6 +586,7 @@ export function createControls(deps: ControlsDeps): Controls {
     } else if (
       mode === 'reset-game-settings' ||
       mode === 'delete-game' ||
+      mode === 'delete-game-history' ||
       mode === 'discard-game-settings' ||
       mode === 'switch-game-source'
     ) {
@@ -597,7 +603,14 @@ export function createControls(deps: ControlsDeps): Controls {
             ? t()('gameSettings.confirmDiscard')
             : mode === 'switch-game-source'
               ? t()('gameSettings.confirmSwitchSource')
-              : t()('gameSettings.confirmDelete', { title: browse?.title ?? '' });
+              : mode === 'delete-game-history'
+                ? t()('gameSettings.confirmDeleteHistory', { title: browse?.title ?? '' })
+                : t()('gameSettings.confirmDelete', { title: browse?.title ?? '' });
+      // The second question's own note: what each of ITS answers costs. It matters more than the first
+      // one's, because "No" here does not mean "never mind" — it deletes the game and keeps the card.
+      if (mode === 'delete-game-history') {
+        deleteNote.textContent = t()('gameSettings.confirmDeleteHistoryNote');
+      }
       if (mode === 'delete-game') {
         // A local game's save backups survive the deletion — gcOrphans sweeps artwork and never touches
         // saves/ — and a confirm that stayed silent about it would read as "everything goes".
@@ -1214,6 +1227,15 @@ export function createControls(deps: ControlsDeps): Controls {
     } else if (btn === confirmYes) {
       acceptConfirm();
     } else if (btn === confirmNo) {
+      // No IS back everywhere else — one gesture, one meaning. The history question is the exception: it
+      // asks how FAR the deletion goes, so "No" answers it (delete the game, keep its card) while B and
+      // the veil keep meaning "get me out of here" and cancel the deletion outright.
+      if (popupView === 'confirm' && confirmMode === 'delete-game-history') {
+        audio.play('button');
+        closePopup();
+        deps.gameSettings.confirmAccepted('delete');
+        return;
+      }
       back(); // cancel → returns to Details / Power
     }
   }
@@ -1229,6 +1251,14 @@ export function createControls(deps: ControlsDeps): Controls {
   // "Yes" — closes the ENTIRE popup stack (→ 'none') and runs the action. Closing first is critical for
   // steam-install: after Yes the state stays 'ready', so the popup wouldn't self-close on a state change.
   function acceptConfirm(): void {
+    // Deleting is asked in two parts, and the second one replaces the first ON THE SAME SURFACE: closing
+    // the popup and opening it again would flash it out and back in for what the user experiences as one
+    // question growing a follow-up.
+    if (confirmMode === 'delete-game') {
+      audio.play('button'); // neutral sound for the destructive confirm
+      openConfirm('delete-game-history');
+      return;
+    }
     const mode = confirmMode;
     closePopup();
     switch (mode) {
@@ -1269,9 +1299,9 @@ export function createControls(deps: ControlsDeps): Controls {
         audio.play('button'); // neutral sound for the destructive confirm
         deps.gameSettings.confirmAccepted('reset');
         break;
-      case 'delete-game':
+      case 'delete-game-history':
         audio.play('button'); // neutral sound for the destructive confirm
-        deps.gameSettings.confirmAccepted('delete');
+        deps.gameSettings.confirmAccepted('delete-history');
         break;
       case 'discard-game-settings':
         audio.play('back');
@@ -1778,9 +1808,11 @@ export function createControls(deps: ControlsDeps): Controls {
           ? 'reset-game-settings'
           : kind === 'delete'
             ? 'delete-game'
-            : kind === 'switch-source'
-              ? 'switch-game-source'
-              : 'discard-game-settings',
+            : kind === 'delete-history'
+              ? 'delete-game-history'
+              : kind === 'switch-source'
+                ? 'switch-game-source'
+                : 'discard-game-settings',
       ),
     focusStrip,
     refresh,

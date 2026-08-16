@@ -359,6 +359,11 @@ export const en = {
   'gameSettings.confirmSwitchSource':
     'Add the game somewhere else? The paths and the install settings are cleared — the name and the rest stay.',
   'gameSettings.confirmDelete': 'Delete "{title}" from the manifest?',
+  // The second half of the delete question. Its "No" is an ANSWER, not a way out — hence the last line:
+  // backing out of the question is what cancels the deletion.
+  'gameSettings.confirmDeleteHistory': 'Remove "{title}" from the history as well?',
+  'gameSettings.confirmDeleteHistoryNote':
+    'Yes also drops its card from the carousel, with the artwork copied to this PC. No deletes the game and keeps the card. Closing this question cancels the deletion; the play time is kept either way.',
   'gameSettings.confirmDeleteNote':
     'The game files stay where they are. Unsaved changes on this screen are discarded.',
   'gameSettings.confirmDeleteSavesNote':
