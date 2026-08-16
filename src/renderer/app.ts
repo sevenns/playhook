@@ -19,6 +19,7 @@ import {
 import { createOsk } from './osk.js';
 import { createFilePicker } from './file-picker.js';
 import { createCarousel } from './carousel.js';
+import { createPresence } from './presence.js';
 import { formatDate, formatPlaytime } from './format.js';
 import { busyKindOf, gameOf, phaseOf, statusOf, steamBusy } from './state-view.js';
 import { req } from './dom.js';
@@ -139,8 +140,16 @@ const gameSettingsScreen = createGameSettingsScreen({
     steamBusy(currentState),
 });
 
+// ── Presence (the renderer's half of "may main make noise?", see presence.ts) ──
+// Fed by every input the interaction layer sees, released by the boot reveal, and reported to main only
+// when it flips.
+const presence = createPresence({
+  onChange: (active) => window.api.setPresence(active),
+});
+
 const controls = createControls({
   getState: () => currentState,
+  onInput: () => presence.note(),
   getBrowse: () => currentBrowse,
   audio,
   getTranslator,
@@ -561,6 +570,9 @@ function revealUi(): void {
   if (bootRevealed) return;
   bootRevealed = true;
   delete app.dataset['boot'];
+  // Only now is there a UI to show a toast on — until this moment main is told the user is not here, so
+  // anything that arrives during boot is filed unread and replayed instead of flashing at nobody.
+  presence.reveal();
   dissolveBootBackdrop();
   // The strip's cards were held at zero behind the boot screen — let them fan in now, so the carousel's
   // own entrance is actually seen instead of having happened under the wallpaper.

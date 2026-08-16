@@ -67,6 +67,11 @@ export interface ControlsDeps {
    * (false). The background subsystem holds its image for the duration — see hero.setFlipping.
    */
   onFlipping(flipping: boolean): void;
+  /**
+   * Any user input reached the launcher (gamepad/keyboard or a real mouse move). Feeds the presence
+   * signal, which decides whether main may pop a notification toast at this moment — see presence.ts.
+   */
+  onInput(): void;
 }
 
 /**
@@ -732,6 +737,7 @@ export function createControls(deps: ControlsDeps): Controls {
   // Gamepad/keyboard input = activity: hide the cursor at once (the user switched to the pad), disarm
   // hover, restart the idle countdown.
   function noteGamepadActivity(): void {
+    deps.onInput();
     setCursorHidden(true);
     // Every keyboard/gamepad step re-arms the hover guard: last input wins. Without this, one real mouse
     // move wakes hover for good, and from then on any element that slides under the still cursor — a
@@ -742,6 +748,7 @@ export function createControls(deps: ControlsDeps): Controls {
 
   // Real mouse movement = activity: show the cursor + restart the idle.
   function noteMouseActivity(): void {
+    deps.onInput();
     setCursorHidden(false);
     armIdleTimer();
   }
