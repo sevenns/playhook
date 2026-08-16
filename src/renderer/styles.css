@@ -1493,24 +1493,31 @@ html:not(.cursor-hidden) #menu-notifications:hover .menu-dot {
   padding: calc(20 * var(--px)) calc(32 * var(--px));
 }
 
-/* ONE pulse, at the very END of the plate's six seconds — not a heartbeat. A repeating pulse reads as an
-   alarm and keeps pulling the eye back to something already read; a single hop just before the plate
-   slides out reads as the plate leaving of its own accord.
-   The duration MUST match SHOW_MS in toast.ts: that is what lands the hop on the last half-second
-   instead of somewhere in the middle. It returns to `none` by 100% on purpose — the animation stops the
-   moment `is-open` goes (the selector stops matching), and a keyframe left mid-scale would snap back
-   with a visible pop right as the exit begins. */
+/* TWO beats over the plate's six seconds, and no more — a repeating pulse reads as an alarm and keeps
+   pulling the eye back to something already read. The first lands halfway through ("still here"), the
+   second just before the plate slides out, so it reads as hopping and then leaving of its own accord.
+   The duration MUST match SHOW_MS in toast.ts: that is what places the beats at 3s and at 5.6s rather
+   than wherever a loop happens to be. Both return to `none` on purpose, and the last one by 100% — the
+   animation stops the moment `is-open` goes (the selector stops matching), and a keyframe left
+   mid-scale would snap back with a visible pop right as the exit begins. */
 .toast.is-open .toast-pulse {
   animation: toast-pulse 6s ease-in-out 1;
 }
 
 @keyframes toast-pulse {
   0%,
+  47% {
+    transform: none;
+  }
+  50% {
+    transform: scale(1.03);
+  }
+  53%,
   88% {
     transform: none;
   }
   94% {
-    transform: scale(1.05);
+    transform: scale(1.03);
   }
   100% {
     transform: none;
