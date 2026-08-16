@@ -67,11 +67,13 @@
   cursor: default;
 }
 
-/* Cursor hidden while the gamepad is in use, or after the idle timeout (class toggled from controls.ts). The
-   descendant selector's specificity beats the per-element cursor rules (buttons' pointer, the copyable
-   path's text); a real mouse move restores it. */
-html.cursor-hidden,
-html.cursor-hidden * {
+/* The mouse is asleep: the gamepad/keyboard is driving, or the idle timeout ran out (class toggled from
+   controls.ts). Asleep it is not merely invisible — controls.ts swallows every pointer gesture too, and
+   the :hover rules throughout this file are gated on :not(.mouse-asleep) so nothing stays lit under a
+   parked cursor. Only a deliberate shove wakes it (mouse-sleep.ts). The descendant selector's specificity
+   beats the per-element cursor rules (buttons' pointer, the copyable path's text). */
+html.mouse-asleep,
+html.mouse-asleep * {
   cursor: none;
 }
 
@@ -673,7 +675,7 @@ body {
 
 /* :hover gated on a live cursor — see the note on .text-button:hover (avoids a stale hover highlight
    sticking under the pointer once the gamepad takes over). */
-html:not(.cursor-hidden) .play-button:hover,
+html:not(.mouse-asleep) .play-button:hover,
 .play-button.is-focused {
   background: var(--d2);
   color: var(--d1);
@@ -698,7 +700,7 @@ html:not(.cursor-hidden) .play-button:hover,
   transition: opacity 0.2s ease;
 }
 
-html:not(.cursor-hidden) .play-button:hover::after,
+html:not(.mouse-asleep) .play-button:hover::after,
 .play-button.is-focused::after {
   opacity: 1;
   animation: pulse-ring 1.1s ease-in-out infinite;
@@ -766,7 +768,7 @@ html:not(.cursor-hidden) .play-button:hover::after,
 }
 
 /* :hover gated on a live cursor — see the note on .text-button:hover. */
-html:not(.cursor-hidden) .rect-button:hover,
+html:not(.mouse-asleep) .rect-button:hover,
 .rect-button.is-focused {
   background: var(--d2);
   color: var(--d1);
@@ -1341,11 +1343,11 @@ html:not(.cursor-hidden) .rect-button:hover,
 }
 
 /* Hover paints the same highlight as .is-focused, but ONLY while the cursor is live: once the gamepad
-   takes over (html.cursor-hidden), the pointer still physically sits over whatever it last hovered, so a
+   takes over (html.mouse-asleep), the pointer still physically sits over whatever it last hovered, so a
    bare :hover would keep that button highlighted alongside the gamepad's .is-focused one — two
    highlights, and A (which acts on .is-focused) would fire a different button than the hovered one looks.
-   Gating :hover on :not(.cursor-hidden) drops the stale hover the moment the gamepad is used. */
-html:not(.cursor-hidden) .text-button:hover,
+   Gating :hover on :not(.mouse-asleep) drops the stale hover the moment the gamepad is used. */
+html:not(.mouse-asleep) .text-button:hover,
 .text-button.is-focused {
   background: var(--d2);
   color: var(--d1);
@@ -1494,7 +1496,7 @@ html:not(.cursor-hidden) .text-button:hover,
 }
 
 .notification-item.is-focused .notification-dot,
-html:not(.cursor-hidden) .notification-item:hover .notification-dot {
+html:not(.mouse-asleep) .notification-item:hover .notification-dot {
   background: var(--d1);
 }
 
@@ -1534,7 +1536,7 @@ html:not(.cursor-hidden) .notification-item:hover .notification-dot {
 }
 
 #menu-notifications.is-focused .menu-dot,
-html:not(.cursor-hidden) #menu-notifications:hover .menu-dot {
+html:not(.mouse-asleep) #menu-notifications:hover .menu-dot {
   background: var(--d1);
 }
 
@@ -1796,7 +1798,7 @@ html:not(.cursor-hidden) #menu-notifications:hover .menu-dot {
   transition: background 0.2s ease, color 0.2s ease;
 }
 
-html:not(.cursor-hidden) .settings-nav-item:hover,
+html:not(.mouse-asleep) .settings-nav-item:hover,
 .settings-nav-item.is-focused {
   background: var(--d2);
   color: var(--d1);
@@ -1929,7 +1931,7 @@ html:not(.cursor-hidden) .settings-nav-item:hover,
 }
 
 /* :hover gated on a live cursor, like every other control here (see .text-button). */
-html:not(.cursor-hidden) .setting-row:hover,
+html:not(.mouse-asleep) .setting-row:hover,
 .setting-row.is-focused {
   background: var(--d2);
   color: var(--d1);
@@ -2166,8 +2168,8 @@ html:not(.cursor-hidden) .setting-row:hover,
    reads as two competing highlights. */
 .setting-row[data-kind='action'].is-focused,
 .setting-row[data-kind='update-status'].is-focused,
-html:not(.cursor-hidden) .setting-row[data-kind='action']:hover,
-html:not(.cursor-hidden) .setting-row[data-kind='update-status']:hover {
+html:not(.mouse-asleep) .setting-row[data-kind='action']:hover,
+html:not(.mouse-asleep) .setting-row[data-kind='update-status']:hover {
   background: transparent;
   color: var(--d2);
 }
@@ -2392,7 +2394,7 @@ html:not(.cursor-hidden) .setting-row[data-kind='update-status']:hover {
   }
 }
 
-html:not(.cursor-hidden) .settings-option:hover,
+html:not(.mouse-asleep) .settings-option:hover,
 .settings-option.is-focused {
   background: var(--d2);
   color: var(--d1);
@@ -2556,7 +2558,7 @@ html:not(.cursor-hidden) .settings-option:hover,
   pointer-events: none;
 }
 
-html:not(.cursor-hidden) .setting-row.is-inert:hover {
+html:not(.mouse-asleep) .setting-row.is-inert:hover {
   background: transparent;
   color: var(--d2);
 }
@@ -2711,7 +2713,7 @@ html:not(.cursor-hidden) .setting-row.is-inert:hover {
   font-size: calc(24 * var(--px));
 }
 
-html:not(.cursor-hidden) .osk-key:hover,
+html:not(.mouse-asleep) .osk-key:hover,
 .osk-key.is-focused {
   background: var(--d2);
   color: var(--d1);
@@ -2846,7 +2848,7 @@ html:not(.cursor-hidden) .osk-key:hover,
   transition: background 0.15s ease, color 0.15s ease;
 }
 
-html:not(.cursor-hidden) .picker-item:hover,
+html:not(.mouse-asleep) .picker-item:hover,
 .picker-item.is-focused {
   background: var(--d2);
   color: var(--d1);

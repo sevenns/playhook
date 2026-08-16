@@ -1896,7 +1896,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     (event) => {
       hover.track(event.clientX, event.clientY);
       if (!open) return;
-      if (document.documentElement.classList.contains('cursor-hidden')) return;
+      if (document.documentElement.classList.contains('mouse-asleep')) return;
       if (!hover.awake(event.clientX, event.clientY)) return;
       const target = event.target;
       if (!(target instanceof Element)) return;

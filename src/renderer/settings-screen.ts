@@ -967,7 +967,7 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
       pointerY = event.clientY;
       hover.track(event.clientX, event.clientY);
       if (!moved || !open) return;
-      if (document.documentElement.classList.contains('cursor-hidden')) return;
+      if (document.documentElement.classList.contains('mouse-asleep')) return;
       if (!hover.awake(event.clientX, event.clientY)) return;
       const target = event.target;
       if (!(target instanceof Element)) return;
