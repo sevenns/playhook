@@ -798,9 +798,6 @@ void window.api.requestAmbient().then((url) => {
 window.api.onSfxSet((set) => audio.setSounds(set));
 void window.api.requestSfxSet().then((set) => audio.setSounds(set));
 
-// One-shot UI sounds pushed from main (main has no <audio> — the renderer owns playback). Used for the
-// "play" sound when an install/copy/Steam download completes, where the trigger lives in main.
-window.api.onSfxPlay((name) => audio.play(name));
 
 // Audio volumes are app-wide (set in the settings window): seed them on startup and update live.
 const applyVolumes = (volumes: { music: number; sfx: number }): void => {

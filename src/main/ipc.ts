@@ -19,7 +19,6 @@ import {
   type LaunchTarget,
   type ManifestSource,
   type ResolvedManifest,
-  type SfxName,
   type Stats,
 } from '../shared/types';
 import { type Translator } from '../shared/i18n/index';
@@ -1715,9 +1714,9 @@ export class GameController {
       const installedInfo = await this.buildGameInfo(manifest, currentStats);
       log.info(`[install] completed id=${manifest.raw.id} dir="${install.dir}"`);
       this.enterReady(installedInfo);
-      // The "install finished" cue belongs to the notification now (its own `notify` sound), not to a
-      // bare playSfx('play') here — two sounds would land on the same moment, and the launcher used to
-      // chirp from a hidden window while a game was running.
+      // The "install finished" cue belongs to the notification now (its own `notify` sound). It used to
+      // be a bare "play" sound pushed straight to the renderer from here — two sounds would now land on
+      // the same moment, and that one also chirped from a hidden window while a game was running.
       this.deps.notifications.notify({
         kind: 'game-installed',
         gameId: manifest.raw.id,
@@ -2206,13 +2205,6 @@ export class GameController {
     }
   }
 
-  /** Asks the game renderer to play a one-shot UI sound (main owns no <audio> — the renderer does). */
-  private playSfx(name: SfxName): void {
-    const browserWindow = this.deps.window.browserWindow;
-    if (browserWindow !== null && !browserWindow.isDestroyed()) {
-      browserWindow.webContents.send(IPC.sfxPlay, name);
-    }
-  }
 
   // ── Carousel list (the card's games + the play history) ────────────────────
 

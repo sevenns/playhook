@@ -29,7 +29,6 @@ import type {
   LanguageMode,
   ListDirResult,
   RendererApi,
-  SfxName,
   UpdateStatus,
 } from '../shared/types';
 import type { IPC } from '../shared/types';
@@ -53,7 +52,6 @@ const CHANNELS = {
   cardMusicRequest: 'card-music:request',
   ambientUpdate: 'ambient:update',
   ambientRequest: 'ambient:request',
-  sfxPlay: 'sfx:play',
   windowFocus: 'window:focus',
   heroUpdate: 'hero:update',
   heroRequest: 'hero:request',
@@ -182,11 +180,6 @@ const api: RendererApi = {
   },
   requestAmbient(): Promise<string | null> {
     return ipcRenderer.invoke(CHANNELS.ambientRequest) as Promise<string | null>;
-  },
-  onSfxPlay(callback: (name: SfxName) => void): void {
-    ipcRenderer.on(CHANNELS.sfxPlay, (_event: IpcRendererEvent, name: SfxName) => {
-      callback(name);
-    });
   },
   onHeroUpdate(callback: (assets: HeroAssets | null) => void): void {
     ipcRenderer.on(CHANNELS.heroUpdate, (_event: IpcRendererEvent, assets: HeroAssets | null) => {
