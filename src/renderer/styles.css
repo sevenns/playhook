@@ -1828,7 +1828,7 @@ html:not(.mouse-asleep) .settings-nav-item:hover,
 /* The column arrives the way the popup's items do — one after another, top-down, which is the order they
    are read in. Driven by a class rather than by the overlay state, because the buttons are REUSED between
    visits (screen-sidebar.ts): the animation has to be re-armed, not re-triggered by a state change. */
-.settings-nav.is-entering .settings-nav-item {
+.settings-nav-item.is-entering {
   animation: popup-item-in 0.3s cubic-bezier(0.2, 0, 0.2, 1) both;
   animation-delay: calc(var(--nav-index, 0) * 40ms);
 }
@@ -1902,8 +1902,10 @@ html:not(.mouse-asleep) .settings-nav-item:hover,
    alike. Armed by the screen (settings-screen.ts) when the pane changes SECTION, and only then: NOT on a
    value patch, not on the rebuilds a held direction used to cause (those are debounced away before they
    reach here), and not when the focus merely steps in — that one is the width change above, because
-   "you moved in here" and "this is another section" must not look like the same event. */
-.settings-list.is-entering .setting-row {
+   "you moved in here" and "this is another section" must not look like the same event.
+   The class sits on the ROW, not on the list around it — a class on the list is a window in which every
+   row built later starts the entrance over again. See entrance.ts. */
+.setting-row.is-entering {
   animation: popup-item-in 0.28s cubic-bezier(0.2, 0, 0.2, 1) both;
   animation-delay: calc(var(--row-index, 0) * 30ms);
 }
@@ -2612,8 +2614,9 @@ html:not(.mouse-asleep) .setting-row.is-inert:hover {
 }
 
 /* …and the rows arrive behind it, in the order they are read. Armed by the keyboard (osk.ts) on open —
-   see the note there for why this cannot key off .is-open like the popup's items do. */
-.osk.is-entering .osk-row {
+   see the note there for why this cannot key off .is-open like the popup's items do, and entrance.ts for
+   why the class lands on the row rather than on the keyboard around it. */
+.osk-row.is-entering {
   animation: popup-item-in 0.26s cubic-bezier(0.2, 0, 0.2, 1) both;
   animation-delay: calc(0.08s + var(--osk-row, 0) * 35ms);
 }

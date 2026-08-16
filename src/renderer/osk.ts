@@ -15,6 +15,7 @@
 import type { Translator } from '../shared/i18n/index.js';
 import { type AudioController } from './audio.js';
 import { req } from './dom.js';
+import { createEntrance } from './entrance.js';
 import { createHoverGuard } from './hover-guard.js';
 import { clampIndex, wrapIndex } from './index-math.js';
 import {
@@ -390,35 +391,19 @@ export function createOsk(deps: OskDeps): TextEntrySurface {
   function hide(): void {
     if (!open) return;
     open = false;
-    if (entranceTimer !== 0) {
-      window.clearTimeout(entranceTimer);
-      entranceTimer = 0;
-    }
-    root.classList.remove('is-entering');
+    entrance.cancel();
     root.classList.remove('is-open');
     root.setAttribute('aria-hidden', 'true');
   }
 
-  /** How long the rows' staggered arrival runs before the class that drives it is dropped. */
-  const ENTRANCE_MS = 600;
-  let entranceTimer = 0;
-
   /**
-   * Arms the rows' entrance. It has to be a class the keyboard switches on and off rather than a rule off
-   * `.is-open`, because the rows are REBUILT far more often than the keyboard opens — every shift, and
-   * every shifted character types one and rebuilds them back — and an animation the elements simply
-   * inherit on creation would replay through all of that.
+   * The rows' staggered arrival. Armed by the keyboard rather than inherited from `.is-open`, because the
+   * rows are REBUILT far more often than the keyboard opens — every shift, and every shifted character
+   * types one and rebuilds them back — and an animation the elements simply inherit on creation would
+   * replay through all of that. entrance.ts is what keeps a rebuild DURING the arrival out of it too.
    */
-  function armEntrance(): void {
-    if (entranceTimer !== 0) window.clearTimeout(entranceTimer);
-    root.classList.remove('is-entering');
-    void root.offsetWidth;
-    root.classList.add('is-entering');
-    entranceTimer = window.setTimeout(() => {
-      entranceTimer = 0;
-      root.classList.remove('is-entering');
-    }, ENTRANCE_MS);
-  }
+  const ENTRANCE_MS = 600;
+  const entrance = createEntrance(root, '.osk-row', ENTRANCE_MS);
 
   function move(rowDelta: number, colDelta: number): void {
     hover.arm();
@@ -640,7 +625,7 @@ export function createOsk(deps: OskDeps): TextEntrySurface {
       rebuild();
       hover.arm();
       root.classList.add('is-open');
-      armEntrance();
+      entrance.play();
       root.setAttribute('aria-hidden', 'false');
     },
     navUp: () => move(-1, 0),
