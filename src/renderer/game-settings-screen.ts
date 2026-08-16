@@ -217,6 +217,8 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   let focusIndex = 0;
   /** Which titled section the pane is showing, by its translation key. */
   let sectionKey: MessageKey | null = null;
+  /** …and which one the pane is actually showing. The two differ for as long as a preview is pending. */
+  let paneKey: MessageKey | null = null;
   let validateTimer = 0;
   /** Guards a late answer from a validation whose text is already stale. */
   let validateToken = 0;
@@ -372,12 +374,18 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     }, PREVIEW_MS);
   }
 
-  /** Draws a pending preview NOW. Anything that reads the rendered rows has to call this first. */
+  /**
+   * Brings the pane up to date with the selected section NOW, cancelling a pending preview. Anything that
+   * reads the rendered rows has to call this first — including the paths that never scheduled a preview
+   * at all: a MOUSE click on a section activates it without ever moving onto it, and that used to leave
+   * the focus stepping into the section the pane was showing before.
+   */
   function flushPreview(): void {
-    if (previewTimer === 0) return;
-    window.clearTimeout(previewTimer);
-    previewTimer = 0;
-    renderPane();
+    if (previewTimer !== 0) {
+      window.clearTimeout(previewTimer);
+      previewTimer = 0;
+    }
+    if (paneKey !== sectionKey) renderPane();
   }
 
   /** A section that HAS a title — i.e. one the column can name and the pane can show. */
@@ -519,6 +527,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     const section = currentSection(from);
     if (section === undefined) return;
     sectionKey = section.titleKey;
+    paneKey = section.titleKey;
     // WITHOUT its title: the column beside it already names the section, and printing the name again at
     // the top of the pane says the same thing twice.
     rendered = renderGameSettings(
@@ -1675,6 +1684,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       sidebar.setFocused(true); // the screen opens on its table of contents, not inside a section
       sidebar.animateIn();
       sectionKey = null;
+      paneKey = null;
       columnSignature = '';
       statusSignature = '';
       hover.arm();
