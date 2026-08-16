@@ -888,6 +888,7 @@ export class GameController {
       // needs — would stay missing until the user left the screen and came back.
       await this.reseedBrowse();
     }
+    this.dropStateIfGameGone();
 
     // Same background copy a card gets: the artwork already lives in the library root, but the history is
     // what the carousel draws from, and it is also what keeps a local game's card on screen after the
@@ -2451,6 +2452,28 @@ export class GameController {
   private async wallpaperHero(): Promise<HeroAssets | null> {
     const wallpaper = await this.assets.readWallpaperDataUrl();
     return wallpaper === null ? null : { images: [wallpaper] };
+  }
+
+  /**
+   * Lets go of a `ready` state whose game this read no longer carries and which nothing can replace.
+   *
+   * `ready` is not merely a phase: it NAMES a GameInfo. Play launches that GameInfo, and the Details menu
+   * falls back to it whenever there is no game on screen at all (see screenGame in controls.ts) — so a
+   * state left pointing at a deleted game keeps offering "Install" for it, and Play would try to launch
+   * it. The retarget in reloadPcLibrary handles the ordinary case by moving the state onto another game;
+   * it cannot help with the case that leaves the ghost behind — deleting the LAST game, where there is no
+   * other game to move onto. Then the honest state is `idle`: the launcher is about nothing.
+   */
+  private dropStateIfGameGone(): void {
+    const snapshot = this.deps.state.get();
+    if (snapshot.kind !== 'ready') return;
+    if (this.games.some((manifest) => manifest.raw.id === snapshot.game.id)) return;
+    if (this.current() !== null) return; // there IS something to be about — the retarget names it
+    this.selectedId = null;
+    this.setHero(null);
+    this.setCardMusic(null);
+    this.steamWatch.stop();
+    this.deps.state.set({ kind: 'idle' });
   }
 
   /**
