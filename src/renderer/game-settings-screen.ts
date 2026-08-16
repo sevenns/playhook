@@ -419,8 +419,12 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
    * of it — they are the screen's own feedback (what the last save did, why Save is unavailable), so
    * they go under both columns where they are readable from anywhere.
    */
-  /** What the column WOULD show — so it is only rebuilt when that actually changed. */
-  let columnSignature = '';
+  /**
+   * What the column WOULD show — so it is only rebuilt when that actually changed. `null` means "nothing
+   * is known about what is on screen", which is NOT the same as "it is empty": a re-opened screen that
+   * confuses the two skips the rebuild and keeps whatever the last visit left in the DOM.
+   */
+  let columnSignature: string | null = null;
 
   function renderColumn(from: GameSettingsModel): void {
     const entries = columnEntries(from);
@@ -457,8 +461,8 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     ];
   }
 
-  /** What the status strip WOULD show — so it is only rebuilt when that actually changed. */
-  let statusSignature = '';
+  /** The same, for the status strip — and the same reason for the null. */
+  let statusSignature: string | null = null;
 
   /** The notes, under both columns. */
   function renderStatus(from: GameSettingsModel): void {
@@ -1692,8 +1696,12 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       sidebar.animateIn();
       sectionKey = null;
       paneKey = null;
-      columnSignature = '';
-      statusSignature = '';
+      // NOT '': an empty string is a real signature (a column with no entries, a strip with no notes),
+      // and starting a visit on it made the guards claim the screen already showed that. A game left with
+      // "fix the errors first" under it then kept that line for every game opened after — the strip was
+      // empty in the model and empty in the guard, so nothing ever rewrote the DOM.
+      columnSignature = null;
+      statusSignature = null;
       hover.arm();
       thumbnails.clear();
       listScroller.to(0, true);
