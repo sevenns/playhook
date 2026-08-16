@@ -111,11 +111,18 @@ export function createOsk(deps: OskDeps): TextEntrySurface {
     return EN_ROWS;
   }
 
+  /**
+   * Whether this mode + layout has a case to shift at all: the symbol rows and the digits have none, and
+   * an id is lower-case by rule (see `insert`), so offering the key there would be offering a key that
+   * lies. The legend asks the same question — one answer, two places that must agree.
+   */
+  function hasShift(): boolean {
+    return mode !== 'number' && mode !== 'id' && layout !== 'symbols';
+  }
+
   function controlRow(): readonly Key[] {
     const keys: Key[] = [];
-    // Shift only where there is a case to shift: the symbol rows and the digits have none, and an id is
-    // lower-case by rule (see `insert`), so offering the key there would be offering a key that lies.
-    if (mode !== 'number' && mode !== 'id' && layout !== 'symbols') keys.push({ kind: 'shift' });
+    if (hasShift()) keys.push({ kind: 'shift' });
     if (layoutsFor(mode).length > 1) keys.push({ kind: 'layout' });
     if (mode !== 'number') keys.push({ kind: 'space' });
     keys.push({ kind: 'backspace' }, { kind: 'cancel' }, { kind: 'done' });
@@ -184,6 +191,7 @@ export function createOsk(deps: OskDeps): TextEntrySurface {
   function rebuild(): void {
     keysEl.replaceChildren();
     render();
+    updateLegend(); // the layout may have changed, and with it whether Shift exists
   }
 
   function applyFocus(): void {
@@ -359,8 +367,20 @@ export function createOsk(deps: OskDeps): TextEntrySurface {
     return rows[rowIndex]?.[colIndex];
   }
 
+  /**
+   * The legend names the buttons this keyboard ACTUALLY has right now — it is built from the same two
+   * conditions the control row is (see controlRow), so it can never promise a key that is not there. A
+   * number pad has neither a case to shift nor a second layout to switch to, and listing both was telling
+   * the user to press buttons that do nothing.
+   */
   function updateLegend(): void {
-    legendEl.textContent = t()('osk.legend');
+    const parts: string[] = [t()('osk.legendDelete')];
+    if (hasShift()) parts.push(t()('osk.legendShift'));
+    if (layoutsFor(mode).length > 1) parts.push(t()('osk.legendLayout'));
+    parts.push(t()('osk.legendDone'), t()('osk.legendCancel'));
+    const text = parts.join(', ');
+    // Rewritten only when it changed: this runs on every rebuild, and a rebuild happens on every shift.
+    if (legendEl.textContent !== text) legendEl.textContent = text;
   }
 
   root.querySelector<HTMLElement>('.osk-veil')?.addEventListener('click', () => {
