@@ -830,9 +830,6 @@ export const IPC = {
   /** game-renderer → main: mark as read. Payload `ids?: string[]` — WITHOUT ids (the popup was opened)
    * everything, WITH ids only the live toasts the renderer actually got on screen. */
   notificationsMarkRead: 'notifications:mark-read',
-  /** game-renderer → main: whether the user is AT the launcher (input seen < 5s ago and the UI shown).
-   * Sent only when the value flips; main combines it with the window/game state — see PresenceInput. */
-  uiPresence: 'ui:presence',
 } as const;
 
 /**
@@ -1168,8 +1165,6 @@ export interface RendererApi {
   clearNotifications(): void;
   /** Mark read: no ids = the popup was opened (all of them), ids = only those toasts were really shown. */
   markNotificationsRead(ids?: readonly string[]): void;
-  /** Whether the user is at the launcher (input < 5s ago and the UI revealed). Sent on change only. */
-  setPresence(active: boolean): void;
 }
 
 declare global {

@@ -19,7 +19,6 @@ import {
 import { createOsk } from './osk.js';
 import { createFilePicker } from './file-picker.js';
 import { createCarousel } from './carousel.js';
-import { createPresence } from './presence.js';
 import { createToast } from './toast.js';
 import { formatDate, formatNotification, formatPlaytime } from './format.js';
 import { busyKindOf, gameOf, phaseOf, statusOf, steamBusy } from './state-view.js';
@@ -147,13 +146,6 @@ const gameSettingsScreen = createGameSettingsScreen({
     steamBusy(currentState),
 });
 
-// ── Presence (the renderer's half of "may main make noise?", see presence.ts) ──
-// Fed by every input the interaction layer sees, released by the boot reveal, and reported to main only
-// when it flips.
-const presence = createPresence({
-  onChange: (active) => window.api.setPresence(active),
-});
-
 // ── The notification toast (see toast.ts) ────────────────────────────────────
 // Read lazily, for the same reason the carousel seam is: `controls` is created just below, and the two
 // point at each other — the plate shares its corner with the popup column, so it waits while a popup is
@@ -165,7 +157,6 @@ const toast = createToast({
 
 const controls = createControls({
   getState: () => currentState,
-  onInput: () => presence.note(),
   getLocale: () => currentLocale,
   getNotifications: () => notificationItems,
   onPopupClosed: () => toast.resume(),
@@ -605,9 +596,6 @@ function revealUi(): void {
   if (bootRevealed) return;
   bootRevealed = true;
   delete app.dataset['boot'];
-  // Only now is there a UI to show a toast on — until this moment main is told the user is not here, so
-  // anything that arrives during boot is filed unread and replayed instead of flashing at nobody.
-  presence.reveal();
   dissolveBootBackdrop();
   // The strip's cards were held at zero behind the boot screen — let them fan in now, so the carousel's
   // own entrance is actually seen instead of having happened under the wallpaper.

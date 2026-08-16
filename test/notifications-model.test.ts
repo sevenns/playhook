@@ -86,24 +86,22 @@ describe('unreadCount', () => {
 
 describe('deliveryFor — when the launcher may make noise', () => {
   const present: PresenceInput = {
-    uiActive: true,
     windowVisible: true,
     windowFocused: true,
     gameRunning: false,
   };
 
-  it('is live only when the user is at the launcher: UI active, window visible AND focused', () => {
+  it('is live whenever the launcher is in front — no idle timer in the way', () => {
     expect(deliveryFor(present)).toBe('live');
   });
 
   it('is muted while a game runs — whatever the window says', () => {
     expect(deliveryFor({ ...present, gameRunning: true })).toBe('muted');
     expect(deliveryFor({ ...present, gameRunning: true, windowVisible: false })).toBe('muted');
-    expect(deliveryFor({ ...present, gameRunning: true, uiActive: false })).toBe('muted');
+    expect(deliveryFor({ ...present, gameRunning: true, windowFocused: false })).toBe('muted');
   });
 
-  it('is deferred when any one of the three "the user is here" facts is missing', () => {
-    expect(deliveryFor({ ...present, uiActive: false })).toBe('deferred');
+  it('is deferred when the window is hidden or behind something — a plate nobody would see', () => {
     expect(deliveryFor({ ...present, windowVisible: false })).toBe('deferred');
     expect(deliveryFor({ ...present, windowFocused: false })).toBe('deferred');
   });

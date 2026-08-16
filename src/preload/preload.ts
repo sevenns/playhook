@@ -106,14 +106,13 @@ const CHANNELS = {
   gameConfigAcceptPath: 'gameConfig:accept-path',
   gameConfigListDir: 'gameConfig:list-dir',
   clipboardRead: 'clipboard:read',
-  // Notifications — the inbox lives in main; these are the two surfaces plus the presence signal.
+  // Notifications — the inbox lives in main; these are its two surfaces in the renderer.
   notificationsUpdate: 'notifications:update',
   notificationsToast: 'notifications:toast',
   notificationsRequest: 'notifications:request',
   notificationsDismiss: 'notifications:dismiss',
   notificationsClear: 'notifications:clear',
   notificationsMarkRead: 'notifications:mark-read',
-  uiPresence: 'ui:presence',
 } as const satisfies Partial<typeof IPC>;
 
 const api: RendererApi = {
@@ -383,9 +382,6 @@ const api: RendererApi = {
   },
   markNotificationsRead(ids?: readonly string[]): void {
     ipcRenderer.send(CHANNELS.notificationsMarkRead, ids);
-  },
-  setPresence(active: boolean): void {
-    ipcRenderer.send(CHANNELS.uiPresence, active);
   },
 };
 

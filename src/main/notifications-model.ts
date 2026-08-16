@@ -54,21 +54,27 @@ export function unreadCount(items: readonly AppNotification[]): number {
   return items.reduce((count, item) => (item.read ? count : count + 1), 0);
 }
 
-/** Everything that decides whether a notification may make noise right now. */
+/**
+ * Everything that decides whether a notification may make noise right now. All three facts are main's
+ * own: whether the user has TOUCHED anything recently is deliberately not among them — a launcher
+ * sitting in front of someone who has not pressed a button for a minute is still a launcher they are
+ * looking at, and treating that as absence held back notifications they would have seen.
+ */
 export interface PresenceInput {
-  /** The renderer saw input less than 5s ago AND the UI is revealed (it reports false while booting). */
-  readonly uiActive: boolean;
+  /** The launcher window is on screen (not hidden to the tray, not minimized). */
   readonly windowVisible: boolean;
+  /** …and it is the foreground window (not sitting behind whatever the user is actually using). */
   readonly windowFocused: boolean;
   readonly gameRunning: boolean;
 }
 
 /**
  * How a notification reaches the user:
- *  • `live` — they are at the launcher: a toast plus the sound, and seeing it IS reading it;
- *  • `deferred` — they stepped away (idle, or the window is hidden/behind): the notification is filed
- *    unread and its toast waits for them to come back (returning does not mark it read — only the popup
- *    does). This covers the ordinary "pressed Install, walked off for a minute, came back" case;
+ *  • `live` — the launcher is in front of them: a toast plus the sound, and seeing it IS reading it;
+ *  • `deferred` — the window is hidden or behind something: the notification is filed unread and its
+ *    toast waits until the launcher comes back to the front (coming back does not mark it read — only
+ *    opening the popup does). This is the case a plate would otherwise be shown to nobody and marked
+ *    read for it;
  *  • `muted` — a game is running: the launcher is behind it, so it stays quiet and settles up with a
  *    single "N unread" plate once the game exits.
  */
@@ -76,6 +82,5 @@ export type Delivery = 'live' | 'deferred' | 'muted';
 
 export function deliveryFor(presence: PresenceInput): Delivery {
   if (presence.gameRunning) return 'muted';
-  if (presence.uiActive && presence.windowVisible && presence.windowFocused) return 'live';
-  return 'deferred';
+  return presence.windowVisible && presence.windowFocused ? 'live' : 'deferred';
 }

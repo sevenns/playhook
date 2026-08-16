@@ -95,12 +95,12 @@ export class NotificationsService {
   }
 
   /**
-   * The user came back (or stepped away). Returning is what releases the toasts that arrived while they
-   * were gone — they are shown with `live: false`, so watching them go past does NOT mark them read: the
-   * dot beside the More item only goes out once the popup has been opened.
+   * The launcher is in front of the user again (it was shown, or it regained focus). That is what
+   * releases the toasts which arrived while it was away — they are shown with `live: false`, so watching
+   * them go past does NOT mark them read: the dot beside the More item only goes out once the popup has
+   * been opened.
    */
-  setPresence(active: boolean): void {
-    if (!active) return;
+  onLauncherFronted(): void {
     this.releaseDeferred();
   }
 

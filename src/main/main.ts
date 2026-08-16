@@ -160,16 +160,14 @@ async function bootstrap(): Promise<void> {
   const stats = new StatsService(store);
 
   // The notification inbox. Whether an arriving notification may make noise is a question about the
-  // WHOLE app — is the user at the keyboard, is the window even on screen, is a game running — so the
-  // three facts main owns are read live here, and the renderer contributes the fourth over ui:presence.
-  // uiActive starts false: nothing is on screen until the renderer reveals its UI and says so.
-  let uiActive = false;
+  // whole app — is the window on screen, is it in front, is a game running — and all three facts are
+  // main's own, read live here. Whether the user has TOUCHED anything recently is deliberately NOT one
+  // of them: someone reading the launcher without pressing buttons is still looking at it.
   const notifications = new NotificationsService({
     store: new NotificationsStore(app.getPath('userData')),
     presence: () => {
       const bw = windowRef?.browserWindow ?? null;
       return {
-        uiActive,
         windowVisible: window.isShown(),
         windowFocused: bw !== null && !bw.isDestroyed() && bw.isFocused(),
         gameRunning: state.get().kind === 'running',
@@ -181,14 +179,6 @@ async function bootstrap(): Promise<void> {
     },
   });
   await notifications.init();
-
-  // The renderer's half of the presence signal. It is sent only when the value flips, so this is not a
-  // stream — and a fire-and-forget send rather than an invoke, because nothing waits for an answer.
-  ipcMain.on(IPC.uiPresence, (_event, active: unknown) => {
-    if (typeof active !== 'boolean' || active === uiActive) return;
-    uiActive = active;
-    notifications.setPresence(active);
-  });
 
   // One summary plate for everything that piled up while a game was running. StateManager.subscribe
   // hands the listener only the NEW state, so the previous kind is tracked here — the same shape the
@@ -340,16 +330,12 @@ async function bootstrap(): Promise<void> {
   // destroy it), and every push re-checks isDestroyed().
   const launcherWindow = window.browserWindow;
   if (launcherWindow !== null) updater.attachWindow(launcherWindow);
-  // Presence must not survive the renderer that reported it. A reload (or a crashed renderer) leaves the
-  // flag stuck at `true`, and every notification would then take the live path into a window that shows
-  // nothing — the plate is never drawn, the toast is never replayed, and the user simply loses it. The
-  // fresh renderer says so itself the moment it reveals its UI.
+  // The launcher came back to the front — release whatever piled up while it was away (a toast held
+  // because the window was hidden or behind something, and the summary after a game). Both events are
+  // needed: showing from the tray does not necessarily focus, and focusing does not re-show.
   if (launcherWindow !== null) {
-    const forgetPresence = (): void => {
-      uiActive = false;
-    };
-    launcherWindow.webContents.on('did-finish-load', forgetPresence);
-    launcherWindow.webContents.on('destroyed', forgetPresence);
+    launcherWindow.on('show', () => notifications.onLauncherFronted());
+    launcherWindow.on('focus', () => notifications.onLauncherFronted());
   }
   // Normally start hidden in the tray — the window appears only when a valid game card is detected
   // (GameController shows it on the 'ready' state). But if "always show the no-card screen" is enabled,
