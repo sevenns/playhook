@@ -18,8 +18,11 @@ export interface NavSurface {
    * X, and Y. Optional because only the on-screen keyboard has a use for a second and third action
    * (Backspace and Shift) — every other surface leaves the buttons alone, and controls.ts keeps its own
    * meaning for Y (the strip ⇄ bar swap) whenever no surface claims one.
+   *
+   * `repeat` marks a press produced by holding X rather than a fresh one, exactly as it does for the
+   * directions: the keyboard keeps deleting through a hold, and skips the sound while it does.
    */
-  navSecondary?(): void;
+  navSecondary?(repeat?: boolean): void;
   navTertiary?(): void;
   /** LB / RB (-1 / +1) — the keyboard's layout switch. Same rule: unclaimed means unchanged. */
   navShoulder?(direction: -1 | 1): void;

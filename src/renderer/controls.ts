@@ -1291,9 +1291,9 @@ export function createControls(deps: ControlsDeps): Controls {
   }
 
   /** X and the shoulders: overlay-only, and only when the surface on top claims them. */
-  function navSecondary(): void {
+  function navSecondary(repeat = false): void {
     if (popupView !== 'none') return;
-    overlays.active()?.navSecondary?.();
+    overlays.active()?.navSecondary?.(repeat);
   }
 
   function navShoulder(direction: -1 | 1): void {

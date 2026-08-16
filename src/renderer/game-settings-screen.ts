@@ -1727,9 +1727,9 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     // The secondary buttons belong to whatever surface is on top, exactly as the six primitives do.
     // controls.ts routes them to the open OVERLAY — that is this screen — so they die here unless they
     // are handed down the stack.
-    navSecondary: () => {
+    navSecondary: (repeat = false) => {
       const surface = activeSurface();
-      if (typeof surface !== 'string') surface.navSecondary?.();
+      if (typeof surface !== 'string') surface.navSecondary?.(repeat);
     },
     navTertiary: () => {
       const surface = activeSurface();
