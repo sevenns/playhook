@@ -848,14 +848,9 @@ window.api.onNotificationToast((incoming) => {
     toast.show(translator.tp('notifications.unread', incoming.count));
     return;
   }
-  const { item, live } = incoming;
-  // Only a LIVE plate reports back: seeing it is reading it. A plate replayed after the user returns is
-  // deliberately not a read receipt — the dot beside the More item goes out when the popup is opened,
-  // and that confirmation is also what keeps a plate still sitting in the queue at shutdown unread.
-  toast.show(
-    formatNotification(item, translator),
-    live ? () => window.api.markNotificationsRead([item.id]) : undefined,
-  );
+  // A plate is never a read receipt: it is up for a few seconds and the user may be looking elsewhere,
+  // so the dot beside the More item has to outlive it. Only opening the popup clears the unread state.
+  toast.show(formatNotification(incoming.item, translator));
 });
 
 // Game Mode (gamescope) is static for the process — seed it once so the power menu shows "Close Playhook"

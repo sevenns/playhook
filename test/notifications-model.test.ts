@@ -50,27 +50,23 @@ describe('dismissNotification', () => {
 });
 
 describe('markRead', () => {
-  it('marks everything when no ids are given (the popup was opened)', () => {
+  it('marks the whole inbox — what opening the popup means', () => {
     const items = [installed('a', 1), installed('b', 2)];
     expect(markRead(items).every((n) => n.read)).toBe(true);
-  });
-
-  it('marks only the named ones (the toasts that were really shown)', () => {
-    const items = [installed('a', 1), installed('b', 2), installed('c', 3)];
-    const next = markRead(items, ['a', 'c']);
-    expect(next.map((n) => n.read)).toEqual([true, false, true]);
   });
 
   it('keeps an already-read entry as the SAME object (so a caller can skip a pointless write)', () => {
     const read = installed('a', 1, true);
     const items = [read, installed('b', 2)];
-    const next = markRead(items, ['a']);
+    const next = markRead(items);
     expect(next[0]).toBe(read);
+    expect(next[1]).not.toBe(items[1]);
   });
 
-  it('ignores ids that are not in the inbox', () => {
+  it('does not mutate the list it was given', () => {
     const items = [installed('a', 1)];
-    expect(markRead(items, ['gone']).map((n) => n.read)).toEqual([false]);
+    markRead(items);
+    expect(items[0]?.read).toBe(false);
   });
 });
 

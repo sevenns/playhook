@@ -75,9 +75,11 @@ export class NotificationsService {
     this.pushList();
     log.info(`[notifications] ${item.kind} → ${delivery}`);
     if (delivery === 'live') {
-      // `live: true` asks the renderer to confirm the display back (notifications:mark-read with this
-      // id) — seeing a plate IS reading it, but only for the plates that really made it on screen.
-      this.deps.push(IPC.notificationsToast, { kind: 'item', item, live: true });
+      // The plate is shown, and that is ALL it does: a notification stays unread until the popup is
+      // opened. A toast is up for a few seconds and the user may be looking at the game they just
+      // installed rather than at the corner — treating it as read left the More item with no dot at
+      // exactly the moment there was something new to tell them about.
+      this.deps.push(IPC.notificationsToast, { kind: 'item', item });
       return;
     }
     if (delivery === 'deferred') this.deferredIds = [...this.deferredIds, item.id];
@@ -96,9 +98,8 @@ export class NotificationsService {
 
   /**
    * The launcher is in front of the user again (it was shown, or it regained focus). That is what
-   * releases the toasts which arrived while it was away — they are shown with `live: false`, so watching
-   * them go past does NOT mark them read: the dot beside the More item only goes out once the popup has
-   * been opened.
+   * releases the toasts which arrived while it was away. Watching them go past does not mark them read
+   * — no plate ever does — so the dot beside the More item stays until the popup is opened.
    */
   onLauncherFronted(): void {
     this.releaseDeferred();
@@ -118,9 +119,9 @@ export class NotificationsService {
     this.pushSummary();
   }
 
-  /** Marks read: no ids = the popup was opened, ids = exactly those toasts reached the screen. */
-  markRead(ids?: readonly string[]): void {
-    const next = markRead(this.items, ids);
+  /** The popup was opened: the whole inbox has been seen. The only gesture that clears an unread. */
+  markRead(): void {
+    const next = markRead(this.items);
     // markRead returns the SAME object for an entry it did not touch, so an all-identical result means
     // nothing actually changed — no write, no push.
     if (next.every((item, at) => item === this.items[at])) return;
@@ -160,13 +161,7 @@ export class NotificationsService {
       if (typeof id === 'string') this.dismiss(id);
     });
     ipcMain.on(IPC.notificationsClear, () => this.clearAll());
-    ipcMain.on(IPC.notificationsMarkRead, (_event, ids: unknown) => {
-      if (ids === undefined) {
-        this.markRead();
-        return;
-      }
-      if (Array.isArray(ids)) this.markRead(ids.filter((id): id is string => typeof id === 'string'));
-    });
+    ipcMain.on(IPC.notificationsMarkRead, () => this.markRead());
   }
 
   // ── Delivery plumbing ────────────────────────────────────────────────────
@@ -199,7 +194,7 @@ export class NotificationsService {
       return;
     }
     for (const item of pending) {
-      this.deps.push(IPC.notificationsToast, { kind: 'item', item, live: false });
+      this.deps.push(IPC.notificationsToast, { kind: 'item', item });
     }
   }
 

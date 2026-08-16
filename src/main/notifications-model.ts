@@ -34,20 +34,11 @@ export function dismissNotification(
 }
 
 /**
- * Marks notifications read: WITHOUT `ids` everything (the popup was opened — the user has seen the
- * list), WITH `ids` only those (the toasts the renderer confirms it actually got on screen). Unknown
- * ids are ignored, and an already-read entry keeps its identity so callers can skip a pointless write.
+ * Marks the whole inbox read — what opening the popup means. An already-read entry keeps its identity,
+ * so a caller can tell "nothing changed" from the result and skip a pointless write and push.
  */
-export function markRead(
-  items: readonly AppNotification[],
-  ids?: readonly string[],
-): readonly AppNotification[] {
-  const target = ids === undefined ? null : new Set(ids);
-  return items.map((item) => {
-    if (item.read) return item;
-    if (target !== null && !target.has(item.id)) return item;
-    return { ...item, read: true };
-  });
+export function markRead(items: readonly AppNotification[]): readonly AppNotification[] {
+  return items.map((item) => (item.read ? item : { ...item, read: true }));
 }
 
 export function unreadCount(items: readonly AppNotification[]): number {

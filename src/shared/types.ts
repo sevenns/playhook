@@ -633,12 +633,13 @@ type WithoutNotificationBase<T> = T extends unknown ? Omit<T, keyof Notification
 export type NotificationInput = WithoutNotificationBase<AppNotification>;
 
 /**
- * What the renderer must show OVER the UI (the toast plate, top right, 3s). `live` says the user was at
- * the keyboard when it happened, which is the only case where showing it also marks it read.
+ * What the renderer must show OVER the UI (the toast plate, top right). Showing a plate does NOT make the
+ * notification read — that happens only when the popup is opened or an entry is pressed — so the dot
+ * beside the More item survives a toast the user may well have missed.
  * `unread-summary` is the single plate shown after a game ends / after a long absence instead of a queue.
  */
 export type NotificationToast =
-  | { readonly kind: 'item'; readonly item: AppNotification; readonly live: boolean }
+  | { readonly kind: 'item'; readonly item: AppNotification }
   | { readonly kind: 'unread-summary'; readonly count: number };
 
 /** IPC channels (the preload typed bridge). */
@@ -827,8 +828,8 @@ export const IPC = {
   notificationsDismiss: 'notifications:dismiss',
   /** game-renderer → main: "Clear all" in the notifications popup. */
   notificationsClear: 'notifications:clear',
-  /** game-renderer → main: mark as read. Payload `ids?: string[]` — WITHOUT ids (the popup was opened)
-   * everything, WITH ids only the live toasts the renderer actually got on screen. */
+  /** game-renderer → main: the notifications popup was opened, so the whole inbox has been seen. The
+   * only other thing that clears an unread is pressing an entry, which removes it outright. */
   notificationsMarkRead: 'notifications:mark-read',
 } as const;
 
@@ -1163,8 +1164,8 @@ export interface RendererApi {
   dismissNotification(id: string): void;
   /** "Clear all" — empties the inbox. */
   clearNotifications(): void;
-  /** Mark read: no ids = the popup was opened (all of them), ids = only those toasts were really shown. */
-  markNotificationsRead(ids?: readonly string[]): void;
+  /** The popup was opened — everything in the inbox counts as seen. */
+  markNotificationsRead(): void;
 }
 
 declare global {

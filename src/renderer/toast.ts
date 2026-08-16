@@ -27,19 +27,14 @@ export interface ToastDeps {
 }
 
 export interface Toast {
-  /**
-   * Queues a plate. `onShown` fires the moment it actually reaches the screen — that is what the live
-   * path reports back to main as "the user has seen this one", so a plate still sitting in the queue
-   * when the app closes stays unread.
-   */
-  show(text: string, onShown?: () => void): void;
+  /** Queues a plate. Showing one is purely a display: read state is main's, and only the popup moves it. */
+  show(text: string): void;
   /** The corner is free again (the popup closed) — resume the queue. */
   resume(): void;
 }
 
 interface Pending {
   readonly text: string;
-  readonly onShown?: () => void;
 }
 
 export function createToast(deps: ToastDeps): Toast {
@@ -59,7 +54,6 @@ export function createToast(deps: ToastDeps): Toast {
     // One sound per plate, at the moment it appears — a queued plate makes its own sound when its turn
     // comes, not when it was enqueued.
     deps.audio.play('notify');
-    next.onShown?.();
     window.setTimeout(() => {
       toast.classList.remove('is-open');
       toast.setAttribute('aria-hidden', 'true');
@@ -71,8 +65,8 @@ export function createToast(deps: ToastDeps): Toast {
   }
 
   return {
-    show: (text, onShown) => {
-      queue.push({ text, onShown });
+    show: (text) => {
+      queue.push({ text });
       pump();
     },
     resume: () => pump(),

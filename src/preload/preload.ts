@@ -380,8 +380,8 @@ const api: RendererApi = {
   clearNotifications(): void {
     ipcRenderer.send(CHANNELS.notificationsClear);
   },
-  markNotificationsRead(ids?: readonly string[]): void {
-    ipcRenderer.send(CHANNELS.notificationsMarkRead, ids);
+  markNotificationsRead(): void {
+    ipcRenderer.send(CHANNELS.notificationsMarkRead);
   },
 };
 
