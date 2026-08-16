@@ -13,8 +13,9 @@
 // WAKE_TRAVEL_PX. Distance TRAVELLED, not distance from the start — shaking the mouse in place is as
 // good a "hello" as dragging it across the screen, and both beat a drift nobody meant.
 
-/** Total travel, in CSS pixels, that wakes the mouse. Roughly a deliberate shove; a nudge won't do it. */
-export const WAKE_TRAVEL_PX = 150;
+/** Total travel, in CSS pixels, that wakes the mouse: about a sixth of a 1080p screen crossed in one go.
+ *  Deliberately far. Nothing short of "I am reaching for the mouse now" should get through. */
+export const WAKE_TRAVEL_PX = 300;
 /** A gap this long between moves starts the count over: two nudges a second apart are not one shove. */
 export const TRAVEL_RESET_MS = 250;
 
