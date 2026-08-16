@@ -694,6 +694,18 @@ export class GameController {
     if (info.steamInstalling === true || info.steamUninstalling === true) this.steamBusyId = info.id;
     else if (this.steamBusyId === info.id) this.steamBusyId = null;
     this.deps.state.set({ kind: 'ready', game: info });
+    // AppState and BrowseInfo carry the SAME GameInfo whenever they are about the same game — and the
+    // detail screen reads the BROWSE one (`browse.game.requiresInstall` decides whether Play is there,
+    // `canUninstall` whether the menu offers Uninstall). Pushing only the state left the screen showing
+    // "Install" after an install had finished, until the user stepped out to the carousel and back in,
+    // which is what re-asked for the browse info.
+    //
+    // Only the INFO is re-pushed, never the assets: the hero images and the music have not changed, and
+    // re-reading them on every state change would cost megabytes per transition.
+    const browse = this.currentBrowse;
+    if (browse !== null && browse.id === info.id && browse.active) {
+      this.pushBrowse({ ...browse, game: info });
+    }
     // Poll for ANY steam game whose source is available: it catches install completion (Install→Play),
     // uninstall completion (Play→Install) — incl. an uninstall the user triggers in Steam directly — and
     // download progress. A LOCAL steam game's source is always available, so this poll is no longer bounded

@@ -434,6 +434,9 @@ export function createControls(deps: ControlsDeps): Controls {
       empty.textContent = t()('notifications.empty');
       notificationList.append(empty);
     }
+    // Nothing to clear when there is nothing there — the button would be an action with no effect, sitting
+    // right where the eye lands. It folds away like every other volatile item in a stack.
+    notificationsClear.classList.toggle('is-hidden', items.length === 0);
     if (popupView === 'notifications') {
       const stack = stackFocusables();
       const at =
@@ -449,9 +452,16 @@ export function createControls(deps: ControlsDeps): Controls {
     applyStackFocus();
   }
 
-  /** The More item's label and its unread dot (see applyMenuNotifications' note on the two nodes). */
+  /**
+   * The More item: its label, its unread dot, and whether it is there at all. The inbox belongs to the
+   * LAUNCHER, not to one game — so it follows System and Settings exactly: it lives on the carousel's
+   * menu, and stands down on a game's own. Same exception too: with NO carousel to go up to (a
+   * single-game card, the empty screen) that menu is the only menu there is, and hiding the item there
+   * would put the notifications out of reach entirely.
+   */
   function applyMenuNotifications(): void {
     if (menuFrozen()) return;
+    menuNotifications.classList.toggle('is-hidden', onGameScreen() && deps.carousel.exists());
     menuNotificationsLabel.textContent = t()('launcher.menu.notifications');
     menuNotifications.classList.toggle(
       'has-unread',
@@ -977,15 +987,19 @@ export function createControls(deps: ControlsDeps): Controls {
         if (!menuShutdown.classList.contains('is-hidden')) items.push(menuShutdown);
         if (!menuHome.classList.contains('is-hidden')) items.push(menuHome);
         if (!menuCustomize.classList.contains('is-hidden')) items.push(menuCustomize);
-        items.push(menuNotifications);
         if (!menuSettings.classList.contains('is-hidden')) items.push(menuSettings);
+        if (!menuNotifications.classList.contains('is-hidden')) items.push(menuNotifications);
         items.push(menuClose);
         return items;
       }
-      case 'notifications':
+      case 'notifications': {
         // The list first (oldest at the top, freshest just above the buttons — the DOM order), then the
-        // two fixed buttons. This IS the up/down order, so it must match the DOM exactly.
-        return [...notificationButtons, notificationsClear, notificationsClose];
+        // buttons. This IS the up/down order, so it must match the DOM exactly.
+        const items: HTMLButtonElement[] = [...notificationButtons];
+        if (!notificationsClear.classList.contains('is-hidden')) items.push(notificationsClear);
+        items.push(notificationsClose);
+        return items;
+      }
       case 'power': {
         const items: HTMLButtonElement[] = [powerShutdown, powerReboot, powerSleep];
         if (!powerMinimize.classList.contains('is-hidden')) items.push(powerMinimize);

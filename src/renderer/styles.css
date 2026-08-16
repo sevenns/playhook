@@ -1350,8 +1350,16 @@ html:not(.cursor-hidden) .text-button:hover,
   flex-direction: column;
   align-items: flex-end;
   overflow-y: auto;
+  /* Hidden, as on every other scrolling surface here (the focus ring is the position indicator). It also
+     kills a flash: the entries come in translated by the staggered entrance, so for those few frames the
+     content overflows and Chromium painted a native scrollbar over the plate before settling. */
+  scrollbar-width: none;
   min-height: 0;
   margin-bottom: calc(8 * var(--px));
+}
+
+.notification-list::-webkit-scrollbar {
+  display: none;
 }
 
 /* An entry is two lines (what happened, and when), so it cannot use the one-line TextButton geometry:
@@ -1399,11 +1407,11 @@ html:not(.cursor-hidden) .text-button:hover,
   transition: opacity 0.2s ease;
 }
 
-/* Read: the dot goes, but its space stays. Opening the popup marks the whole list read at once, and a
-   row of entries reflowing sideways under the cursor as the dots vanish is the kind of movement the
-   user reads as a bug. */
+/* Read: the dot goes, and takes its space with it — a row of entries each carrying an invisible 20px of
+   right padding reads as a layout bug. The whole list is marked read in one go when the popup opens, so
+   this is one coordinated reflow during the entrance, not a jitter. */
 .notification-dot.is-hidden {
-  opacity: 0;
+  display: none;
 }
 
 .notification-item.is-focused .notification-dot,
@@ -1431,18 +1439,19 @@ html:not(.cursor-hidden) .notification-item:hover .notification-dot {
 /* The More menu's "Notifications" item carries the unread dot, which is why its label lives in a span of
    its own: the other applyMenu* helpers write textContent straight into the button, and doing that here
    would wipe the dot out with it. */
+/* Absent unless there is something unread: the label is centred inside the button, so a dot kept at
+   opacity 0 would still hold its 20px and push the word off-centre for good. */
 .menu-dot {
+  display: none;
   width: calc(8 * var(--px));
   height: calc(8 * var(--px));
   border-radius: 50%;
   background: var(--d2);
   margin-left: calc(12 * var(--px));
-  opacity: 0;
-  transition: opacity 0.2s ease;
 }
 
 #menu-notifications.has-unread .menu-dot {
-  opacity: 1;
+  display: block;
 }
 
 #menu-notifications.is-focused .menu-dot,
@@ -1484,17 +1493,25 @@ html:not(.cursor-hidden) #menu-notifications:hover .menu-dot {
   padding: calc(20 * var(--px)) calc(32 * var(--px));
 }
 
+/* ONE pulse, halfway through the plate's own six seconds — not a heartbeat. A repeating pulse reads as
+   an alarm and pulls the eye back to something the user has already read; a single beat in the middle
+   says "still here" once and lets go. The duration MUST match SHOW_MS in toast.ts, which is what puts
+   the beat in the middle rather than wherever the loop happens to be. */
 .toast.is-open .toast-pulse {
-  animation: toast-pulse 1s ease-in-out infinite;
+  animation: toast-pulse 6s ease-in-out 1;
 }
 
 @keyframes toast-pulse {
   0%,
-  100% {
+  47% {
     transform: none;
   }
   50% {
     transform: scale(1.03);
+  }
+  53%,
+  100% {
+    transform: none;
   }
 }
 

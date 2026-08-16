@@ -158,17 +158,17 @@
               <!-- Customize — the per-game manifest editor, offered only for a game that is on the card
                    or in the local library (an `active` game is the only one whose file we can reach). -->
               <button id="menu-customize" class="text-button" type="button"></button>
-              <!-- Notifications — always present (the inbox exists on every screen), so it belongs to
-                   the FIXED block, not above it with the volatile items. Two nodes rather than one:
-                   the label is rewritten from JS on every language change and would take the unread
-                   dot with it if the dot lived in the same text node. -->
+              <!-- The ONLY way into Settings (the tray item is gone), so it shows on every screen —
+                   including the empty one, where More is still there. -->
+              <button id="menu-settings" class="text-button" type="button" data-i18n="launcher.menu.settings">Settings</button>
+              <!-- Notifications — the inbox belongs to the launcher, not to one game, so it follows the
+                   same rule System and Settings do: it lives on the carousel's menu and stands down on a
+                   game's own. Two nodes rather than one: the label is rewritten from JS on every language
+                   change and would take the unread dot with it if the dot shared its text node. -->
               <button id="menu-notifications" class="text-button" type="button">
                 <span class="menu-label" id="menu-notifications-label"></span
                 ><span class="menu-dot" id="menu-notifications-dot"></span>
               </button>
-              <!-- The ONLY way into Settings (the tray item is gone), so it shows on every screen —
-                   including the empty one, where More is still there. -->
-              <button id="menu-settings" class="text-button" type="button" data-i18n="launcher.menu.settings">Settings</button>
               <button id="menu-close" class="text-button" type="button" data-i18n="launcher.menu.close">Close</button>
             </div>
             <div class="actions-group" data-group="power">

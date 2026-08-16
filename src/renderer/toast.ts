@@ -8,8 +8,12 @@
 import { type AudioController } from './audio.js';
 import { req } from './dom.js';
 
-/** How long a plate stays up, and how long its exit transition runs (must match .toast in styles.css). */
-const SHOW_MS = 3000;
+/**
+ * How long a plate stays up, and how long its exit transition runs (both must match .toast in
+ * styles.css). SHOW_MS is also the length of the single pulse animation, which is what puts the one beat
+ * in the MIDDLE of the plate's life rather than at some arbitrary point of a loop.
+ */
+const SHOW_MS = 6000;
 const EXIT_MS = 300;
 
 export interface ToastDeps {
