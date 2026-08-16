@@ -775,10 +775,18 @@ html:not(.cursor-hidden) .rect-button:hover,
 /* The launcher drives its own focus indicator via .is-focused (gamepad / arrow-key nav), so the native
    keyboard focus ring is redundant. It also lingered as a stray outline after closing a popup with Esc:
    the button kept DOM focus from the opening mouse click, and Esc flipped Chromium into keyboard
-   modality, painting the :focus-visible ring. Suppress it — .is-focused is the single focus visual. */
+   modality, painting the :focus-visible ring. Suppress it — .is-focused is the single focus visual.
+   EVERY button the launcher draws belongs on this list: a click leaves DOM focus behind wherever it
+   lands, and the very next key press paints a ring on it that has nothing to do with where our own focus
+   now is. The settings screens' buttons were missing here, which is how the column kept a stray ring
+   after a click. */
 .play-button,
 .rect-button,
-.text-button {
+.text-button,
+.settings-nav-item,
+.settings-option,
+.osk-key,
+.picker-item {
   outline: none;
 }
 
