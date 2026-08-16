@@ -343,8 +343,8 @@ export function createControls(deps: ControlsDeps): Controls {
     applyMenuCustomize(); // …and "Customize", which only applies to a game we can reach the file of
     applyMenuForget(); // keep the "Remove from history" item fresh (history-only games)
     applyMenuSystem(); // …and System, which belongs to the carousel level, not to a game
-    applyMenuAddGame(); // …and "Add game", which belongs to the launcher level, not to a game
-    applyMenuSettings(); // …and Settings, which belongs to that level too
+    applyMenuSettings(); // …and Settings, which belongs to the carousel level too
+    applyMenuAddGame(); // …and "Add game", which sits right under it for the same reason
     applyMenuNotifications(); // …and the inbox item, whose dot follows the unread count
     setView('details');
     focusStackBottom(); // default focus: Close
@@ -992,8 +992,8 @@ export function createControls(deps: ControlsDeps): Controls {
     menuHome,
     menuCustomize,
     menuNotifications,
-    menuAddGame,
     menuSettings,
+    menuAddGame,
     menuClose,
     notificationsClear,
     notificationsClose,
@@ -1022,8 +1022,8 @@ export function createControls(deps: ControlsDeps): Controls {
         if (!menuShutdown.classList.contains('is-hidden')) items.push(menuShutdown);
         if (!menuHome.classList.contains('is-hidden')) items.push(menuHome);
         if (!menuCustomize.classList.contains('is-hidden')) items.push(menuCustomize);
-        if (!menuAddGame.classList.contains('is-hidden')) items.push(menuAddGame);
         if (!menuSettings.classList.contains('is-hidden')) items.push(menuSettings);
+        if (!menuAddGame.classList.contains('is-hidden')) items.push(menuAddGame);
         if (!menuNotifications.classList.contains('is-hidden')) items.push(menuNotifications);
         items.push(menuClose);
         return items;
@@ -1721,8 +1721,8 @@ export function createControls(deps: ControlsDeps): Controls {
     applyMenuCustomize();
     applyMenuForget();
     applyMenuSystem();
-    applyMenuAddGame();
     applyMenuSettings();
+    applyMenuAddGame();
     applyMenuNotifications();
   }
 
@@ -1736,8 +1736,8 @@ export function createControls(deps: ControlsDeps): Controls {
     menuForget.classList.add('is-hidden'); // no game on screen → nothing to remove from the history
     applyMenuHome(); // the carousel can still be there with no game on screen (history only)
     applyMenuSystem();
-    applyMenuAddGame();
     applyMenuSettings();
+    applyMenuAddGame();
     applyMenuNotifications();
   }
 

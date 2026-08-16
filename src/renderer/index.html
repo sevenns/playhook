@@ -158,13 +158,13 @@
               <!-- Customize — the per-game manifest editor, offered only for a game that is on the card
                    or in the local library (an `active` game is the only one whose file we can reach). -->
               <button id="menu-customize" class="text-button" type="button"></button>
-              <!-- Add game — the same editor with no game behind it. It belongs to the launcher level
-                   like Settings below, and follows the same rule: hidden on a game's own menu when there
-                   is a carousel to reach the launcher level through. Text from JS, like its neighbours. -->
-              <button id="menu-add-game" class="text-button" type="button"></button>
               <!-- The ONLY way into Settings (the tray item is gone), so it shows on every screen —
                    including the empty one, where More is still there. -->
               <button id="menu-settings" class="text-button" type="button" data-i18n="launcher.menu.settings">Settings</button>
+              <!-- Add game — the same editor with no game behind it. It belongs to the launcher level
+                   like Settings above, and follows the same rule: hidden on a game's own menu when there
+                   is a carousel to reach the launcher level through. Text from JS, like its neighbours. -->
+              <button id="menu-add-game" class="text-button" type="button"></button>
               <!-- Notifications — the inbox belongs to the launcher, not to one game, so it follows the
                    same rule System and Settings do: it lives on the carousel's menu and stands down on a
                    game's own. Two nodes rather than one: the label is rewritten from JS on every language
