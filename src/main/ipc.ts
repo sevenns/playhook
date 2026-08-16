@@ -50,6 +50,7 @@ import { openSteamUri } from './steam-uri';
 import { type PcSaveLocation, type Platform, type ProcessMonitor } from './platform';
 import { AssetReader } from './asset-reader';
 import { type AppSettingsStore } from './app-settings';
+import { type NotificationsService } from './notifications';
 import { focusGameWindow } from './window-finder';
 import { normalizeImageNames } from './image-names';
 import { SteamInstallWatch } from './steam-install-watch';
@@ -68,6 +69,12 @@ export interface ControllerDeps {
   readonly watcher: DriveWatcher;
   /** App-wide settings store — read/patched by the custom-wallpaper handlers (they own AssetReader). */
   readonly settings: AppSettingsStore;
+  /**
+   * The notification inbox. Fed from the SUCCESS paths of the install/uninstall sequences only — never
+   * from a state transition: `failSequence` ends in `enterReady` too, and a Steam install never enters
+   * `installing` at all, so "it finished" cannot be read off the state machine.
+   */
+  readonly notifications: NotificationsService;
   /** Platform services (process monitor, Steam locator, launcher, save-path resolver, power) for the OS. */
   readonly platform: Platform;
   /**
@@ -380,7 +387,18 @@ export class GameController {
     getState: () => this.deps.state.get(),
     isSourceAvailable: () => this.currentSourceAvailable(),
     enterReady: (info) => this.enterReady(info),
-    onInstallCompleted: () => this.playSfx('play'),
+    onInstallCompleted: (game) =>
+      this.deps.notifications.notify({
+        kind: 'game-installed',
+        gameId: game.id,
+        gameTitle: game.title,
+      }),
+    onUninstallCompleted: (game) =>
+      this.deps.notifications.notify({
+        kind: 'game-uninstalled',
+        gameId: game.id,
+        gameTitle: game.title,
+      }),
     steamLocator: () => this.deps.platform.steamLocator,
   });
 
@@ -1697,9 +1715,14 @@ export class GameController {
       const installedInfo = await this.buildGameInfo(manifest, currentStats);
       log.info(`[install] completed id=${manifest.raw.id} dir="${install.dir}"`);
       this.enterReady(installedInfo);
-      // Audible "install finished" cue — covers both an installer run and the `copy` type (both reach
-      // here only on a real completion, never on a plain card insert of an already-installed game).
-      this.playSfx('play');
+      // The "install finished" cue belongs to the notification now (its own `notify` sound), not to a
+      // bare playSfx('play') here — two sounds would land on the same moment, and the launcher used to
+      // chirp from a hidden window while a game was running.
+      this.deps.notifications.notify({
+        kind: 'game-installed',
+        gameId: manifest.raw.id,
+        gameTitle: installedInfo.title,
+      });
       window.showAndFocus();
     } catch (cause) {
       if (cause instanceof LaunchAbortedError) return; // aborted by shutdown or a card swap
@@ -1855,6 +1878,11 @@ export class GameController {
       const updatedInfo = await this.buildGameInfo(manifest, currentStats);
       log.info(`[uninstall] completed id=${manifest.raw.id} removed="${uninstallDir}"`);
       this.enterReady(updatedInfo);
+      this.deps.notifications.notify({
+        kind: 'game-uninstalled',
+        gameId: manifest.raw.id,
+        gameTitle: updatedInfo.title,
+      });
       window.showAndFocus();
     } catch (cause) {
       if (cause instanceof LaunchAbortedError) return; // aborted by shutdown or a card swap

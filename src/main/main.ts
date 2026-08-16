@@ -19,6 +19,8 @@ import { createTray, buildTrayMenu, type TrayCallbacks, type TraySteamState } fr
 import { createSteamShortcutService } from './steam-shortcut';
 import { installDaemonUnit, removeDaemonUnit } from './daemon-unit';
 import { UpdaterService } from './updater';
+import { NotificationsService } from './notifications';
+import { NotificationsStore } from './notifications-store';
 import { GameConfigService } from './game-config';
 import { LocaleService } from './locale';
 import { createPowerService } from './power';
@@ -157,6 +159,47 @@ async function bootstrap(): Promise<void> {
   const window = new GameWindow(getTranslator);
   const stats = new StatsService(store);
 
+  // The notification inbox. Whether an arriving notification may make noise is a question about the
+  // WHOLE app — is the user at the keyboard, is the window even on screen, is a game running — so the
+  // three facts main owns are read live here, and the renderer contributes the fourth over ui:presence.
+  // uiActive starts false: nothing is on screen until the renderer reveals its UI and says so.
+  let uiActive = false;
+  const notifications = new NotificationsService({
+    store: new NotificationsStore(app.getPath('userData')),
+    presence: () => {
+      const bw = windowRef?.browserWindow ?? null;
+      return {
+        uiActive,
+        windowVisible: window.isShown(),
+        windowFocused: bw !== null && !bw.isDestroyed() && bw.isFocused(),
+        gameRunning: state.get().kind === 'running',
+      };
+    },
+    push: (channel, payload) => {
+      const bw = windowRef?.browserWindow ?? null;
+      if (bw !== null && !bw.isDestroyed()) bw.webContents.send(channel, payload);
+    },
+  });
+  await notifications.init();
+
+  // The renderer's half of the presence signal. It is sent only when the value flips, so this is not a
+  // stream — and a fire-and-forget send rather than an invoke, because nothing waits for an answer.
+  ipcMain.on(IPC.uiPresence, (_event, active: unknown) => {
+    if (typeof active !== 'boolean' || active === uiActive) return;
+    uiActive = active;
+    notifications.setPresence(active);
+  });
+
+  // One summary plate for everything that piled up while a game was running. StateManager.subscribe
+  // hands the listener only the NEW state, so the previous kind is tracked here — the same shape the
+  // keep-awake recompute below uses.
+  let previousStateKind = state.get().kind;
+  state.subscribe((next) => {
+    const previous = previousStateKind;
+    previousStateKind = next.kind;
+    if (previous === 'running' && next.kind !== 'running') notifications.announceUnreadAfterGame();
+  });
+
   // The launch history behind the carousel: copies of every inserted game's art/audio, so the launcher
   // has something to show with no card in. init() re-syncs its cached stats and runs the GC; a failure
   // there must not stop the app from starting (the carousel just falls back to the card's games).
@@ -202,6 +245,7 @@ async function bootstrap(): Promise<void> {
     pcLibrary,
     watcher,
     settings,
+    notifications,
     platform,
     isGamescope: gameModeSession,
     getTranslator,
@@ -235,6 +279,7 @@ async function bootstrap(): Promise<void> {
   // synchronously before quitAndInstall.
   const updater = new UpdaterService({
     settings,
+    notifications,
     isBusy: () => {
       const kind = state.get().kind;
       return kind !== 'idle' && kind !== 'ready' && kind !== 'error';
@@ -295,6 +340,17 @@ async function bootstrap(): Promise<void> {
   // destroy it), and every push re-checks isDestroyed().
   const launcherWindow = window.browserWindow;
   if (launcherWindow !== null) updater.attachWindow(launcherWindow);
+  // Presence must not survive the renderer that reported it. A reload (or a crashed renderer) leaves the
+  // flag stuck at `true`, and every notification would then take the live path into a window that shows
+  // nothing — the plate is never drawn, the toast is never replayed, and the user simply loses it. The
+  // fresh renderer says so itself the moment it reveals its UI.
+  if (launcherWindow !== null) {
+    const forgetPresence = (): void => {
+      uiActive = false;
+    };
+    launcherWindow.webContents.on('did-finish-load', forgetPresence);
+    launcherWindow.webContents.on('destroyed', forgetPresence);
+  }
   // Normally start hidden in the tray — the window appears only when a valid game card is detected
   // (GameController shows it on the 'ready' state). But if "always show the no-card screen" is enabled,
   // seed the controller with it now so it shows the empty screen at startup (reconciles: idle + no card).
