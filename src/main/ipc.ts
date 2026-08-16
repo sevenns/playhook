@@ -19,7 +19,6 @@ import {
   type LaunchTarget,
   type ManifestSource,
   type ResolvedManifest,
-  type SfxName,
   type Stats,
 } from '../shared/types';
 import { type Translator } from '../shared/i18n/index';
@@ -50,6 +49,7 @@ import { openSteamUri } from './steam-uri';
 import { type PcSaveLocation, type Platform, type ProcessMonitor } from './platform';
 import { AssetReader } from './asset-reader';
 import { type AppSettingsStore } from './app-settings';
+import { type NotificationsService } from './notifications';
 import { focusGameWindow } from './window-finder';
 import { normalizeImageNames } from './image-names';
 import { SteamInstallWatch } from './steam-install-watch';
@@ -68,6 +68,12 @@ export interface ControllerDeps {
   readonly watcher: DriveWatcher;
   /** App-wide settings store — read/patched by the custom-wallpaper handlers (they own AssetReader). */
   readonly settings: AppSettingsStore;
+  /**
+   * The notification inbox. Fed from the SUCCESS paths of the install/uninstall sequences only — never
+   * from a state transition: `failSequence` ends in `enterReady` too, and a Steam install never enters
+   * `installing` at all, so "it finished" cannot be read off the state machine.
+   */
+  readonly notifications: NotificationsService;
   /** Platform services (process monitor, Steam locator, launcher, save-path resolver, power) for the OS. */
   readonly platform: Platform;
   /**
@@ -380,7 +386,18 @@ export class GameController {
     getState: () => this.deps.state.get(),
     isSourceAvailable: () => this.currentSourceAvailable(),
     enterReady: (info) => this.enterReady(info),
-    onInstallCompleted: () => this.playSfx('play'),
+    onInstallCompleted: (game) =>
+      this.deps.notifications.notify({
+        kind: 'game-installed',
+        gameId: game.id,
+        gameTitle: game.title,
+      }),
+    onUninstallCompleted: (game) =>
+      this.deps.notifications.notify({
+        kind: 'game-uninstalled',
+        gameId: game.id,
+        gameTitle: game.title,
+      }),
     steamLocator: () => this.deps.platform.steamLocator,
   });
 
@@ -677,6 +694,18 @@ export class GameController {
     if (info.steamInstalling === true || info.steamUninstalling === true) this.steamBusyId = info.id;
     else if (this.steamBusyId === info.id) this.steamBusyId = null;
     this.deps.state.set({ kind: 'ready', game: info });
+    // AppState and BrowseInfo carry the SAME GameInfo whenever they are about the same game — and the
+    // detail screen reads the BROWSE one (`browse.game.requiresInstall` decides whether Play is there,
+    // `canUninstall` whether the menu offers Uninstall). Pushing only the state left the screen showing
+    // "Install" after an install had finished, until the user stepped out to the carousel and back in,
+    // which is what re-asked for the browse info.
+    //
+    // Only the INFO is re-pushed, never the assets: the hero images and the music have not changed, and
+    // re-reading them on every state change would cost megabytes per transition.
+    const browse = this.currentBrowse;
+    if (browse !== null && browse.id === info.id && browse.active) {
+      this.pushBrowse({ ...browse, game: info });
+    }
     // Poll for ANY steam game whose source is available: it catches install completion (Install→Play),
     // uninstall completion (Play→Install) — incl. an uninstall the user triggers in Steam directly — and
     // download progress. A LOCAL steam game's source is always available, so this poll is no longer bounded
@@ -1697,9 +1726,14 @@ export class GameController {
       const installedInfo = await this.buildGameInfo(manifest, currentStats);
       log.info(`[install] completed id=${manifest.raw.id} dir="${install.dir}"`);
       this.enterReady(installedInfo);
-      // Audible "install finished" cue — covers both an installer run and the `copy` type (both reach
-      // here only on a real completion, never on a plain card insert of an already-installed game).
-      this.playSfx('play');
+      // The "install finished" cue belongs to the notification now (its own `notify` sound). It used to
+      // be a bare "play" sound pushed straight to the renderer from here — two sounds would now land on
+      // the same moment, and that one also chirped from a hidden window while a game was running.
+      this.deps.notifications.notify({
+        kind: 'game-installed',
+        gameId: manifest.raw.id,
+        gameTitle: installedInfo.title,
+      });
       window.showAndFocus();
     } catch (cause) {
       if (cause instanceof LaunchAbortedError) return; // aborted by shutdown or a card swap
@@ -1855,6 +1889,11 @@ export class GameController {
       const updatedInfo = await this.buildGameInfo(manifest, currentStats);
       log.info(`[uninstall] completed id=${manifest.raw.id} removed="${uninstallDir}"`);
       this.enterReady(updatedInfo);
+      this.deps.notifications.notify({
+        kind: 'game-uninstalled',
+        gameId: manifest.raw.id,
+        gameTitle: updatedInfo.title,
+      });
       window.showAndFocus();
     } catch (cause) {
       if (cause instanceof LaunchAbortedError) return; // aborted by shutdown or a card swap
@@ -2178,13 +2217,6 @@ export class GameController {
     }
   }
 
-  /** Asks the game renderer to play a one-shot UI sound (main owns no <audio> — the renderer does). */
-  private playSfx(name: SfxName): void {
-    const browserWindow = this.deps.window.browserWindow;
-    if (browserWindow !== null && !browserWindow.isDestroyed()) {
-      browserWindow.webContents.send(IPC.sfxPlay, name);
-    }
-  }
 
   // ── Carousel list (the card's games + the play history) ────────────────────
 

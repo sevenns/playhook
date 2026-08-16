@@ -56,6 +56,7 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'launcher.menu.forceClose': 'Закрыть принудительно',
   'launcher.menu.home': 'Главная',
   'launcher.menu.forget': 'Убрать из истории',
+  'launcher.menu.notifications': 'Уведомления',
   'launcher.menu.settings': 'Настройки',
   'launcher.confirm.install': 'Установить игру?',
   'launcher.confirm.uninstall': 'Удалить игру с компьютера?',
@@ -183,6 +184,14 @@ export const ru: Partial<Record<MessageKey, string>> = {
 
   // ── Customize screen: what the SCREEN itself says (game-settings-*.ts) ──────
   'launcher.menu.customize': 'Настройки игры',
+
+  // ── Notifications (the toast + the Notifications popup) ────────────────────
+  'notifications.updateReady': 'Обновление {version} готово - установится при перезапуске',
+  'notifications.gameInstalled': '{title} установлена',
+  'notifications.gameUninstalled': '{title} удалена',
+  'notifications.empty': 'Уведомлений нет',
+  'notifications.clearAll': 'Очистить всё',
+  'notifications.yesterday': 'вчера, {time}',
 
   // ── On-screen keyboard + file browser (osk.ts / file-picker.ts) ────────────
   'osk.shift': 'Shift',

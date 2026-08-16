@@ -5,7 +5,7 @@
 // wires them together and owns only the bits that don't belong to any one subsystem (phase attribute,
 // info panel, title slide, music gating).
 // IMPORTANT: title/data come from the card (untrusted) — rendered via textContent, never innerHTML.
-import type { AppState, BrowseInfo, LibraryEntry, Stats } from '../shared/types';
+import type { AppNotification, AppState, BrowseInfo, LibraryEntry, Stats } from '../shared/types';
 import { createTranslator, type Locale, type Translator, type MessageKey } from '../shared/i18n/index.js';
 import { localizeDocument } from './i18n-dom.js';
 import { createAudioController } from './audio.js';
@@ -19,7 +19,8 @@ import {
 import { createOsk } from './osk.js';
 import { createFilePicker } from './file-picker.js';
 import { createCarousel } from './carousel.js';
-import { formatDate, formatPlaytime } from './format.js';
+import { createToast } from './toast.js';
+import { formatDate, formatNotification, formatPlaytime } from './format.js';
 import { busyKindOf, gameOf, phaseOf, statusOf, steamBusy } from './state-view.js';
 import { req } from './dom.js';
 
@@ -36,6 +37,12 @@ let currentState: AppState = { kind: 'idle' };
 let currentBrowse: BrowseInfo | null = null;
 // The carousel hid the title + status for a pending selection change; the next render reveals the new one.
 let textSwapPending = false;
+// The games the strip currently holds, kept so a notification about one can be resolved to an entry —
+// the carousel keeps the list too, but only the id/active pair is needed here (see openGameDetail).
+let currentGames: readonly LibraryEntry[] = [];
+// The notification inbox, exactly as main last pushed it. The popup list and the More item's unread dot
+// are drawn from this and nothing else: main owns the inbox, the renderer only shows it.
+let notificationItems: readonly AppNotification[] = [];
 // UI locale + translator (both refreshed on a language push). The HTML ships English fallback text, so
 // until the invoke-seed lands there is no blank flash — the seed then localizes and re-renders.
 let currentLocale: Locale = 'en';
@@ -139,8 +146,21 @@ const gameSettingsScreen = createGameSettingsScreen({
     steamBusy(currentState),
 });
 
+// ── The notification toast (see toast.ts) ────────────────────────────────────
+// Read lazily, for the same reason the carousel seam is: `controls` is created just below, and the two
+// point at each other — the plate shares its corner with the popup column, so it waits while a popup is
+// up and resumes when one closes.
+const toast = createToast({
+  audio,
+  isBlocked: () => controls.isPopupOpen(),
+});
+
 const controls = createControls({
   getState: () => currentState,
+  getLocale: () => currentLocale,
+  getNotifications: () => notificationItems,
+  onPopupClosed: () => toast.resume(),
+  openGameDetail: (id) => openGameDetail(id),
   getBrowse: () => currentBrowse,
   audio,
   getTranslator,
@@ -196,17 +216,7 @@ const carousel = createCarousel({
   onActivate: (entry) => {
     // Entering a card is an ordinary button press — same cue as any other "open" action.
     audio.play('button');
-    userChoseDetail = true;
-    // Committing to a game outranks the debounce main applies while flipping: ask for its hero and music
-    // NOW. Without this, opening a game straight out of a fast flip leaves the previous game's background
-    // and music on its screen until the debounce elapses.
-    requestedBrowseId = entry.id;
-    window.api.browseGame(entry.id, true);
-    // An active game must also become the CARD's selected game (main rebuilds its hero/audio/GameInfo).
-    // If that is refused — a launch or install is in flight — the detail screen is still correct: it is
-    // drawn from the browse model, so it shows the game you picked, just without an actionable Play.
-    if (entry.active && gameOf(currentState)?.id !== entry.id) window.api.selectGame(entry.id);
-    carousel.setScreen('detail');
+    openGameDetail(entry.id);
   },
   onNavigate: (delta) => {
     audio.play('navigate');
@@ -226,6 +236,31 @@ const carousel = createCarousel({
     textSwapPending = true;
   },
 });
+
+/**
+ * Open one game's detail screen. Lifted out of the carousel's activate callback, because it is now
+ * reached from two places: pressing a card, and pressing a notification about that game.
+ *
+ * A game that is not in the list has nowhere to open — its card is out and its history record was
+ * evicted — so the press simply does nothing rather than opening an empty screen.
+ */
+function openGameDetail(id: string): void {
+  const entry = currentGames.find((game) => game.id === id);
+  if (entry === undefined) return;
+  userChoseDetail = true;
+  // Committing to a game outranks the debounce main applies while flipping: ask for its hero and music
+  // NOW. Without this, opening a game straight out of a fast flip leaves the previous game's background
+  // and music on its screen until the debounce elapses.
+  requestedBrowseId = id;
+  window.api.browseGame(id, true);
+  // An active game must also become the CARD's selected game (main rebuilds its hero/audio/GameInfo).
+  // If that is refused — a launch or install is in flight — the detail screen is still correct: it is
+  // drawn from the browse model, so it shows the game you picked, just without an actionable Play.
+  if (entry.active && gameOf(currentState)?.id !== id) window.api.selectGame(id);
+  // A no-op when the strip is already on it (the carousel path), and the whole point when it is not.
+  carousel.focusGame(id);
+  carousel.setScreen('detail');
+}
 
 /** Back out of a detail screen to the carousel (B). False when there is no carousel to return to. */
 function leaveDetail(): boolean {
@@ -642,6 +677,9 @@ function applyLocale(locale: Locale): void {
   // knows nothing about it. It keeps its focus and scroll position across the swap.
   settingsScreen.relocalize();
   gameSettingsScreen.relocalize();
+  // The notification list is built from JS too, and its text is ASSEMBLED from the kind rather than
+  // stored — which is the whole reason it is not stored: a language change rewrites it in place.
+  controls.applyNotifications();
 }
 window.api.onLanguageUpdate(applyLocale);
 void window.api.getLanguage().then(applyLocale);
@@ -748,9 +786,6 @@ void window.api.requestAmbient().then((url) => {
 window.api.onSfxSet((set) => audio.setSounds(set));
 void window.api.requestSfxSet().then((set) => audio.setSounds(set));
 
-// One-shot UI sounds pushed from main (main has no <audio> — the renderer owns playback). Used for the
-// "play" sound when an install/copy/Steam download completes, where the trigger lives in main.
-window.api.onSfxPlay((name) => audio.play(name));
 
 // Audio volumes are app-wide (set in the settings window): seed them on startup and update live.
 const applyVolumes = (volumes: { music: number; sfx: number }): void => {
@@ -783,6 +818,7 @@ void window.api.requestHero().then((assets) => {
 // The carousel list (the inserted card's games + the play history, already ordered) arrives on its own
 // channel. Seed on startup (back-fill after a window reconnect), then live updates.
 function applyLibrary(games: readonly LibraryEntry[]): void {
+  currentGames = games;
   carousel.setGames(games);
   // The carousel is the default level whenever there is more than one game to flip through — but never
   // yank the user out of a detail screen they opened themselves (they may be watching an install run).
@@ -795,6 +831,26 @@ void window.api.requestLibrary().then((library) => {
   // Even an empty list counts: it settles `data-screen`, which is what decides whether the strip's
   // container is on at all. Waiting for it is what keeps the carousel from popping in afterwards.
   noteBootSeed('library');
+});
+
+// The notification inbox and the plates main asks us to show. The list is the popup's only source of
+// truth; the plate is a one-shot surface of our own (see toast.ts). Subscribe BEFORE the seed, like
+// every other channel here, so a push arriving in between isn't lost.
+function applyNotifications(items: readonly AppNotification[]): void {
+  notificationItems = items;
+  controls.applyNotifications();
+}
+window.api.onNotifications(applyNotifications);
+void window.api.requestNotifications().then(applyNotifications);
+
+window.api.onNotificationToast((incoming) => {
+  if (incoming.kind === 'unread-summary') {
+    toast.show(translator.tp('notifications.unread', incoming.count));
+    return;
+  }
+  // A plate is never a read receipt: it is up for a few seconds and the user may be looking elsewhere,
+  // so the dot beside the More item has to outlive it. Only opening the popup clears the unread state.
+  toast.show(formatNotification(incoming.item, translator));
 });
 
 // Game Mode (gamescope) is static for the process — seed it once so the power menu shows "Close Playhook"

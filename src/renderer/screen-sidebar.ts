@@ -46,8 +46,12 @@ export interface Sidebar {
   /** Whether the COLUMN holds the focus (as opposed to the pane beside it). */
   hasFocus(): boolean;
   setFocused(focused: boolean): void;
-  /** Selects a section by id without announcing it (used to restore a selection after a rebuild). */
-  select(id: string): void;
+  /**
+   * Selects an entry by id without announcing it — used to restore a selection after a rebuild, and to
+   * deep-link a screen straight to one section. Returns whether the id was there at all: silently doing
+   * nothing is how a deep link to a renamed section would go unnoticed.
+   */
+  select(id: string): boolean;
   /**
    * Puts the selection back on the first entry. A re-opened screen must not resume where the last visit
    * left the column while the pane falls back to section one — the two would then disagree about what is
@@ -162,9 +166,12 @@ export function createSidebar(box: HTMLElement, deps: SidebarDeps): Sidebar {
     },
     select: (id) => {
       const at = entries.findIndex((entry) => entry.id === id);
-      if (at === -1) return;
+      if (at === -1) return false;
       index = at;
-      paintFocus();
+      // Instant, like reset(): a screen that OPENS on a section must already be there, not glide to it
+      // from the top while the user watches.
+      paintFocus(true);
+      return true;
     },
     reset: () => {
       index = 0;

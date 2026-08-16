@@ -8,8 +8,10 @@
 // unit test (shared/types.ts is the single source of truth).
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
 import type {
+  AppNotification,
   AppSettings,
   AppState,
+  NotificationToast,
   SfxSet,
   AudioOptions,
   AudioVolumes,
@@ -27,7 +29,6 @@ import type {
   LanguageMode,
   ListDirResult,
   RendererApi,
-  SfxName,
   UpdateStatus,
 } from '../shared/types';
 import type { IPC } from '../shared/types';
@@ -51,7 +52,6 @@ const CHANNELS = {
   cardMusicRequest: 'card-music:request',
   ambientUpdate: 'ambient:update',
   ambientRequest: 'ambient:request',
-  sfxPlay: 'sfx:play',
   windowFocus: 'window:focus',
   heroUpdate: 'hero:update',
   heroRequest: 'hero:request',
@@ -106,6 +106,13 @@ const CHANNELS = {
   gameConfigAcceptPath: 'gameConfig:accept-path',
   gameConfigListDir: 'gameConfig:list-dir',
   clipboardRead: 'clipboard:read',
+  // Notifications — the inbox lives in main; these are its two surfaces in the renderer.
+  notificationsUpdate: 'notifications:update',
+  notificationsToast: 'notifications:toast',
+  notificationsRequest: 'notifications:request',
+  notificationsDismiss: 'notifications:dismiss',
+  notificationsClear: 'notifications:clear',
+  notificationsMarkRead: 'notifications:mark-read',
 } as const satisfies Partial<typeof IPC>;
 
 const api: RendererApi = {
@@ -172,11 +179,6 @@ const api: RendererApi = {
   },
   requestAmbient(): Promise<string | null> {
     return ipcRenderer.invoke(CHANNELS.ambientRequest) as Promise<string | null>;
-  },
-  onSfxPlay(callback: (name: SfxName) => void): void {
-    ipcRenderer.on(CHANNELS.sfxPlay, (_event: IpcRendererEvent, name: SfxName) => {
-      callback(name);
-    });
   },
   onHeroUpdate(callback: (assets: HeroAssets | null) => void): void {
     ipcRenderer.on(CHANNELS.heroUpdate, (_event: IpcRendererEvent, assets: HeroAssets | null) => {
@@ -355,6 +357,31 @@ const api: RendererApi = {
   },
   readClipboard(): Promise<string> {
     return ipcRenderer.invoke(CHANNELS.clipboardRead) as Promise<string>;
+  },
+  onNotifications(callback: (items: readonly AppNotification[]) => void): void {
+    ipcRenderer.on(
+      CHANNELS.notificationsUpdate,
+      (_event: IpcRendererEvent, items: readonly AppNotification[]) => {
+        callback(items);
+      },
+    );
+  },
+  onNotificationToast(callback: (toast: NotificationToast) => void): void {
+    ipcRenderer.on(CHANNELS.notificationsToast, (_event: IpcRendererEvent, toast: NotificationToast) => {
+      callback(toast);
+    });
+  },
+  requestNotifications(): Promise<readonly AppNotification[]> {
+    return ipcRenderer.invoke(CHANNELS.notificationsRequest) as Promise<readonly AppNotification[]>;
+  },
+  dismissNotification(id: string): void {
+    ipcRenderer.send(CHANNELS.notificationsDismiss, id);
+  },
+  clearNotifications(): void {
+    ipcRenderer.send(CHANNELS.notificationsClear);
+  },
+  markNotificationsRead(): void {
+    ipcRenderer.send(CHANNELS.notificationsMarkRead);
   },
 };
 

@@ -40,6 +40,7 @@ import {
 } from '../shared/types';
 import { type Translator } from '../shared/i18n/index';
 import { type AppSettingsStore } from './app-settings';
+import { type NotificationsService } from './notifications';
 import { DEFAULT_SOUND_SET } from './asset-reader';
 import { ipcMain } from 'electron';
 
@@ -47,6 +48,13 @@ const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000; // re-check every 6h for long-runn
 
 export interface UpdaterDeps {
   readonly settings: AppSettingsStore;
+  /**
+   * The launcher's notification inbox. Told when an update has finished DOWNLOADING — that is the
+   * actionable moment ("it will apply on the next restart"), whereas `available` is a couple of seconds
+   * of transit the user can do nothing with (autoDownload is on in every mode but `off`). Its writes are
+   * also drained before quitAndInstall, beside the settings store's.
+   */
+  readonly notifications: NotificationsService;
   /** True while ANY in-flight operation runs (not only a running game) — blocks the manual install. */
   readonly isBusy: () => boolean;
   /** Drops both windows' close-guards synchronously right before quitAndInstall. */
@@ -326,6 +334,10 @@ export class UpdaterService {
     autoUpdater.on('update-downloaded', (info) => {
       log.info(`[updater] downloaded ${info.version}`);
       this.setStatus({ kind: 'downloaded', version: info.version });
+      // The Settings screen only shows this to someone who is already IN the Settings screen; the
+      // notification is what reaches everyone else. Deduplicated by version inside the service — the
+      // periodic check keeps re-reporting the same downloaded build every 6 hours.
+      this.deps.notifications.notifyUpdateReady(info.version);
     });
     autoUpdater.on('error', (err) => {
       log.error('[updater] error:', err);
@@ -422,6 +434,9 @@ export class UpdaterService {
     // right before quitAndInstall (nothing awaited between them) — its contract of dropping the window
     // close-guards with no yield in the way is preserved.
     await this.deps.settings.flush();
+    // Same reason for the inbox: a notification written as the process goes down would come back
+    // truncated, and the file is read on the very next start.
+    await this.deps.notifications.flush();
     log.info('[updater] installing update — quitAndInstall');
     this.deps.beforeInstall(); // drop both windows' close-guards synchronously first
     autoUpdater.quitAndInstall();

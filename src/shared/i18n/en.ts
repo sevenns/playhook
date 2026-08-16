@@ -72,6 +72,7 @@ export const en = {
   'launcher.menu.forceClose': 'Force close',
   'launcher.menu.home': 'Home',
   'launcher.menu.forget': 'Remove from history',
+  'launcher.menu.notifications': 'Notifications',
   'launcher.menu.settings': 'Settings',
   // Confirmation popup copy (controls.ts). The Yes/No buttons use the shared common.* keys.
   'launcher.confirm.install': 'Do you want to install game?',
@@ -217,6 +218,17 @@ export const en = {
 
   // ── Customize screen: what the SCREEN itself says (game-settings-*.ts) ──────
   'launcher.menu.customize': 'Customize',
+
+  // ── Notifications (the toast + the Notifications popup) ────────────────────
+  // The TEXT of a notification is assembled here rather than stored with it: the UI language changes
+  // live, and a string written into notifications.json would be frozen at the language of the moment.
+  'notifications.updateReady': 'Update {version} is ready — it will be installed on restart',
+  'notifications.gameInstalled': '{title} is installed',
+  'notifications.gameUninstalled': '{title} has been removed',
+  'notifications.empty': 'No notifications',
+  'notifications.clearAll': 'Clear all',
+  // Timestamp of a list entry: today shows the time alone, yesterday is named, older gets a date.
+  'notifications.yesterday': 'yesterday, {time}',
 
   // ── On-screen keyboard + file browser (osk.ts / file-picker.ts) ────────────
   'osk.shift': 'Shift',

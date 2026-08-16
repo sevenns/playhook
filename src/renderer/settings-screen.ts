@@ -445,6 +445,23 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
     requestAnimationFrame(() => listScroller.fades());
   }
 
+  /**
+   * Opens the screen ON a given section instead of the first one — the route an "update ready"
+   * notification takes to the Updates section.
+   *
+   * It runs AFTER the column has been built (render → renderColumn): `sidebar.select` on an empty column
+   * silently does nothing, and that failure would have been invisible for this very deep link, since
+   * Updates happens to be the first section anyway and the fallback lands on it by accident.
+   */
+  function selectSection(key: MessageKey): void {
+    if (!sidebar.select(key)) {
+      console.warn(`[settings] no "${key}" section to open on — falling back to the first one`);
+      return;
+    }
+    sectionKey = key;
+    renderPane();
+  }
+
   /** Hands the focus from the column to the pane, at its first row. */
   function enterPane(): void {
     flushPreview(); // whatever the column last moved onto is what the focus is stepping into
@@ -981,7 +998,7 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
 
   return {
     isOpen: () => open,
-    open: () => {
+    open: (section?: MessageKey) => {
       if (open) return;
       open = true;
       focusIndex = 0;
@@ -1000,6 +1017,7 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
       // the previous visit left the list (which showed as a half-cropped first row).
       listScroller.to(0, true);
       render();
+      if (section !== undefined) selectSection(section);
       applyRowFocus(true);
     },
     close,

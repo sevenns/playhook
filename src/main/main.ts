@@ -19,6 +19,8 @@ import { createTray, buildTrayMenu, type TrayCallbacks, type TraySteamState } fr
 import { createSteamShortcutService } from './steam-shortcut';
 import { installDaemonUnit, removeDaemonUnit } from './daemon-unit';
 import { UpdaterService } from './updater';
+import { NotificationsService } from './notifications';
+import { NotificationsStore } from './notifications-store';
 import { GameConfigService } from './game-config';
 import { LocaleService } from './locale';
 import { createPowerService } from './power';
@@ -157,6 +159,37 @@ async function bootstrap(): Promise<void> {
   const window = new GameWindow(getTranslator);
   const stats = new StatsService(store);
 
+  // The notification inbox. Whether an arriving notification may make noise is a question about the
+  // whole app — is the window on screen, is it in front, is a game running — and all three facts are
+  // main's own, read live here. Whether the user has TOUCHED anything recently is deliberately NOT one
+  // of them: someone reading the launcher without pressing buttons is still looking at it.
+  const notifications = new NotificationsService({
+    store: new NotificationsStore(app.getPath('userData')),
+    presence: () => {
+      const bw = windowRef?.browserWindow ?? null;
+      return {
+        windowVisible: window.isShown(),
+        windowFocused: bw !== null && !bw.isDestroyed() && bw.isFocused(),
+        gameRunning: state.get().kind === 'running',
+      };
+    },
+    push: (channel, payload) => {
+      const bw = windowRef?.browserWindow ?? null;
+      if (bw !== null && !bw.isDestroyed()) bw.webContents.send(channel, payload);
+    },
+  });
+  await notifications.init();
+
+  // One summary plate for everything that piled up while a game was running. StateManager.subscribe
+  // hands the listener only the NEW state, so the previous kind is tracked here — the same shape the
+  // keep-awake recompute below uses.
+  let previousStateKind = state.get().kind;
+  state.subscribe((next) => {
+    const previous = previousStateKind;
+    previousStateKind = next.kind;
+    if (previous === 'running' && next.kind !== 'running') notifications.announceUnreadAfterGame();
+  });
+
   // The launch history behind the carousel: copies of every inserted game's art/audio, so the launcher
   // has something to show with no card in. init() re-syncs its cached stats and runs the GC; a failure
   // there must not stop the app from starting (the carousel just falls back to the card's games).
@@ -202,6 +235,7 @@ async function bootstrap(): Promise<void> {
     pcLibrary,
     watcher,
     settings,
+    notifications,
     platform,
     isGamescope: gameModeSession,
     getTranslator,
@@ -235,6 +269,7 @@ async function bootstrap(): Promise<void> {
   // synchronously before quitAndInstall.
   const updater = new UpdaterService({
     settings,
+    notifications,
     isBusy: () => {
       const kind = state.get().kind;
       return kind !== 'idle' && kind !== 'ready' && kind !== 'error';
@@ -295,6 +330,13 @@ async function bootstrap(): Promise<void> {
   // destroy it), and every push re-checks isDestroyed().
   const launcherWindow = window.browserWindow;
   if (launcherWindow !== null) updater.attachWindow(launcherWindow);
+  // The launcher came back to the front — release whatever piled up while it was away (a toast held
+  // because the window was hidden or behind something, and the summary after a game). Both events are
+  // needed: showing from the tray does not necessarily focus, and focusing does not re-show.
+  if (launcherWindow !== null) {
+    launcherWindow.on('show', () => notifications.onLauncherFronted());
+    launcherWindow.on('focus', () => notifications.onLauncherFronted());
+  }
   // Normally start hidden in the tray — the window appears only when a valid game card is detected
   // (GameController shows it on the 'ready' state). But if "always show the no-card screen" is enabled,
   // seed the controller with it now so it shows the empty screen at startup (reconciles: idle + no card).
