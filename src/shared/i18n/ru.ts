@@ -250,7 +250,7 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'gameSettings.steamAppidHint': 'Число из адреса игры в магазине Steam.',
   'gameSettings.watchProcesses': 'Отслеживаемые процессы',
   'gameSettings.watchProcessesHint':
-    'Имена процессов, по которым лаунчер понимает, что игра ещё идёт. Нужны, когда игра стартует через свой лаунчер, а первый процесс сразу завершается.',
+    'По ним видно, что игра ещё идёт, если она стартует через свой лаунчер.',
   'gameSettings.heroImage': 'Фоны',
   'gameSettings.gridImage': 'Обложка карточки',
   'gameSettings.gridImageAuto': 'обрезается из первого фона',

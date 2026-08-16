@@ -1650,11 +1650,17 @@ html:not(.cursor-hidden) .setting-row:hover,
   transform: scale(0.98);
 }
 
+/* Capped at 60% of the row, the same share .setting-value-wide takes on the other side: a hint is free to
+   run onto a second line, but never to push the value out of the column the rest of the rows keep it in.
+   The cap is what makes that a WRAP rather than a shove — without it the box is sized by its longest line
+   and the value gets whatever is left. */
 .setting-label-box {
   display: flex;
   flex-direction: column;
   gap: calc(2 * var(--px));
+  flex: 1 1 auto;
   min-width: 0;
+  max-width: 60%;
 }
 
 .setting-label {

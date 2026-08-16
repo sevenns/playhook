@@ -280,7 +280,7 @@ export const en = {
   'gameSettings.steamAppidHint': 'The number in the game’s Steam store URL.',
   'gameSettings.watchProcesses': 'Watched processes',
   'gameSettings.watchProcessesHint':
-    'Process names that tell the launcher the game is still running. Needed when the game starts through a launcher of its own and its first process exits.',
+    'What shows the game is still running, when it starts through a launcher of its own.',
   'gameSettings.heroImage': 'Backgrounds',
   'gameSettings.gridImage': 'Card artwork',
   'gameSettings.gridImageAuto': 'cropped from the first background',
