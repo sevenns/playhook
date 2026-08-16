@@ -158,6 +158,14 @@
               <!-- Customize — the per-game manifest editor, offered only for a game that is on the card
                    or in the local library (an `active` game is the only one whose file we can reach). -->
               <button id="menu-customize" class="text-button" type="button"></button>
+              <!-- Notifications — always present (the inbox exists on every screen), so it belongs to
+                   the FIXED block, not above it with the volatile items. Two nodes rather than one:
+                   the label is rewritten from JS on every language change and would take the unread
+                   dot with it if the dot lived in the same text node. -->
+              <button id="menu-notifications" class="text-button" type="button">
+                <span class="menu-label" id="menu-notifications-label"></span
+                ><span class="menu-dot" id="menu-notifications-dot"></span>
+              </button>
               <!-- The ONLY way into Settings (the tray item is gone), so it shows on every screen —
                    including the empty one, where More is still there. -->
               <button id="menu-settings" class="text-button" type="button" data-i18n="launcher.menu.settings">Settings</button>
@@ -175,6 +183,14 @@
               <button id="power-quit" class="text-button" type="button" data-i18n="launcher.menu.quit">Close Playhook</button>
               <button id="power-close" class="text-button" type="button" data-i18n="launcher.menu.close">Close</button>
             </div>
+            <!-- Notifications: the list is built from JS (the inbox arrives on notifications:update),
+                 the two buttons under it are fixed. Pressing an entry removes it and performs its
+                 action; "Clear all" empties the inbox and leaves the popup open on its empty state. -->
+            <div class="actions-group" data-group="notifications">
+              <div id="notification-list" class="notification-list"></div>
+              <button id="notifications-clear" class="text-button" type="button" data-i18n="notifications.clearAll">Clear all</button>
+              <button id="notifications-close" class="text-button" type="button" data-i18n="launcher.menu.close">Close</button>
+            </div>
             <div class="actions-group" data-group="confirm">
               <button id="confirm-yes" class="text-button" type="button" data-i18n="common.yes">Yes</button>
               <button id="confirm-no" class="text-button" type="button" data-i18n="common.no">No</button>
@@ -185,6 +201,18 @@
           </div>
         </div>
       </section>
+
+      <!-- Notification toast: a plate in the top-right corner for 3s. It lives INSIDE #app on purpose —
+           that is where hero.ts writes the live --d1/--d2 palette, so the plate is painted in the current
+           game's colours and inherits their 1s crossfade. Outside #app the variables would still
+           resolve, but to the static :root fallbacks, and the colour would freeze.
+           Two nested elements, the same trick #hero / #hero-pan uses: the outer owns the entrance and
+           exit (translateX + opacity), the inner the pulse (scale) — one node cannot animate two
+           transforms independently. Not interactive (pointer-events: none): there is nothing to press,
+           notifications are clickable only inside the popup. -->
+      <div id="toast" class="toast" aria-hidden="true">
+        <div class="toast-pulse"><span class="toast-text" id="toast-text"></span></div>
+      </div>
 
       <!-- Settings: the fourth surface (not a carousel screen — the strip keeps its position underneath).
            Openness is published as #app[data-overlay="settings"]; the veil + the column are built from

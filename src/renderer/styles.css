@@ -1086,36 +1086,44 @@ html:not(.cursor-hidden) .rect-button:hover,
 }
 
 .popup.is-open .info-item,
-.popup.is-open .actions-group > .text-button {
+.popup.is-open .actions-group > .text-button,
+.popup.is-open .notification-list > .text-button {
   animation: popup-item-in 0.3s cubic-bezier(0.2, 0, 0.2, 1) both;
   animation-delay: calc(0.12s + var(--pop, 0) * 45ms);
 }
 
 .popup.is-open .info-item:nth-last-child(2),
-.popup.is-open .actions-group > .text-button:nth-last-child(2) {
+.popup.is-open .actions-group > .text-button:nth-last-child(2),
+.popup.is-open .notification-list > .text-button:nth-last-child(2) {
   --pop: 1;
 }
 .popup.is-open .info-item:nth-last-child(3),
-.popup.is-open .actions-group > .text-button:nth-last-child(3) {
+.popup.is-open .actions-group > .text-button:nth-last-child(3),
+.popup.is-open .notification-list > .text-button:nth-last-child(3) {
   --pop: 2;
 }
-.popup.is-open .actions-group > .text-button:nth-last-child(4) {
+.popup.is-open .actions-group > .text-button:nth-last-child(4),
+.popup.is-open .notification-list > .text-button:nth-last-child(4) {
   --pop: 3;
 }
-.popup.is-open .actions-group > .text-button:nth-last-child(5) {
+.popup.is-open .actions-group > .text-button:nth-last-child(5),
+.popup.is-open .notification-list > .text-button:nth-last-child(5) {
   --pop: 4;
 }
-.popup.is-open .actions-group > .text-button:nth-last-child(6) {
+.popup.is-open .actions-group > .text-button:nth-last-child(6),
+.popup.is-open .notification-list > .text-button:nth-last-child(6) {
   --pop: 5;
 }
-.popup.is-open .actions-group > .text-button:nth-last-child(n + 7) {
+.popup.is-open .actions-group > .text-button:nth-last-child(n + 7),
+.popup.is-open .notification-list > .text-button:nth-last-child(n + 7) {
   --pop: 6;
 }
 
 /* An item that collapses (or grows back) WHILE the popup is open must not have the entrance animation
    sitting on its opacity — `both` would pin it at the animation's end value and the fade below would
    never show. The entrance has long finished by then, so dropping it costs nothing. */
-.popup.is-open .actions-group > .text-button.is-hidden {
+.popup.is-open .actions-group > .text-button.is-hidden,
+.popup.is-open .notification-list > .text-button.is-hidden {
   animation: none;
 }
 
@@ -1247,10 +1255,12 @@ html:not(.cursor-hidden) .rect-button:hover,
 
 /* The gap is a MARGIN rather than `gap`, so an item that collapses can take its own spacing with it —
    a flex gap survives a zero-height neighbour and would leave a step in the stack while it folds away. */
-.actions-group > .text-button + .text-button {
+.actions-group > .text-button + .text-button,
+.notification-list > .text-button + .text-button {
   margin-top: calc(8 * var(--px));
 }
 #popup[data-view='details'] .actions-group[data-group='details'],
+#popup[data-view='notifications'] .actions-group[data-group='notifications'],
 #popup[data-view='power'] .actions-group[data-group='power'],
 #popup[data-view='confirm'] .actions-group[data-group='confirm'],
 #popup[data-view='error'] .actions-group[data-group='error'] {
@@ -1310,18 +1320,192 @@ html:not(.cursor-hidden) .text-button:hover,
    spacing and opacity animate to nothing and the items below slide up to meet it. Kept out of the base
    rule on purpose — everywhere else `is-hidden` is decided before the element is ever seen, and a fold
    would be an animation of nothing. */
-.actions-group > .text-button {
+.actions-group > .text-button,
+.notification-list > .text-button {
   transition: background 0.2s ease, color 0.2s ease, transform 0.12s ease, opacity 0.2s ease,
     height 0.24s cubic-bezier(0.4, 0, 0.2, 1), margin-top 0.24s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-.actions-group > .text-button.is-hidden {
+.actions-group > .text-button.is-hidden,
+.notification-list > .text-button.is-hidden {
   display: flex;
   height: 0;
   margin-top: 0;
   opacity: 0;
   overflow: hidden;
   pointer-events: none;
+}
+
+/* ── Notifications: the popup's list, the More item's unread dot, and the toast ──
+   The list is a stack of TextButtons one level deeper than the other groups' own buttons (it has a
+   scrolling box of its own around them), which is why every rule above written with the `>` combinator
+   names `.notification-list > .text-button` as well — otherwise the entries would fall out of the
+   stack's rhythm: no spacing, no staggered entrance, no fold. */
+
+/* The scrolling half of the group. `min-height: 0` is load-bearing: .popup-actions has it, .actions-group
+   does not, and without it this flex column refuses to shrink below its content and the list overflows
+   the popup column instead of scrolling inside it. */
+.notification-list {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  overflow-y: auto;
+  min-height: 0;
+  margin-bottom: calc(8 * var(--px));
+}
+
+/* An entry is two lines (what happened, and when), so it cannot use the one-line TextButton geometry:
+   the height grows with the text, the lines stack right-aligned like everything else in this column,
+   and a long game title is clamped rather than allowed to run the popup off the screen. */
+.notification-item {
+  height: auto;
+  min-height: calc(92 * var(--px));
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: center;
+  gap: calc(4 * var(--px));
+  padding-top: calc(14 * var(--px));
+  padding-bottom: calc(14 * var(--px));
+  max-width: 100%;
+  white-space: normal;
+  text-align: right;
+}
+
+.notification-text {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  line-height: calc(34 * var(--px));
+}
+
+.notification-time {
+  font-weight: 300;
+  font-size: calc(20 * var(--px));
+  line-height: calc(28 * var(--px));
+  opacity: 0.7;
+}
+
+/* Unread marker — the same 8px dot the carousel puts under a card on the inserted card, for the same
+   reason: it is this UI's one word for "look here". It rides in the entry's own row, so a focused entry
+   (which inverts to a d2 fill) needs it painted in d1 or it would vanish into the fill. */
+.notification-dot {
+  flex: 0 0 auto;
+  width: calc(8 * var(--px));
+  height: calc(8 * var(--px));
+  border-radius: 50%;
+  background: var(--d2);
+  margin-left: calc(12 * var(--px));
+  transition: opacity 0.2s ease;
+}
+
+/* Read: the dot goes, but its space stays. Opening the popup marks the whole list read at once, and a
+   row of entries reflowing sideways under the cursor as the dots vanish is the kind of movement the
+   user reads as a bug. */
+.notification-dot.is-hidden {
+  opacity: 0;
+}
+
+.notification-item.is-focused .notification-dot,
+html:not(.cursor-hidden) .notification-item:hover .notification-dot {
+  background: var(--d1);
+}
+
+/* The first line of an entry: the text, with the unread dot beside it. */
+.notification-line {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  max-width: 100%;
+}
+
+/* Empty state — a line, not a button: there is nothing to press, so it must not be focusable either. */
+.notification-empty {
+  padding: calc(24 * var(--px)) calc(32 * var(--px));
+  font-weight: 300;
+  font-size: calc(24 * var(--px));
+  line-height: calc(36 * var(--px));
+  color: color-mix(in srgb, var(--fg) 75%, transparent);
+}
+
+/* The More menu's "Notifications" item carries the unread dot, which is why its label lives in a span of
+   its own: the other applyMenu* helpers write textContent straight into the button, and doing that here
+   would wipe the dot out with it. */
+.menu-dot {
+  width: calc(8 * var(--px));
+  height: calc(8 * var(--px));
+  border-radius: 50%;
+  background: var(--d2);
+  margin-left: calc(12 * var(--px));
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+#menu-notifications.has-unread .menu-dot {
+  opacity: 1;
+}
+
+#menu-notifications.is-focused .menu-dot,
+html:not(.cursor-hidden) #menu-notifications:hover .menu-dot {
+  background: var(--d1);
+}
+
+/* ── The toast ──────────────────────────────────────────────────────────────
+   Top-right, above every surface (the popup is 3, the screens 2), and NOT interactive: there is nothing
+   to press on it, which also keeps it clear of the hover guard in controls.ts. It shares its corner with
+   the popup column, so a toast that arrives while the popup is open waits in the queue instead (the list
+   inside the popup is updating live anyway). */
+.toast {
+  position: absolute;
+  top: calc(50 * var(--px));
+  right: calc(50 * var(--px));
+  max-width: calc(550 * var(--px));
+  z-index: 4;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateX(calc(40 * var(--px)));
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
+.toast.is-open {
+  opacity: 1;
+  transform: none;
+}
+
+/* The inner node carries the pulse, so the entrance/exit transform above stays its own. The border is
+   there because the palette only guarantees the two colours are APART (dominant-color.ts keeps a
+   distance of 0.18), not that they meet a contrast ratio — a thin outline keeps the plate readable
+   against a hero that happens to sit close to --d1. */
+.toast-pulse {
+  background: var(--d1);
+  color: var(--d2);
+  border: 1px solid color-mix(in srgb, var(--d2) 30%, transparent);
+  border-radius: calc(10 * var(--px));
+  padding: calc(20 * var(--px)) calc(32 * var(--px));
+}
+
+.toast.is-open .toast-pulse {
+  animation: toast-pulse 1s ease-in-out infinite;
+}
+
+@keyframes toast-pulse {
+  0%,
+  100% {
+    transform: none;
+  }
+  50% {
+    transform: scale(1.03);
+  }
+}
+
+.toast-text {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  font-weight: 500;
+  font-size: calc(28 * var(--px));
+  line-height: calc(38 * var(--px));
 }
 
 /* ── Full-screen overlays: Settings, and Customize ──────────────────────────

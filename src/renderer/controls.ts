@@ -10,8 +10,9 @@
 // The popup is a state machine: one #popup element whose content + action stack switch by data-view.
 // Navigation is vertical (up/down) inside a stack; the default focus is always the BOTTOM button
 // (Close / No / Sleep), which the mockup draws filled. B/Esc/veil step BACK one level.
-import type { AppState, BrowseInfo, GameInfo } from '../shared/types';
-import type { Translator } from '../shared/i18n/index.js';
+import type { AppNotification, AppState, BrowseInfo, GameInfo } from '../shared/types';
+import type { Locale, MessageKey, Translator } from '../shared/i18n/index.js';
+import { formatNotification, formatNotificationTime } from './format.js';
 import { NAV_REPEAT_MS, createGamepadController } from './gamepad.js';
 import type { NavSurface } from './nav-surface.js';
 import type { MoveResult } from './carousel.js';
@@ -20,7 +21,7 @@ import { gameOf, phaseOf, steamBusy } from './state-view.js';
 import { req, reqQuery } from './dom.js';
 
 // The current popup view (mutually exclusive; 'none' = closed). Mirrors the data-view on #popup.
-type PopupView = 'none' | 'details' | 'power' | 'confirm' | 'error';
+type PopupView = 'none' | 'details' | 'notifications' | 'power' | 'confirm' | 'error';
 // Which action the confirm view is asking about (only meaningful while popupView === 'confirm').
 type ConfirmMode =
   | 'install'
@@ -56,6 +57,8 @@ export interface ControlsDeps {
   audio: AudioController;
   /** The current translator (read live so menu/confirm copy follows the language). */
   getTranslator(): Translator;
+  /** The current UI locale — the notification list formats its timestamps with it. */
+  getLocale(): Locale;
   /** The history carousel — the THIRD focus group, above the bar and the popup stack (see navLeft…). */
   carousel: CarouselNav;
   /** The Settings screen — the FOURTH surface, between the popup and the carousel (see navLeft…). */
@@ -72,6 +75,12 @@ export interface ControlsDeps {
    * signal, which decides whether main may pop a notification toast at this moment — see presence.ts.
    */
   onInput(): void;
+  /** The inbox as main last pushed it — the popup list and the More item's dot are drawn from it. */
+  getNotifications(): readonly AppNotification[];
+  /** The popup finished closing. The toast shares this corner and holds its queue while it is up. */
+  onPopupClosed(): void;
+  /** Opens a game's detail screen (a notification about a game leads there). Owned by app.ts. */
+  openGameDetail(id: string): void;
 }
 
 /**
@@ -80,7 +89,8 @@ export interface ControlsDeps {
  * would otherwise keep running underneath (idle timer, wheel, Y).
  */
 export interface SettingsNav extends NavSurface {
-  open(): void;
+  /** `sectionKey` deep-links to one section — an "update ready" notification lands on Updates. */
+  open(sectionKey?: MessageKey): void;
   close(): void;
   /** Runs the reset once the shared confirm popup says yes. */
   resetSettings(): void;
@@ -141,6 +151,10 @@ export interface Controls {
   start(): void;
   /** Pause/resume acting on gamepad input (paused while the launcher is backgrounded — a game on top). */
   setGamepadPaused(paused: boolean): void;
+  /** A fresh inbox arrived: repaint the More item's dot and, if the list is up, the list. */
+  applyNotifications(): void;
+  /** Whether the popup is up. The toast shares its corner and waits rather than covering it. */
+  isPopupOpen(): boolean;
 }
 
 /**
@@ -225,6 +239,8 @@ export function createControls(deps: ControlsDeps): Controls {
   const menuHome = req<HTMLButtonElement>('menu-home');
   const menuCustomize = req<HTMLButtonElement>('menu-customize');
   const menuForget = req<HTMLButtonElement>('menu-forget');
+  const menuNotifications = req<HTMLButtonElement>('menu-notifications');
+  const menuNotificationsLabel = req('menu-notifications-label');
   const menuSettings = req<HTMLButtonElement>('menu-settings');
   const menuClose = req<HTMLButtonElement>('menu-close');
   const powerShutdown = req<HTMLButtonElement>('power-shutdown');
@@ -233,11 +249,18 @@ export function createControls(deps: ControlsDeps): Controls {
   const powerMinimize = req<HTMLButtonElement>('power-minimize');
   const powerQuit = req<HTMLButtonElement>('power-quit');
   const powerClose = req<HTMLButtonElement>('power-close');
+  const notificationList = req('notification-list');
+  const notificationsClear = req<HTMLButtonElement>('notifications-clear');
+  const notificationsClose = req<HTMLButtonElement>('notifications-close');
   const confirmYes = req<HTMLButtonElement>('confirm-yes');
   const confirmNo = req<HTMLButtonElement>('confirm-no');
   const errorClose = req<HTMLButtonElement>('error-close');
 
   let popupView: PopupView = 'none';
+  // The notification entries currently in the DOM. They are recreated on every snapshot, so — unlike
+  // ALL_STACK_BUTTONS — they cannot be wired or highlighted once at startup; see the click delegation
+  // below and applyStackFocus.
+  let notificationButtons: readonly HTMLButtonElement[] = [];
   let confirmMode: ConfirmMode = 'uninstall';
   // Where B/Esc/veil returns FROM the confirm view: install/uninstall come from Details, the power
   // actions come from Power.
@@ -292,6 +315,9 @@ export function createControls(deps: ControlsDeps): Controls {
     popupView = 'none';
     popup.classList.remove('is-open');
     popup.setAttribute('aria-hidden', 'true');
+    // The toast lives in the corner this column is fading out of, so it is released only once the fade
+    // is over — otherwise a plate would fade IN over a popup still fading OUT, in the same 20 pixels.
+    window.setTimeout(() => deps.onPopupClosed(), POPUP_FADE_MS);
     freezeMenuDuringFade();
     applyStackFocus(); // clear the stack highlight (stackActive becomes false)
     applyFocus(); // restore the main bar highlight
@@ -309,9 +335,145 @@ export function createControls(deps: ControlsDeps): Controls {
     applyMenuForget(); // keep the "Remove from history" item fresh (history-only games)
     applyMenuSystem(); // …and System, which belongs to the carousel level, not to a game
     applyMenuSettings(); // …and Settings, which belongs to that level too
+    applyMenuNotifications(); // …and the inbox item, whose dot follows the unread count
     setView('details');
     focusStackBottom(); // default focus: Close
     applyFocus(); // main highlight clears (focusActive false with a popup open)
+  }
+
+  /**
+   * The Notifications popup (from Details → Notifications). Opening it IS reading the inbox — that is
+   * one of the only two gestures that clear the unread state, the other being pressing an entry — so
+   * main is told straight away and the dot beside the More item goes out.
+   */
+  function openNotifications(): void {
+    window.api.markNotificationsRead();
+    setView('notifications');
+    renderNotificationList();
+    focusStackBottom(); // default focus: Close, as in every other view
+    applyFocus();
+  }
+
+  /** The notification whose entry currently holds the focus — the anchor a repaint restores. */
+  function focusedNotificationId(): string | undefined {
+    if (popupView !== 'notifications') return undefined;
+    return stackFocusables()[stackIndex]?.dataset['notificationId'];
+  }
+
+  /** One entry: what happened and when, plus the unread dot. */
+  function buildNotificationButton(item: AppNotification): HTMLButtonElement {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'text-button notification-item';
+    const line = document.createElement('span');
+    line.className = 'notification-line';
+    const text = document.createElement('span');
+    text.className = 'notification-text';
+    line.append(text);
+    const dot = document.createElement('span');
+    dot.className = 'notification-dot';
+    line.append(dot);
+    const time = document.createElement('span');
+    time.className = 'notification-time';
+    button.append(line, time);
+    patchNotificationButton(button, item);
+    return button;
+  }
+
+  /** Writes one notification into an entry node — the same path for a fresh node and for a reused one. */
+  function patchNotificationButton(button: HTMLButtonElement, item: AppNotification): void {
+    button.dataset['notificationId'] = item.id;
+    const text = button.querySelector('.notification-text');
+    const dot = button.querySelector('.notification-dot');
+    const time = button.querySelector('.notification-time');
+    // textContent, never innerHTML: the title comes off the card and is untrusted data.
+    if (text !== null) text.textContent = formatNotification(item, t());
+    if (dot !== null) dot.classList.toggle('is-hidden', item.read);
+    if (time !== null) {
+      time.textContent = formatNotificationTime(item.at, Date.now(), t(), deps.getLocale());
+    }
+  }
+
+  /**
+   * Rebuilds the list from the latest snapshot (main is the only source of truth — nothing here edits the
+   * inbox locally and hopes main agrees). Two things make the rebuild safe while the popup is on screen:
+   *  • it stands down entirely during the popup's fade-out, so the user never watches the menu rewrite
+   *    itself on the way out (the same freeze every applyMenu* helper respects);
+   *  • the focus is re-anchored by notification ID rather than by index — `stackIndex` is only clamped
+   *    when the stack changes, so a snapshot arriving under an open list would otherwise slide the
+   *    highlight quietly onto a different entry.
+   */
+  function renderNotificationList(): void {
+    if (menuFrozen()) return;
+    const items = deps.getNotifications();
+    // Same entries, different values — opening the popup marks them all read, and main echoes that back
+    // a beat later. Recreating the nodes for it would replay the whole staggered entrance under the
+    // user's eyes, right after the list appeared; patching in place does not (the same reason the stats
+    // panel in app.ts updates its rows rather than rebuilding them).
+    if (
+      notificationButtons.length === items.length &&
+      items.every((item, at) => notificationButtons[at]?.dataset['notificationId'] === item.id)
+    ) {
+      items.forEach((item, at) => {
+        const button = notificationButtons[at];
+        if (button !== undefined) patchNotificationButton(button, item);
+      });
+      return;
+    }
+    const anchorId = focusedNotificationId();
+    const anchorButton = popupView === 'notifications' ? stackFocusables()[stackIndex] : undefined;
+    notificationButtons = items.map(buildNotificationButton);
+    notificationList.replaceChildren(...notificationButtons);
+    if (items.length === 0) {
+      // A line, not a button: there is nothing to press, so it must not be focusable either.
+      const empty = document.createElement('div');
+      empty.className = 'notification-empty';
+      empty.textContent = t()('notifications.empty');
+      notificationList.append(empty);
+    }
+    if (popupView === 'notifications') {
+      const stack = stackFocusables();
+      const at =
+        anchorId !== undefined
+          ? stack.findIndex((button) => button.dataset['notificationId'] === anchorId)
+          : anchorButton === undefined
+            ? -1
+            : stack.indexOf(anchorButton);
+      // The entry that had the focus is gone (pressed, or evicted) → fall back to the bottom button,
+      // which is "Close" — the same safe default every stack opens on.
+      stackIndex = at === -1 ? Math.max(0, stack.length - 1) : at;
+    }
+    applyStackFocus();
+  }
+
+  /** The More item's label and its unread dot (see applyMenuNotifications' note on the two nodes). */
+  function applyMenuNotifications(): void {
+    if (menuFrozen()) return;
+    menuNotificationsLabel.textContent = t()('launcher.menu.notifications');
+    menuNotifications.classList.toggle(
+      'has-unread',
+      deps.getNotifications().some((item) => !item.read),
+    );
+  }
+
+  /**
+   * Pressing an entry removes it (this is an inbox — the press IS the handling) and then goes where the
+   * notification points. A game that is no longer in the list — its card is out, its record evicted —
+   * simply has nowhere to go, and the popup just closes.
+   */
+  function activateNotification(button: HTMLButtonElement): void {
+    const id = button.dataset['notificationId'];
+    if (id === undefined) return;
+    const item = deps.getNotifications().find((candidate) => candidate.id === id);
+    audio.play('button');
+    window.api.dismissNotification(id);
+    closePopup();
+    if (item === undefined) return;
+    if (item.kind === 'update-ready') {
+      openSettings('settings.sectionUpdates');
+      return;
+    }
+    deps.openGameDetail(item.gameId);
   }
 
   // Power submenu (from Details → Shutdown): Shutdown / Reboot / Sleep. Each opens a Yes/No confirm.
@@ -446,6 +608,7 @@ export function createControls(deps: ControlsDeps): Controls {
   function back(): void {
     switch (popupView) {
       case 'power':
+      case 'notifications':
         audio.play('back');
         setView('details');
         focusStackBottom();
@@ -475,8 +638,8 @@ export function createControls(deps: ControlsDeps): Controls {
   // Opening/closing lives here because the bar focus does: the screen is entered from More and returns
   // to it. Everything INSIDE the screen belongs to settings-screen.ts.
 
-  function openSettings(): void {
-    deps.settings.open();
+  function openSettings(sectionKey?: MessageKey): void {
+    deps.settings.open(sectionKey);
     applyFocus(); // the bar highlight clears (focusActive is false with the screen open)
   }
 
@@ -781,8 +944,11 @@ export function createControls(deps: ControlsDeps): Controls {
     menuShutdown,
     menuHome,
     menuCustomize,
+    menuNotifications,
     menuSettings,
     menuClose,
+    notificationsClear,
+    notificationsClose,
     powerShutdown,
     powerReboot,
     powerSleep,
@@ -808,10 +974,15 @@ export function createControls(deps: ControlsDeps): Controls {
         if (!menuShutdown.classList.contains('is-hidden')) items.push(menuShutdown);
         if (!menuHome.classList.contains('is-hidden')) items.push(menuHome);
         if (!menuCustomize.classList.contains('is-hidden')) items.push(menuCustomize);
+        items.push(menuNotifications);
         if (!menuSettings.classList.contains('is-hidden')) items.push(menuSettings);
         items.push(menuClose);
         return items;
       }
+      case 'notifications':
+        // The list first (oldest at the top, freshest just above the buttons — the DOM order), then the
+        // two fixed buttons. This IS the up/down order, so it must match the DOM exactly.
+        return [...notificationButtons, notificationsClear, notificationsClose];
       case 'power': {
         const items: HTMLButtonElement[] = [powerShutdown, powerReboot, powerSleep];
         if (!powerMinimize.classList.contains('is-hidden')) items.push(powerMinimize);
@@ -835,7 +1006,10 @@ export function createControls(deps: ControlsDeps): Controls {
     const items = stackFocusables();
     stackIndex = Math.min(items.length - 1, Math.max(0, stackIndex));
     const focused = stackActive() ? items[stackIndex] : undefined;
-    for (const btn of ALL_STACK_BUTTONS) btn.classList.toggle('is-focused', btn === focused);
+    // The notification entries are not in ALL_STACK_BUTTONS — they are rebuilt on every snapshot — so
+    // they are cleared alongside it, or a stale highlight would sit on two buttons at once.
+    for (const btn of [...ALL_STACK_BUTTONS, ...notificationButtons])
+      btn.classList.toggle('is-focused', btn === focused);
     if (focused !== undefined) focused.scrollIntoView({ block: 'nearest' });
   }
 
@@ -921,6 +1095,16 @@ export function createControls(deps: ControlsDeps): Controls {
     } else if (btn === menuForget) {
       audio.play('button');
       openConfirm('forget');
+    } else if (btn.classList.contains('notification-item')) {
+      activateNotification(btn);
+    } else if (btn === menuNotifications) {
+      audio.play('button');
+      openNotifications();
+    } else if (btn === notificationsClear) {
+      // The popup deliberately stays open on its empty state: "Clear all" answers "get rid of these",
+      // not "take me out of here", and closing would hide the very result of the press.
+      audio.play('button');
+      window.api.clearNotifications();
     } else if (btn === menuSettings) {
       // The single entrance to Settings — the tray item is gone, so this works the same on the desktop
       // and in Game Mode. The menu it was opened from closes first: the screen is a surface of its own.
@@ -937,7 +1121,7 @@ export function createControls(deps: ControlsDeps): Controls {
       audio.play('back');
       closePopup();
       deps.carousel.leaveDetail();
-    } else if (btn === menuClose || btn === errorClose || btn === powerClose) {
+    } else if (btn === menuClose || btn === errorClose || btn === powerClose || btn === notificationsClose) {
       // back() dispatches by the current view: Details/Error → close the popup; Power → step back to
       // the Details menu (so "Close" in the Power submenu returns you one level up, like the B gesture).
       back();
@@ -1046,6 +1230,19 @@ export function createControls(deps: ControlsDeps): Controls {
       pressFlash(btn);
       triggerStackButton(btn);
     });
+  });
+
+  // The list's entries are recreated on every snapshot, so the one-off wiring above cannot reach them —
+  // a click on a fresh entry would land on nothing (hover already works: it resolves its target through
+  // closest('.text-button')). Delegation on the container covers whatever is in it at press time.
+  notificationList.addEventListener('click', (event) => {
+    const target =
+      event.target instanceof Element
+        ? event.target.closest<HTMLButtonElement>('.notification-item')
+        : null;
+    if (target === null) return;
+    pressFlash(target);
+    triggerStackButton(target);
   });
 
   // ONE window-level mouse handler for both surfaces (the bar and the popup stack), guarded against
@@ -1449,6 +1646,7 @@ export function createControls(deps: ControlsDeps): Controls {
     applyMenuForget();
     applyMenuSystem();
     applyMenuSettings();
+    applyMenuNotifications();
   }
 
   function clearGameButtons(): void {
@@ -1462,6 +1660,7 @@ export function createControls(deps: ControlsDeps): Controls {
     applyMenuHome(); // the carousel can still be there with no game on screen (history only)
     applyMenuSystem();
     applyMenuSettings();
+    applyMenuNotifications();
   }
 
   function refresh(): void {
@@ -1515,5 +1714,10 @@ export function createControls(deps: ControlsDeps): Controls {
     },
     /** Pause/resume acting on gamepad input (paused while the launcher is backgrounded — a game on top). */
     setGamepadPaused: (paused: boolean) => gamepad.setPaused(paused),
+    applyNotifications: () => {
+      applyMenuNotifications();
+      if (popupView === 'notifications') renderNotificationList();
+    },
+    isPopupOpen: () => popupView !== 'none',
   };
 }
