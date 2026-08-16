@@ -264,6 +264,11 @@ export function createControls(deps: ControlsDeps): Controls {
   // the edge fades. Reused rather than reinvented — a list that scrolls differently from the Settings
   // list would be the only one in the app that does.
   const notificationScroller = createScroller(notificationList);
+  // The Details stack scrolls too: its items are the launcher's whole menu, and on a one-game screen the
+  // play statistics above it leave less room than the eight items need. Its own scroller, because a
+  // scroller owns one box's position and fades.
+  const menuStack = req('menu-stack');
+  const menuStackScroller = createScroller(menuStack);
   const notificationsClear = req<HTMLButtonElement>('notifications-clear');
   const notificationsClose = req<HTMLButtonElement>('notifications-close');
   const confirmYes = req<HTMLButtonElement>('confirm-yes');
@@ -354,6 +359,11 @@ export function createControls(deps: ControlsDeps): Controls {
     setView('details');
     focusStackBottom(); // default focus: Close
     applyFocus(); // main highlight clears (focusActive false with a popup open)
+    // Open at the BOTTOM of the stack when it does not all fit — that is where the focus already is, and
+    // a menu that opens at the top and then glides down shows the wrong end first. Instant, and next
+    // frame: the items were relabelled/unhidden this tick and the box has not been laid out yet. A stack
+    // that fits clamps this to 0, so nothing moves.
+    requestAnimationFrame(() => menuStackScroller.to(menuStack.scrollHeight, true));
   }
 
   /**
@@ -1077,9 +1087,12 @@ export function createControls(deps: ControlsDeps): Controls {
     for (const btn of [...ALL_STACK_BUTTONS, ...notificationButtons])
       btn.classList.toggle('is-focused', btn === focused);
     if (focused === undefined) return;
-    // An entry lives inside the scrolling list, so it is revealed BY that list — which also keeps its
-    // edge fades in step. Everything else is a plain stack button with nothing to scroll.
+    // A focused item is revealed BY the box that scrolls it, which also keeps that box's edge fades in
+    // step. Anything outside those two boxes has nothing to scroll — and must NOT fall back to
+    // scrollIntoView there: with no scrollable ancestor Chromium walks up to the app itself and moves the
+    // whole screen, which is what an overflowing menu used to do.
     if (focused.classList.contains('notification-item')) notificationScroller.reveal(focused);
+    else if (popupView === 'details') menuStackScroller.reveal(focused);
     else focused.scrollIntoView({ block: 'nearest' });
   }
 
