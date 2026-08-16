@@ -278,6 +278,16 @@ function openGameDetail(id: string): void {
 function showAddedGame(id: string): void {
   userChoseDetail = false;
   carousel.focusGame(id);
+  // focusGame moves the STRIP and nothing else — it does not tell main the browse cursor moved (a real
+  // flip does that through the carousel's own onNavigate). Without this the row lands on the new card
+  // while the title, the background and the info panel still describe whatever was on screen before.
+  // Immediate, like opening a detail screen: committing to a game outranks the flip debounce.
+  requestedBrowseId = id;
+  window.api.browseGame(id, true);
+  // `applied` is main saying it re-read the manifest, so the game is playable NOW — and Play acts on the
+  // CARD's selected game, not on the browse cursor, so it has to move too or Play would launch the game
+  // the user was looking at before.
+  if (gameOf(currentState)?.id !== id) window.api.selectGame(id);
   // setScreen('carousel') with no carousel is not refused — it quietly becomes 'detail' — so it is only
   // asked for when there is a strip to show.
   if (carousel.exists()) carousel.setScreen('carousel');

@@ -204,6 +204,13 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   let sources: readonly DriveCandidate[] = [];
   /** The root a pending "switch the source?" confirm is about — applied when the answer comes back. */
   let pendingSource: string | null = null;
+  /**
+   * The root an adoptRoot is currently reading, and the guard that keeps a late answer from overwriting a
+   * newer one. Stepping the source row with the D-pad can start a second read before the first lands, and
+   * the two would otherwise race — the slower one wins and the form ends up describing another root.
+   */
+  let adoptingRoot: string | null = null;
+  let adoptToken = 0;
   // Where the manifest came from, and the media signature it was read against (the swap guard, Р6.2).
   let origin: {
     readonly root: string;
@@ -952,12 +959,28 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   }
 
   /**
+   * Steps the source row by `delta`, wrapping like every other select. Measured from the root being
+   * ADOPTED when a read is still in flight, so a quick second press moves on rather than re-asking for
+   * the same neighbour. A step that would cost something still raises the confirm — and the popup takes
+   * the input while it is up, so a HELD direction cannot stack a queue of questions behind it.
+   */
+  function cycleSource(delta: number): void {
+    if (sources.length === 0) return;
+    const current = adoptingRoot ?? origin?.root ?? '';
+    const at = sources.findIndex((candidate) => candidate.root === current);
+    const next = sources[wrapIndex(at === -1 ? 0 : at, delta, sources.length)];
+    if (next === undefined || next.root === current) return;
+    deps.audio.play('navigate');
+    requestSource(next.root);
+  }
+
+  /**
    * Moves the new game to another root, asking first only when the move would COST something: the paths
    * and the install block are read against a root, so they cannot travel with it (see
    * carryFormAcrossSources). With nothing but a name typed there is nothing to warn about.
    */
   function requestSource(root: string): void {
-    if (root === origin?.root) return;
+    if (root === (adoptingRoot ?? origin?.root)) return;
     if (hasSourceBoundValues(form)) {
       pendingSource = root;
       deps.onConfirmRequested('switch-source');
@@ -999,9 +1022,13 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   }
 
   function cycleSelect(row: Extract<GameSettingsRow, { kind: 'select' }>, delta: number): void {
-    // The source is not stepped through: every step of it re-reads a root and, with paths already typed,
-    // raises a confirm — so one held D-pad press would queue a stack of them. It is chosen from its menu.
-    if (row.id === 'source') return;
+    // The source steps through the CANDIDATES, not through the row's own value: a step starts a root read,
+    // and until it lands the row still shows the previous root — so stepping again would keep landing on
+    // the same neighbour instead of walking down the list.
+    if (row.id === 'source') {
+      cycleSource(delta);
+      return;
+    }
     if (row.options.length === 0) return;
     const current = row.options.findIndex((option) => option.value === row.value);
     const next = wrapIndex(current === -1 ? 0 : current, delta, row.options.length);
@@ -1380,9 +1407,13 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
    */
   async function adoptRoot(root: string): Promise<void> {
     const carried = origin === null ? null : form;
+    const token = ++adoptToken;
+    adoptingRoot = root;
     setStatus(null);
     const result = await deps.api.readRoot(root);
-    if (!open || mode !== 'add') return;
+    // A newer step already asked for another root — this answer describes a place the user has left.
+    if (!open || mode !== 'add' || token !== adoptToken) return;
+    adoptingRoot = null;
     if (!result.ok) {
       setStatus(result.message);
       return;
@@ -1512,8 +1543,11 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
    * them — it is the slot the form is still editing, and keeping both would write it twice.
    */
   async function resyncAfterWrite(root: string, writtenId: string): Promise<void> {
+    const token = ++adoptToken;
     const result = await deps.api.readRoot(root);
-    if (!open || mode !== 'add' || !result.ok) return;
+    // The same guard adoptRoot uses: the user may have moved the game to another root meanwhile, and
+    // this answer is about the one they left.
+    if (!open || mode !== 'add' || token !== adoptToken || !result.ok) return;
     const parsed = slotsWithNewGame(result.hasManifest ? result.text : null, form.launchMode);
     if (!parsed.ok) return;
     const others = parsed.slots.filter(
@@ -1904,6 +1938,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     baselineOtherIssues = new Set();
     sources = [];
     pendingSource = null;
+    adoptingRoot = null;
     form = emptyFormModel(defaultLaunchMode('card'));
   }
 
