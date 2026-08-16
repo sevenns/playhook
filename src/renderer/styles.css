@@ -2348,6 +2348,12 @@ html:not(.cursor-hidden) .setting-row.is-inert:hover {
   font-weight: 500;
   font-size: calc(30 * var(--px));
   overflow-wrap: anywhere;
+  /* Spaces are rendered EXACTLY as they are stored. HTML normally collapses a run of them into one and
+     drops them at the end of a line entirely, so pressing space five times drew one space and stored
+     five — and the only way to notice was that it then took five presses of Backspace to clear. The
+     `break-spaces` flavour (rather than pre-wrap) also keeps trailing spaces from hanging past the edge,
+     which is what puts the caret in the right place after them. */
+  white-space: break-spaces;
   cursor: text;
 }
 
