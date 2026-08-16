@@ -4,7 +4,7 @@
 // and replicates AppState to the window. All FS/process work happens only here (in main).
 import path from 'node:path';
 import fse from 'fs-extra';
-import { app, ipcMain } from 'electron';
+import { app, clipboard, ipcMain } from 'electron';
 import {
   IPC,
   type AppState,
@@ -583,6 +583,9 @@ export class GameController {
     ipcMain.handle(IPC.libraryRequest, (): GameLibrary | null => this.currentLibrary);
     ipcMain.handle(IPC.browseRequest, (): BrowseInfo | null => this.currentBrowse);
     ipcMain.handle(IPC.sfxSetRequest, (): SfxSet | null => this.sfxSet);
+    // The clipboard as text, for the on-screen keyboard's Paste. Trimmed of nothing here — what the
+    // field will accept is the keyboard's own rule (osk-text.ts sanitize), and it differs per field.
+    ipcMain.handle(IPC.clipboardRead, (): string => clipboard.readText());
     // The carousel asks for one card's artwork at a time, only for what is on screen, and caches it by id
     // — that is what keeps the list channel light enough to re-push on every change (Р5).
     ipcMain.handle(IPC.libraryGridRequest, (_event, id: unknown): Promise<string | null> => {

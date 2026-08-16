@@ -17,9 +17,23 @@ import { type AudioController } from './audio.js';
 import { req } from './dom.js';
 import { createHoverGuard } from './hover-guard.js';
 import { clampIndex, wrapIndex } from './index-math.js';
+import {
+  caretFromOffset,
+  charsOf,
+  clampCaret,
+  deleteAfter,
+  deleteBefore,
+  insertAt,
+  moveCaret,
+  sanitize,
+  splitAtCaret,
+  type TextState,
+} from './osk-text.js';
 import type { TextEntrySurface } from './game-settings-screen.js';
 
 const PRESS_MS = 130;
+/** The most a single paste may bring in. A manifest field is a title or a path — never a document. */
+const PASTE_MAX_CHARS = 512;
 
 export type OskMode = 'text' | 'id' | 'number';
 type Layout = 'en' | 'ru' | 'symbols';
@@ -30,6 +44,9 @@ type Key =
   | { readonly kind: 'backspace' }
   | { readonly kind: 'space' }
   | { readonly kind: 'layout' }
+  | { readonly kind: 'caret-left' }
+  | { readonly kind: 'caret-right' }
+  | { readonly kind: 'paste' }
   | { readonly kind: 'done' }
   | { readonly kind: 'cancel' };
 
@@ -70,12 +87,17 @@ const NUMBER_ROWS: readonly (readonly Key[])[] = [
 export interface OskDeps {
   readonly audio: AudioController;
   getTranslator(): Translator;
+  /** The system clipboard, read by main — the Paste key's only source (see clipboard:read). */
+  readClipboard(): Promise<string>;
 }
 
 export function createOsk(deps: OskDeps): TextEntrySurface {
   const root = req('osk');
   const titleEl = req('osk-title');
+  const fieldEl = req('osk-field');
   const valueEl = req('osk-value');
+  const valueAfterEl = req('osk-value-after');
+  const caretEl = req<HTMLElement>('osk-caret');
   const keysEl = req('osk-keys');
   const legendEl = req('osk-legend');
 
@@ -85,7 +107,8 @@ export function createOsk(deps: OskDeps): TextEntrySurface {
   let mode: OskMode = 'text';
   let layout: Layout = 'en';
   let shifted = false;
-  let value = '';
+  /** The value AND where in it the next character goes — every edit runs through osk-text.ts. */
+  let text: TextState = { value: '', caret: 0 };
   let title = '';
   let onDone: (value: string) => void = () => undefined;
 
@@ -120,13 +143,18 @@ export function createOsk(deps: OskDeps): TextEntrySurface {
     return mode !== 'number' && mode !== 'id' && layout !== 'symbols';
   }
 
-  function controlRow(): readonly Key[] {
-    const keys: Key[] = [];
-    if (hasShift()) keys.push({ kind: 'shift' });
-    if (layoutsFor(mode).length > 1) keys.push({ kind: 'layout' });
-    if (mode !== 'number') keys.push({ kind: 'space' });
-    keys.push({ kind: 'backspace' }, { kind: 'cancel' }, { kind: 'done' });
-    return keys;
+  /**
+   * The two control rows. Two, not one: with the caret keys and Paste on it the single row grew wider
+   * than the panel, and a row that overflows is a key you cannot reach. The split is by SUBJECT — what
+   * you type with above, what you do with the text below — rather than by where the overflow happened.
+   */
+  function controlRows(): readonly (readonly Key[])[] {
+    const typing: Key[] = [];
+    if (hasShift()) typing.push({ kind: 'shift' });
+    if (layoutsFor(mode).length > 1) typing.push({ kind: 'layout' });
+    if (mode !== 'number') typing.push({ kind: 'space' });
+    typing.push({ kind: 'caret-left' }, { kind: 'caret-right' }, { kind: 'backspace' });
+    return [typing, [{ kind: 'paste' }, { kind: 'cancel' }, { kind: 'done' }]];
   }
 
   function keyLabel(key: Key): string {
@@ -141,6 +169,13 @@ export function createOsk(deps: OskDeps): TextEntrySurface {
         return t()('osk.space');
       case 'layout':
         return layoutLabel(nextLayout());
+      // Glyphs, not words: an arrow needs no translation and fits a narrow key.
+      case 'caret-left':
+        return '◀';
+      case 'caret-right':
+        return '▶';
+      case 'paste':
+        return t()('osk.paste');
       case 'done':
         return t()('osk.done');
       case 'cancel':
@@ -160,8 +195,13 @@ export function createOsk(deps: OskDeps): TextEntrySurface {
     return list[wrapIndex(at === -1 ? 0 : at, 1, list.length)] ?? layout;
   }
 
+  /** Whether a key takes the wide form. The caret arrows are glyphs — they stay the size of a letter. */
+  function isWideKey(key: Key): boolean {
+    return key.kind !== 'char' && key.kind !== 'caret-left' && key.kind !== 'caret-right';
+  }
+
   function render(): void {
-    rows = [...letterRows(), controlRow()];
+    rows = [...letterRows(), ...controlRows()];
     buttons = rows.map((row, r) => {
       const rowEl = document.createElement('div');
       rowEl.className = 'osk-row';
@@ -170,7 +210,7 @@ export function createOsk(deps: OskDeps): TextEntrySurface {
         const button = document.createElement('button');
         button.type = 'button';
         button.className = 'osk-key';
-        if (key.kind !== 'char') button.classList.add('is-wide');
+        if (isWideKey(key)) button.classList.add('is-wide');
         if (key.kind === 'shift' && shifted) button.classList.add('is-active');
         button.textContent = keyLabel(key);
         button.addEventListener('click', () => {
@@ -206,7 +246,21 @@ export function createOsk(deps: OskDeps): TextEntrySurface {
   }
 
   function paintValue(): void {
-    valueEl.textContent = value;
+    const { before, after } = splitAtCaret(text);
+    valueEl.textContent = before;
+    valueAfterEl.textContent = after;
+    // Restart the blink on every edit: the caret spends half of each second invisible, and landing in
+    // that half right after a click or a keypress reads as "nothing happened".
+    caretEl.style.setProperty('animation', 'none');
+    void caretEl.offsetWidth;
+    caretEl.style.removeProperty('animation');
+  }
+
+  /** Applies a new text state and repaints. The one door every edit goes through. */
+  function setText(next: TextState): void {
+    if (next === text) return;
+    text = next;
+    paintValue();
   }
 
   function pressFlash(el: HTMLElement): void {
@@ -214,27 +268,42 @@ export function createOsk(deps: OskDeps): TextEntrySurface {
     window.setTimeout(() => el.classList.remove('is-pressed'), PRESS_MS);
   }
 
-  function insert(text: string): void {
-    // `id` is the manifest's own key for this game on disk; a character the schema rejects would only be
-    // reported as an error later, so the keyboard simply does not produce one. Lower case on top of that:
-    // the id is compared as written wherever this PC remembers the game by it, so two ids differing only
-    // in case are two games — a distinction nobody means to draw. The slug the title proposes is
-    // lower-case already, and this makes typing one by hand agree with it.
-    const filtered = mode === 'id' ? text.toLowerCase().replace(/[^a-z0-9._-]/g, '') : text;
+  /** Types text AT the caret. What each mode will accept lives in osk-text.ts, with its reasoning. */
+  function insert(typed: string): void {
+    const filtered = sanitize(mode, typed);
     if (filtered === '') return;
-    value += filtered;
+    setText(insertAt(text, filtered));
     // Shift is a one-shot, the way a phone keyboard treats it — a name is "Hades", not "HADES".
     if (shifted) {
       shifted = false;
       rebuild();
     }
-    paintValue();
   }
 
   function backspace(): void {
-    if (value === '') return;
-    value = [...value].slice(0, -1).join('');
-    paintValue();
+    setText(deleteBefore(text));
+  }
+
+  function moveCaretBy(delta: number): void {
+    const next = moveCaret(text, delta);
+    if (next === text) return; // already at that end — no move, no sound
+    deps.audio.play('navigate');
+    setText(next);
+  }
+
+  /**
+   * Paste, the only edit whose text comes from outside the launcher. It is filtered exactly like typing:
+   * a clipboard holding a newline, a tab or a character the field's schema rejects must not be able to
+   * put into the manifest what the keys themselves cannot.
+   */
+  async function paste(): Promise<void> {
+    const clipboard = await deps.readClipboard();
+    if (!open) return; // the keyboard was closed while main was answering
+    // Capped, and capped by CHARACTER so the cut can't land inside one: nothing this keyboard edits is
+    // longer than a path, and a clipboard holding a whole file would otherwise be drawn into the field.
+    const filtered = charsOf(sanitize(mode, clipboard)).slice(0, PASTE_MAX_CHARS).join('');
+    if (filtered === '') return;
+    setText(insertAt(text, filtered));
   }
 
   function press(key: Key, el?: HTMLElement): void {
@@ -260,6 +329,16 @@ export function createOsk(deps: OskDeps): TextEntrySurface {
       case 'layout':
         deps.audio.play('button');
         switchLayout(1);
+        return;
+      case 'caret-left':
+        moveCaretBy(-1);
+        return;
+      case 'caret-right':
+        moveCaretBy(1);
+        return;
+      case 'paste':
+        deps.audio.play('button');
+        void paste();
         return;
       case 'done':
         deps.audio.play('button');
@@ -299,7 +378,7 @@ export function createOsk(deps: OskDeps): TextEntrySurface {
   }
 
   function confirm(): void {
-    const result = value;
+    const result = text.value;
     hide();
     onDone(result);
   }
@@ -383,6 +462,64 @@ export function createOsk(deps: OskDeps): TextEntrySurface {
     if (legendEl.textContent !== text) legendEl.textContent = text;
   }
 
+  /** What the DOM reports for a point: the node the caret would land in, and an offset inside it. */
+  interface CaretHit {
+    readonly node: Node;
+    readonly offset: number;
+  }
+
+  /**
+   * Where a click lands in the text. Both spellings of the same browser API are tried: the standard
+   * `caretPositionFromPoint` and the older `caretRangeFromPoint` Chromium has always had. Neither is in
+   * the DOM lib types we compile against, hence the narrow local shape rather than a cast to `any`.
+   */
+  function caretHitAt(x: number, y: number): CaretHit | null {
+    const doc = document as unknown as {
+      caretPositionFromPoint?: (
+        x: number,
+        y: number,
+      ) => { offsetNode: Node; offset: number } | null;
+      caretRangeFromPoint?: (x: number, y: number) => Range | null;
+    };
+    const position = doc.caretPositionFromPoint?.(x, y) ?? null;
+    if (position !== null) return { node: position.offsetNode, offset: position.offset };
+    const range = doc.caretRangeFromPoint?.(x, y) ?? null;
+    if (range !== null) return { node: range.startContainer, offset: range.startOffset };
+    return null;
+  }
+
+  /**
+   * Click anywhere in the value to put the caret there. This is the mouse's whole answer to "I want to
+   * fix the middle of this" — without it the only way back into typed text was to delete it.
+   */
+  fieldEl.addEventListener('click', (event) => {
+    if (!open) return;
+    const hit = caretHitAt(event.clientX, event.clientY);
+    // A click on the padding around the text, or anywhere the DOM cannot resolve: treat it as "past the
+    // end", which is where a click into empty space means.
+    if (hit === null) {
+      setCaret(clampCaret(text.value, Infinity));
+      return;
+    }
+    if (valueEl.contains(hit.node)) {
+      setCaret(caretFromOffset(text, 'before', hit.offset));
+      return;
+    }
+    if (valueAfterEl.contains(hit.node)) {
+      setCaret(caretFromOffset(text, 'after', hit.offset));
+      return;
+    }
+    setCaret(clampCaret(text.value, Infinity));
+  });
+
+  /** Moves the caret without moving anything else — the mouse's own path into the text. */
+  function setCaret(at: number): void {
+    const next = { value: text.value, caret: clampCaret(text.value, at) };
+    if (next.caret === text.caret) return;
+    deps.audio.play('navigate');
+    setText(next);
+  }
+
   root.querySelector<HTMLElement>('.osk-veil')?.addEventListener('click', () => {
     deps.audio.play('back');
     cancel();
@@ -421,8 +558,18 @@ export function createOsk(deps: OskDeps): TextEntrySurface {
     'keydown',
     (event) => {
       if (!open) return;
-      if (event.ctrlKey || event.metaKey || event.altKey) return;
       const key = event.key;
+      // Ctrl/Cmd+V is the only modified combination the keyboard claims — everything else with a modifier
+      // belongs to the OS (and a modified letter must not be typed as that letter).
+      if (event.ctrlKey || event.metaKey) {
+        if (key === 'v' || key === 'V' || key === 'м' || key === 'М') {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          void paste();
+        }
+        return;
+      }
+      if (event.altKey) return;
       if (key === 'Enter') {
         event.preventDefault();
         event.stopImmediatePropagation();
@@ -438,13 +585,36 @@ export function createOsk(deps: OskDeps): TextEntrySurface {
       if (key === 'Backspace') {
         event.preventDefault();
         event.stopImmediatePropagation();
-        backspace();
+        backspace(); // auto-repeat included: a held Backspace should keep deleting, like anywhere else
+        return;
+      }
+      if (key === 'Delete') {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        setText(deleteAfter(text));
+        return;
+      }
+      // The arrows move the CARET here, not the key highlight. The highlight is what a gamepad steers;
+      // someone on a physical keyboard is typing straight through and means the text.
+      if (key === 'ArrowLeft' || key === 'ArrowRight') {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        setText(moveCaret(text, key === 'ArrowLeft' ? -1 : 1));
+        return;
+      }
+      if (key === 'Home' || key === 'End') {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        setText({
+          value: text.value,
+          caret: key === 'Home' ? 0 : clampCaret(text.value, Infinity),
+        });
         return;
       }
       if ([...key].length === 1) {
         event.preventDefault();
         event.stopImmediatePropagation();
-        insert(mode === 'number' ? key.replace(/[^0-9-]/g, '') : key);
+        insert(key);
       }
     },
     { capture: true },
@@ -454,7 +624,9 @@ export function createOsk(deps: OskDeps): TextEntrySurface {
     isOpen: () => open,
     open: (request) => {
       mode = request.mode;
-      value = request.value;
+      // The caret opens at the END of what is already there: the commonest edit is "add to this", and
+      // anything else is one click or one arrow away.
+      text = { value: request.value, caret: clampCaret(request.value, request.value.length) };
       title = request.title;
       onDone = request.onDone;
       layout = layoutsFor(mode)[0] ?? 'en';
@@ -485,8 +657,10 @@ export function createOsk(deps: OskDeps): TextEntrySurface {
       cancel();
     },
     // X is Backspace and Y is Shift — the two things a typist reaches for constantly, off the grid.
-    navSecondary: () => {
-      deps.audio.play('back');
+    // A HELD X keeps deleting, one character at a time, the way a held Backspace does everywhere else.
+    navSecondary: (repeat = false) => {
+      if (text.caret === 0) return; // nothing left to delete: no sound either, or a hold would rattle
+      if (!repeat) deps.audio.play('back');
       backspace();
     },
     navTertiary: () => {

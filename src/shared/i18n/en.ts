@@ -224,6 +224,7 @@ export const en = {
   'osk.space': 'Space',
   'osk.done': 'Done',
   'osk.cancel': 'Cancel',
+  'osk.paste': 'Paste',
   'osk.legendDelete': 'X - delete',
   'osk.legendShift': 'Y - shift',
   'osk.legendLayout': 'LB/RB - layout',

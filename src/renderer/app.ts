@@ -102,7 +102,11 @@ const settingsScreen = createSettingsScreen({
 // ── Customize screen (the fifth surface, see game-settings-screen.ts) ────────
 // Its two sub-surfaces are built first because the screen takes them as dependencies: the keyboard is the
 // only way to type anything here, and the file browser the only way to name a path with a gamepad.
-const osk = createOsk({ audio, getTranslator });
+const osk = createOsk({
+  audio,
+  getTranslator,
+  readClipboard: () => window.api.readClipboard(),
+});
 const gameSettingsApi: GameSettingsScreenApi = {
   read: (id) => window.api.readGameConfig(id),
   validate: (root, text) => window.api.validateGameConfig(root, text),

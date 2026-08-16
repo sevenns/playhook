@@ -766,6 +766,10 @@ export const IPC = {
   /** game-renderer → main (invoke): list one directory for the in-launcher file picker, plus the
    * starting points offered beside it. Read-only. Payload GameConfigListDirRequest. */
   gameConfigListDir: 'gameConfig:list-dir',
+  /** game-renderer → main (invoke): the system clipboard as text, for the on-screen keyboard's Paste.
+   * Reading it belongs to main like every other environment fact; the renderer is sandboxed and its own
+   * clipboard API would need a permission prompt that Game Mode has nowhere to show. No payload. */
+  clipboardRead: 'clipboard:read',
 } as const;
 
 /**
@@ -1087,6 +1091,8 @@ export interface RendererApi {
   acceptGameConfigPaths(request: GameConfigAcceptRequest): Promise<ConfigPickResult>;
   /** List one directory for the in-launcher file picker (read-only). */
   listGameConfigDir(request: GameConfigListDirRequest): Promise<ListDirResult>;
+  /** The clipboard as text, for the on-screen keyboard's Paste key. Empty when there is nothing to paste. */
+  readClipboard(): Promise<string>;
 }
 
 declare global {

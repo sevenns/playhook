@@ -265,7 +265,9 @@ available right now, because that is the only case where there is a file to reac
   a gamepad can drive (a picked PC save folder is converted back into a `%APPDATA%`-style prefix
   automatically, and a file outside the card is rejected);
 - an **on-screen keyboard** for every text field, with English, Russian and symbol layouts — the Deck's
-  own keyboard is not available to an app outside Steam;
+  own keyboard is not available to an app outside Steam. The caret goes anywhere in the value (click it,
+  or the ◀ ▶ keys, or the arrows on a real keyboard), **X held** keeps deleting, and **Paste** pulls the
+  system clipboard in (Ctrl+V too), filtered by whatever the field accepts;
 - **live validation**: a problem is shown on the row that owns it, and Save stays unavailable until it
   is gone. On a multi-game card, a problem in ANOTHER game is reported as a line of its own — and does
   not block saving yours, since you cannot fix it from here anyway;

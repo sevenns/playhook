@@ -105,6 +105,7 @@ const CHANNELS = {
   gameConfigImagePreview: 'gameConfig:image-preview',
   gameConfigAcceptPath: 'gameConfig:accept-path',
   gameConfigListDir: 'gameConfig:list-dir',
+  clipboardRead: 'clipboard:read',
 } as const satisfies Partial<typeof IPC>;
 
 const api: RendererApi = {
@@ -351,6 +352,9 @@ const api: RendererApi = {
   },
   listGameConfigDir(request: GameConfigListDirRequest): Promise<ListDirResult> {
     return ipcRenderer.invoke(CHANNELS.gameConfigListDir, request) as Promise<ListDirResult>;
+  },
+  readClipboard(): Promise<string> {
+    return ipcRenderer.invoke(CHANNELS.clipboardRead) as Promise<string>;
   },
 };
 

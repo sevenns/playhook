@@ -260,7 +260,15 @@
           <div class="osk-veil"></div>
           <div class="osk-panel">
             <div class="osk-title" id="osk-title"></div>
-            <div class="osk-field"><span id="osk-value"></span><span class="osk-caret"></span></div>
+            <!-- The value is drawn in TWO halves with the caret between them, so the caret can sit
+                 anywhere in the text and a click can be resolved against the half it landed in. The
+                 halves live inside one inline wrapper so a long value still wraps as one paragraph. -->
+            <div class="osk-field" id="osk-field">
+              <span class="osk-line"
+                ><span id="osk-value"></span><span class="osk-caret" id="osk-caret"></span
+                ><span id="osk-value-after"></span
+              ></span>
+            </div>
             <div class="osk-keys" id="osk-keys"></div>
             <div class="osk-legend" id="osk-legend"></div>
           </div>

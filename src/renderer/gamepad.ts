@@ -26,8 +26,10 @@ export interface GamepadHandlers {
   readonly onB: () => void;
   readonly onY: () => void;
   /** X, and the two shoulder buttons. Claimed only by the on-screen keyboard (Backspace / layout
-   *  switching); everywhere else the handler is a no-op, so the buttons stay unassigned as before. */
-  readonly onX: () => void;
+   *  switching); everywhere else the handler is a no-op, so the buttons stay unassigned as before.
+   *  X repeats while HELD, like a direction: what it deletes there is one character, and holding it is
+   *  how anyone clears a field. `repeat` marks those, so the consumer can tell a hold from a press. */
+  readonly onX: (repeat: boolean) => void;
   readonly onShoulderLeft: () => void;
   readonly onShoulderRight: () => void;
   /** RT — "commit"; claimed by the on-screen keyboard as Done. */
@@ -88,8 +90,10 @@ export function createGamepadController(handlers: GamepadHandlers): GamepadContr
   // down a 40-game history one press at a time is the thing to avoid. Vertical: the same for the long
   // Settings list — the repeat is DELIVERED for up/down too, and the consumer decides whether it applies
   // (controls.ts drops it outside the Settings screen, where the popup stacks are short and cyclic).
-  const heldSince = { left: 0, right: 0, up: 0, down: 0 };
-  const lastFire = { left: 0, right: 0, up: 0, down: 0 };
+  // `x` rides along here for the same reason, though it is a button rather than a direction — the timing
+  // is the timing of a hold, and there is no sense in having two of those.
+  const heldSince = { left: 0, right: 0, up: 0, down: 0, x: 0 };
+  const lastFire = { left: 0, right: 0, up: 0, down: 0, x: 0 };
   // The stick's own previous state per direction, and the moment each one was RELEASED (the edge, not
   // every idle frame — timing it from "currently centred" would leave both directions of an axis
   // permanently gating each other). The clock STICK_SETTLE_MS runs from for the opposite direction.
@@ -128,7 +132,7 @@ export function createGamepadController(handlers: GamepadHandlers): GamepadContr
    * behind, so a direction held across a resume starts its delay from scratch and doesn't burst.
    */
   const stepHeld = (
-    dir: 'left' | 'right' | 'up' | 'down',
+    dir: 'left' | 'right' | 'up' | 'down' | 'x',
     down: boolean,
     fire: (repeat: boolean) => void,
   ): void => {
@@ -196,7 +200,7 @@ export function createGamepadController(handlers: GamepadHandlers): GamepadContr
       if (a && !prev.a) handlers.onA();
       if (b && !prev.b) handlers.onB();
       if (yButton && !prev.y) handlers.onY();
-      if (xButton && !prev.x) handlers.onX();
+      stepHeld('x', xButton, handlers.onX);
       if (shoulderLeft && !prev.shoulderLeft) handlers.onShoulderLeft();
       if (shoulderRight && !prev.shoulderRight) handlers.onShoulderRight();
       if (triggerRight && !prev.triggerRight) handlers.onTriggerRight();
@@ -206,6 +210,7 @@ export function createGamepadController(handlers: GamepadHandlers): GamepadContr
       heldSince.right = 0;
       heldSince.up = 0;
       heldSince.down = 0;
+      heldSince.x = 0;
     }
 
     // The release edge, reported whether or not we are acting on input: a pause must not leave a consumer

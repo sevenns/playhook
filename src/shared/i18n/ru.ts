@@ -190,6 +190,7 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'osk.space': 'Пробел',
   'osk.done': 'Готово',
   'osk.cancel': 'Отмена',
+  'osk.paste': 'Вставить',
   'osk.legendDelete': 'X - стереть',
   'osk.legendShift': 'Y - регистр',
   'osk.legendLayout': 'LB/RB - раскладка',
