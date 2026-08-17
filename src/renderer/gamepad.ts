@@ -5,6 +5,7 @@
 // A = buttons[0] (activate focused control), B = buttons[1] (back / close popup),
 // Y = buttons[3] (hand the focus between the carousel strip and the bar — see controls.ts).
 // We fire on the press EDGE (false→true) so one press / one stick tilt = one action.
+import { HOLD_DELAY_MS, NAV_REPEAT_MS, type AutoRepeatChain } from './auto-repeat.js';
 
 export interface GamepadController {
   start(): void;
@@ -63,13 +64,12 @@ const STICK_DEADZONE = 0.5;
  */
 const STICK_SETTLE_MS = 140;
 
-/** How long a direction must be HELD before the auto-repeat kicks in (a normal press stays one move). */
-const HOLD_DELAY_MS = 350;
-/** The auto-repeat's own cadence once it has kicked in. Shared with the keyboard, whose OS repeat rate is
- *  far faster than anything usable here — see controls.ts. */
-export const NAV_REPEAT_MS = 110;
+// The hold-to-repeat tempo lives in auto-repeat.ts — the keyboard runs on the same numbers (controls.ts).
 
-export function createGamepadController(handlers: GamepadHandlers): GamepadController {
+export function createGamepadController(
+  handlers: GamepadHandlers,
+  chain: AutoRepeatChain,
+): GamepadController {
   let rafId = 0;
   let running = false;
   let paused = false;
@@ -142,13 +142,18 @@ export function createGamepadController(handlers: GamepadHandlers): GamepadContr
     }
     const now = performance.now();
     if (!prev[dir] || heldSince[dir] === 0) {
-      heldSince[dir] = now;
+      // A direction taken up while the previous auto-move is still warm CONTINUES it: the clock is
+      // back-dated by the whole delay, so the run picks up at the repeat cadence instead of stalling.
+      // X is left out — Backspace has nothing to do with the row the hands were just flipping through.
+      const chained = dir !== 'x' && prev[dir] === false && chain.continues(now);
+      heldSince[dir] = chained ? now - HOLD_DELAY_MS : now;
       lastFire[dir] = now;
       if (!prev[dir]) fire(false); // an edge; resuming onto a held direction is not one
       return;
     }
     if (now - heldSince[dir] < HOLD_DELAY_MS || now - lastFire[dir] < NAV_REPEAT_MS) return;
     lastFire[dir] = now;
+    if (dir !== 'x') chain.noteRepeat(now);
     fire(true);
   };
 

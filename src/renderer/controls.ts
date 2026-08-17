@@ -14,7 +14,8 @@ import type { AppNotification, AppState, BrowseInfo, GameInfo } from '../shared/
 import type { Locale, MessageKey, Translator } from '../shared/i18n/index.js';
 import { formatNotification, formatNotificationTime } from './format.js';
 import { createScroller } from './screen-scroller.js';
-import { NAV_REPEAT_MS, createGamepadController } from './gamepad.js';
+import { HOLD_DELAY_MS, NAV_REPEAT_MS, createAutoRepeatChain } from './auto-repeat.js';
+import { createGamepadController } from './gamepad.js';
 import { createWakeMeter } from './mouse-sleep.js';
 import type { NavSurface } from './nav-surface.js';
 import type { MoveResult } from './carousel.js';
@@ -188,6 +189,10 @@ export function createControls(deps: ControlsDeps): Controls {
   // overlaps the next one and the row never stalls between them; an exact match would leave tiny holes.
   const FLIP_STEP_MS = Math.round(NAV_REPEAT_MS * 1.3);
   document.documentElement.style.setProperty('--flip-step', `${FLIP_STEP_MS}ms`);
+
+  // The shared warmth of an auto-move, so a run handed from one direction to the next — or from the pad
+  // to the keyboard — skips the initial delay instead of stalling (auto-repeat.ts).
+  const autoRepeat = createAutoRepeatChain();
   const state = (): AppState => deps.getState();
   const t = (): Translator => deps.getTranslator();
 
@@ -1801,20 +1806,23 @@ export function createControls(deps: ControlsDeps): Controls {
     noteMouseActivity();
   });
 
-  const gamepad = createGamepadController({
-    onLeft: navLeft,
-    onRight: navRight,
-    onUp: navUp,
-    onDown: navDown,
-    onA: navActivate,
-    onB: navBack,
-    onY: navToggleBar,
-    onX: navSecondary,
-    onShoulderLeft: () => navShoulder(-1),
-    onShoulderRight: () => navShoulder(1),
-    onTriggerRight: navCommit,
-    onDirectionsReleased: endInput,
-  });
+  const gamepad = createGamepadController(
+    {
+      onLeft: navLeft,
+      onRight: navRight,
+      onUp: navUp,
+      onDown: navDown,
+      onA: navActivate,
+      onB: navBack,
+      onY: navToggleBar,
+      onX: navSecondary,
+      onShoulderLeft: () => navShoulder(-1),
+      onShoulderRight: () => navShoulder(1),
+      onTriggerRight: navCommit,
+      onDirectionsReleased: endInput,
+    },
+    autoRepeat,
+  );
 
   // Keyboard navigation (Desktop Mode / no gamepad): WASD + arrows move, Space/Enter activate, Tab/Backspace
   // (and Esc) step back — the SAME six primitives as the gamepad, so the two input models stay in lockstep.
@@ -1841,9 +1849,11 @@ export function createControls(deps: ControlsDeps): Controls {
   };
   // The four directions are the exception to the edge model: holding one flips through the carousel or
   // runs down the Settings list, matching the gamepad's hold-to-repeat (a held direction inside a popup
-  // stack is dropped by navUp/navDown themselves). The OS auto-repeat supplies the events (its own
-  // initial delay is close enough to the pad's), but its rate is far too fast, so it is throttled to the
-  // same NAV_REPEAT_MS cadence. Every other key stays one action per press.
+  // stack is dropped by navUp/navDown themselves). The repeat is OURS, on a timer — the OS supplies its
+  // own, but at a rate and an initial delay that are the user's system settings, not ours, so the two
+  // input models would drift apart (and chaining one run into the next would be impossible: the OS
+  // restarts its full delay on every new key). Native repeats are dropped. Every other key stays one
+  // action per press.
   const REPEATABLE_KEYS = new Set([
     'a',
     'arrowleft',
@@ -1854,24 +1864,56 @@ export function createControls(deps: ControlsDeps): Controls {
     's',
     'arrowdown',
   ]);
-  let lastKeyRepeatAt = 0;
+  // The key whose repeat is running, and its timer. Only one at a time: with two directions down the
+  // last one pressed owns the run, which is what a keyboard's own repeat does too.
+  let heldKey: string | null = null;
+  let keyRepeatTimer = 0;
+
+  function stopKeyRepeat(): void {
+    if (keyRepeatTimer !== 0) {
+      window.clearTimeout(keyRepeatTimer);
+      keyRepeatTimer = 0;
+    }
+    heldKey = null;
+  }
+
+  function scheduleKeyRepeat(key: string, handler: (repeat: boolean) => void, delay: number): void {
+    keyRepeatTimer = window.setTimeout(() => {
+      keyRepeatTimer = 0;
+      if (heldKey !== key) return;
+      autoRepeat.noteRepeat(performance.now());
+      handler(true);
+      scheduleKeyRepeat(key, handler, NAV_REPEAT_MS);
+    }, delay);
+  }
+
   window.addEventListener('keydown', (event) => {
     const key = event.key.toLowerCase();
     const handler = KEY_NAV[key];
     if (handler === undefined) return;
     event.preventDefault(); // suppress the native default even on auto-repeat (e.g. Tab traversal)
-    if (event.repeat) {
-      if (!REPEATABLE_KEYS.has(key)) return;
-      const now = performance.now();
-      if (now - lastKeyRepeatAt < NAV_REPEAT_MS) return;
-      lastKeyRepeatAt = now;
-    }
-    handler(event.repeat);
+    if (event.repeat) return; // the OS cadence is not ours — the timer below drives the run
+    handler(false);
+    if (!REPEATABLE_KEYS.has(key)) return;
+    stopKeyRepeat(); // a second direction takes the run over from the first
+    heldKey = key;
+    // A key taken up while the previous run is still warm continues it, delay skipped — same rule as the
+    // pad's (auto-repeat.ts), so swinging left→right glides on either device.
+    const now = performance.now();
+    scheduleKeyRepeat(key, handler, autoRepeat.continues(now) ? NAV_REPEAT_MS : HOLD_DELAY_MS);
   });
   // The keyboard's half of "the hold is over". A keyup can be missed (the window loses focus mid-hold and
-  // the release goes to whoever took it), which is what the watchdog in noteFlip covers.
+  // the release goes to whoever took it), which is what the watchdog in noteFlip covers — and the blur
+  // below, which also has to stop a timer nobody would otherwise turn off.
   window.addEventListener('keyup', (event) => {
-    if (REPEATABLE_KEYS.has(event.key.toLowerCase())) endInput();
+    const key = event.key.toLowerCase();
+    if (heldKey === key) stopKeyRepeat();
+    if (REPEATABLE_KEYS.has(key)) endInput();
+  });
+  window.addEventListener('blur', () => {
+    if (heldKey === null) return;
+    stopKeyRepeat();
+    endInput();
   });
 
   function applyGameButtons(): void {
