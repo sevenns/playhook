@@ -67,11 +67,13 @@
   cursor: default;
 }
 
-/* Cursor hidden while the gamepad is in use, or after the idle timeout (class toggled from controls.ts). The
-   descendant selector's specificity beats the per-element cursor rules (buttons' pointer, the copyable
-   path's text); a real mouse move restores it. */
-html.cursor-hidden,
-html.cursor-hidden * {
+/* The mouse is asleep: the gamepad/keyboard is driving, or the idle timeout ran out (class toggled from
+   controls.ts). Asleep it is not merely invisible — controls.ts swallows every pointer gesture too, and
+   the :hover rules throughout this file are gated on :not(.mouse-asleep) so nothing stays lit under a
+   parked cursor. Only a deliberate shove wakes it (mouse-sleep.ts). The descendant selector's specificity
+   beats the per-element cursor rules (buttons' pointer, the copyable path's text). */
+html.mouse-asleep,
+html.mouse-asleep * {
   cursor: none;
 }
 
@@ -624,9 +626,16 @@ body {
   cursor: pointer;
   /* width/height are part of the carousel→detail morph and share the strip's curve; `opacity` is
      deliberately NOT transitioned — the carousel card and this button swap places instantaneously while
-     they are pixel-identical, and a fade there would show both at once. */
-  transition: background 0.2s ease, color 0.2s ease, transform 0.12s ease,
-    width 0.35s cubic-bezier(0.4, 0, 0.2, 1), height 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+     they are pixel-identical, and a fade there would show both at once.
+     The FOCUS FILL is not transitioned either, here or on any other focusable control in this file. It
+     used to fade over 0.2s, and on the Deck that fade ended in a dropped frame: a 30fps capture of the
+     Customize screen has the row the focus had just landed on measuring 131 … 7 … 134 — one frame at the
+     background's own brightness, no fill and no text, in the very frame the transition completed, while
+     every neighbouring row and the header stayed byte-identical. Chromium on Mesa losing the element as
+     its animated layer is retired. A highlight that arrives instantly cannot end, so it cannot blink —
+     and on a gamepad UI the 200ms lag was worth less than the twitch cost. */
+  transition: transform 0.12s ease, width 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+    height 0.35s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 /* The morph's cover layer: the selected card's artwork, painted behind the button's own content. It is
@@ -673,7 +682,7 @@ body {
 
 /* :hover gated on a live cursor — see the note on .text-button:hover (avoids a stale hover highlight
    sticking under the pointer once the gamepad takes over). */
-html:not(.cursor-hidden) .play-button:hover,
+html:not(.mouse-asleep) .play-button:hover,
 .play-button.is-focused {
   background: var(--d2);
   color: var(--d1);
@@ -698,7 +707,7 @@ html:not(.cursor-hidden) .play-button:hover,
   transition: opacity 0.2s ease;
 }
 
-html:not(.cursor-hidden) .play-button:hover::after,
+html:not(.mouse-asleep) .play-button:hover::after,
 .play-button.is-focused::after {
   opacity: 1;
   animation: pulse-ring 1.1s ease-in-out infinite;
@@ -762,11 +771,11 @@ html:not(.cursor-hidden) .play-button:hover::after,
   background: transparent;
   color: var(--d2);
   cursor: pointer;
-  transition: background 0.2s ease, color 0.2s ease, opacity 0.3s ease, transform 0.12s ease;
+  transition: opacity 0.3s ease, transform 0.12s ease;
 }
 
 /* :hover gated on a live cursor — see the note on .text-button:hover. */
-html:not(.cursor-hidden) .rect-button:hover,
+html:not(.mouse-asleep) .rect-button:hover,
 .rect-button.is-focused {
   background: var(--d2);
   color: var(--d1);
@@ -1337,15 +1346,15 @@ html:not(.cursor-hidden) .rect-button:hover,
   font-size: calc(28 * var(--px));
   white-space: nowrap;
   cursor: pointer;
-  transition: background 0.2s ease, color 0.2s ease, transform 0.12s ease;
+  transition: transform 0.12s ease;
 }
 
 /* Hover paints the same highlight as .is-focused, but ONLY while the cursor is live: once the gamepad
-   takes over (html.cursor-hidden), the pointer still physically sits over whatever it last hovered, so a
+   takes over (html.mouse-asleep), the pointer still physically sits over whatever it last hovered, so a
    bare :hover would keep that button highlighted alongside the gamepad's .is-focused one — two
    highlights, and A (which acts on .is-focused) would fire a different button than the hovered one looks.
-   Gating :hover on :not(.cursor-hidden) drops the stale hover the moment the gamepad is used. */
-html:not(.cursor-hidden) .text-button:hover,
+   Gating :hover on :not(.mouse-asleep) drops the stale hover the moment the gamepad is used. */
+html:not(.mouse-asleep) .text-button:hover,
 .text-button.is-focused {
   background: var(--d2);
   color: var(--d1);
@@ -1369,7 +1378,7 @@ html:not(.cursor-hidden) .text-button:hover,
    would be an animation of nothing. */
 .actions-group > .text-button,
 .notification-list > .text-button {
-  transition: background 0.2s ease, color 0.2s ease, transform 0.12s ease, opacity 0.2s ease,
+  transition: transform 0.12s ease, opacity 0.2s ease,
     height 0.24s cubic-bezier(0.4, 0, 0.2, 1), margin-top 0.24s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
@@ -1494,7 +1503,7 @@ html:not(.cursor-hidden) .text-button:hover,
 }
 
 .notification-item.is-focused .notification-dot,
-html:not(.cursor-hidden) .notification-item:hover .notification-dot {
+html:not(.mouse-asleep) .notification-item:hover .notification-dot {
   background: var(--d1);
 }
 
@@ -1534,7 +1543,7 @@ html:not(.cursor-hidden) .notification-item:hover .notification-dot {
 }
 
 #menu-notifications.is-focused .menu-dot,
-html:not(.cursor-hidden) #menu-notifications:hover .menu-dot {
+html:not(.mouse-asleep) #menu-notifications:hover .menu-dot {
   background: var(--d1);
 }
 
@@ -1793,10 +1802,11 @@ html:not(.cursor-hidden) #menu-notifications:hover .menu-dot {
   font-size: calc(28 * var(--px));
   text-align: left;
   cursor: pointer;
-  transition: background 0.2s ease, color 0.2s ease;
 }
 
-html:not(.cursor-hidden) .settings-nav-item:hover,
+/* Instant, like every other focus fill — see the note on .play-button. This is the control the dropped
+   frame was actually caught on. */
+html:not(.mouse-asleep) .settings-nav-item:hover,
 .settings-nav-item.is-focused {
   background: var(--d2);
   color: var(--d1);
@@ -1826,7 +1836,7 @@ html:not(.cursor-hidden) .settings-nav-item:hover,
 /* The column arrives the way the popup's items do — one after another, top-down, which is the order they
    are read in. Driven by a class rather than by the overlay state, because the buttons are REUSED between
    visits (screen-sidebar.ts): the animation has to be re-armed, not re-triggered by a state change. */
-.settings-nav.is-entering .settings-nav-item {
+.settings-nav-item.is-entering {
   animation: popup-item-in 0.3s cubic-bezier(0.2, 0, 0.2, 1) both;
   animation-delay: calc(var(--nav-index, 0) * 40ms);
 }
@@ -1900,8 +1910,10 @@ html:not(.cursor-hidden) .settings-nav-item:hover,
    alike. Armed by the screen (settings-screen.ts) when the pane changes SECTION, and only then: NOT on a
    value patch, not on the rebuilds a held direction used to cause (those are debounced away before they
    reach here), and not when the focus merely steps in — that one is the width change above, because
-   "you moved in here" and "this is another section" must not look like the same event. */
-.settings-list.is-entering .setting-row {
+   "you moved in here" and "this is another section" must not look like the same event.
+   The class sits on the ROW, not on the list around it — a class on the list is a window in which every
+   row built later starts the entrance over again. See entrance.ts. */
+.setting-row.is-entering {
   animation: popup-item-in 0.28s cubic-bezier(0.2, 0, 0.2, 1) both;
   animation-delay: calc(var(--row-index, 0) * 30ms);
 }
@@ -1925,11 +1937,11 @@ html:not(.cursor-hidden) .settings-nav-item:hover,
   padding: calc(8 * var(--px)) calc(32 * var(--px));
   border-radius: calc(10 * var(--px));
   color: var(--d2);
-  transition: background 0.2s ease, color 0.2s ease, transform 0.12s ease;
+  transition: transform 0.12s ease;
 }
 
 /* :hover gated on a live cursor, like every other control here (see .text-button). */
-html:not(.cursor-hidden) .setting-row:hover,
+html:not(.mouse-asleep) .setting-row:hover,
 .setting-row.is-focused {
   background: var(--d2);
   color: var(--d1);
@@ -2166,8 +2178,8 @@ html:not(.cursor-hidden) .setting-row:hover,
    reads as two competing highlights. */
 .setting-row[data-kind='action'].is-focused,
 .setting-row[data-kind='update-status'].is-focused,
-html:not(.cursor-hidden) .setting-row[data-kind='action']:hover,
-html:not(.cursor-hidden) .setting-row[data-kind='update-status']:hover {
+html:not(.mouse-asleep) .setting-row[data-kind='action']:hover,
+html:not(.mouse-asleep) .setting-row[data-kind='update-status']:hover {
   background: transparent;
   color: var(--d2);
 }
@@ -2329,7 +2341,7 @@ html:not(.cursor-hidden) .setting-row[data-kind='update-status']:hover {
   font-weight: 500;
   font-size: calc(28 * var(--px));
   cursor: pointer;
-  transition: background 0.2s ease, color 0.2s ease, transform 0.12s ease;
+  transition: transform 0.12s ease;
 }
 
 /* The label's window + a moving inner span — the same mechanism the 0.6 "Select game" picker used for
@@ -2392,7 +2404,7 @@ html:not(.cursor-hidden) .setting-row[data-kind='update-status']:hover {
   }
 }
 
-html:not(.cursor-hidden) .settings-option:hover,
+html:not(.mouse-asleep) .settings-option:hover,
 .settings-option.is-focused {
   background: var(--d2);
   color: var(--d1);
@@ -2556,7 +2568,7 @@ html:not(.cursor-hidden) .settings-option:hover,
   pointer-events: none;
 }
 
-html:not(.cursor-hidden) .setting-row.is-inert:hover {
+html:not(.mouse-asleep) .setting-row.is-inert:hover {
   background: transparent;
   color: var(--d2);
 }
@@ -2610,8 +2622,9 @@ html:not(.cursor-hidden) .setting-row.is-inert:hover {
 }
 
 /* …and the rows arrive behind it, in the order they are read. Armed by the keyboard (osk.ts) on open —
-   see the note there for why this cannot key off .is-open like the popup's items do. */
-.osk.is-entering .osk-row {
+   see the note there for why this cannot key off .is-open like the popup's items do, and entrance.ts for
+   why the class lands on the row rather than on the keyboard around it. */
+.osk-row.is-entering {
   animation: popup-item-in 0.26s cubic-bezier(0.2, 0, 0.2, 1) both;
   animation-delay: calc(0.08s + var(--osk-row, 0) * 35ms);
 }
@@ -2703,7 +2716,7 @@ html:not(.cursor-hidden) .setting-row.is-inert:hover {
   font-weight: 500;
   font-size: calc(30 * var(--px));
   cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease, transform 0.12s ease;
+  transition: transform 0.12s ease;
 }
 
 .osk-key.is-wide {
@@ -2711,7 +2724,7 @@ html:not(.cursor-hidden) .setting-row.is-inert:hover {
   font-size: calc(24 * var(--px));
 }
 
-html:not(.cursor-hidden) .osk-key:hover,
+html:not(.mouse-asleep) .osk-key:hover,
 .osk-key.is-focused {
   background: var(--d2);
   color: var(--d1);
@@ -2843,10 +2856,9 @@ html:not(.cursor-hidden) .osk-key:hover,
   font-size: calc(26 * var(--px));
   text-align: left;
   cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease;
 }
 
-html:not(.cursor-hidden) .picker-item:hover,
+html:not(.mouse-asleep) .picker-item:hover,
 .picker-item.is-focused {
   background: var(--d2);
   color: var(--d1);

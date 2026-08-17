@@ -34,6 +34,7 @@ import type {
 import type { MessageKey, Translator } from '../shared/i18n/index.js';
 import { type AudioController } from './audio.js';
 import { req } from './dom.js';
+import { createEntrance } from './entrance.js';
 import { createHoverGuard } from './hover-guard.js';
 import { clampIndex, wrapIndex } from './index-math.js';
 import { createScroller, pxUnit } from './screen-scroller.js';
@@ -397,24 +398,12 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     rendered = [];
   }
 
-  /** How long the staggered row entrance runs — the class is dropped once it is over. */
+  /** How long the staggered row entrance runs — the marks come off once it is over. */
   const ENTRANCE_MS = 700;
   /** The stagger stops counting here: past a handful of rows the wave is a wait, not a wave. */
   const ENTRANCE_STEPS = 8;
-  let entranceTimer = 0;
-
-  /** Arms the one-shot entrance animation (see .settings-list.is-entering in styles.css). */
-  function armEntrance(): void {
-    if (entranceTimer !== 0) window.clearTimeout(entranceTimer);
-    // Off and on around a forced reflow, so a caller that did not rebuild the rows still gets a replay.
-    listEl.classList.remove('is-entering');
-    void listEl.offsetWidth;
-    listEl.classList.add('is-entering');
-    entranceTimer = window.setTimeout(() => {
-      entranceTimer = 0;
-      listEl.classList.remove('is-entering');
-    }, ENTRANCE_MS);
-  }
+  /** The one-shot entrance (see .setting-row.is-entering in styles.css, and entrance.ts for the shape). */
+  const entrance = createEntrance(listEl, '.setting-row', ENTRANCE_MS);
 
   /**
    * How long the pane waits before showing the section the column moved onto. A held direction walks
@@ -604,7 +593,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     rendered.forEach((row, at) =>
       row.el.style.setProperty('--row-index', String(Math.min(at, ENTRANCE_STEPS))),
     );
-    armEntrance();
+    entrance.play();
     focusIndex = nearestFocusable(focusIndex, 1);
     applyRowFocus(true);
     listScroller.to(0, true);
@@ -1833,15 +1822,11 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     open = false;
     closeImage();
     closeMenus();
-    if (entranceTimer !== 0) {
-      window.clearTimeout(entranceTimer);
-      entranceTimer = 0;
-    }
+    entrance.cancel();
     if (previewTimer !== 0) {
       window.clearTimeout(previewTimer);
       previewTimer = 0;
     }
-    listEl.classList.remove('is-entering');
     if (validateTimer !== 0) {
       window.clearTimeout(validateTimer);
       validateTimer = 0;
@@ -1896,7 +1881,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     (event) => {
       hover.track(event.clientX, event.clientY);
       if (!open) return;
-      if (document.documentElement.classList.contains('cursor-hidden')) return;
+      if (document.documentElement.classList.contains('mouse-asleep')) return;
       if (!hover.awake(event.clientX, event.clientY)) return;
       const target = event.target;
       if (!(target instanceof Element)) return;

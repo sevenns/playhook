@@ -11,6 +11,7 @@
 // entry to the first is the shortest path to the actions rather than a surprise. The pane stays clamped
 // — a long list that wraps loses your place.
 import { type AudioController } from './audio.js';
+import { createEntrance } from './entrance.js';
 import { createScroller } from './screen-scroller.js';
 import { wrapIndex } from './index-math.js';
 
@@ -77,7 +78,9 @@ export function createSidebar(box: HTMLElement, deps: SidebarDeps): Sidebar {
   // under the cursor. Reusing the node for an id that is still there turns the common rebuild into a
   // handful of property writes, and the DOM is only touched when the SET of entries actually moved.
   const nodes = new Map<string, HTMLButtonElement>();
-  let entranceTimer = 0;
+  // Marks the entries themselves, so an entry ADDED by one of those frequent rebuilds does not arrive
+  // sliding while the rest of the column sits still — see entrance.ts.
+  const entrance = createEntrance(box, '.settings-nav-item', ENTRANCE_MS);
 
   function paintFocus(instant = false): void {
     buttons.forEach((button, at) => {
@@ -177,18 +180,7 @@ export function createSidebar(box: HTMLElement, deps: SidebarDeps): Sidebar {
       index = 0;
       paintFocus(true);
     },
-    animateIn: () => {
-      if (entranceTimer !== 0) window.clearTimeout(entranceTimer);
-      // Removed and re-added around a forced reflow: the nodes are reused across visits, so re-adding the
-      // class alone would leave the animation already finished and play nothing.
-      box.classList.remove('is-entering');
-      void box.offsetWidth;
-      box.classList.add('is-entering');
-      entranceTimer = window.setTimeout(() => {
-        entranceTimer = 0;
-        box.classList.remove('is-entering');
-      }, ENTRANCE_MS);
-    },
+    animateIn: () => entrance.play(),
   };
 
   function runSelected(): void {

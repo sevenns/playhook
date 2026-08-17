@@ -15,6 +15,7 @@ import type { Locale, MessageKey, Translator } from '../shared/i18n/index.js';
 import { formatNotification, formatNotificationTime } from './format.js';
 import { createScroller } from './screen-scroller.js';
 import { NAV_REPEAT_MS, createGamepadController } from './gamepad.js';
+import { createWakeMeter } from './mouse-sleep.js';
 import type { NavSurface } from './nav-surface.js';
 import type { MoveResult } from './carousel.js';
 import { type AudioController } from './audio.js';
@@ -857,12 +858,16 @@ export function createControls(deps: ControlsDeps): Controls {
   // it wakes again only on an explicit gamepad move or a mouse hover. `wasActive` tracks the edge.
   let focusRevealed = true;
   let wasActive = false;
-  // Idle timeout, shared by the bar focus and the mouse cursor: after 5s with no input the bar
-  // highlight goes dormant AND the cursor hides. Any input restarts the countdown; the gamepad hides the
-  // cursor at once (the user switched to the pad), a real mouse move shows it (see the note* helpers).
+  // Idle timeout, shared by the bar focus and the mouse: after 5s with no input the bar highlight goes
+  // dormant AND the mouse falls asleep. Any input restarts the countdown; the gamepad puts the mouse to
+  // sleep at once (the user switched to the pad), a shove wakes it back up (see the note* helpers).
   const IDLE_MS = 5_000;
   let idleTimer = 0;
-  let cursorHidden = false;
+  // The launcher OPENS with the mouse asleep (index.html carries the class from the first frame, so there
+  // is no moment where a parked pointer can hover something before this file runs). Waking it takes a
+  // deliberate shove — see mouse-sleep.ts and the swallowing listener below.
+  let mouseAsleep = true;
+  const wakeMeter = createWakeMeter();
 
   function mainFocusables(): readonly HTMLButtonElement[] {
     // On the carousel screen Play is not a button at all — it is the selected card's invisible stand-in
@@ -920,10 +925,12 @@ export function createControls(deps: ControlsDeps): Controls {
     );
   }
 
-  function setCursorHidden(hidden: boolean): void {
-    if (cursorHidden === hidden) return;
-    cursorHidden = hidden;
-    document.documentElement.classList.toggle('cursor-hidden', hidden);
+  /** Puts the mouse to sleep or wakes it: hides the cursor AND turns every pointer gesture on or off. */
+  function setMouseAsleep(asleep: boolean): void {
+    if (mouseAsleep === asleep) return;
+    mouseAsleep = asleep;
+    document.documentElement.classList.toggle('mouse-asleep', asleep);
+    wakeMeter.reset();
   }
 
   // (Re)start the idle countdown (IDLE_MS). On expiry the cursor hides and the bar highlight
@@ -935,7 +942,7 @@ export function createControls(deps: ControlsDeps): Controls {
     if (overlays.isAnyOpen()) return;
     idleTimer = window.setTimeout(() => {
       idleTimer = 0;
-      setCursorHidden(true);
+      setMouseAsleep(true);
       // On the carousel the bar-focus spell is not a highlight that can simply go dormant: dropping it
       // would leave the row dimmed with nothing focused anywhere — a dead screen. Hand the focus back to
       // the cards instead, which is where an untouched carousel belongs.
@@ -969,10 +976,15 @@ export function createControls(deps: ControlsDeps): Controls {
     return true;
   }
 
-  // Gamepad/keyboard input = activity: hide the cursor at once (the user switched to the pad), disarm
-  // hover, restart the idle countdown.
+  // Gamepad/keyboard input = activity: the mouse goes to sleep at once (the user switched to the pad, so
+  // the pointer parked on screen stops counting as input at all), hover is disarmed, the idle countdown
+  // restarts.
   function noteGamepadActivity(): void {
-    setCursorHidden(true);
+    setMouseAsleep(true);
+    // Explicitly, not just via setMouseAsleep: while the mouse is ALREADY asleep that call is a no-op,
+    // and the travel a bumped trackpad has quietly banked up has to die on every pad step regardless —
+    // otherwise a hand resting on the Deck adds up to a wake across a whole session of pressing buttons.
+    wakeMeter.reset();
     // Every keyboard/gamepad step re-arms the hover guard: last input wins. Without this, one real mouse
     // move wakes hover for good, and from then on any element that slides under the still cursor — a
     // scrolling list, a popup opening — can take the focus back off the key that just moved it.
@@ -980,9 +992,9 @@ export function createControls(deps: ControlsDeps): Controls {
     armIdleTimer();
   }
 
-  // Real mouse movement = activity: show the cursor + restart the idle.
+  // Real mouse movement, with the mouse already awake = activity: keep the cursor up, restart the idle.
   function noteMouseActivity(): void {
-    setCursorHidden(false);
+    setMouseAsleep(false);
     armIdleTimer();
   }
 
@@ -1373,6 +1385,10 @@ export function createControls(deps: ControlsDeps): Controls {
     if (event.clientX === lastMouseX && event.clientY === lastMouseY) return; // synthetic — ignore
     lastMouseX = event.clientX;
     lastMouseY = event.clientY;
+    // Asleep, a move is not input — it only feeds the meter. Nothing hovers, nothing focuses and the
+    // cursor stays hidden until the travel adds up to a shove. The position above is recorded either way:
+    // whatever wakes the mouse next has to know where the pointer already is.
+    if (mouseAsleep && !wakeMeter.moved(event.clientX, event.clientY, performance.now())) return;
     noteMouseActivity();
     if (!hoverAwake(event.clientX, event.clientY)) return;
     const element = event.target instanceof Element ? event.target : null;
@@ -1396,6 +1412,55 @@ export function createControls(deps: ControlsDeps): Controls {
       focusIndex = idx;
       applyFocus();
     }
+  });
+
+  // Every OTHER thing a pointer can do, switched off in one place for as long as the mouse is asleep.
+  //
+  // Asleep means the mouse is OUT of the UI, not merely invisible: clicks, the wheel, right-click-as-back,
+  // the hover reads on every surface. Gating each of those where it lives would be a list to keep in sync,
+  // and one forgotten entry is a stutter nobody can reproduce — which is exactly how a resting cursor kept
+  // stealing the popup's focus. So the gestures die here, in the capture phase on window, before any
+  // surface sees them. Moves are the deliberate exception: they are the way back (see above).
+  //
+  // Two things still get through. Untrusted events, because a synthetic .click() is our own code driving
+  // the UI rather than a mouse (file-picker.ts does that). And touch: a finger on the Deck's screen is a
+  // poke at one specific thing, never a pointer drifting under a resting hand, so it wakes the mouse and
+  // proceeds — the click Chromium synthesises after it then lands on a UI that is already awake.
+  const SLEPT_THROUGH: readonly string[] = [
+    'click',
+    'dblclick',
+    'auxclick',
+    'contextmenu',
+    'wheel',
+    'mousedown',
+    'mouseup',
+    'mouseover',
+    'mouseout',
+    'mouseenter',
+    'mouseleave',
+    'pointerdown',
+    'pointerup',
+    'pointerover',
+    'pointerout',
+    'pointerenter',
+    'pointerleave',
+  ];
+  SLEPT_THROUGH.forEach((type) => {
+    window.addEventListener(
+      type,
+      (event) => {
+        if (!mouseAsleep || !event.isTrusted) return;
+        if (event instanceof PointerEvent && event.pointerType === 'touch') {
+          noteMouseActivity();
+          return;
+        }
+        event.stopImmediatePropagation();
+        // Not merely "don't route it": the default has to go too, or a sleeping wheel still scrolls the
+        // list under the cursor and a sleeping middle-click still opens Chromium's autoscroll.
+        if (event.cancelable) event.preventDefault();
+      },
+      { capture: true, passive: false },
+    );
   });
 
   // The six navigation primitives, shared by the gamepad AND the keyboard (below) so both drive the exact
