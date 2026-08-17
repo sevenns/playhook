@@ -33,7 +33,7 @@ The card can carry the game itself, an **installer** for heavy games
 > [Preparing a card](#preparing-a-card-gamejson) for the exact rules.
 
 <div align="center">
-  <img src="assets/github/playhook-example.png" width="760" alt="Playhook home screen — the history carousel over the selected game's hero art">
+  <img src="assets/github/playhook-example.jpg" width="760" alt="Playhook home screen — the history carousel over the selected game's hero art">
   <p><em>The Playhook home screen: the history carousel, with the selected game's hero art behind it. Ready-made cards — <code>game.json</code>, hero art and music — live in the <a href="https://sevenns.github.io/playhook-collection/">Playhook Collection</a>, whose UI you can also try right in the browser.</em></p>
 </div>
 
