@@ -237,8 +237,19 @@ export interface GameManifest {
 }
 
 /** UI sound-effect slots. Each maps to a file in the bundled set chosen in Settings → Audio; a card
- *  cannot supply its own (the `sounds` block in an old game.json is ignored, not rejected). */
-export type SfxName = 'play' | 'navigate' | 'button' | 'back' | 'notify';
+ *  cannot supply its own (the `sounds` block in an old game.json is ignored, not rejected).
+ *  `limit` is the dead end — a press that changed nothing (end of a list, a button with no meaning
+ *  here); `popup-open`/`popup-close` mark a surface appearing over the screen and going away. The
+ *  kebab-case names are the file basenames, kept 1:1 so SFX_SLOT_FILE stays trivial. */
+export type SfxName =
+  | 'play'
+  | 'navigate'
+  | 'button'
+  | 'back'
+  | 'notify'
+  | 'limit'
+  | 'popup-open'
+  | 'popup-close';
 
 /**
  * Manifest with already-resolved and security-checked paths.

@@ -17,6 +17,9 @@ describe('sfxFileName — UI slot → set file basename', () => {
       button: 'button',
       back: 'back',
       notify: 'notify',
+      limit: 'limit',
+      'popup-open': 'popup-open',
+      'popup-close': 'popup-close',
     };
     for (const [slot, file] of Object.entries(expected) as [SfxName, string][]) {
       expect(sfxFileName(slot)).toBe(file);
@@ -24,13 +27,17 @@ describe('sfxFileName — UI slot → set file basename', () => {
   });
 });
 
-describe('sfxSetsForSlot — the notify-only fallback to the default set', () => {
-  it('falls back to the default set for notify, which the older sets do not carry yet', () => {
-    expect(sfxSetsForSlot('notify', 'ps2')).toEqual(['ps2', DEFAULT_SOUND_SET]);
+describe('sfxSetsForSlot — the borrowing slots fall back to the default set', () => {
+  it('falls back to the default set for the slots the older sets do not carry yet', () => {
+    for (const slot of ['notify', 'limit', 'popup-open', 'popup-close'] as const) {
+      expect(sfxSetsForSlot(slot, 'ps2')).toEqual(['ps2', DEFAULT_SOUND_SET]);
+    }
   });
 
   it('does not duplicate the default set when it is the chosen one', () => {
-    expect(sfxSetsForSlot('notify', DEFAULT_SOUND_SET)).toEqual([DEFAULT_SOUND_SET]);
+    for (const slot of ['notify', 'limit', 'popup-open', 'popup-close'] as const) {
+      expect(sfxSetsForSlot(slot, DEFAULT_SOUND_SET)).toEqual([DEFAULT_SOUND_SET]);
+    }
   });
 
   it('leaves every other slot on "missing file ⇒ silence" — no borrowing across sets', () => {

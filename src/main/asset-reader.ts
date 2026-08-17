@@ -77,7 +77,16 @@ export async function readAudioDataUrl(filePath: string): Promise<string | undef
   }
 }
 
-const SFX_NAMES: readonly SfxName[] = ['play', 'navigate', 'button', 'back', 'notify'];
+const SFX_NAMES: readonly SfxName[] = [
+  'play',
+  'navigate',
+  'button',
+  'back',
+  'notify',
+  'limit',
+  'popup-open',
+  'popup-close',
+];
 
 // The sound set shipped as the default, and the fallback whenever the chosen set's folder is missing.
 // Mirrors DEFAULT_SETTINGS.soundSet in app-settings.ts (kept in sync by hand — importing that module
@@ -92,16 +101,25 @@ const SFX_SLOT_FILE: Readonly<Record<SfxName, string>> = {
   button: 'button',
   back: 'back',
   notify: 'notify',
+  limit: 'limit',
+  'popup-open': 'popup-open',
+  'popup-close': 'popup-close',
 };
 
 /**
- * The one slot that falls back to the DEFAULT set's file when the chosen set doesn't carry it. The rule
- * for every other slot is "missing file ⇒ silence" (see readSfxSet), and that is deliberate: borrowing a
- * sound from another set mixes two sound identities. `notify` is the documented exception — a
- * notification that arrives silently is a notification the user misses — and the sets that predate it
- * have no file of their own yet (they are generated in sfxsmith, set by set).
+ * The slots that fall back to the DEFAULT set's file when the chosen set doesn't carry it. The rule for
+ * every other slot is "missing file ⇒ silence" (see readSfxSet), and that is deliberate: borrowing a
+ * sound from another set mixes two sound identities. These are the documented exceptions — events that
+ * have to be audible in every set — and the sets that predate them have no file of their own yet (they
+ * are generated in sfxsmith, set by set): a notification that arrives silently is one the user misses,
+ * and a popup that opens or a dead end that hits without a sound reads as the app not responding.
  */
-const SLOT_FALLS_BACK_TO_DEFAULT_SET: SfxName = 'notify';
+const SLOTS_FALLING_BACK_TO_DEFAULT_SET: ReadonlySet<SfxName> = new Set<SfxName>([
+  'notify',
+  'limit',
+  'popup-open',
+  'popup-close',
+]);
 
 /** The file basename (no extension) for a UI sound slot inside a set folder. Pure — unit-tested. */
 export function sfxFileName(name: SfxName): string {
@@ -109,12 +127,12 @@ export function sfxFileName(name: SfxName): string {
 }
 
 /**
- * The sets a slot's file is looked for in, in order: the chosen one, and — for the single borrowing slot
- * — the default set behind it. Every other slot gets a one-element list, which is what keeps "missing
- * file ⇒ silence" true for them. Pure — unit-tested.
+ * The sets a slot's file is looked for in, in order: the chosen one, and — for the borrowing slots — the
+ * default set behind it. Every other slot gets a one-element list, which is what keeps "missing file ⇒
+ * silence" true for them. Pure — unit-tested.
  */
 export function sfxSetsForSlot(name: SfxName, set: string): readonly string[] {
-  if (name !== SLOT_FALLS_BACK_TO_DEFAULT_SET || set === DEFAULT_SOUND_SET) return [set];
+  if (!SLOTS_FALLING_BACK_TO_DEFAULT_SET.has(name) || set === DEFAULT_SOUND_SET) return [set];
   return [set, DEFAULT_SOUND_SET];
 }
 
