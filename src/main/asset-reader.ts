@@ -86,6 +86,7 @@ const SFX_NAMES: readonly SfxName[] = [
   'limit',
   'popup-open',
   'popup-close',
+  'typing',
 ];
 
 // The sound set shipped as the default, and the fallback whenever the chosen set's folder is missing.
@@ -104,6 +105,7 @@ const SFX_SLOT_FILE: Readonly<Record<SfxName, string>> = {
   limit: 'limit',
   'popup-open': 'popup-open',
   'popup-close': 'popup-close',
+  typing: 'typing',
 };
 
 /**
@@ -112,13 +114,15 @@ const SFX_SLOT_FILE: Readonly<Record<SfxName, string>> = {
  * sound from another set mixes two sound identities. These are the documented exceptions — events that
  * have to be audible in every set — and the sets that predate them have no file of their own yet (they
  * are generated in sfxsmith, set by set): a notification that arrives silently is one the user misses,
- * and a popup that opens or a dead end that hits without a sound reads as the app not responding.
+ * and a popup that opens, a dead end that hits, or a key that types without a sound reads as the app not
+ * responding.
  */
 const SLOTS_FALLING_BACK_TO_DEFAULT_SET: ReadonlySet<SfxName> = new Set<SfxName>([
   'notify',
   'limit',
   'popup-open',
   'popup-close',
+  'typing',
 ]);
 
 /** The file basename (no extension) for a UI sound slot inside a set folder. Pure — unit-tested. */

@@ -314,7 +314,9 @@ export function createOsk(deps: OskDeps): TextEntrySurface {
     if (el !== undefined) pressFlash(el);
     switch (key.kind) {
       case 'char':
-        deps.audio.play('navigate');
+        // A character is a KEYSTROKE, not a move through the grid — the arrows already say `navigate`,
+        // and typing a name with that sound reads as walking the keyboard rather than writing.
+        deps.audio.play('typing');
         insert(shifted ? key.value.toUpperCase() : key.value);
         return;
       case 'shift':
@@ -327,7 +329,7 @@ export function createOsk(deps: OskDeps): TextEntrySurface {
         backspace();
         return;
       case 'space':
-        deps.audio.play('navigate');
+        deps.audio.play('typing'); // a space is a character like any other
         insert(' ');
         return;
       case 'layout':
@@ -606,6 +608,10 @@ export function createOsk(deps: OskDeps): TextEntrySurface {
       if ([...key].length === 1) {
         event.preventDefault();
         event.stopImmediatePropagation();
+        // The same keystroke sound the on-screen keys make — it is the same field being typed into. A
+        // HELD key is silent after the first: the OS repeats some 30 times a second, which is a rattle,
+        // not typing.
+        if (!event.repeat) deps.audio.play('typing');
         insert(key);
       }
     },
