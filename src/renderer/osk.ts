@@ -325,7 +325,7 @@ export function createOsk(deps: OskDeps): TextEntrySurface {
         rebuild();
         return;
       case 'backspace':
-        deps.audio.play('back');
+        deps.audio.play('typing'); // deleting is typing too — the field is being written either way
         backspace();
         return;
       case 'space':
@@ -579,6 +579,7 @@ export function createOsk(deps: OskDeps): TextEntrySurface {
       if (key === 'Backspace') {
         event.preventDefault();
         event.stopImmediatePropagation();
+        if (!event.repeat) deps.audio.play('typing'); // silent while held, as the character keys are
         backspace(); // auto-repeat included: a held Backspace should keep deleting, like anywhere else
         return;
       }
@@ -661,7 +662,7 @@ export function createOsk(deps: OskDeps): TextEntrySurface {
         if (!repeat) deps.audio.playLimit(); // nothing left to delete; a hold stays quiet
         return;
       }
-      if (!repeat) deps.audio.play('back');
+      if (!repeat) deps.audio.play('typing');
       backspace();
     },
     navTertiary: () => {
