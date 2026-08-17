@@ -89,7 +89,7 @@ export interface ControllerDeps {
 // How long the browsed game's HEAVY assets (hero images, music — megabytes of data URL each) wait before
 // being read. The light BrowseInfo goes out immediately, so the title/status/stats track the carousel
 // with no lag; only the expensive half is debounced, and a burst of moves reads the disk once.
-const BROWSE_ASSETS_DEBOUNCE_MS = 250;
+const BROWSE_ASSETS_DEBOUNCE_MS = 150;
 
 // Grace-poll cadence after the installer exits, waiting for the game executable to appear.
 const INSTALL_POLL_INTERVAL_MS = 1000;

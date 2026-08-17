@@ -181,6 +181,13 @@ function isOverSelectableText(target: EventTarget | null): boolean {
 
 export function createControls(deps: ControlsDeps): Controls {
   const { audio } = deps;
+
+  // The glide step the strip animates one held move over (styles.css reads it as --flip-step). Slightly
+  // LONGER than the repeat itself, on purpose: the keyboard's repeats arrive on the OS clock and are only
+  // throttled to NAV_REPEAT_MS here, so their real spacing wanders above it. A step that outlasts the gap
+  // overlaps the next one and the row never stalls between them; an exact match would leave tiny holes.
+  const FLIP_STEP_MS = Math.round(NAV_REPEAT_MS * 1.3);
+  document.documentElement.style.setProperty('--flip-step', `${FLIP_STEP_MS}ms`);
   const state = (): AppState => deps.getState();
   const t = (): Translator => deps.getTranslator();
 

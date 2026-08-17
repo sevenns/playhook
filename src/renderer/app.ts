@@ -37,6 +37,10 @@ let currentState: AppState = { kind: 'idle' };
 let currentBrowse: BrowseInfo | null = null;
 // The carousel hid the title + status for a pending selection change; the next render reveals the new one.
 let textSwapPending = false;
+// A direction is being held. While it is, the title/status stay hidden rather than being re-revealed on
+// every step: at the repeat cadence that is a name flashing nine times a second next to a row that is
+// still moving, and nobody can read it anyway. onFlipping(false) brings it back.
+let stripFlipping = false;
 // The games the strip currently holds, kept so a notification about one can be resolved to an entry —
 // the carousel keeps the list too, but only the id/active pair is needed here (see openGameDetail).
 let currentGames: readonly LibraryEntry[] = [];
@@ -171,8 +175,12 @@ const controls = createControls({
   settings: settingsScreen,
   gameSettings: gameSettingsScreen,
   onFlipping: (flipping) => {
+    stripFlipping = flipping;
     hero.setFlipping(flipping);
     carousel.setFlipping(flipping);
+    // The title stays hidden for the whole hold (see textSwapPending) — this is where it comes back, on
+    // the game the row came to rest on.
+    if (!flipping) render(currentState);
   },
   // Read lazily: the carousel is created below (it needs `controls` for its own callbacks), so the seam
   // is a set of thunks rather than the object itself.
@@ -484,7 +492,7 @@ function render(state: AppState): void {
     // an empty list means "wait for the push" (it back-fills), rather than blanking the background.
     hero.repaint();
     titleEl.textContent = browse.title;
-    if (textSwapPending) {
+    if (textSwapPending && !stripFlipping) {
       textSwapPending = false;
       // Next frame, so the browser sees the hidden state first and actually animates the fade back in
       // (dropping the class in the same frame as the text would be coalesced into no transition at all).
