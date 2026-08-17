@@ -834,8 +834,8 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
   function close(): void {
     if (!open) return;
     open = false;
-    deps.audio.play('popup-close');
-    closeOptions({ silent: true }); // the screen's own popup-close covers the dropdown going with it
+    deps.audio.play('back');
+    closeOptions({ silent: true }); // leaving the screen takes the dropdown with it — one sound, not two
     entrance.cancel();
     if (previewTimer !== 0) {
       window.clearTimeout(previewTimer);
@@ -997,7 +997,7 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
     open: (section?: MessageKey) => {
       if (open) return;
       open = true;
-      deps.audio.play('popup-open');
+      deps.audio.play('button');
       focusIndex = 0;
       app.dataset['overlay'] = 'settings';
       screen.setAttribute('aria-hidden', 'false');

@@ -1174,8 +1174,7 @@ export function createControls(deps: ControlsDeps): Controls {
   }
 
   function triggerMore(): void {
-    audio.play('button');
-    openDetails();
+    openDetails(); // the panel's own popup-open is the sound of this press
   }
 
   function activateFocused(): void {

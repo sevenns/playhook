@@ -1397,7 +1397,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       render();
       return;
     }
-    deps.audio.play('popup-open');
+    deps.audio.play('button'); // the screen is entered like a button, not like a popup
     origin = {
       root: result.root,
       source: result.source,
@@ -1848,7 +1848,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   function close(): void {
     if (!open) return;
     open = false;
-    deps.audio.play('popup-close');
+    deps.audio.play('back');
     // The lightbox and the menu go WITH the screen — one close, one sound (Р5).
     closeImage({ silent: true });
     closeMenus({ silent: true });
@@ -1983,7 +1983,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     openNew: () => {
       if (open) return;
       mode = 'add';
-      deps.audio.play('popup-open'); // add mode has no read to fail: the empty form is there at once
+      deps.audio.play('button'); // add mode has no read to fail: the empty form is there at once
       gameId = '';
       origin = null;
       unreadable = null;
