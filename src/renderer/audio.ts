@@ -7,6 +7,7 @@
 // ambience, glides instead of cutting). Music/ambience share one volume; UI sounds have their own.
 // Playback is gated by app.ts (visible && !running) via setMusicPlaying.
 import type { SfxName, SfxSet } from '../shared/types';
+import { shouldPlayLimit } from './sfx-limit.js';
 
 // Fallback volumes until the persisted ones arrive from main (music historically played at 0.5).
 const DEFAULT_MUSIC_VOLUME = 0.5;
@@ -40,6 +41,14 @@ export interface AudioController {
   /** Plays a one-shot UI sound; a no-op when that slot isn't configured. */
   play(name: SfxName): void;
   /**
+   * Plays the `limit` dead-end sound, at most once per series of blocked attempts. Every call counts as
+   * an attempt (that is what keeps a held direction from re-arming the latch by idling); the sound only
+   * comes out when the latch is armed — see sfx-limit.ts.
+   */
+  playLimit(): void;
+  /** Ends the current series of blocked attempts, so the next one sounds again. Called on release. */
+  rearmLimit(): void;
+  /**
    * Plays the bundled startup jingle, once. Resolves the moment playback actually STARTS — the boot
    * sequence times the hand-over from the boot image to the UI off it, so the jingle's two halves line up
    * with what is on screen (see the boot reveal in app.ts). Resolves right away when it can't play at
@@ -64,6 +73,20 @@ export function createAudioController(): AudioController {
   const sfx = new Map<SfxName, HTMLAudioElement>();
   // The startup jingle, kept only so a late volumes seed can still reach it while it plays.
   let startup: HTMLAudioElement | null = null;
+  // The `limit` latch: one sound per series of blocked attempts, armed by a release. App-wide on
+  // purpose, not per slot or per surface — a left edge and a dead LB 100 ms later are one dead end to
+  // the ear, and a doubled `limit` sounds worse than a swallowed second one.
+  let limitArmed = true;
+  let lastLimitAttemptAt = Number.NEGATIVE_INFINITY;
+
+  const playSfx = (name: SfxName): void => {
+    const el = sfx.get(name);
+    if (el === undefined) return;
+    // Clone so rapid retriggers (fast navigation) overlap instead of cutting each other off.
+    const node = el.cloneNode() as HTMLAudioElement;
+    node.volume = sfxVolume;
+    void node.play().catch(() => undefined);
+  };
 
   /** Builds the <audio> elements for one sound set into `target` (cleared first). */
   const loadSounds = (target: Map<SfxName, HTMLAudioElement>, assets: SfxSet | null): void => {
@@ -258,13 +281,19 @@ export function createAudioController(): AudioController {
       loadSounds(sfx, set);
     },
 
-    play(name: SfxName): void {
-      const el = sfx.get(name);
-      if (el === undefined) return;
-      // Clone so rapid retriggers (fast navigation) overlap instead of cutting each other off.
-      const node = el.cloneNode() as HTMLAudioElement;
-      node.volume = sfxVolume;
-      void node.play().catch(() => undefined);
+    play: playSfx,
+
+    playLimit(): void {
+      const now = performance.now();
+      const sound = shouldPlayLimit(limitArmed, lastLimitAttemptAt, now);
+      lastLimitAttemptAt = now;
+      if (!sound) return;
+      limitArmed = false;
+      playSfx('limit');
+    },
+
+    rearmLimit(): void {
+      limitArmed = true;
     },
 
     setMusicPlaying(shouldPlay: boolean): void {
