@@ -14,7 +14,8 @@ import type { AppNotification, AppState, BrowseInfo, GameInfo } from '../shared/
 import type { Locale, MessageKey, Translator } from '../shared/i18n/index.js';
 import { formatNotification, formatNotificationTime } from './format.js';
 import { createScroller } from './screen-scroller.js';
-import { NAV_REPEAT_MS, createGamepadController } from './gamepad.js';
+import { HOLD_DELAY_MS, NAV_REPEAT_MS, createAutoRepeatChain } from './auto-repeat.js';
+import { createGamepadController } from './gamepad.js';
 import { createWakeMeter } from './mouse-sleep.js';
 import type { NavSurface } from './nav-surface.js';
 import type { MoveResult } from './carousel.js';
@@ -181,6 +182,17 @@ function isOverSelectableText(target: EventTarget | null): boolean {
 
 export function createControls(deps: ControlsDeps): Controls {
   const { audio } = deps;
+
+  // The glide step the strip animates one held move over (styles.css reads it as --flip-step). Slightly
+  // LONGER than the repeat itself, on purpose: the keyboard's repeats arrive on the OS clock and are only
+  // throttled to NAV_REPEAT_MS here, so their real spacing wanders above it. A step that outlasts the gap
+  // overlaps the next one and the row never stalls between them; an exact match would leave tiny holes.
+  const FLIP_STEP_MS = Math.round(NAV_REPEAT_MS * 1.3);
+  document.documentElement.style.setProperty('--flip-step', `${FLIP_STEP_MS}ms`);
+
+  // The shared warmth of an auto-move, so a run handed from one direction to the next — or from the pad
+  // to the keyboard — skips the initial delay instead of stalling (auto-repeat.ts).
+  const autoRepeat = createAutoRepeatChain();
   const state = (): AppState => deps.getState();
   const t = (): Translator => deps.getTranslator();
 
@@ -296,6 +308,9 @@ export function createControls(deps: ControlsDeps): Controls {
     // Every view change lays a new stack under the pointer — hover must not claim the focus the view
     // itself just set (see the mousemove handler).
     armHover();
+    // Only the FIRST view is an opening; switching views keeps the popup on screen and keeps the
+    // button/back sounds the callers already play (Р4).
+    if (popupView === 'none') audio.play('popup-open');
     popupView = view;
     popup.dataset['view'] = view;
     popup.classList.add('is-open');
@@ -330,8 +345,11 @@ export function createControls(deps: ControlsDeps): Controls {
     menuThawTimer = 0;
   }
 
-  function closePopup(): void {
+  function closePopup(options?: { readonly silent?: boolean }): void {
     if (popupView === 'none') return;
+    // `silent` is for a close that is only half of a bigger move — the popup handing over to a screen,
+    // where the destination's own popup-open is the single sound of that gesture (Р5).
+    if (options?.silent !== true) audio.play('popup-close');
     popupView = 'none';
     popup.classList.remove('is-open');
     popup.setAttribute('aria-hidden', 'true');
@@ -513,9 +531,10 @@ export function createControls(deps: ControlsDeps): Controls {
     const id = button.dataset['notificationId'];
     if (id === undefined) return;
     const item = deps.getNotifications().find((candidate) => candidate.id === id);
-    audio.play('button');
     window.api.dismissNotification(id);
-    closePopup();
+    // Muted when the entry leads to Settings — that screen's popup-open is the sound of the whole
+    // gesture (Р5). With nowhere to go, the popup simply closes and says so.
+    closePopup({ silent: item?.kind === 'update-ready' });
     if (item === undefined) return;
     if (item.kind === 'update-ready') {
       openSettings('settings.sectionUpdates');
@@ -676,19 +695,18 @@ export function createControls(deps: ControlsDeps): Controls {
         focusStackBottom();
         break;
       case 'confirm':
-        audio.play('back');
         // Neither 'settings' nor 'game-settings' is a popup view: that screen is already open
         // underneath, so the popup just goes and the screen has the focus again.
         if (confirmReturnTo === 'settings' || confirmReturnTo === 'game-settings') {
           closePopup();
           break;
         }
+        audio.play('back');
         setView(confirmReturnTo);
         focusStackBottom();
         break;
       case 'details':
       case 'error':
-        audio.play('back');
         closePopup();
         break;
       default:
@@ -998,7 +1016,7 @@ export function createControls(deps: ControlsDeps): Controls {
     armIdleTimer();
   }
 
-  function moveFocus(delta: number): void {
+  function moveFocus(delta: number, repeat = false): void {
     if (!focusActive()) return;
     // Dormant (an active state or the idle timeout cleared the highlight): the first d-pad press only
     // WAKES the highlight at the current button — it doesn't move — so control returns without a jump.
@@ -1010,7 +1028,10 @@ export function createControls(deps: ControlsDeps): Controls {
     }
     const items = mainFocusables();
     const next = Math.min(items.length - 1, Math.max(0, focusIndex + delta));
-    if (next === focusIndex) return; // already at the edge — no move, no sound
+    if (next === focusIndex) {
+      if (!repeat) audio.playLimit(); // already at the edge: no move, and the dead end says so
+      return;
+    }
     focusIndex = next;
     audio.play('navigate');
     applyFocus();
@@ -1120,7 +1141,10 @@ export function createControls(deps: ControlsDeps): Controls {
     // Cyclic navigation (wrap around) — shared by every popup stack. The early return keeps a single-button
     // view (error) from playing `navigate` without moving: at len===1 the wrap formula returns the same index.
     const next = (stackIndex + delta + items.length) % items.length;
-    if (next === stackIndex) return;
+    if (next === stackIndex) {
+      audio.playLimit();
+      return;
+    }
     stackIndex = next;
     audio.play('navigate');
     applyStackFocus();
@@ -1134,13 +1158,13 @@ export function createControls(deps: ControlsDeps): Controls {
   // ── User-initiated actions ───────────────────────────────────────────────────
 
   function triggerPlay(): void {
-    if (!focusActive()) return;
+    if (!focusActive()) return; // the bar is not the surface driving the press — not a dead end
     // Play acts on the game AppState is about, so it must be the one on screen: a history game has
     // nothing to launch, and while you browse game B, "Play" must not start game A behind your back.
-    if (!screenIsActionable()) return;
+    if (!screenIsActionable()) return audio.playLimit();
     const game = screenGame();
     // A local game whose files are gone: there is nothing to start, and the status line already says so.
-    if (game?.unavailable === true) return;
+    if (game?.unavailable === true) return audio.playLimit();
     // Steam download in progress: the gear opens Steam's Downloads page, where the user can
     // pause/resume (we can't control that programmatically).
     if (game?.steamInstalling === true) {
@@ -1149,26 +1173,26 @@ export function createControls(deps: ControlsDeps): Controls {
       return;
     }
     // Steam uninstall in progress (gear) → nothing useful to do, ignore the press.
-    if (game?.steamUninstalling === true) return;
+    if (game?.steamUninstalling === true) return audio.playLimit();
     // Force-close in flight: Play is a loading spinner, not return-to-game — ignore the press.
     const s = state();
-    if (s.kind === 'running' && s.killing === true) return;
+    if (s.kind === 'running' && s.killing === true) return audio.playLimit();
     // In a hard-busy phase the Play button is just an activity indicator (spinner/gear) — no launch.
     // EXCEPT `running`: the launcher was summoned over the game and Play returns to it (main branches on
     // the running state and raises the game's window instead of launching).
-    if (phaseOf(state()) !== 'ready' && state().kind !== 'running') return;
+    if (phaseOf(state()) !== 'ready' && state().kind !== 'running') return audio.playLimit();
     audio.play('play');
     window.api.requestLaunch();
   }
 
   function triggerMore(): void {
-    audio.play('button');
-    openDetails();
+    openDetails(); // the panel's own popup-open is the sound of this press
   }
 
   function activateFocused(): void {
     // Nothing is selected while the highlight is dormant — the user must wake it (d-pad / hover) first.
-    if (!focusActive() || !focusRevealed) return;
+    if (!focusActive()) return; // the bar is not the surface driving the press
+    if (!focusRevealed) return audio.playLimit(); // A on a dormant highlight presses nothing
     const btn = mainFocusables()[focusIndex];
     if (btn === undefined) return;
     pressFlash(btn);
@@ -1203,23 +1227,20 @@ export function createControls(deps: ControlsDeps): Controls {
     } else if (btn === menuSettings) {
       // The single entrance to Settings — the tray item is gone, so this works the same on the desktop
       // and in Game Mode. The menu it was opened from closes first: the screen is a surface of its own.
-      audio.play('button');
-      closePopup();
+      // One gesture, one sound: the close is muted and the screen's own popup-open carries it (Р5).
+      closePopup({ silent: true });
       openSettings();
     } else if (btn === menuCustomize) {
       // Like Settings: the menu it was opened from closes first — the screen is a surface of its own.
-      audio.play('button');
-      closePopup();
+      closePopup({ silent: true });
       openCustomize();
     } else if (btn === menuAddGame) {
       // The same screen as Customize, opened with no game behind it (see GameSettingsNav.openNew).
-      audio.play('button');
-      closePopup();
+      closePopup({ silent: true });
       deps.gameSettings.openNew();
       applyFocus();
     } else if (btn === menuHome) {
       // Non-destructive, so no confirm: close the popup and hand control back to the strip.
-      audio.play('back');
       closePopup();
       deps.carousel.leaveDetail();
     } else if (btn === menuClose || btn === errorClose || btn === powerClose || btn === notificationsClose) {
@@ -1239,14 +1260,12 @@ export function createControls(deps: ControlsDeps): Controls {
       // Hide to the tray (same as the empty-screen Hide button); never shown in Game Mode, where there is
       // no tray and this would be a no-op. No confirm — hiding is non-destructive. Close the popup first
       // so a re-summoned launcher shows a clean bar, not this menu.
-      audio.play('back');
       closePopup();
       window.api.requestHide();
     } else if (btn === powerQuit) {
       // The full quit. No confirm either: it is as recoverable as relaunching from the Steam library —
       // and in Game Mode this is the only way out, so a confirm would sit between the user and the exit
       // every single time.
-      audio.play('back');
       closePopup();
       window.api.requestQuit();
     } else if (btn === confirmYes) {
@@ -1504,6 +1523,16 @@ export function createControls(deps: ControlsDeps): Controls {
     deps.onFlipping(false);
   }
 
+  /**
+   * Everything that ends when the input is let go: the flip spell, and the `limit` latch — a series of
+   * blocked attempts ends on release, so the next dead end sounds again (see sfx-limit.ts). Both halves
+   * of the release detection (the pad's onDirectionsReleased, the keyboard's keyup) come through here.
+   */
+  function endInput(): void {
+    endFlip();
+    audio.rearmLimit();
+  }
+
   function navLeft(repeat = false): void {
     noteGamepadActivity();
     if (repeat) noteFlip();
@@ -1524,7 +1553,8 @@ export function createControls(deps: ControlsDeps): Controls {
       return;
     }
     if (stripActive()) {
-      deps.carousel.move(-1);
+      const moved = deps.carousel.move(-1);
+      if (!repeat && moved === 'at-end') audio.playLimit();
       return;
     }
     // More sits to the RIGHT of the strip, so left is the way back to the cards — the exit the layout
@@ -1534,7 +1564,7 @@ export function createControls(deps: ControlsDeps): Controls {
       setCarouselBarFocus(false);
       return;
     }
-    moveFocus(-1);
+    moveFocus(-1, repeat);
   }
   function navRight(repeat = false): void {
     noteGamepadActivity();
@@ -1556,7 +1586,7 @@ export function createControls(deps: ControlsDeps): Controls {
       setCarouselBarFocus(true);
       return;
     }
-    if (popupView === 'none') moveFocus(1);
+    if (popupView === 'none') moveFocus(1, repeat);
   }
   // Vertical hold-to-repeat exists for the Settings LIST, which is long enough to warrant it. The popup
   // stacks are short and cyclic — repeating there would spin them — so a repeat is dropped anywhere else.
@@ -1576,7 +1606,9 @@ export function createControls(deps: ControlsDeps): Controls {
     // from is literally where it came from, and it re-enters exactly there. Held (repeat) presses are
     // dropped — one hold must not walk out of the screen the moment the user pauses on it. Only when no
     // popup is up: there the direction belongs to the menu, which is handled above.
-    if (!repeat && deps.carousel.leaveDetail()) audio.play('back');
+    if (repeat) return;
+    if (deps.carousel.leaveDetail()) audio.play('back');
+    else audio.playLimit(); // on the strip there is nothing above the cards to step up to
   }
   function navDown(repeat = false): void {
     noteGamepadActivity();
@@ -1641,10 +1673,14 @@ export function createControls(deps: ControlsDeps): Controls {
     // surface has no use for it, it stays unassigned rather than handing the focus to a hidden bar.
     const overlay = overlays.active();
     if (overlay !== null) {
-      overlay.navTertiary?.();
+      if (overlay.navTertiary === undefined) audio.playLimit();
+      else overlay.navTertiary();
       return;
     }
-    if (popupView !== 'none') return;
+    if (popupView !== 'none') {
+      audio.playLimit(); // the stacks are driven with the directions and A/B — Y has no part in them
+      return;
+    }
     if (deps.carousel.screen() !== 'carousel') {
       toggleMoreFocus();
       return;
@@ -1655,33 +1691,57 @@ export function createControls(deps: ControlsDeps): Controls {
 
   /** The detail screen's half of Y: the focus swaps between More and whatever else the bar offers. */
   function toggleMoreFocus(): void {
-    if (!focusActive()) return;
+    if (!focusActive()) return; // the bar is not the surface driving the press — not a dead end
     const items = mainFocusables();
     const more = items.indexOf(moreButton);
-    if (more === -1) return;
+    if (more === -1) {
+      audio.playLimit(); // no More to jump to
+      return;
+    }
     // Only More is focusable (a busy game, an installer): there is nothing to swap with, so Y wakes the
     // highlight where it is rather than moving it somewhere that does not exist.
     const next = focusRevealed && focusIndex === more ? (items.length > 1 ? 0 : more) : more;
-    if (focusRevealed && next === focusIndex) return;
+    if (focusRevealed && next === focusIndex) {
+      audio.playLimit(); // More is the only button here, and the highlight is already on it
+      return;
+    }
     focusIndex = next;
     focusRevealed = true;
     audio.play('navigate');
     applyFocus();
   }
 
-  /** X and the shoulders: overlay-only, and only when the surface on top claims them. */
+  /**
+   * X and the shoulders: overlay-only, and only when the surface on top claims them. Everywhere else the
+   * button has no meaning here — the carousel, a detail screen, the popup — and the honest answer to that
+   * is the dead-end sound, not silence. Routed in ONE place, so a surface that never claims them (and any
+   * added later) is covered without a stub of its own; the NavSurface contract stays "unclaimed means
+   * unchanged" (nav-surface.ts).
+   */
   function navSecondary(repeat = false): void {
-    if (popupView !== 'none') return;
+    const claimed = popupView === 'none' && overlays.active()?.navSecondary !== undefined;
+    if (!claimed) {
+      if (!repeat) audio.playLimit();
+      return;
+    }
     overlays.active()?.navSecondary?.(repeat);
   }
 
   function navShoulder(direction: -1 | 1): void {
-    if (popupView !== 'none') return;
+    const claimed = popupView === 'none' && overlays.active()?.navShoulder !== undefined;
+    if (!claimed) {
+      audio.playLimit();
+      return;
+    }
     overlays.active()?.navShoulder?.(direction);
   }
 
   function navCommit(): void {
-    if (popupView !== 'none') return;
+    const claimed = popupView === 'none' && overlays.active()?.navCommit !== undefined;
+    if (!claimed) {
+      audio.playLimit();
+      return;
+    }
     overlays.active()?.navCommit?.();
   }
 
@@ -1746,20 +1806,23 @@ export function createControls(deps: ControlsDeps): Controls {
     noteMouseActivity();
   });
 
-  const gamepad = createGamepadController({
-    onLeft: navLeft,
-    onRight: navRight,
-    onUp: navUp,
-    onDown: navDown,
-    onA: navActivate,
-    onB: navBack,
-    onY: navToggleBar,
-    onX: navSecondary,
-    onShoulderLeft: () => navShoulder(-1),
-    onShoulderRight: () => navShoulder(1),
-    onTriggerRight: navCommit,
-    onDirectionsReleased: endFlip,
-  });
+  const gamepad = createGamepadController(
+    {
+      onLeft: navLeft,
+      onRight: navRight,
+      onUp: navUp,
+      onDown: navDown,
+      onA: navActivate,
+      onB: navBack,
+      onY: navToggleBar,
+      onX: navSecondary,
+      onShoulderLeft: () => navShoulder(-1),
+      onShoulderRight: () => navShoulder(1),
+      onTriggerRight: navCommit,
+      onDirectionsReleased: endInput,
+    },
+    autoRepeat,
+  );
 
   // Keyboard navigation (Desktop Mode / no gamepad): WASD + arrows move, Space/Enter activate, Tab/Backspace
   // (and Esc) step back — the SAME six primitives as the gamepad, so the two input models stay in lockstep.
@@ -1786,9 +1849,11 @@ export function createControls(deps: ControlsDeps): Controls {
   };
   // The four directions are the exception to the edge model: holding one flips through the carousel or
   // runs down the Settings list, matching the gamepad's hold-to-repeat (a held direction inside a popup
-  // stack is dropped by navUp/navDown themselves). The OS auto-repeat supplies the events (its own
-  // initial delay is close enough to the pad's), but its rate is far too fast, so it is throttled to the
-  // same NAV_REPEAT_MS cadence. Every other key stays one action per press.
+  // stack is dropped by navUp/navDown themselves). The repeat is OURS, on a timer — the OS supplies its
+  // own, but at a rate and an initial delay that are the user's system settings, not ours, so the two
+  // input models would drift apart (and chaining one run into the next would be impossible: the OS
+  // restarts its full delay on every new key). Native repeats are dropped. Every other key stays one
+  // action per press.
   const REPEATABLE_KEYS = new Set([
     'a',
     'arrowleft',
@@ -1799,24 +1864,56 @@ export function createControls(deps: ControlsDeps): Controls {
     's',
     'arrowdown',
   ]);
-  let lastKeyRepeatAt = 0;
+  // The key whose repeat is running, and its timer. Only one at a time: with two directions down the
+  // last one pressed owns the run, which is what a keyboard's own repeat does too.
+  let heldKey: string | null = null;
+  let keyRepeatTimer = 0;
+
+  function stopKeyRepeat(): void {
+    if (keyRepeatTimer !== 0) {
+      window.clearTimeout(keyRepeatTimer);
+      keyRepeatTimer = 0;
+    }
+    heldKey = null;
+  }
+
+  function scheduleKeyRepeat(key: string, handler: (repeat: boolean) => void, delay: number): void {
+    keyRepeatTimer = window.setTimeout(() => {
+      keyRepeatTimer = 0;
+      if (heldKey !== key) return;
+      autoRepeat.noteRepeat(performance.now());
+      handler(true);
+      scheduleKeyRepeat(key, handler, NAV_REPEAT_MS);
+    }, delay);
+  }
+
   window.addEventListener('keydown', (event) => {
     const key = event.key.toLowerCase();
     const handler = KEY_NAV[key];
     if (handler === undefined) return;
     event.preventDefault(); // suppress the native default even on auto-repeat (e.g. Tab traversal)
-    if (event.repeat) {
-      if (!REPEATABLE_KEYS.has(key)) return;
-      const now = performance.now();
-      if (now - lastKeyRepeatAt < NAV_REPEAT_MS) return;
-      lastKeyRepeatAt = now;
-    }
-    handler(event.repeat);
+    if (event.repeat) return; // the OS cadence is not ours — the timer below drives the run
+    handler(false);
+    if (!REPEATABLE_KEYS.has(key)) return;
+    stopKeyRepeat(); // a second direction takes the run over from the first
+    heldKey = key;
+    // A key taken up while the previous run is still warm continues it, delay skipped — same rule as the
+    // pad's (auto-repeat.ts), so swinging left→right glides on either device.
+    const now = performance.now();
+    scheduleKeyRepeat(key, handler, autoRepeat.continues(now) ? NAV_REPEAT_MS : HOLD_DELAY_MS);
   });
   // The keyboard's half of "the hold is over". A keyup can be missed (the window loses focus mid-hold and
-  // the release goes to whoever took it), which is what the watchdog in noteFlip covers.
+  // the release goes to whoever took it), which is what the watchdog in noteFlip covers — and the blur
+  // below, which also has to stop a timer nobody would otherwise turn off.
   window.addEventListener('keyup', (event) => {
-    if (REPEATABLE_KEYS.has(event.key.toLowerCase())) endFlip();
+    const key = event.key.toLowerCase();
+    if (heldKey === key) stopKeyRepeat();
+    if (REPEATABLE_KEYS.has(key)) endInput();
+  });
+  window.addEventListener('blur', () => {
+    if (heldKey === null) return;
+    stopKeyRepeat();
+    endInput();
   });
 
   function applyGameButtons(): void {

@@ -2,9 +2,16 @@
 // the carousel after a delay. The timing lives in a closure driven by requestAnimationFrame, so the test
 // fakes the pad, the clock and the frame loop and steps them by hand.
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { NAV_REPEAT_MS, createGamepadController } from '../src/renderer/gamepad';
+import {
+  AUTO_CHAIN_MS,
+  HOLD_DELAY_MS,
+  NAV_REPEAT_MS,
+  createAutoRepeatChain,
+} from '../src/renderer/auto-repeat';
+import { createGamepadController } from '../src/renderer/gamepad';
 
 const DPAD_LEFT = 14;
+const DPAD_RIGHT = 15;
 
 interface Harness {
   readonly press: (index: number, down: boolean) => void;
@@ -12,6 +19,8 @@ interface Harness {
   readonly stickY: (value: number) => void;
   readonly tick: (ms: number) => void;
   readonly moves: () => number;
+  /** Moves the OTHER way — for the runs that swing from one direction into its opposite. */
+  readonly rightMoves: () => number;
   readonly verticalMoves: () => { up: number; down: number };
   readonly releases: () => number;
   readonly setPaused: (paused: boolean) => void;
@@ -23,6 +32,7 @@ function harness(): Harness {
   let frame: (() => void) | null = null;
   let now = 0;
   let left = 0;
+  let right = 0;
   let up = 0;
   let down = 0;
   let releases = 0;
@@ -36,24 +46,29 @@ function harness(): Harness {
   vi.stubGlobal('performance', { now: () => now });
 
   const noop = (): void => undefined;
-  const controller = createGamepadController({
-    onLeft: () => {
-      left += 1;
+  const controller = createGamepadController(
+    {
+      onLeft: () => {
+        left += 1;
+      },
+      onRight: () => {
+        right += 1;
+      },
+      onUp: () => {
+        up += 1;
+      },
+      onDown: () => {
+        down += 1;
+      },
+      onA: noop,
+      onB: noop,
+      onY: noop,
+      onDirectionsReleased: () => {
+        releases += 1;
+      },
     },
-    onRight: noop,
-    onUp: () => {
-      up += 1;
-    },
-    onDown: () => {
-      down += 1;
-    },
-    onA: noop,
-    onB: noop,
-    onY: noop,
-    onDirectionsReleased: () => {
-      releases += 1;
-    },
-  });
+    createAutoRepeatChain(),
+  );
   controller.start();
 
   return {
@@ -69,6 +84,7 @@ function harness(): Harness {
       frame?.();
     },
     moves: () => left,
+    rightMoves: () => right,
     verticalMoves: () => ({ up, down }),
     releases: () => releases,
     setPaused: (paused) => controller.setPaused(paused),
@@ -85,7 +101,7 @@ describe('gamepad hold-to-repeat', () => {
     pad.press(DPAD_LEFT, true);
     pad.tick(16);
     expect(pad.moves()).toBe(1);
-    for (let elapsed = 0; elapsed < 300; elapsed += 16) pad.tick(16);
+    for (let elapsed = 0; elapsed < HOLD_DELAY_MS - 32; elapsed += 16) pad.tick(16);
     expect(pad.moves()).toBe(1);
   });
 
@@ -93,7 +109,7 @@ describe('gamepad hold-to-repeat', () => {
     const pad = harness();
     pad.press(DPAD_LEFT, true);
     pad.tick(16);
-    pad.tick(400); // past the hold delay
+    pad.tick(HOLD_DELAY_MS); // past the hold delay
     expect(pad.moves()).toBe(2);
     pad.tick(NAV_REPEAT_MS);
     expect(pad.moves()).toBe(3);
@@ -101,19 +117,49 @@ describe('gamepad hold-to-repeat', () => {
     expect(pad.moves()).toBe(3);
   });
 
-  it('treats a release as a reset — the next press is a single move again', () => {
+  it('treats a full stop as a reset — the next press waits out the delay again', () => {
     const pad = harness();
     pad.press(DPAD_LEFT, true);
     pad.tick(16);
-    pad.tick(400);
+    pad.tick(HOLD_DELAY_MS);
     expect(pad.moves()).toBe(2);
     pad.press(DPAD_LEFT, false);
-    pad.tick(16);
+    pad.tick(AUTO_CHAIN_MS); // stopped long enough for the run to go cold
     pad.press(DPAD_LEFT, true);
     pad.tick(16);
     expect(pad.moves()).toBe(3);
-    pad.tick(100); // still inside the fresh delay
+    pad.tick(HOLD_DELAY_MS - 32); // still inside the fresh delay
     expect(pad.moves()).toBe(3);
+  });
+
+  it('carries a warm run into the opposite direction with no delay of its own', () => {
+    const pad = harness();
+    pad.press(DPAD_LEFT, true);
+    pad.tick(16);
+    pad.tick(HOLD_DELAY_MS); // left is now auto-moving
+    expect(pad.moves()).toBe(2);
+    // The swing: left goes, right comes, with the gap a thumb (or a stick through its centre) leaves.
+    pad.press(DPAD_LEFT, false);
+    pad.tick(16);
+    pad.press(DPAD_RIGHT, true);
+    pad.tick(16);
+    expect(pad.rightMoves()).toBe(1); // the press itself
+    pad.tick(NAV_REPEAT_MS);
+    expect(pad.rightMoves()).toBe(2); // …and the run picks up at the cadence, not after the delay
+  });
+
+  it('goes cold when the hands stop between the two directions', () => {
+    const pad = harness();
+    pad.press(DPAD_LEFT, true);
+    pad.tick(16);
+    pad.tick(HOLD_DELAY_MS);
+    pad.press(DPAD_LEFT, false);
+    pad.tick(AUTO_CHAIN_MS); // a real stop, not a swing
+    pad.press(DPAD_RIGHT, true);
+    pad.tick(16);
+    expect(pad.rightMoves()).toBe(1);
+    pad.tick(NAV_REPEAT_MS);
+    expect(pad.rightMoves()).toBe(1); // the delay is back
   });
 
   it('does not burst when resuming onto a direction that was already held', () => {
@@ -126,7 +172,7 @@ describe('gamepad hold-to-repeat', () => {
     pad.setPaused(false);
     pad.tick(16);
     expect(pad.moves()).toBe(0); // no phantom edge…
-    pad.tick(400);
+    pad.tick(HOLD_DELAY_MS);
     expect(pad.moves()).toBe(1); // …and the delay is counted from the resume
   });
 });
@@ -149,7 +195,6 @@ describe('gamepad direction release', () => {
 
   it('waits for the LAST direction before calling it a release', () => {
     const pad = harness();
-    const DPAD_RIGHT = 15;
     pad.press(DPAD_LEFT, true);
     pad.stickY(1); // and down at the same time
     pad.tick(16);

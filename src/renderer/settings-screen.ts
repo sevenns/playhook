@@ -591,14 +591,19 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
         ? row.percent
         : volumePercent(row.id === 'sfxVolume' ? settings.sfxVolume : settings.musicVolume);
     const next = clampPercent(current + delta * VOLUME_STEP);
-    if (next === current) return;
+    if (next === current) {
+      deps.audio.playLimit(); // already at 0 % / 100 %
+      return;
+    }
     applyVolume(row, next, true);
   }
 
   // ── Expanded dropdown ──────────────────────────────────────────────────────
 
-  function closeOptions(): void {
+  function closeOptions(options?: { readonly silent?: boolean }): void {
     if (openSelect === null) return;
+    // `silent` for the cascade out of close(): the screen going away is one popup-close, not two (Р5).
+    if (options?.silent !== true) deps.audio.play('popup-close');
     openSelect = null;
     screen.classList.remove('is-options-open');
     optionsEl.classList.remove('is-open');
@@ -635,6 +640,7 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
       });
       return button;
     });
+    deps.audio.play('popup-open');
     optionsListEl.replaceChildren(...buttons);
     screen.classList.add('is-options-open'); // switches the frost on (no fade — see styles.css)
     optionsEl.classList.add('is-open');
@@ -693,7 +699,10 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
   function moveRowFocus(delta: number): void {
     if (rendered.length === 0) return;
     const next = clampIndex(focusIndex, delta, rendered.length);
-    if (next === focusIndex) return;
+    if (next === focusIndex) {
+      deps.audio.playLimit(); // the end of the list — a held direction still sounds only once
+      return;
+    }
     focusIndex = next;
     deps.audio.play('navigate');
     applyRowFocus();
@@ -728,7 +737,10 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
     // From the column, RIGHT steps into the pane — the direction the layout already suggests. Left is
     // NOT its mirror inside the pane: there it belongs to the sliders and the dropdowns, so leaving is B.
     if (sidebar.hasFocus()) {
+      // Left off the column, and right off anything that is not a section (the actions at its foot),
+      // lead nowhere — the column is the edge of the screen in both directions.
       if (delta > 0 && sidebar.selected()?.kind === 'section') enterPane();
+      else deps.audio.playLimit();
       return;
     }
     const target = focusedRow();
@@ -741,7 +753,11 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
       cycleSelect(focusIndex, row, delta);
       return;
     }
-    if (row.kind === 'slider') stepSlider(row, delta);
+    if (row.kind === 'slider') {
+      stepSlider(row, delta);
+      return;
+    }
+    deps.audio.playLimit(); // a checkbox (and the static rows) has no range to step along — A flips it
   }
 
   function navLeft(repeat = false): void {
@@ -750,10 +766,7 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
     // right edge, so moving left off it means "out". A HELD left is ignored, or the same press would
     // close the list and then start cycling the row's value behind it.
     if (openSelect !== null) {
-      if (!repeat) {
-        deps.audio.play('back');
-        closeOptions();
-      }
+      if (!repeat) closeOptions();
       return;
     }
     navHorizontal(-1);
@@ -771,11 +784,11 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
         toggleRow(index, row);
         break;
       case 'select':
-        deps.audio.play('button');
         pressFlash(target.el);
         openOptions(index, row);
         break;
       case 'slider':
+        deps.audio.playLimit(); // a slider is moved with left/right, and A has nothing to press on it
         break;
       case 'action':
         if (row.id === 'close') {
@@ -810,7 +823,6 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
       if (row === undefined || row.kind !== 'select') return;
       const option = row.options[optionIndex];
       if (option === undefined) return;
-      deps.audio.play('button');
       chooseOption(openSelect.rowIndex, option);
       return;
     }
@@ -822,7 +834,8 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
   function close(): void {
     if (!open) return;
     open = false;
-    closeOptions();
+    deps.audio.play('back');
+    closeOptions({ silent: true }); // leaving the screen takes the dropdown with it — one sound, not two
     entrance.cancel();
     if (previewTimer !== 0) {
       window.clearTimeout(previewTimer);
@@ -836,14 +849,14 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
   function navBack(): void {
     armHover();
     if (openSelect !== null) {
-      deps.audio.play('back');
       closeOptions();
       return;
     }
-    deps.audio.play('back');
     // Out of the pane, back to the column; out of the column, off the screen. The screen can only be
     // left from the column, which is also where Reset and Close live — so leaving is never a surprise.
+    // Only the step INSIDE the screen keeps `back`; leaving it is a popup closing, and close() says so.
     if (!sidebar.hasFocus()) {
+      deps.audio.play('back');
       leavePane();
       return;
     }
@@ -924,7 +937,6 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
   listEl.addEventListener('pointercancel', endDrag);
 
   veil?.addEventListener('click', () => {
-    deps.audio.play('back');
     close();
   });
 
@@ -977,7 +989,6 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
   );
 
   optionsVeil?.addEventListener('click', () => {
-    deps.audio.play('back');
     closeOptions();
   });
 
@@ -986,6 +997,7 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
     open: (section?: MessageKey) => {
       if (open) return;
       open = true;
+      deps.audio.play('button');
       focusIndex = 0;
       app.dataset['overlay'] = 'settings';
       screen.setAttribute('aria-hidden', 'false');

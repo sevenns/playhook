@@ -184,8 +184,10 @@ interface MenuEntry {
   readonly label: string;
   /** Marks the value a dropdown currently holds (underlined, like the Settings dropdown). */
   readonly current?: boolean;
-  /** Which sound this entry makes. One runner plays it, so a press and a click sound identical. */
-  readonly sound?: SfxName;
+  /** Which sound this entry makes. One runner plays it, so a press and a click sound identical.
+   *  'none' is for an entry whose own surface speaks for it — opening the file browser or the lightbox,
+   *  where the primitive plays popup-open (Р5). */
+  readonly sound?: SfxName | 'none';
   readonly run: () => void;
 }
 
@@ -704,7 +706,10 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     let next = focusIndex;
     for (;;) {
       const stepped = clampIndex(next, delta, rendered.length);
-      if (stepped === next) return; // at the edge — no move, no sound
+      if (stepped === next) {
+        deps.audio.playLimit(); // at the edge: no move, and the dead end says so
+        return;
+      }
       next = stepped;
       const row = rendered[next];
       if (row !== undefined && isFocusable(row.row)) break;
@@ -795,7 +800,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
 
   /** Plays an entry's sound exactly once, then runs it. The only way an entry is ever triggered. */
   function runEntry(entry: MenuEntry): void {
-    deps.audio.play(entry.sound ?? 'button');
+    if (entry.sound !== 'none') deps.audio.play(entry.sound ?? 'button');
     entry.run();
   }
 
@@ -820,23 +825,33 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   }): MenuLevel {
     const entries: MenuEntry[] = [
       ...level.entries,
-      { label: t()('launcher.menu.close'), sound: 'back', run: () => popMenu() },
+      { label: t()('launcher.menu.close'), sound: 'none', run: () => popMenu() },
     ];
     return { kind: 'menu', title: level.title, entries, focus: entries.length - 1 };
   }
 
   function pushMenu(level: MenuLevel): void {
     hover.arm();
+    // Only the FIRST level is a surface appearing; going deeper is a step inside one already open (Р4).
+    if (menuStack.length === 0) deps.audio.play('popup-open');
     menuStack.push(level);
     paintMenu();
   }
 
+  /**
+   * The single voice of leaving a level, so every way out (B, left, the Close entry, the veil) sounds the
+   * same: stepping out of a deeper level is a step INSIDE the menu and keeps `back`; leaving the last one
+   * is the menu going away.
+   */
   function popMenu(): void {
+    if (menuStack.length > 0) deps.audio.play(menuStack.length > 1 ? 'back' : 'popup-close');
     menuStack.pop();
     paintMenu();
   }
 
-  function closeMenus(): void {
+  function closeMenus(options?: { readonly silent?: boolean }): void {
+    // `silent` for a cascade — the screen closing, or a surface that already played its own close (Р5).
+    if (menuStack.length > 0 && options?.silent !== true) deps.audio.play('popup-close');
     menuStack.length = 0;
     paintMenu();
   }
@@ -1045,7 +1060,10 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     const parsed = Number.parseInt(row.value, 10);
     const base = Number.isFinite(parsed) ? parsed : 0;
     const next = Math.min(row.max, Math.max(row.min, base + delta * row.step));
-    if (String(next) === row.value) return;
+    if (String(next) === row.value) {
+      deps.audio.playLimit(); // already at min / max
+      return;
+    }
     deps.audio.play('navigate');
     setField(row.id, String(next));
   }
@@ -1071,11 +1089,13 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     if (row.value !== '' && row.preview !== undefined) {
       entries.push({
         label: t()('gameSettings.viewImage'),
+        sound: 'none',
         run: () => void showImage(row.value),
       });
     }
     entries.push({
       label: t()('gameSettings.browse'),
+      sound: 'none',
       run: () => browseInto(row.id, row.value, false),
     });
     if (row.value !== '') {
@@ -1095,7 +1115,8 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     const root = origin?.root;
     if (root === undefined || relative === '') return;
     const url = await deps.api.imagePreview(root, relative);
-    if (url === null) return;
+    if (url === null) return; // a preview that could not be read never became a surface — and never sounds
+    deps.audio.play('popup-open');
     lightboxImage.src = url;
     lightboxCaption.textContent = relative;
     lightboxOpen = true;
@@ -1103,8 +1124,9 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     lightboxEl.setAttribute('aria-hidden', 'false');
   }
 
-  function closeImage(): void {
+  function closeImage(options?: { readonly silent?: boolean }): void {
     if (!lightboxOpen) return;
+    if (options?.silent !== true) deps.audio.play('popup-close');
     lightboxOpen = false;
     lightboxEl.classList.remove('is-open');
     lightboxEl.setAttribute('aria-hidden', 'true');
@@ -1142,7 +1164,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
           applyMenuFocus();
           return;
         }
-        closeMenus();
+        closeMenus({ silent: true }); // the browser's own popup-close already covered this gesture
         if (onPicked !== undefined) {
           onPicked(result.paths);
           return;
@@ -1231,6 +1253,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     if (isPath) {
       entries.push({
         label: t()('gameSettings.viewImage'),
+        sound: 'none',
         run: () => void showImage(items[index] ?? ''),
       });
     }
@@ -1374,6 +1397,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       render();
       return;
     }
+    deps.audio.play('button'); // the screen is entered like a button, not like a popup
     origin = {
       root: result.root,
       source: result.source,
@@ -1621,7 +1645,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   function navUp(): void {
     hover.arm();
     const surface = activeSurface();
-    if (surface === 'lightbox') return;
+    if (surface === 'lightbox') return deps.audio.playLimit(); // nothing to move in a picture
     if (surface === 'menu') return moveMenuFocus(-1);
     if (surface === 'form') return sidebar.hasFocus() ? sidebar.move(-1) : moveRowFocus(-1);
     surface.navUp();
@@ -1630,7 +1654,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   function navDown(): void {
     hover.arm();
     const surface = activeSurface();
-    if (surface === 'lightbox') return;
+    if (surface === 'lightbox') return deps.audio.playLimit();
     if (surface === 'menu') return moveMenuFocus(1);
     if (surface === 'form') return sidebar.hasFocus() ? sidebar.move(1) : moveRowFocus(1);
     surface.navDown();
@@ -1640,7 +1664,9 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     // From the column, RIGHT steps into the pane. Left is NOT its mirror there: inside the pane it
     // belongs to the selects and the number steppers, so leaving is B.
     if (sidebar.hasFocus()) {
+      // As in Settings: left off the column, and right off a row that is not a section, lead nowhere.
       if (delta > 0 && sidebar.selected()?.kind === 'section') enterPane();
+      else deps.audio.playLimit();
       return;
     }
     const target = rendered[focusIndex];
@@ -1653,20 +1679,24 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       cycleSelect(row, delta);
       return;
     }
-    if (row.kind === 'number') stepNumber(row, delta);
+    if (row.kind === 'number') {
+      stepNumber(row, delta);
+      return;
+    }
+    deps.audio.playLimit(); // a checkbox, a text or a path row has no range to step along
   }
 
   function navLeft(repeat = false): void {
     hover.arm();
     const surface = activeSurface();
-    if (surface === 'lightbox') return;
+    if (surface === 'lightbox') {
+      if (!repeat) deps.audio.playLimit();
+      return;
+    }
     if (surface === 'menu') {
       // Left leaves a level, the same way it leaves a popup: the column sits on the right edge, so moving
       // off it means "out". A HELD left is ignored, or one press would walk out through every level.
-      if (!repeat) {
-        deps.audio.play('back');
-        popMenu();
-      }
+      if (!repeat) popMenu();
       return;
     }
     if (surface === 'form') {
@@ -1679,8 +1709,8 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   function navRight(): void {
     hover.arm();
     const surface = activeSurface();
-    if (surface === 'lightbox') return;
-    if (surface === 'menu') return;
+    if (surface === 'lightbox') return deps.audio.playLimit();
+    if (surface === 'menu') return deps.audio.playLimit(); // a menu is vertical — right leads nowhere
     if (surface === 'form') {
       navHorizontal(1);
       return;
@@ -1692,29 +1722,28 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     const row = target.row;
     switch (row.kind) {
       case 'toggle':
-        if (row.disabled === true) return;
+        if (row.disabled === true) {
+          deps.audio.playLimit(); // the row is shown, but this game cannot have it switched
+          return;
+        }
         deps.audio.play('button');
         pressFlash(target.el);
         toggleField(row.id);
         return;
       case 'select':
-        deps.audio.play('button');
         pressFlash(target.el);
         openSelectMenu(row);
         return;
       case 'text':
       case 'number':
-        deps.audio.play('button');
         pressFlash(target.el);
         openKeyboardFor(row);
         return;
       case 'path':
-        deps.audio.play('button');
         pressFlash(target.el);
         openPathMenu(row);
         return;
       case 'list':
-        deps.audio.play('button');
         pressFlash(target.el);
         openListMenu(row);
         return;
@@ -1737,12 +1766,12 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       case 'reset':
         // Neither action exists in add mode's column — but the column is not the only way in (a stale
         // model, a click), and both would act on a game that does not exist.
-        if (mode === 'add') return;
+        if (mode === 'add') return deps.audio.playLimit();
         deps.audio.play('button');
         deps.onConfirmRequested('reset');
         return;
       case 'delete':
-        if (mode === 'add') return;
+        if (mode === 'add') return deps.audio.playLimit();
         deps.audio.play('button');
         deps.onConfirmRequested('delete');
         return;
@@ -1785,12 +1814,10 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     hover.arm();
     const surface = activeSurface();
     if (surface === 'lightbox') {
-      deps.audio.play('back');
       closeImage();
       return;
     }
     if (surface === 'menu') {
-      deps.audio.play('back');
       popMenu();
       return;
     }
@@ -1798,10 +1825,11 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       surface.navBack();
       return;
     }
-    deps.audio.play('back');
     // Out of the pane, back to the column; out of the column, off the screen — which is where the
-    // unsaved-edits question belongs, since the column is the only way out.
+    // unsaved-edits question belongs, since the column is the only way out. Only the step INSIDE the
+    // screen keeps `back`; leaving it is a popup closing, and close() says so.
     if (!sidebar.hasFocus()) {
+      deps.audio.play('back');
       leavePane();
       return;
     }
@@ -1820,8 +1848,10 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   function close(): void {
     if (!open) return;
     open = false;
-    closeImage();
-    closeMenus();
+    deps.audio.play('back');
+    // The lightbox and the menu go WITH the screen — one close, one sound (Р5).
+    closeImage({ silent: true });
+    closeMenus({ silent: true });
     entrance.cancel();
     if (previewTimer !== 0) {
       window.clearTimeout(previewTimer);
@@ -1866,13 +1896,11 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   });
 
   lightboxEl.querySelector<HTMLElement>('.lightbox-veil')?.addEventListener('click', () => {
-    deps.audio.play('back');
     closeImage();
   });
 
   veil?.addEventListener('click', () => navBack());
   menuVeil?.addEventListener('click', () => {
-    deps.audio.play('back');
     popMenu();
   });
 
@@ -1950,11 +1978,12 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       if (open) return;
       mode = 'edit';
       resetScreenState();
-      void load(id);
+      void load(id); // the sound waits for the read to land — an unreadable game never became a screen
     },
     openNew: () => {
       if (open) return;
       mode = 'add';
+      deps.audio.play('button'); // add mode has no read to fail: the empty form is there at once
       gameId = '';
       origin = null;
       unreadable = null;
@@ -1978,21 +2007,39 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     // The secondary buttons belong to whatever surface is on top, exactly as the six primitives do.
     // controls.ts routes them to the open OVERLAY — that is this screen — so they die here unless they
     // are handed down the stack.
+    // The form, the menu and the lightbox claim none of them, and neither does a nested surface that
+    // left the method out — one place to say so, the same way controls.ts does it one level up.
     navSecondary: (repeat = false) => {
       const surface = activeSurface();
-      if (typeof surface !== 'string') surface.navSecondary?.(repeat);
+      if (typeof surface === 'string' || surface.navSecondary === undefined) {
+        if (!repeat) deps.audio.playLimit();
+        return;
+      }
+      surface.navSecondary(repeat);
     },
     navTertiary: () => {
       const surface = activeSurface();
-      if (typeof surface !== 'string') surface.navTertiary?.();
+      if (typeof surface === 'string' || surface.navTertiary === undefined) {
+        deps.audio.playLimit();
+        return;
+      }
+      surface.navTertiary();
     },
     navShoulder: (direction) => {
       const surface = activeSurface();
-      if (typeof surface !== 'string') surface.navShoulder?.(direction);
+      if (typeof surface === 'string' || surface.navShoulder === undefined) {
+        deps.audio.playLimit();
+        return;
+      }
+      surface.navShoulder(direction);
     },
     navCommit: () => {
       const surface = activeSurface();
-      if (typeof surface !== 'string') surface.navCommit?.();
+      if (typeof surface === 'string' || surface.navCommit === undefined) {
+        deps.audio.playLimit();
+        return;
+      }
+      surface.navCommit();
     },
     applyBrowse: (browse) => {
       if (!open) return;

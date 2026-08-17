@@ -287,8 +287,13 @@ export function createOsk(deps: OskDeps): TextEntrySurface {
 
   function moveCaretBy(delta: number): void {
     const next = moveCaret(text, delta);
-    if (next === text) return; // already at that end — no move, no sound
-    deps.audio.play('navigate');
+    if (next === text) {
+      deps.audio.playLimit(); // the caret is already at that end
+      return;
+    }
+    // `button`, not `navigate`: these are the caret KEYS being pressed. `navigate` belongs to the
+    // highlight walking the grid — the caret moving in the text is what the key does, not the walk.
+    deps.audio.play('button');
     setText(next);
   }
 
@@ -311,7 +316,9 @@ export function createOsk(deps: OskDeps): TextEntrySurface {
     if (el !== undefined) pressFlash(el);
     switch (key.kind) {
       case 'char':
-        deps.audio.play('navigate');
+        // A character is a KEYSTROKE, not a move through the grid — the arrows already say `navigate`,
+        // and typing a name with that sound reads as walking the keyboard rather than writing.
+        deps.audio.play('typing');
         insert(shifted ? key.value.toUpperCase() : key.value);
         return;
       case 'shift':
@@ -320,11 +327,11 @@ export function createOsk(deps: OskDeps): TextEntrySurface {
         rebuild();
         return;
       case 'backspace':
-        deps.audio.play('back');
+        deps.audio.play('typing'); // deleting is typing too — the field is being written either way
         backspace();
         return;
       case 'space':
-        deps.audio.play('navigate');
+        deps.audio.play('typing'); // a space is a character like any other
         insert(' ');
         return;
       case 'layout':
@@ -346,20 +353,21 @@ export function createOsk(deps: OskDeps): TextEntrySurface {
         confirm();
         return;
       case 'cancel':
-        deps.audio.play('back');
         cancel();
         return;
     }
   }
 
-  function switchLayout(direction: -1 | 1): void {
+  /** Cycles to the next layout of this mode. False when the mode has only one — nothing to switch to. */
+  function switchLayout(direction: -1 | 1): boolean {
     const list = layoutsFor(mode);
-    if (list.length < 2) return;
+    if (list.length < 2) return false;
     const at = list.indexOf(layout);
     layout = list[wrapIndex(at === -1 ? 0 : at, direction, list.length)] ?? layout;
     shifted = false;
     rebuild();
     focusKind('layout');
+    return true;
   }
 
   /**
@@ -390,6 +398,7 @@ export function createOsk(deps: OskDeps): TextEntrySurface {
 
   function hide(): void {
     if (!open) return;
+    deps.audio.play('popup-close');
     open = false;
     entrance.cancel();
     root.classList.remove('is-open');
@@ -409,7 +418,10 @@ export function createOsk(deps: OskDeps): TextEntrySurface {
     hover.arm();
     if (rowDelta !== 0) {
       const next = clampIndex(rowIndex, rowDelta, rows.length);
-      if (next === rowIndex) return;
+      if (next === rowIndex) {
+        deps.audio.playLimit(); // the top / bottom row of the grid
+        return;
+      }
       // The column is kept PROPORTIONALLY, not by index: the rows are of different lengths, and jumping
       // from the middle of a ten-key row to the end of a four-key one reads as the focus teleporting.
       const from = buttons[rowIndex]?.length ?? 1;
@@ -506,7 +518,6 @@ export function createOsk(deps: OskDeps): TextEntrySurface {
   }
 
   root.querySelector<HTMLElement>('.osk-veil')?.addEventListener('click', () => {
-    deps.audio.play('back');
     cancel();
   });
 
@@ -570,6 +581,7 @@ export function createOsk(deps: OskDeps): TextEntrySurface {
       if (key === 'Backspace') {
         event.preventDefault();
         event.stopImmediatePropagation();
+        if (!event.repeat) deps.audio.play('typing'); // silent while held, as the character keys are
         backspace(); // auto-repeat included: a held Backspace should keep deleting, like anywhere else
         return;
       }
@@ -584,7 +596,9 @@ export function createOsk(deps: OskDeps): TextEntrySurface {
       if (key === 'ArrowLeft' || key === 'ArrowRight') {
         event.preventDefault();
         event.stopImmediatePropagation();
-        setText(moveCaret(text, key === 'ArrowLeft' ? -1 : 1));
+        // Through the same primitive as the on-screen caret keys, so a physical arrow sounds like one
+        // and stops at the ends with the dead-end sound instead of silently doing nothing.
+        moveCaretBy(key === 'ArrowLeft' ? -1 : 1);
         return;
       }
       if (key === 'Home' || key === 'End') {
@@ -599,6 +613,10 @@ export function createOsk(deps: OskDeps): TextEntrySurface {
       if ([...key].length === 1) {
         event.preventDefault();
         event.stopImmediatePropagation();
+        // The same keystroke sound the on-screen keys make — it is the same field being typed into. A
+        // HELD key is silent after the first: the OS repeats some 30 times a second, which is a rattle,
+        // not typing.
+        if (!event.repeat) deps.audio.play('typing');
         insert(key);
       }
     },
@@ -619,6 +637,7 @@ export function createOsk(deps: OskDeps): TextEntrySurface {
       rowIndex = 0;
       colIndex = 0;
       open = true;
+      deps.audio.play('popup-open');
       titleEl.textContent = title;
       paintValue();
       updateLegend();
@@ -638,25 +657,33 @@ export function createOsk(deps: OskDeps): TextEntrySurface {
       press(key, buttons[rowIndex]?.[colIndex]);
     },
     navBack: () => {
-      deps.audio.play('back');
       cancel();
     },
     // X is Backspace and Y is Shift — the two things a typist reaches for constantly, off the grid.
     // A HELD X keeps deleting, one character at a time, the way a held Backspace does everywhere else.
     navSecondary: (repeat = false) => {
-      if (text.caret === 0) return; // nothing left to delete: no sound either, or a hold would rattle
-      if (!repeat) deps.audio.play('back');
+      if (text.caret === 0) {
+        if (!repeat) deps.audio.playLimit(); // nothing left to delete; a hold stays quiet
+        return;
+      }
+      if (!repeat) deps.audio.play('typing');
       backspace();
     },
     navTertiary: () => {
-      if (mode === 'number' || layout === 'symbols') return;
+      // Shift has no meaning on the digits or the symbol layout — neither has a second case.
+      if (mode === 'number' || layout === 'symbols') {
+        deps.audio.playLimit();
+        return;
+      }
       deps.audio.play('button');
       shifted = !shifted;
       rebuild();
     },
     navShoulder: (direction) => {
-      deps.audio.play('button');
-      switchLayout(direction);
+      // The number mode offers a single layout, so the shoulders have nothing to switch to there — and
+      // saying so is the point: they used to answer with `button`, sounding like an action that happened.
+      if (switchLayout(direction)) deps.audio.play('button');
+      else deps.audio.playLimit();
     },
     navCommit: () => {
       deps.audio.play('button');

@@ -8,6 +8,7 @@
 import type { AppNotification, AppState, BrowseInfo, LibraryEntry, Stats } from '../shared/types';
 import { createTranslator, type Locale, type Translator, type MessageKey } from '../shared/i18n/index.js';
 import { localizeDocument } from './i18n-dom.js';
+import { AUTO_CHAIN_MS, NAV_REPEAT_MS } from './auto-repeat.js';
 import { createAudioController } from './audio.js';
 import { createHeroController } from './hero.js';
 import { createControls } from './controls.js';
@@ -37,6 +38,23 @@ let currentState: AppState = { kind: 'idle' };
 let currentBrowse: BrowseInfo | null = null;
 // The carousel hid the title + status for a pending selection change; the next render reveals the new one.
 let textSwapPending = false;
+// A direction is being held. While it is, the title/status stay hidden rather than being re-revealed on
+// every step: at the repeat cadence that is a name flashing nine times a second next to a row that is
+// still moving, and nobody can read it anyway. The end of the run brings it back.
+let stripFlipping = false;
+/**
+ * How long after a release the run is still treated as GOING. Letting go for a beat and pressing again
+ * is one continuous auto-move to the user (auto-repeat.ts chains the two), and everything that waits for
+ * the flip to end is expensive: the hero swap is a megabyte-sized cross-fade, the palette rides along
+ * with it, and the carousel fetches the covers around wherever it stopped. Firing all of that into every
+ * gap of a rapid press-release-press is exactly what made the background stutter.
+ *
+ * The window has to outlast the chain itself PLUS the first repeat of the new run — that is when the
+ * flip is reported as started again — or a swap would slip through on the boundary.
+ */
+const FLIP_SETTLE_MS = AUTO_CHAIN_MS + NAV_REPEAT_MS;
+/** Pending "the run is really over" (see FLIP_SETTLE_MS); 0 when the strip is at rest or flipping. */
+let flipSettleTimer = 0;
 // The games the strip currently holds, kept so a notification about one can be resolved to an entry —
 // the carousel keeps the list too, but only the id/active pair is needed here (see openGameDetail).
 let currentGames: readonly LibraryEntry[] = [];
@@ -171,8 +189,26 @@ const controls = createControls({
   settings: settingsScreen,
   gameSettings: gameSettingsScreen,
   onFlipping: (flipping) => {
-    hero.setFlipping(flipping);
-    carousel.setFlipping(flipping);
+    if (flipping) {
+      if (flipSettleTimer !== 0) {
+        window.clearTimeout(flipSettleTimer);
+        flipSettleTimer = 0;
+      }
+      stripFlipping = true;
+      hero.setFlipping(true);
+      carousel.setFlipping(true);
+      return;
+    }
+    if (flipSettleTimer !== 0) return;
+    flipSettleTimer = window.setTimeout(() => {
+      flipSettleTimer = 0;
+      stripFlipping = false;
+      hero.setFlipping(false);
+      carousel.setFlipping(false);
+      // The title stays hidden for the whole run (see textSwapPending) — this is where it comes back, on
+      // the game the row finally came to rest on.
+      render(currentState);
+    }, FLIP_SETTLE_MS);
   },
   // Read lazily: the carousel is created below (it needs `controls` for its own callbacks), so the seam
   // is a set of thunks rather than the object itself.
@@ -484,7 +520,7 @@ function render(state: AppState): void {
     // an empty list means "wait for the push" (it back-fills), rather than blanking the background.
     hero.repaint();
     titleEl.textContent = browse.title;
-    if (textSwapPending) {
+    if (textSwapPending && !stripFlipping) {
       textSwapPending = false;
       // Next frame, so the browser sees the hidden state first and actually animates the fade back in
       // (dropping the class in the same frame as the text would be coalesced into no transition at all).

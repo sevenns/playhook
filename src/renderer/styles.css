@@ -57,6 +57,15 @@
   --d2: #836e95;
   /* Text colour OUTSIDE the app shell (there is none in practice — see the #app override below). */
   --fg: #f0f0f0;
+  /* The card morph: how long the selected card grows/shrinks and how long the strip takes one step.
+     MIRRORED by MORPH_MS in carousel-geometry.ts (CSS cannot read it, JS cannot set it) — edit the two
+     together. Every carousel rule reads this, so the row's tempo is this one number. */
+  --morph: 0.24s;
+  --morph-ease: cubic-bezier(0.4, 0, 0.2, 1);
+  /* One step of a HELD direction, written by controls.ts from NAV_REPEAT_MS. While a direction is down
+     the strip runs on this instead of --morph, and LINEARLY: a step that lasts exactly as long as the
+     gap to the next one makes the flip one continuous glide instead of nine eased hops a second. */
+  --flip-step: 110ms;
 }
 
 * {
@@ -103,7 +112,7 @@ body {
   --fg: var(--d2);
   /* Palette crossfade, matched to the hero layers' own 1s opacity fade (see .hero-layer) so the colors
      and the image arrive together. hero.ts sets --d1/--d2 on this element. */
-  transition: --d1 1s ease, --d2 1s ease;
+  transition: --d1 0.7s ease, --d2 0.7s ease;
   /* Establish a stacking context so the z-index:-1 hero ::before paints ABOVE #app's own
      background-color (otherwise the opaque bg covers it → black screen) but below the UI. */
   isolation: isolate;
@@ -118,9 +127,9 @@ body {
   inset: 0;
   z-index: -1;
   /* The screen-level zoom (see the data-screen rules below). Short on purpose: going back it has to be
-     DONE by the time the strip returns, which is 0.35s after the switch (see the reverse-morph delay). */
+     DONE by the time the strip returns, which is --morph after the switch (see the reverse-morph delay). */
   transform: scale(var(--hero-zoom, 1));
-  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: transform var(--morph) var(--morph-ease);
 }
 
 /* Parallax: flipping through the carousel drags the background a little the same way (hero.ts sets
@@ -147,7 +156,7 @@ body {
   background-size: cover;
   background-position: center;
   opacity: 0;
-  transition: opacity 1s ease;
+  transition: opacity 0.7s ease;
   transform-origin: center;
   will-change: transform, opacity;
   animation: bg-pan 30s ease-in-out infinite alternate;
@@ -289,7 +298,7 @@ body {
   align-items: flex-end;
   gap: calc(16 * var(--px));
   transform: translateX(calc(var(--strip-offset, 0) * var(--px)));
-  transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.25s ease;
+  transition: transform var(--morph) var(--morph-ease), opacity 0.25s ease;
 }
 
 /* A card. The size transition MUST match the strip's curve and duration, or the card's growth and the
@@ -304,7 +313,7 @@ body {
   background-size: cover;
   background-position: center;
   overflow: visible;
-  transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1), height 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+  transition: width var(--morph) var(--morph-ease), height var(--morph) var(--morph-ease),
     opacity 0.2s ease;
   cursor: pointer;
 }
@@ -417,27 +426,27 @@ body {
   width: 0;
   height: 0;
   transform-origin: bottom left;
-  transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1), height 0.35s cubic-bezier(0.4, 0, 0.2, 1),
-    opacity 0.35s ease;
+  transition: width var(--morph) var(--morph-ease), height var(--morph) var(--morph-ease),
+    opacity var(--morph) ease;
 }
 #app[data-screen='detail'][data-card-morph='off'] #carousel {
   /* The container has to outlast the shrink it is showing — the default 0.3s fade would take the card
      with it halfway through. It goes in one frame once the card has reached zero, which is the same
      moment the other branch hands over to the button. */
-  transition: opacity 0s linear 0.35s;
+  transition: opacity 0s linear var(--morph);
 }
 
 /* Going BACK is the entry played backwards, not a cross-fade, and it runs in the same two beats whether
-   or not there is a Play button: FIRST the selected card comes back to full size on its own (0.35s),
+   or not there is a Play button: FIRST the selected card comes back to full size on its own (--morph),
    THEN the rest of the strip arrives. What differs is only WHO does the growing — the button when it
    exists (morph on), the card itself when it does not (morph off) — and, with it, when the strip's
    container may be shown: after the grow when the button is on top of it, before it otherwise (the card
    growing inside it IS the animation). */
 #app[data-screen='carousel'][data-card-morph='on'] #carousel {
-  /* Switched on in ONE frame, not faded: the button disappears at exactly 0.35s, and a strip that is
+  /* Switched on in ONE frame, not faded: the button disappears at exactly the morph, and a strip that is
      still climbing out of opacity 0 at that instant leaves a hole where the artwork just was — read as
      a blink at the end of the morph. The strip's own cards decide how they come in. */
-  transition: opacity 0s linear 0.35s;
+  transition: opacity 0s linear var(--morph);
 }
 #app[data-screen='carousel'][data-card-morph='off'] #carousel {
   /* No button to wait for — the container must be up from frame one or the card would grow unseen. */
@@ -447,8 +456,8 @@ body {
   /* Flipping through the row: the only cards whose opacity moves are the ones crossing the window's edge
      (.is-beyond below), and they must do it WITH the slide — no delay, or the row would arrive first and
      the newcomer blink in afterwards. The staggered hand-back fade lives in the [data-returning] rule. */
-  transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1), height 0.35s cubic-bezier(0.4, 0, 0.2, 1),
-    opacity 0.35s cubic-bezier(0.2, 0, 0.2, 1), transform 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: width var(--morph) var(--morph-ease), height var(--morph) var(--morph-ease),
+    opacity var(--morph) cubic-bezier(0.2, 0, 0.2, 1), transform var(--morph) var(--morph-ease);
 }
 #app[data-screen='carousel'][data-returning] .card {
   /* Coming back from the detail screen. ONLY the fade-in waits for the grow. Delaying width/height here
@@ -458,13 +467,27 @@ body {
      row opens outwards instead of appearing as one block. --fan is set per card by carousel.ts. The fade
      is much LONGER than the step on purpose — the cards overlap heavily, which reads as one soft wave
      travelling outwards rather than a row of separate blinks.
-     These three numbers (0.35s morph / 50ms step / 0.4s fade) are mirrored by RETURN_LOCK_MS and
+     These three numbers (--morph / 50ms step / 0.4s fade) are mirrored by RETURN_LOCK_MS and
      RETURN_FAN_MS in carousel-geometry.ts — the first locks input out for the morph, the second is how
      long the renderer keeps `data-returning` on: edit them together. */
-  transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1), height 0.35s cubic-bezier(0.4, 0, 0.2, 1),
-    opacity 0.4s cubic-bezier(0.2, 0, 0.2, 1) calc(0.35s + var(--fan, 0) * 50ms),
-    transform 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: width var(--morph) var(--morph-ease), height var(--morph) var(--morph-ease),
+    opacity 0.4s cubic-bezier(0.2, 0, 0.2, 1) calc(var(--morph) + var(--fan, 0) * 50ms),
+    transform var(--morph) var(--morph-ease);
 }
+/* A HELD direction: the row GLIDES instead of hopping. Each repeat arrives every --flip-step (controls.ts
+   writes it from NAV_REPEAT_MS), and an eased 0.24s transition restarted three times faster than it can
+   finish is what made the flip read as bumps — the curve keeps re-accelerating from wherever it got to.
+   A LINEAR step of exactly one repeat's length hands the strip over to the next step at the same speed it
+   was travelling, so the whole hold is one even slide. The card grow/shrink follows the same clock, or
+   the size change would drift behind the row (the invariant the .card comment states). */
+#app[data-flipping] #carousel-strip {
+  transition: transform var(--flip-step) linear, opacity 0.25s ease;
+}
+#app[data-flipping][data-screen='carousel'] .card {
+  transition: width var(--flip-step) linear, height var(--flip-step) linear,
+    opacity var(--morph) cubic-bezier(0.2, 0, 0.2, 1), transform var(--flip-step) linear;
+}
+
 /* Past the end of the shown window (VISIBLE_CARDS = 9 in carousel-geometry.ts): laid out as usual — the
    strip's offset is positional, so removing the node would shift the whole row — but invisible and
    unclickable until the selection walks far enough right for it to fade in. */

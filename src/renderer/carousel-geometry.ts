@@ -65,9 +65,9 @@ export function isWithinWindow(index: number, selected: number, size = VISIBLE_C
 /** How many places of stagger the returning strip is allowed to spread over (see fanIndex). */
 export const FAN_MAX = 4;
 
-// The morph's duration, in milliseconds. MIRRORS the timing in styles.css — CSS cannot read this and JS
+// The morph's duration, in milliseconds. MIRRORS `--morph` in styles.css — CSS cannot read this and JS
 // cannot set it, so the two must be edited together.
-const MORPH_MS = 350;
+const MORPH_MS = 240;
 
 /**
  * How long flipping through cards is refused for after coming back from the detail screen: exactly the

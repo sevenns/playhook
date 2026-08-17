@@ -311,7 +311,7 @@ export function createCarousel(deps: CarouselDeps): Carousel {
     // The user is steering now: a seed request still waiting for its list must not yank the strip later.
     pendingFocusId = null;
     const next = clampIndex(index + delta, games.length);
-    if (next === index) return 'at-end'; // no move, no sound — the caller decides what a stop means
+    if (next === index) return 'at-end'; // no move — the caller decides what a stop means, sound included
     const moved = next - index;
     index = next;
     deps.onNavigate(moved);
@@ -374,6 +374,11 @@ export function createCarousel(deps: CarouselDeps): Carousel {
     setFlipping(next: boolean): void {
       if (flipping === next) return;
       flipping = next;
+      // The attribute switches the strip and the cards onto the glide timing (see --flip-step in
+      // styles.css): a held direction slides at one even speed instead of restarting an eased morph
+      // three times a second.
+      if (flipping) app.dataset['flipping'] = 'on';
+      else delete app.dataset['flipping'];
       // Released: pick up the covers of wherever the row came to rest.
       if (!flipping) loadNearbyArt();
     },

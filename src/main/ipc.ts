@@ -89,7 +89,14 @@ export interface ControllerDeps {
 // How long the browsed game's HEAVY assets (hero images, music — megabytes of data URL each) wait before
 // being read. The light BrowseInfo goes out immediately, so the title/status/stats track the carousel
 // with no lag; only the expensive half is debounced, and a burst of moves reads the disk once.
-const BROWSE_ASSETS_DEBOUNCE_MS = 250;
+//
+// It must outlast the GAP the renderer leaves between two chained auto-moves — releasing the pad for a
+// beat and pressing again (AUTO_CHAIN_MS + NAV_REPEAT_MS in auto-repeat.ts, ~310 ms). Shorter than that
+// and every such gap starts a megabyte-sized read plus a base64 encode for a game the user is already
+// flipping past, which is what made a rapid press-release-press stutter. The renderer holds the swap for
+// the same span (FLIP_SETTLE_MS in app.ts), so the two wait side by side rather than one after the other
+// — this costs nothing on a single step. Keep the three in step if any of them changes.
+const BROWSE_ASSETS_DEBOUNCE_MS = 320;
 
 // Grace-poll cadence after the installer exits, waiting for the game executable to appear.
 const INSTALL_POLL_INTERVAL_MS = 1000;

@@ -130,13 +130,13 @@ export function createHeroController(deps: HeroDeps): HeroController {
   let shownUrl: string | null = null;
 
   /** Matches the .hero-layer opacity transition in styles.css — how long a cross-fade owns both layers. */
-  const CROSSFADE_MS = 1000;
+  const CROSSFADE_MS = 700;
   /**
    * How long the requested image must stand before it is painted. Deliberately longer than the nav
    * repeat (NAV_REPEAT_MS in gamepad.ts), so a HELD left/right never paints a background at all: the
    * strip flips, and the hero lands once, on wherever the user stopped.
    */
-  const SETTLE_MS = 180;
+  const SETTLE_MS = 120;
 
   // What the launcher WANTS on screen, versus what is on it (shownUrl). They differ while a swap waits —
   // see requestImage. The palette travels with the image rather than being applied at request time: the
