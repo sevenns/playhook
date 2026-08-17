@@ -626,9 +626,16 @@ body {
   cursor: pointer;
   /* width/height are part of the carousel→detail morph and share the strip's curve; `opacity` is
      deliberately NOT transitioned — the carousel card and this button swap places instantaneously while
-     they are pixel-identical, and a fade there would show both at once. */
-  transition: background 0.2s ease, color 0.2s ease, transform 0.12s ease,
-    width 0.35s cubic-bezier(0.4, 0, 0.2, 1), height 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+     they are pixel-identical, and a fade there would show both at once.
+     The FOCUS FILL is not transitioned either, here or on any other focusable control in this file. It
+     used to fade over 0.2s, and on the Deck that fade ended in a dropped frame: a 30fps capture of the
+     Customize screen has the row the focus had just landed on measuring 131 … 7 … 134 — one frame at the
+     background's own brightness, no fill and no text, in the very frame the transition completed, while
+     every neighbouring row and the header stayed byte-identical. Chromium on Mesa losing the element as
+     its animated layer is retired. A highlight that arrives instantly cannot end, so it cannot blink —
+     and on a gamepad UI the 200ms lag was worth less than the twitch cost. */
+  transition: transform 0.12s ease, width 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+    height 0.35s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 /* The morph's cover layer: the selected card's artwork, painted behind the button's own content. It is
@@ -764,7 +771,7 @@ html:not(.mouse-asleep) .play-button:hover::after,
   background: transparent;
   color: var(--d2);
   cursor: pointer;
-  transition: background 0.2s ease, color 0.2s ease, opacity 0.3s ease, transform 0.12s ease;
+  transition: opacity 0.3s ease, transform 0.12s ease;
 }
 
 /* :hover gated on a live cursor — see the note on .text-button:hover. */
@@ -1339,7 +1346,7 @@ html:not(.mouse-asleep) .rect-button:hover,
   font-size: calc(28 * var(--px));
   white-space: nowrap;
   cursor: pointer;
-  transition: background 0.2s ease, color 0.2s ease, transform 0.12s ease;
+  transition: transform 0.12s ease;
 }
 
 /* Hover paints the same highlight as .is-focused, but ONLY while the cursor is live: once the gamepad
@@ -1371,7 +1378,7 @@ html:not(.mouse-asleep) .text-button:hover,
    would be an animation of nothing. */
 .actions-group > .text-button,
 .notification-list > .text-button {
-  transition: background 0.2s ease, color 0.2s ease, transform 0.12s ease, opacity 0.2s ease,
+  transition: transform 0.12s ease, opacity 0.2s ease,
     height 0.24s cubic-bezier(0.4, 0, 0.2, 1), margin-top 0.24s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
@@ -1795,9 +1802,10 @@ html:not(.mouse-asleep) #menu-notifications:hover .menu-dot {
   font-size: calc(28 * var(--px));
   text-align: left;
   cursor: pointer;
-  transition: background 0.2s ease, color 0.2s ease;
 }
 
+/* Instant, like every other focus fill — see the note on .play-button. This is the control the dropped
+   frame was actually caught on. */
 html:not(.mouse-asleep) .settings-nav-item:hover,
 .settings-nav-item.is-focused {
   background: var(--d2);
@@ -1929,7 +1937,7 @@ html:not(.mouse-asleep) .settings-nav-item:hover,
   padding: calc(8 * var(--px)) calc(32 * var(--px));
   border-radius: calc(10 * var(--px));
   color: var(--d2);
-  transition: background 0.2s ease, color 0.2s ease, transform 0.12s ease;
+  transition: transform 0.12s ease;
 }
 
 /* :hover gated on a live cursor, like every other control here (see .text-button). */
@@ -2333,7 +2341,7 @@ html:not(.mouse-asleep) .setting-row[data-kind='update-status']:hover {
   font-weight: 500;
   font-size: calc(28 * var(--px));
   cursor: pointer;
-  transition: background 0.2s ease, color 0.2s ease, transform 0.12s ease;
+  transition: transform 0.12s ease;
 }
 
 /* The label's window + a moving inner span — the same mechanism the 0.6 "Select game" picker used for
@@ -2708,7 +2716,7 @@ html:not(.mouse-asleep) .setting-row.is-inert:hover {
   font-weight: 500;
   font-size: calc(30 * var(--px));
   cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease, transform 0.12s ease;
+  transition: transform 0.12s ease;
 }
 
 .osk-key.is-wide {
@@ -2848,7 +2856,6 @@ html:not(.mouse-asleep) .osk-key:hover,
   font-size: calc(26 * var(--px));
   text-align: left;
   cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease;
 }
 
 html:not(.mouse-asleep) .picker-item:hover,
