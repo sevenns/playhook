@@ -291,7 +291,9 @@ export function createOsk(deps: OskDeps): TextEntrySurface {
       deps.audio.playLimit(); // the caret is already at that end
       return;
     }
-    deps.audio.play('navigate');
+    // `button`, not `navigate`: these are the caret KEYS being pressed. `navigate` belongs to the
+    // highlight walking the grid — the caret moving in the text is what the key does, not the walk.
+    deps.audio.play('button');
     setText(next);
   }
 
@@ -594,7 +596,9 @@ export function createOsk(deps: OskDeps): TextEntrySurface {
       if (key === 'ArrowLeft' || key === 'ArrowRight') {
         event.preventDefault();
         event.stopImmediatePropagation();
-        setText(moveCaret(text, key === 'ArrowLeft' ? -1 : 1));
+        // Through the same primitive as the on-screen caret keys, so a physical arrow sounds like one
+        // and stops at the ends with the dead-end sound instead of silently doing nothing.
+        moveCaretBy(key === 'ArrowLeft' ? -1 : 1);
         return;
       }
       if (key === 'Home' || key === 'End') {
