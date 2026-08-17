@@ -288,7 +288,10 @@ export function createFilePicker(deps: FilePickerDeps): FilePickerSurface {
       await goTo(full);
       return;
     }
-    if (wantsDirectory()) return; // a folder field has no use for a file
+    if (wantsDirectory()) {
+      deps.audio.playLimit(); // a folder field has no use for a file
+      return;
+    }
     if (request?.multi === true) {
       // X ticks and unticks; A on a file in multi mode ticks it and finishes, which is the one-image case.
       deps.audio.play('button');
@@ -321,7 +324,7 @@ export function createFilePicker(deps: FilePickerDeps): FilePickerSurface {
       // A rejection is not an exit: the user is standing in the folder they picked from, and the message
       // tells them what to pick instead.
       pathEl.textContent = result.message;
-      deps.audio.play('back');
+      deps.audio.playLimit(); // main refused this path: the press could not do what it asked
       return;
     }
     hide();
@@ -330,6 +333,7 @@ export function createFilePicker(deps: FilePickerDeps): FilePickerSurface {
 
   function hide(): void {
     if (!open) return;
+    deps.audio.play('popup-close');
     open = false;
     root.classList.remove('is-open');
     root.setAttribute('aria-hidden', 'true');
@@ -345,11 +349,17 @@ export function createFilePicker(deps: FilePickerDeps): FilePickerSurface {
     hover.arm();
     if (column === 'roots') {
       const next = clampIndex(rootIndex, delta, rootButtons.length);
-      if (next === rootIndex) return;
+      if (next === rootIndex) {
+        deps.audio.playLimit(); // the end of the roots column
+        return;
+      }
       rootIndex = next;
     } else {
       const next = clampIndex(entryIndex, delta, entryButtons.length);
-      if (next === entryIndex) return;
+      if (next === entryIndex) {
+        deps.audio.playLimit(); // the end of the tree column
+        return;
+      }
       entryIndex = next;
     }
     deps.audio.play('navigate');
@@ -363,7 +373,6 @@ export function createFilePicker(deps: FilePickerDeps): FilePickerSurface {
   }
 
   root.querySelector<HTMLElement>('.picker-veil')?.addEventListener('click', () => {
-    deps.audio.play('back');
     cancel();
   });
 
@@ -412,6 +421,7 @@ export function createFilePicker(deps: FilePickerDeps): FilePickerSurface {
       };
       picked = [];
       open = true;
+      deps.audio.play('popup-open');
       titleEl.textContent = t()('picker.title');
       updateChrome();
       root.classList.add('is-open');
@@ -461,7 +471,10 @@ export function createFilePicker(deps: FilePickerDeps): FilePickerSurface {
      */
     navBack: () => {
       hover.arm();
-      if (parent === null) return;
+      if (parent === null) {
+        deps.audio.playLimit(); // the top of the filesystem: there is no level above it
+        return;
+      }
       deps.audio.play('back');
       void goTo(parent);
     },
@@ -487,9 +500,16 @@ export function createFilePicker(deps: FilePickerDeps): FilePickerSurface {
     },
     /** X ticks a file in multi mode — the one gesture a single-select browser has no need for. */
     navSecondary: () => {
-      if (request?.multi !== true || column !== 'entries') return;
+      // Ticking is a multi-select gesture, and only a file can be ticked — anywhere else X does nothing.
+      if (request?.multi !== true || column !== 'entries') {
+        deps.audio.playLimit();
+        return;
+      }
       const focused = focusedEntry();
-      if (focused === null || focused.entry.kind !== 'file') return;
+      if (focused === null || focused.entry.kind !== 'file') {
+        deps.audio.playLimit();
+        return;
+      }
       togglePick(focused.full);
     },
     relocalize: () => {

@@ -287,7 +287,10 @@ export function createOsk(deps: OskDeps): TextEntrySurface {
 
   function moveCaretBy(delta: number): void {
     const next = moveCaret(text, delta);
-    if (next === text) return; // already at that end — no move, no sound
+    if (next === text) {
+      deps.audio.playLimit(); // the caret is already at that end
+      return;
+    }
     deps.audio.play('navigate');
     setText(next);
   }
@@ -346,20 +349,21 @@ export function createOsk(deps: OskDeps): TextEntrySurface {
         confirm();
         return;
       case 'cancel':
-        deps.audio.play('back');
         cancel();
         return;
     }
   }
 
-  function switchLayout(direction: -1 | 1): void {
+  /** Cycles to the next layout of this mode. False when the mode has only one — nothing to switch to. */
+  function switchLayout(direction: -1 | 1): boolean {
     const list = layoutsFor(mode);
-    if (list.length < 2) return;
+    if (list.length < 2) return false;
     const at = list.indexOf(layout);
     layout = list[wrapIndex(at === -1 ? 0 : at, direction, list.length)] ?? layout;
     shifted = false;
     rebuild();
     focusKind('layout');
+    return true;
   }
 
   /**
@@ -390,6 +394,7 @@ export function createOsk(deps: OskDeps): TextEntrySurface {
 
   function hide(): void {
     if (!open) return;
+    deps.audio.play('popup-close');
     open = false;
     entrance.cancel();
     root.classList.remove('is-open');
@@ -409,7 +414,10 @@ export function createOsk(deps: OskDeps): TextEntrySurface {
     hover.arm();
     if (rowDelta !== 0) {
       const next = clampIndex(rowIndex, rowDelta, rows.length);
-      if (next === rowIndex) return;
+      if (next === rowIndex) {
+        deps.audio.playLimit(); // the top / bottom row of the grid
+        return;
+      }
       // The column is kept PROPORTIONALLY, not by index: the rows are of different lengths, and jumping
       // from the middle of a ten-key row to the end of a four-key one reads as the focus teleporting.
       const from = buttons[rowIndex]?.length ?? 1;
@@ -506,7 +514,6 @@ export function createOsk(deps: OskDeps): TextEntrySurface {
   }
 
   root.querySelector<HTMLElement>('.osk-veil')?.addEventListener('click', () => {
-    deps.audio.play('back');
     cancel();
   });
 
@@ -619,6 +626,7 @@ export function createOsk(deps: OskDeps): TextEntrySurface {
       rowIndex = 0;
       colIndex = 0;
       open = true;
+      deps.audio.play('popup-open');
       titleEl.textContent = title;
       paintValue();
       updateLegend();
@@ -638,25 +646,33 @@ export function createOsk(deps: OskDeps): TextEntrySurface {
       press(key, buttons[rowIndex]?.[colIndex]);
     },
     navBack: () => {
-      deps.audio.play('back');
       cancel();
     },
     // X is Backspace and Y is Shift — the two things a typist reaches for constantly, off the grid.
     // A HELD X keeps deleting, one character at a time, the way a held Backspace does everywhere else.
     navSecondary: (repeat = false) => {
-      if (text.caret === 0) return; // nothing left to delete: no sound either, or a hold would rattle
+      if (text.caret === 0) {
+        if (!repeat) deps.audio.playLimit(); // nothing left to delete; a hold stays quiet
+        return;
+      }
       if (!repeat) deps.audio.play('back');
       backspace();
     },
     navTertiary: () => {
-      if (mode === 'number' || layout === 'symbols') return;
+      // Shift has no meaning on the digits or the symbol layout — neither has a second case.
+      if (mode === 'number' || layout === 'symbols') {
+        deps.audio.playLimit();
+        return;
+      }
       deps.audio.play('button');
       shifted = !shifted;
       rebuild();
     },
     navShoulder: (direction) => {
-      deps.audio.play('button');
-      switchLayout(direction);
+      // The number mode offers a single layout, so the shoulders have nothing to switch to there — and
+      // saying so is the point: they used to answer with `button`, sounding like an action that happened.
+      if (switchLayout(direction)) deps.audio.play('button');
+      else deps.audio.playLimit();
     },
     navCommit: () => {
       deps.audio.play('button');

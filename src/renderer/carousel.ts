@@ -311,7 +311,7 @@ export function createCarousel(deps: CarouselDeps): Carousel {
     // The user is steering now: a seed request still waiting for its list must not yank the strip later.
     pendingFocusId = null;
     const next = clampIndex(index + delta, games.length);
-    if (next === index) return 'at-end'; // no move, no sound — the caller decides what a stop means
+    if (next === index) return 'at-end'; // no move — the caller decides what a stop means, sound included
     const moved = next - index;
     index = next;
     deps.onNavigate(moved);
