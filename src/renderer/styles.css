@@ -277,16 +277,6 @@ body {
   opacity: 1;
 }
 
-/* …except when the detail screen was entered from the LIBRARY. The row's 240ms of grace on the way out
-   (the rules further down) exists so the card can hand its geometry to #play-button — but a game opened
-   from the Library was never on the row: the strip was hidden behind the screen, and it spends those
-   240ms re-aiming at the game that was just picked. With the screen now cut away rather than faded, that
-   is 240ms of a carousel visibly rebuilding itself. It has nothing to show here, so it does not show.
-   app.ts sets the flag when it opens the screen from there, and clears it on the way back. */
-#app[data-detail-from='library'] #carousel {
-  opacity: 0;
-  transition: opacity 0s linear;
-}
 
 /* The container stays transparent to the mouse even here, and the CARDS take the clicks instead. It is a
    full-width band (see the box above) painted at z-index 1, so it lies right across the bottom bar — made
@@ -478,6 +468,20 @@ body {
 }
 #app[data-screen='carousel'][data-card-morph='off'] #carousel {
   /* No button to wait for — the container must be up from frame one or the card would grow unseen. */
+  transition: opacity 0s linear;
+}
+
+/* …and none of that applies when the detail screen was entered from the LIBRARY. The row's grace period
+   exists so the selected CARD can hand its geometry to #play-button — but a game opened from the Library
+   was never on the row (the strip sat hidden behind the screen), and it spends those 240ms re-aiming at
+   the game just picked. With the screen cut away rather than faded, that is 240ms of a carousel visibly
+   rebuilding itself, which is exactly what it was.
+   It has to sit HERE, after the morph rules, and carry two attributes: `[data-card-morph='off']` is the
+   one that bites — the flag is off at that instant, because `browse` still describes the launcher card
+   the Library was opened from, so the delay it pins would otherwise win on specificity and hold the row
+   on screen for its whole 240ms. app.ts sets the flag on the way in and clears it on the way back. */
+#app[data-detail-from='library'][data-screen='detail'] #carousel {
+  opacity: 0;
   transition: opacity 0s linear;
 }
 #app[data-screen='carousel'] .card {
