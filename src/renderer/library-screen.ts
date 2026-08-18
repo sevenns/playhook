@@ -39,6 +39,8 @@ const LEAVE_MS = 220;
 const ENTRANCE_MS = 700;
 /** The stagger stops counting here: past a dozen cards the wave is a wait, not a wave. */
 const ENTRANCE_STEPS = 11;
+/** How long the grid waits before drawing the section the column moved onto (see previewTimer). */
+const PREVIEW_MS = 120;
 
 export interface LibraryScreenDeps {
   readonly audio: AudioController;
@@ -96,8 +98,15 @@ export function createLibraryScreen(deps: LibraryScreenDeps): LibraryScreen {
   // fading out under the detail screen, and cards moving during that fade is what read as a twitch.
   // The next open/restore rebuilds it instead.
   let stale = false;
-  // The card nodes by game id: rebuilt lists reuse them, so a re-flow moves nodes instead of replacing
-  // them — which is what lets the FLIP below animate, and what keeps a decoded cover on screen.
+  // A held direction walks the column faster than the grid can be rebuilt, so the section the column
+  // moved onto is drawn ONCE, when the movement stops — the same debounce the Settings pane uses for the
+  // same reason. Short enough that a single press still reads as instant.
+  let previewTimer = 0;
+  let previewFilter: LibraryFilter | null = null;
+  // Every card node ever built, by game id — a POOL, not "what the grid holds right now". A section
+  // switch only takes nodes out of the grid: their covers are painted on them, and rebuilding a card on
+  // the way back to "All" would show its title again while the artwork was re-fetched (and, on a held
+  // direction, not re-fetched at all — loading is paused then). Entries go only when main drops the game.
   const nodes = new Map<string, HTMLElement>();
   // The same nodes by ARTWORK key, so an eviction (which knows only the key) finds what to un-paint.
   const painted = new Map<string, HTMLElement>();
@@ -284,7 +293,11 @@ export function createLibraryScreen(deps: LibraryScreenDeps): LibraryScreen {
       node.style.top = `${place.top}px`;
       node.classList.remove('is-selected');
       node.classList.add('is-leaving');
-      window.setTimeout(() => node.remove(), LEAVE_MS);
+      // Checked again on the way out: a fast switch back puts this very node in the grid again (it lives
+      // in the pool), and the timer must not then pull it out from under the section that took it.
+      window.setTimeout(() => {
+        if (node.classList.contains('is-leaving')) node.remove();
+      }, LEAVE_MS);
     });
   }
 
@@ -299,6 +312,11 @@ export function createLibraryScreen(deps: LibraryScreenDeps): LibraryScreen {
       // list must arrive earlier than it did last time, not keep its old place in the wave.
       const stagger = String(Math.min(at, ENTRANCE_STEPS));
       if (existing !== undefined) {
+        // It may be coming back from a section that dismissed it — undo the freeze before it is re-laid.
+        existing.classList.remove('is-leaving');
+        existing.style.removeProperty('position');
+        existing.style.removeProperty('left');
+        existing.style.removeProperty('top');
         existing.style.setProperty('--card-index', stagger);
         const label = existing.querySelector('.card-label');
         if (label !== null && label.textContent !== game.title) label.textContent = game.title;
@@ -315,8 +333,11 @@ export function createLibraryScreen(deps: LibraryScreenDeps): LibraryScreen {
     });
     const leaving: HTMLElement[] = [];
     for (const [key, node] of nodes) {
-      if (shown.some((game) => nodeKey(game.id) === key)) continue;
-      nodes.delete(key);
+      const game = games.find((candidate) => nodeKey(candidate.id) === key);
+      // Gone from main's list entirely: the node has nothing left to show, so it leaves the pool too.
+      if (game === undefined) nodes.delete(key);
+      if (shown.some((candidate) => nodeKey(candidate.id) === key)) continue;
+      if (!node.isConnected) continue; // already out of the grid — another section left it there
       if (animate) leaving.push(node);
       else node.remove();
     }
@@ -356,15 +377,33 @@ export function createLibraryScreen(deps: LibraryScreenDeps): LibraryScreen {
     requestAnimationFrame(() => scroller.fades());
   }
 
-  function selectSection(id: string, entered: boolean): void {
-    const next: LibraryFilter = id === 'playable' ? 'playable' : 'all';
-    if (next !== filter) {
-      filter = next;
-      index = 0;
-      renderSection(true);
+  /** Draws whatever section the column last landed on, if the debounce has not done it yet. */
+  function flushPreview(): void {
+    if (previewTimer !== 0) {
+      window.clearTimeout(previewTimer);
+      previewTimer = 0;
     }
-    if (!entered) return;
-    enterGrid();
+    const next = previewFilter;
+    previewFilter = null;
+    if (next === null || next === filter) return;
+    filter = next;
+    index = 0;
+    renderSection(true);
+  }
+
+  function selectSection(id: string, entered: boolean): void {
+    previewFilter = id === 'playable' ? 'playable' : 'all';
+    if (entered) {
+      // Stepping INTO a section is a commitment — it must be on screen before the focus lands in it.
+      flushPreview();
+      enterGrid();
+      return;
+    }
+    if (previewTimer !== 0) window.clearTimeout(previewTimer);
+    previewTimer = window.setTimeout(() => {
+      previewTimer = 0;
+      flushPreview();
+    }, PREVIEW_MS);
   }
 
   /** Hands the focus from the column to the grid. An empty section has nothing to hand it to. */
@@ -445,6 +484,11 @@ export function createLibraryScreen(deps: LibraryScreenDeps): LibraryScreen {
   function close(silent = false): void {
     if (!open) return;
     open = false;
+    if (previewTimer !== 0) {
+      window.clearTimeout(previewTimer);
+      previewTimer = 0;
+    }
+    previewFilter = null;
     const hide = (): void => {
       delete app.dataset['overlay'];
       screen.setAttribute('aria-hidden', 'true');
@@ -500,6 +544,7 @@ export function createLibraryScreen(deps: LibraryScreenDeps): LibraryScreen {
       if (open) return;
       show();
       filter = 'all';
+      previewFilter = null;
       index = 0;
       games = deps.getGames();
       sidebar.render(sidebarEntries());

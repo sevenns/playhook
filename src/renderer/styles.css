@@ -3137,6 +3137,13 @@ html:not(.mouse-asleep) .picker-item:hover,
   }
 }
 
+/* Grown in place: the grid's geometry does not depend on which card is selected, so the neighbours must
+   not shift. z-index lifts it over them, since it now overlaps. */
+#app #library .library-grid .card.is-selected {
+  --card-scale: 1.06;
+  z-index: 1;
+}
+
 /* A held direction: the same trick the strip uses — a step exactly as long as the repeat interval, in
    linear, which glues the steps into one continuous glide instead of 143 ms of ease each. */
 #app[data-flipping] #library .library-grid .card {
