@@ -797,6 +797,9 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
         toggleRow(index, row);
         break;
       case 'select':
+        // Two sounds, deliberately: `button` is the row being pressed, `popup-open` (openOptions) is the
+        // list appearing — the same pair a launcher card plays when it opens its surface.
+        deps.audio.play('button');
         pressFlash(target.el);
         openOptions(index, row);
         break;

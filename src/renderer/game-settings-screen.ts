@@ -1089,13 +1089,11 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     if (row.value !== '' && row.preview !== undefined) {
       entries.push({
         label: t()('gameSettings.viewImage'),
-        sound: 'none',
         run: () => void showImage(row.value),
       });
     }
     entries.push({
       label: t()('gameSettings.browse'),
-      sound: 'none',
       run: () => browseInto(row.id, row.value, false),
     });
     if (row.value !== '') {
@@ -1253,7 +1251,6 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     if (isPath) {
       entries.push({
         label: t()('gameSettings.viewImage'),
-        sound: 'none',
         run: () => void showImage(items[index] ?? ''),
       });
     }
@@ -1730,20 +1727,27 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
         pressFlash(target.el);
         toggleField(row.id);
         return;
+      // Every row below opens a surface of its own (a menu, the keyboard, the picker), and each of them
+      // plays `popup-open` as it appears. The `button` here is the ROW being pressed: two sounds for the
+      // gesture, the same pair a launcher card plays when it opens its surface.
       case 'select':
+        deps.audio.play('button');
         pressFlash(target.el);
         openSelectMenu(row);
         return;
       case 'text':
       case 'number':
+        deps.audio.play('button');
         pressFlash(target.el);
         openKeyboardFor(row);
         return;
       case 'path':
+        deps.audio.play('button');
         pressFlash(target.el);
         openPathMenu(row);
         return;
       case 'list':
+        deps.audio.play('button');
         pressFlash(target.el);
         openListMenu(row);
         return;
@@ -1874,6 +1878,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     // A thumbnail IS the "show me this picture" affordance for the mouse; the gamepad reaches the same
     // viewer through the row's own menu. Checked before the row, or the click would also open that menu.
     if (target instanceof HTMLElement && target.classList.contains('setting-thumb')) {
+      deps.audio.play('button'); // the press; showImage plays the viewer's own `popup-open`
       void showImage(target.dataset['path'] ?? '');
       return;
     }
