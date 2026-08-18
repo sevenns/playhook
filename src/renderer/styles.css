@@ -933,8 +933,11 @@ html:not(.mouse-asleep) .rect-button:hover,
    idle/error, no-play). The busy shift stacks on top, reproducing the mockup's "Home - Installing". */
 #app[data-screen='carousel'] {
   --text-lift: calc(130 * var(--px));
-  --title-x: calc(28 * var(--px));
-  --status-x: calc(28 * var(--px));
+  /* 28 is the mockup's offset from the anchor; --card-shift (carousel.ts) is how far the selection has
+     walked PAST the anchor, which only happens on the launcher cards at the row's end — there the strip
+     stands still and the caption has to travel instead, or it would name the card it no longer marks. */
+  --title-x: calc((28 + var(--card-shift, 0)) * var(--px));
+  --status-x: calc((28 + var(--card-shift, 0)) * var(--px));
 }
 #app[data-screen='carousel'] .title {
   font-size: calc(24 * var(--px));
