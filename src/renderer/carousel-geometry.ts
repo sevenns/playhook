@@ -63,22 +63,6 @@ export function isWithinWindow(index: number, selected: number, size = VISIBLE_C
 }
 
 /**
- * Which card the strip aligns itself to: the selection, until the selection reaches the FIRST launcher
- * card. That one still rides up to the anchor like any other — it is the row's last real destination —
- * and from there the strip stands still while the highlight walks the remaining launcher cards on its
- * own. They are a fixed block of four; once the first of them is at the anchor the rest are already in
- * view beside it, and sliding them leftwards one at a time only takes them away again.
- *
- * Every GAME keeps the anchor invariant above, which is what the play button's morph rests on: the
- * selected card and the button occupy the same box at the instant the screen changes. The launcher cards
- * have no detail screen to morph into, so the strip is free to stop for them.
- */
-export function anchorIndex(index: number, gameCount: number): number {
-  if (gameCount <= 0) return 0;
-  return Math.min(index, gameCount);
-}
-
-/**
  * How many GAMES the strip carries at most. Home is a shortlist, not the whole library: with the four
  * launcher cards after them the row tops out at 13 cards, and everything past that lives on the Library
  * screen, which is built for it. The list arrives already ordered (card first, then the PC library, then

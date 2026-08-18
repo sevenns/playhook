@@ -2,7 +2,6 @@
 // card is selected — which is exactly what makes the strip offset linear in the index.
 import { describe, expect, it } from 'vitest';
 import {
-  anchorIndex,
   CARD_W,
   FAN_MAX,
   GAP,
@@ -128,32 +127,5 @@ describe('MAX_STRIP_GAMES', () => {
 
   it('is not wider than the shown window — a capped row is never partly out of view', () => {
     expect(MAX_STRIP_GAMES).toBeLessThanOrEqual(VISIBLE_CARDS);
-  });
-});
-
-describe('anchorIndex', () => {
-  it('follows the selection while it is on a game', () => {
-    expect(anchorIndex(0, 9)).toBe(0);
-    expect(anchorIndex(5, 9)).toBe(5);
-    expect(anchorIndex(8, 9)).toBe(8);
-  });
-
-  it('brings the FIRST launcher card up to the anchor like any other card', () => {
-    expect(anchorIndex(9, 9)).toBe(9);
-  });
-
-  it('stops there, so the launcher cards beside it stay put as the highlight walks them', () => {
-    for (const index of [10, 11, 12]) expect(anchorIndex(index, 9)).toBe(9);
-  });
-
-  it('leaves the strip unmoved when there are no games at all', () => {
-    for (const index of [0, 1, 3]) expect(anchorIndex(index, 0)).toBe(0);
-    expect(stripOffset(anchorIndex(2, 0))).toBe(0);
-  });
-
-  it('keeps the anchor invariant for every game — the morph rests on it', () => {
-    for (let index = 0; index < 9; index += 1) {
-      expect(stripOffset(anchorIndex(index, 9))).toBe(stripOffset(index));
-    }
   });
 });

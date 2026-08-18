@@ -13,8 +13,6 @@ import type { LibraryEntry } from '../shared/types';
 import type { Translator } from '../shared/i18n/index.js';
 import {
   MAX_STRIP_GAMES,
-  STEP,
-  anchorIndex,
   RETURN_FAN_MS,
   RETURN_LOCK_MS,
   clampIndex,
@@ -172,9 +170,6 @@ export function createCarousel(deps: CarouselDeps): Carousel {
 
   const artKey = (game: LibraryEntry): string => `${game.id}@${game.artRev ?? ''}`;
 
-  /** How many of the row's cards are games — the launcher's own cards always follow them. */
-  const gameCount = (): number => items.filter((item) => item.kind === 'game').length;
-
   function selected(): CarouselItem | undefined {
     return items[index];
   }
@@ -194,13 +189,7 @@ export function createCarousel(deps: CarouselDeps): Carousel {
 
   /** The strip's translation + the per-card selected/active/busy state. Cheap; safe to call often. */
   function applyLayout(): void {
-    const anchor = anchorIndex(index, gameCount());
-    strip.style.setProperty('--strip-offset', String(stripOffset(anchor)));
-    // How far the selection sits from the anchor — nothing at all while the strip follows it, and one
-    // step per launcher card once the strip has parked (see anchorIndex). The bar's text block reads it
-    // and travels with the selected card: the name belongs BESIDE the card it names, and a caption left
-    // behind at the anchor names whatever happens to be standing there.
-    app.style.setProperty('--card-shift', String((index - anchor) * STEP));
+    strip.style.setProperty('--strip-offset', String(stripOffset(index)));
     const current = selected();
     const currentKey = current === undefined ? null : itemKey(current);
     items.forEach((item, position) => {
