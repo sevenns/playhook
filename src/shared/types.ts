@@ -550,7 +550,7 @@ export interface AppSettings {
    * is present. Default false (the background-app behaviour: hidden until a card is detected). When true
    * the empty screen stays on card removal AND is shown at startup.
    */
-  readonly alwaysShowEmptyScreen: boolean;
+  readonly keepOpenWithoutCard: boolean;
   /**
    * Disable trying silent mode for install-mode installers (Linux/Proton). Default false (installers run
    * unattended). When true, the installer shows its wizard so the user can click through steps a silent
@@ -775,7 +775,7 @@ export const IPC = {
   /** game-renderer → main: change the auto-update mode (payload AutoUpdateMode). */
   settingsSetAutoUpdate: 'settings:set-auto-update',
   /** game-renderer → main: toggle keeping the empty "no card" screen visible (payload boolean). */
-  settingsSetAlwaysShowEmptyScreen: 'settings:set-always-show-empty-screen',
+  settingsSetKeepOpenWithoutCard: 'settings:set-keep-open-without-card',
   /** game-renderer → main: toggle disabling silent installer mode (payload boolean). */
   settingsSetDisableSilentInstall: 'settings:set-disable-silent-install',
   /** game-renderer → main: toggle Game Mode auto-launch on card insertion (payload boolean). */
@@ -1118,8 +1118,11 @@ export interface RendererApi {
    * Tell main which game the carousel is on — it answers with browse:update/hero/music. `immediate` says
    * the user COMMITTED to this game (opened its screen) rather than flipped onto it, so the heavy half
    * (hero images, music) is read at once instead of waiting out main's debounce.
+   *
+   * `null` is the carousel standing on one of the launcher's own cards: nothing is on screen, and main
+   * answers with an empty browse (and pins the cursor there — see the browse section in ipc.ts).
    */
-  browseGame(id: string, immediate?: boolean): void;
+  browseGame(id: string | null, immediate?: boolean): void;
   /** Drop a game from the play history. Refused by main for a game that is available right now (on the
    *  card or in the PC library) — that one is not history, it is a game you can play. */
   forgetGame(id: string): void;
@@ -1166,7 +1169,7 @@ export interface RendererApi {
   /** Toggle keeping the display awake (no screensaver / display-sleep) while the launcher owns the session. */
   setPreventScreensaver(on: boolean): void;
   /** Toggle keeping the empty "no card" screen visible instead of hiding to the tray. */
-  setAlwaysShowEmptyScreen(on: boolean): void;
+  setKeepOpenWithoutCard(on: boolean): void;
   /** Toggle disabling silent installer mode (installers show their wizard when on). */
   setDisableSilentInstall(on: boolean): void;
   /** Toggle the Game Mode card-insert auto-launch (Steam Deck only; see AppSettings.steamAutoLaunch). */

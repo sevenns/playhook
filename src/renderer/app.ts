@@ -69,10 +69,10 @@ const getTranslator = (): Translator => translator;
 const audio = createAudioController();
 
 // ── Hero background + palette (own subsystem, see hero.ts) ───────────────────
-// The hero layers, cross-fade, renderer-local rotation, the empty/idle wallpaper screen and the
+// The hero layers, cross-fade, renderer-local rotation, the idle wallpaper background and the
 // two-color palette live in hero.ts. It reaches back for just two things: whether a game is on screen
 // and the current game id (for the per-hero palette cache key). render() drives it via repaint/
-// startRotation/applyEmptyScreen; the hero:update channel feeds applyAssets; main's wallpaper feeds
+// startRotation/applyIdleBackground; the hero:update channel feeds applyAssets; main's wallpaper feeds
 // setWallpaper.
 // Both hooks read the BROWSE model, not AppState: a history game is browsed while the state is `idle`,
 // where `gameOf` is undefined. Left on AppState, hasGameOnScreen would suppress the rotation AND the very
@@ -81,7 +81,6 @@ const audio = createAudioController();
 const hero = createHeroController({
   hasGameOnScreen: () => currentBrowse !== null,
   getGameId: () => currentBrowse?.id ?? '',
-  getTranslator,
 });
 
 // ── Settings screen (the fourth surface, see settings-screen.ts) ─────────────
@@ -93,7 +92,7 @@ const settingsApi: SettingsScreenApi = {
   setPrerelease: (on) => window.api.setPrerelease(on),
   setSummonHotkey: (on) => window.api.setSummonHotkey(on),
   setPreventScreensaver: (on) => window.api.setPreventScreensaver(on),
-  setAlwaysShowEmptyScreen: (on) => window.api.setAlwaysShowEmptyScreen(on),
+  setKeepOpenWithoutCard: (on) => window.api.setKeepOpenWithoutCard(on),
   setDisableSilentInstall: (on) => window.api.setDisableSilentInstall(on),
   setSteamAutoLaunch: (on) => window.api.setSteamAutoLaunch(on),
   setSoundSet: (set) => window.api.setSoundSet(set),
@@ -217,7 +216,7 @@ const controls = createControls({
     move: (delta) => carousel.move(delta),
     activate: () => carousel.activate(),
     leaveDetail: () => leaveDetail(),
-    exists: () => carousel.exists(),
+    setUnread: (unread) => carousel.setUnread(unread),
   },
 });
 
@@ -249,14 +248,23 @@ const carousel = createCarousel({
     requestedBrowseId = id;
     window.api.browseGame(id);
   },
+  // A launcher card is selected: there is no game on screen at all. main answers with an empty browse on
+  // the same channels, so the title, the background and the music all clear through their usual path.
+  browseNone: () => {
+    requestedBrowseId = null;
+    window.api.browseGame(null);
+  },
+  getTranslator,
   onScreenChange: () => {
     controls.refresh();
     render(currentState);
   },
-  onActivate: (entry) => {
-    // Entering a card is an ordinary button press — same cue as any other "open" action.
+  onActivate: (item) => {
+    // Entering a card is an ordinary button press — same cue as any other "open" action, and a launcher
+    // card is no different (the surface it opens then plays its own popup-open on top).
     audio.play('button');
-    openGameDetail(entry.id);
+    if (item.kind === 'game') openGameDetail(item.game.id);
+    else controls.openSystemCard(item.card.id);
   },
   onNavigate: (delta) => {
     audio.play('navigate');
@@ -325,15 +333,12 @@ function showAddedGame(id: string): void {
   // CARD's selected game, not on the browse cursor, so it has to move too or Play would launch the game
   // the user was looking at before.
   if (gameOf(currentState)?.id !== id) window.api.selectGame(id);
-  // setScreen('carousel') with no carousel is not refused — it quietly becomes 'detail' — so it is only
-  // asked for when there is a strip to show.
-  if (carousel.exists()) carousel.setScreen('carousel');
-  controls.focusStrip();
+  carousel.setScreen('carousel');
 }
 
-/** Back out of a detail screen to the carousel (B). False when there is no carousel to return to. */
+/** Back out of a detail screen to the carousel (B). False when the carousel is already the screen. */
 function leaveDetail(): boolean {
-  if (!carousel.exists() || carousel.screen() !== 'detail') return false;
+  if (carousel.screen() !== 'detail') return false;
   userChoseDetail = false;
   carousel.setScreen('carousel');
   return true;
@@ -475,7 +480,10 @@ function applyStatus(): void {
 /** The status line for what is ON SCREEN — empty while looking at a game the state isn't about. */
 function statusText(): string {
   const subject = gameOf(currentState)?.id;
-  if (currentBrowse !== null && subject !== undefined && subject !== currentBrowse.id) return '';
+  // Nothing on screen is a state of its own now — a launcher card — and the state's status belongs to a
+  // game, so it says nothing there: "Installing…" under "Settings" would be a lie, and the line's mere
+  // presence shifts the title (see [data-status] in styles.css).
+  if (currentBrowse === null || (subject !== undefined && subject !== currentBrowse.id)) return '';
   const base = statusOf(currentState, translator);
   return chatterSuffix !== null && currentState.kind === chatterKind
     ? `${base} ${translator(chatterSuffix)}`
@@ -514,29 +522,36 @@ function render(state: AppState): void {
   // `idle` while the history still has games to show, and while game A installs you may be looking at
   // game B. The single-game card case is unchanged by construction — there browse.id === state.game.id.
   const browse = currentBrowse;
+  // The title/status were hidden for a pending selection change (see onNavigate); this is where they come
+  // back — for whatever the row came to rest on, a game OR a launcher card. ABOVE the branch on purpose:
+  // done inside the `browse !== null` half, a launcher card's name was written and never revealed.
+  if (textSwapPending && !stripFlipping) {
+    textSwapPending = false;
+    // Next frame, so the browser sees the hidden state first and actually animates the fade back in
+    // (dropping the class in the same frame as the text would be coalesced into no transition at all).
+    // The status is revealed together with the title — applyStatus (below) has already put the new
+    // line in, or emptied it, by the time this frame runs.
+    requestAnimationFrame(() => {
+      titleEl.classList.remove('is-swapping');
+      statusEl.classList.remove('is-swapping');
+    });
+  }
   if (browse !== null) {
     // Hero images travel on their own channels (hero:update / browse:hero), independent of state:update —
     // on a window reconnect render can arrive before the payload. Only paint when we already have images;
     // an empty list means "wait for the push" (it back-fills), rather than blanking the background.
     hero.repaint();
     titleEl.textContent = browse.title;
-    if (textSwapPending && !stripFlipping) {
-      textSwapPending = false;
-      // Next frame, so the browser sees the hidden state first and actually animates the fade back in
-      // (dropping the class in the same frame as the text would be coalesced into no transition at all).
-      // The status is revealed together with the title — applyStatus (below) has already put the new
-      // line in, or emptied it, by the time this frame runs.
-      requestAnimationFrame(() => {
-        titleEl.classList.remove('is-swapping');
-        statusEl.classList.remove('is-swapping');
-      });
-    }
     buildInfoPanel(browse.stats);
     controls.applyGameButtons();
   } else {
-    // No card AND no history → the empty "Insert a game card" screen (wallpaper background). Clear any
-    // stale stats so the empty screen's Details menu (opened via More) shows just System + Close.
-    hero.applyEmptyScreen();
+    // No game on screen: the carousel is standing on one of the launcher's own cards. It names itself in
+    // the title line, exactly where a game's name goes — except the power card, which the mockup leaves
+    // unnamed. The BACKGROUND is deliberately not touched here: it arrives on the debounced browse:hero
+    // channel (see onBrowseHero), so flipping past these cards doesn't make the wallpaper blink.
+    const item = carousel.selected();
+    const titleKey = item !== undefined && item.kind === 'system' ? item.card.titleKey : null;
+    titleEl.textContent = titleKey === null ? '' : translator(titleKey);
     while (infoPanel.firstChild !== null) infoPanel.removeChild(infoPanel.firstChild);
     controls.clearGameButtons();
   }
@@ -593,7 +608,7 @@ function render(state: AppState): void {
   syncMusic();
 
   // Empty-screen error (Р8, point 1): a card that fails to load sets state=error with no game. In Game
-  // Mode the window is shown (no tray to hide into), so surface the reason over the empty screen via the
+  // Mode the window is shown (no tray to hide into), so surface the reason over the idle screen via the
   // error popup. Only on ENTERING the error (prev not already error) so a locale/wallpaper re-render
   // doesn't re-pop a popup the user has closed. Desktop/Windows keep hiding, so this rarely fires there.
   if (state.kind === 'error' && game === undefined && prev.kind !== 'error') {
@@ -645,7 +660,7 @@ let jingleStartedAt: number | null = null;
 /**
  * Hands the screen over to the hero underneath: the backdrop fades out and, over the same beat, travels
  * to where that hero layer currently sits. Converging rather than parting matters because the two are
- * often the SAME image — with no card, the empty screen is this very wallpaper — and any offset left
+ * often the SAME image — with no game on screen the background is this very wallpaper — and any offset left
  * between them shows up as a double image sliding apart. Then it is taken out of the page entirely: it
  * has nothing left to show, and a full-screen composited layer is not free.
  */
@@ -786,11 +801,22 @@ void window.api.requestBrowse().then((browse) => {
 
 // The browsed game's background: a channel of its own, so a history game can be shown without touching
 // the inserted card's hero:update payload (which stays valid for the card's selected game).
-window.api.onBrowseHero((assets) => hero.applyBrowseAssets(assets));
+window.api.onBrowseHero((assets) => {
+  // Nothing on screen (a launcher card) → the idle wallpaper. It has to happen HERE rather than in
+  // render(): this channel is the debounced one, so the background changes when the row STOPS on a card,
+  // the same way it does between games. applyBrowseAssets(null) would not do — it paints only while a
+  // game is on screen (hero.ts), which is exactly what this case is not.
+  if (currentBrowse === null) hero.applyIdleBackground();
+  else hero.applyBrowseAssets(assets);
+});
 
 // The browsed game's music. Music ONLY — the SFX set is never rebuilt by browsing, so flipping through
 // the carousel doesn't re-create the sound elements on every step.
 window.api.onBrowseMusic((url) => {
+  // On the same (debounced) channel as the background, for the same reason: a launcher card means the
+  // ambience, and switching to it while merely flipping PAST the card would tear the music. Not in
+  // applyBrowse — that one rides the instant channel.
+  audio.setIdle(currentBrowse === null);
   audio.setBrowseMusic(url);
   syncMusic();
 });
@@ -814,7 +840,7 @@ void Promise.all([
   settingsScreen.applyEnv({ steamAvailable, audioOptions, appVersion });
 });
 
-// Fallback wallpaper for the empty screen (data URL from main). It doubles as the session's OPENING
+// Fallback wallpaper for the idle background (data URL from main). It doubles as the session's OPENING
 // backdrop: it paints on #hero-boot, above the hero layers, and holds the screen while the rest of the
 // launcher loads underneath (see the boot reveal above). It ALSO goes on a hero layer, as it always has:
 // that is the background a card whose hero never arrives is left with once the backdrop dissolves.
@@ -822,8 +848,11 @@ void window.api.requestWallpaper().then((url) => {
   hero.setWallpaper(url);
   if (url === null) bootBackdrop.hidden = true;
   else bootBackdrop.style.backgroundImage = `url("${url}")`;
-  if (gameOf(currentState) === undefined) hero.applyEmptyScreen();
-  else hero.showWallpaperBackdrop();
+  if (gameOf(currentState) === undefined) {
+    hero.applyIdleBackground();
+    // The title the empty screen used to carry belongs to render() now (a launcher card names itself).
+    render(currentState);
+  } else hero.showWallpaperBackdrop();
   wallpaperPainted = url !== null;
   noteBackgroundSettled();
 });
@@ -889,9 +918,15 @@ void window.api.requestHero().then((assets) => {
 function applyLibrary(games: readonly LibraryEntry[]): void {
   currentGames = games;
   carousel.setGames(games);
-  // The carousel is the default level whenever there is more than one game to flip through — but never
-  // yank the user out of a detail screen they opened themselves (they may be watching an install run).
-  if (carousel.exists() && !userChoseDetail) carousel.setScreen('carousel');
+  // main says nothing is on screen while the row is standing on a GAME: the user was parked on a launcher
+  // card and this window is a fresh one (a reload re-seeds the list, but which of the three cards it was
+  // is remembered nowhere), so the strip lands on games[0] with an idle background over it. Put it back on
+  // the launcher cards, without telling main anything — its cursor did not move.
+  const selected = carousel.selected();
+  if (currentBrowse === null && selected?.kind !== 'system') carousel.focusSystem();
+  // The carousel is the default level — but never yank the user out of a detail screen they opened
+  // themselves (they may be watching an install run).
+  if (!userChoseDetail) carousel.setScreen('carousel');
   render(currentState);
 }
 window.api.onLibraryUpdate((library) => applyLibrary(library?.games ?? []));

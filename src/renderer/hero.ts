@@ -1,10 +1,9 @@
 // Hero background subsystem (split out of app.ts). Owns everything about "what image is on
 // screen and its colors": the two cross-fading hero layers, the shown-url gate, the renderer-local hero
-// rotation, the empty/idle wallpaper screen, and the two-color palette (compute + cache + apply). These
+// rotation, the idle wallpaper background, and the two-color palette (compute + cache + apply). These
 // share `shownUrl`/`wallpaperUrl` so they live together — keeping the palette race gate internal rather
 // than threaded through app.ts. The controller reaches back only through the narrow `deps` seam.
 import type { HeroAssets } from '../shared/types';
-import type { Translator } from '../shared/i18n/index.js';
 import { computePalette, type Palette } from './dominant-color.js';
 import { req } from './dom.js';
 
@@ -16,8 +15,6 @@ export interface HeroDeps {
   hasGameOnScreen(): boolean;
   /** The current game's id (for the per-hero palette cache key); '' when none. */
   getGameId(): string;
-  /** The current translator (read live so the empty-screen title follows the language). */
-  getTranslator(): Translator;
 }
 
 export interface HeroController {
@@ -31,8 +28,12 @@ export interface HeroController {
   /** New hero payload for the BROWSED game. Same thing, except an empty payload REPLACES the background
    *  (with the wallpaper) instead of leaving the previous game's image up. */
   applyBrowseAssets(assets: HeroAssets | null): void;
-  /** The empty / idle screen: fallback wallpaper background, its palette, "Insert a game card" title. */
-  applyEmptyScreen(): void;
+  /**
+   * The idle background: the fallback wallpaper and its palette, for a screen with no game on it — the
+   * carousel standing on one of the launcher's own cards. The TITLE is not touched here: what is written
+   * there belongs to render() (a launcher card names itself in the same line a game does).
+   */
+  applyIdleBackground(): void;
   /**
    * Paints the fallback wallpaper as the FIRST background of the session — without claiming the screen
    * is empty (no title change): a launcher opening onto a card has nothing to show until its hero data
@@ -62,7 +63,6 @@ export interface HeroController {
 export function createHeroController(deps: HeroDeps): HeroController {
   const app = req('app');
   const heroPanEl = req('hero-pan');
-  const titleEl = req('title');
 
   // Fallback wallpaper (data URL from main) for the empty / idle screen, and its cached palette.
   let wallpaperUrl: string | null = null;
@@ -231,10 +231,9 @@ export function createHeroController(deps: HeroDeps): HeroController {
     idleLayer = previousActive;
   }
 
-  // The empty / idle screen (no game): the fallback wallpaper as background, its dominant colors as
-  // the palette, and "Insert a game card" as the title. Reuses the main screen's bottom bar layout.
-  function applyEmptyScreen(): void {
-    titleEl.textContent = deps.getTranslator()('launcher.emptyTitle');
+  // The idle background (no game on screen): the fallback wallpaper, with its dominant colors as the
+  // palette. Reuses the main screen's bottom bar layout; the title line is render()'s business.
+  function applyIdleBackground(): void {
     if (wallpaperUrl === null) {
       requestImage(null, () => applyPalette(null));
       return;
@@ -242,12 +241,12 @@ export function createHeroController(deps: HeroDeps): HeroController {
     requestImage(wallpaperUrl, applyWallpaperPalette);
   }
 
-  // The wallpaper as the opening backdrop: same image and palette as the empty screen, but it says
-  // nothing about the state — the title is left to render(). Only ever paints into an empty screen, so
-  // it can never override a hero that already arrived.
+  // The wallpaper as the opening backdrop: the same paint as the idle background, under a gate — it only
+  // ever paints into a screen that has nothing on it yet, so it can never override a hero that arrived
+  // first. One source of behaviour, two entry conditions.
   function showWallpaperBackdrop(): void {
-    if (shownUrl !== null || desiredUrl !== null || wallpaperUrl === null) return;
-    requestImage(wallpaperUrl, applyWallpaperPalette);
+    if (shownUrl !== null || desiredUrl !== null) return;
+    applyIdleBackground();
   }
 
   // ── Hero rotation (renderer-local, GTA-5 cadence) ──────────────────────────
@@ -353,7 +352,7 @@ export function createHeroController(deps: HeroDeps): HeroController {
     startRotation,
     applyAssets,
     applyBrowseAssets: (assets) => applyAssets(assets, true),
-    applyEmptyScreen,
+    applyIdleBackground,
     showWallpaperBackdrop,
     setWallpaper,
     setParallax,

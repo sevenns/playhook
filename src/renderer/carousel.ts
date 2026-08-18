@@ -1,12 +1,16 @@
-// The history carousel: the launcher's top-level screen. A strip of game cards — the inserted card's
-// games first (dotted: launchable right now), then what was played on this device before — sliding under
-// a fixed anchor while the selection stays put. Pressing A on a card opens the existing bar screen for it
-// (`detail`); B comes back here.
+// The history carousel: the launcher's top-level screen. A strip of cards — the inserted card's games
+// first (dotted: launchable right now), then what was played on this device before, then the launcher's
+// own three cards (Notifications / Settings / System, see system-cards.ts) — sliding under a fixed anchor
+// while the selection stays put. Pressing A on a game card opens the existing bar screen for it
+// (`detail`); B comes back here. Pressing A on a launcher card opens that surface instead — the screen
+// level does not change.
 //
 // Owns only the strip: the DOM of the cards, the selection, the artwork cache and the `data-screen`
 // attribute. What is SHOWN for the selected card (title, stats, background, music) is main's answer to
-// `browseGame(id)` — this module never derives it. The geometry lives in carousel-geometry.ts (pure).
+// `browseGame(id)` — this module never derives it; a launcher card answers `browseNone()`, which is main's
+// "nothing is on screen". The geometry lives in carousel-geometry.ts (pure).
 import type { LibraryEntry } from '../shared/types';
+import type { Translator } from '../shared/i18n/index.js';
 import {
   RETURN_FAN_MS,
   RETURN_LOCK_MS,
@@ -16,16 +20,26 @@ import {
   isWithinWindow,
   stripOffset,
 } from './carousel-geometry.js';
+import { SYSTEM_CARDS, type SystemCard } from './system-cards.js';
+import { systemCardIcon } from './system-card-icons.js';
 import { req } from './dom.js';
 
 /** The two levels of the launcher screen (mirrors `#app[data-screen]`). */
 export type Screen = 'carousel' | 'detail';
 
 /**
+ * One place in the row: a game from main's library, or one of the launcher's own cards. The row always
+ * holds the launcher cards, which is why there is no such thing as an empty carousel any more.
+ */
+export type CarouselItem =
+  | { readonly kind: 'game'; readonly game: LibraryEntry }
+  | { readonly kind: 'system'; readonly card: SystemCard };
+
+/**
  * What a `move` did. `at-end` is the one the caller acts on: the strip is against a hard stop, so the
- * press is free for whatever lies beyond the row (the bar's More button — see controls.ts). It must stay
- * distinct from `locked`, which is the return-morph still running and means "this press does nothing at
- * all" — treating the two alike would fling the focus off the strip on any press right after coming back.
+ * press has nowhere to go and says so (see controls.ts). It must stay distinct from `locked`, which is
+ * the return-morph still running and means "this press does nothing at all" — treating the two alike
+ * would sound a dead end on every press right after coming back.
  */
 export type MoveResult = 'moved' | 'at-end' | 'locked';
 
@@ -34,16 +48,21 @@ export interface CarouselDeps {
   requestGrid(id: string): Promise<string | null>;
   /** Tells main which game is on screen — it answers on the browse:* channels. Debounced by the caller. */
   browseGame(id: string): void;
+  /** Tells main that no game is on screen: a launcher card is selected (main answers with empty browse). */
+  browseNone(): void;
   /** The screen level changed (app.ts re-renders: the no-play layout and the focus model depend on it). */
   onScreenChange(screen: Screen): void;
-  /** A card was activated (A / click on the selected card) — app.ts decides what entering detail means. */
-  onActivate(entry: LibraryEntry): void;
+  /** A card was activated (A / click on the selected card) — app.ts decides what that means per kind. */
+  onActivate(item: CarouselItem): void;
   /** The selection moved by `delta` cards (a nav sound / the background parallax belong to app.ts). */
   onNavigate(delta: number): void;
+  /** The current translator (the launcher cards' aria-labels are the only text this module writes). */
+  getTranslator(): Translator;
 }
 
 export interface Carousel {
-  /** New list from main (insert / removal / a finished session / an eviction). Keeps the selection BY ID. */
+  /** New game list from main (insert / removal / a finished session / an eviction). Keeps the selection
+   *  BY IDENTITY — including a launcher card, which no list update can take away. */
   setGames(games: readonly LibraryEntry[]): void;
   /** Moves the selection by `delta` cards (no wrap-around — the ends are hard stops). */
   move(delta: number): MoveResult;
@@ -53,18 +72,24 @@ export interface Carousel {
    * A no-op when the id isn't in the list.
    */
   focusGame(id: string): void;
+  /**
+   * Puts the selection on the FIRST launcher card, again without telling main. Used when main's browse
+   * cursor says "nothing is on screen" while the row is standing on a game — a reconnected window, where
+   * the user was parked on a launcher card and which of the three it was is not remembered anywhere.
+   */
+  focusSystem(): void;
   /** Activates the selected card (A / a click on it). */
   activate(): void;
   /** The current screen level. */
   screen(): Screen;
-  /** Switches level. Refused into `carousel` when there is no carousel to show (0 or 1 game). */
+  /** Switches level. */
   setScreen(screen: Screen): void;
-  /** Whether the carousel exists at all (>1 game — with one there is nothing to flip through). */
-  exists(): boolean;
-  /** The selected entry, or undefined for an empty list. */
-  selected(): LibraryEntry | undefined;
+  /** The selected item — a game or a launcher card. */
+  selected(): CarouselItem | undefined;
   /** Marks the game AppState is busy with, so its card can pulse wherever it sits in the list. */
   setBusyGame(id: string | null): void;
+  /** Whether the inbox holds anything unread — the Notifications card wears the same dot a game does. */
+  setUnread(unread: boolean): void;
   /**
    * Replays the staggered fan the strip uses when it comes back from a detail screen. Called once at
    * startup, the moment the loading wallpaper hands over: the cards are built and laid out while the
@@ -80,15 +105,28 @@ export interface Carousel {
   setFlipping(flipping: boolean): void;
 }
 
+/** The row's identity for one item — the key of the DOM node, and what a list update keeps the selection by. */
+function itemKey(item: CarouselItem): string {
+  return item.kind === 'game' ? `g:${item.game.id}` : `s:${item.card.id}`;
+}
+
 export function createCarousel(deps: CarouselDeps): Carousel {
   const app = req('app');
   const strip = req('carousel-strip');
   const playButton = req('play-button');
 
-  let games: readonly LibraryEntry[] = [];
+  const systemItems: readonly CarouselItem[] = SYSTEM_CARDS.map((card) => ({
+    kind: 'system',
+    card,
+  }));
+  // The row: main's games, then the launcher's own cards. Never empty — which is what lets the carousel
+  // be the launcher's top level unconditionally, with no empty screen and no single-game special case.
+  let items: readonly CarouselItem[] = [...systemItems];
   let index = 0;
   let screen: Screen = 'detail';
   let busyId: string | null = null;
+  // Whether the inbox holds unread entries (main's push, relayed by app.ts) — the Notifications card's dot.
+  let unread = false;
   // While the strip is coming back from the detail screen the selected card is still growing out of the
   // play square. Moving the selection through that resizes and reorders a card mid-morph, which shows.
   // Timestamp (performance.now) until which a move is refused; 0 = the card stands at full size.
@@ -102,6 +140,8 @@ export function createCarousel(deps: CarouselDeps): Carousel {
   // The revision is what keeps that cache honest: editing gridImage re-copies the assets,
   // main bumps `artRev`, and the new key misses the cache — no restart needed to see the new cover.
   const art = new Map<string, string | null>();
+  // The card nodes, by itemKey — the launcher cards share the row with the games, so a raw game id would
+  // not be unique enough to address a node by.
   const cards = new Map<string, HTMLElement>();
   // A focusGame() that named a game the list does not hold YET. The browse cursor and the carousel list
   // are seeded over two independent channels, in either order, so on startup the "put the strip on the
@@ -112,34 +152,34 @@ export function createCarousel(deps: CarouselDeps): Carousel {
 
   const artKey = (game: LibraryEntry): string => `${game.id}@${game.artRev ?? ''}`;
 
-  function exists(): boolean {
-    return games.length > 1;
-  }
-
-  function selected(): LibraryEntry | undefined {
-    return games[index];
+  function selected(): CarouselItem | undefined {
+    return items[index];
   }
 
   /**
-   * Whether a card shows the "on the inserted card" dot. It only earns its place when it TELLS the two
-   * kinds of entry apart — with no history in the row every card would wear one — or when that game is
-   * busy, where the pulsing dot is the only sign of an install/run happening elsewhere in the list.
+   * Whether a card shows its dot. For a game it only earns its place when it TELLS the two kinds of entry
+   * apart — with no history in the row every card would wear one — or when that game is busy, where the
+   * pulsing dot is the only sign of an install/run happening elsewhere in the list. On the Notifications
+   * card the same dot means the same thing it used to mean beside the menu item: something is unread.
    */
-  function showsDot(game: LibraryEntry, hasHistory: boolean): boolean {
-    return (game.active && hasHistory) || game.id === busyId;
+  function showsDot(item: CarouselItem, hasHistory: boolean): boolean {
+    if (item.kind === 'system') return item.card.id === 'notifications' && unread;
+    return (item.game.active && hasHistory) || item.game.id === busyId;
   }
 
   /** The strip's translation + the per-card selected/active/busy state. Cheap; safe to call often. */
   function applyLayout(): void {
     strip.style.setProperty('--strip-offset', String(stripOffset(index)));
     const current = selected();
-    const hasHistory = games.some((game) => !game.active);
-    games.forEach((game, position) => {
-      const card = cards.get(game.id);
+    const currentKey = current === undefined ? null : itemKey(current);
+    const hasHistory = items.some((item) => item.kind === 'game' && !item.game.active);
+    items.forEach((item, position) => {
+      const key = itemKey(item);
+      const card = cards.get(key);
       if (card === undefined) return;
-      card.classList.toggle('is-selected', game.id === current?.id);
-      card.classList.toggle('is-busy', game.id === busyId);
-      card.classList.toggle('shows-dot', showsDot(game, hasHistory));
+      card.classList.toggle('is-selected', key === currentKey);
+      card.classList.toggle('is-busy', item.kind === 'game' && item.game.id === busyId);
+      card.classList.toggle('shows-dot', showsDot(item, hasHistory));
       // Past the shown window (see VISIBLE_CARDS): still laid out — the strip's offset is positional and
       // a removed node would shift every card after it — but faded out, so it slides in softly when the
       // selection reaches it instead of popping into existence at the row's end.
@@ -148,15 +188,23 @@ export function createCarousel(deps: CarouselDeps): Carousel {
       card.style.setProperty('--fan', String(fanIndex(position, index)));
     });
     // The morph's source image: #play-button wears the selected card's artwork so the swap into `detail`
-    // is invisible (see the morph block in styles.css).
-    const url = current === undefined ? null : (art.get(artKey(current)) ?? null);
+    // is invisible (see the morph block in styles.css). A launcher card has none — and no detail screen
+    // to morph into either.
+    const url =
+      current === undefined || current.kind === 'system'
+        ? null
+        : (art.get(artKey(current.game)) ?? null);
     playButton.style.setProperty('--card-art', url === null ? 'none' : `url("${url}")`);
   }
 
   /** Loads the artwork of the cards near the selection (a 40-game history must not decode 40 covers). */
   function loadNearbyArt(): void {
     if (flipping) return; // see setFlipping — the row is mid-flight, nobody is reading these cards yet
-    games.forEach((game, i) => {
+    // The position is the one in the WHOLE row (isNearViewport measures against the selection), while only
+    // the games have anything to fetch.
+    items.forEach((item, i) => {
+      if (item.kind !== 'game') return;
+      const game = item.game;
       const key = artKey(game);
       if (!isNearViewport(i, index) || art.has(key)) return;
       art.set(key, null); // claim the slot first: the request is async and re-renders are frequent
@@ -164,38 +212,47 @@ export function createCarousel(deps: CarouselDeps): Carousel {
         if (url === null) return;
         art.set(key, url);
         paintArt(game.id, url);
-        if (game.id === selected()?.id) applyLayout(); // refresh the morph source
+        const current = selected();
+        if (current?.kind === 'game' && current.game.id === game.id) applyLayout(); // refresh the morph source
       });
     });
   }
 
   function paintArt(id: string, url: string): void {
-    const card = cards.get(id);
+    const card = cards.get(`g:${id}`);
     if (card === undefined) return;
     card.style.backgroundImage = `url("${url}")`;
     card.classList.add('has-art');
   }
 
-  function buildCard(game: LibraryEntry): HTMLElement {
+  function buildCard(item: CarouselItem): HTMLElement {
     const card = document.createElement('div');
-    card.className = 'card';
-    card.dataset['gameId'] = game.id;
-    // Whether this card gets the "on the inserted card" dot is decided per render by showsDot
-    // (applyLayout) — it depends on the rest of the row, not on this game alone.
-    const label = document.createElement('span');
-    label.className = 'card-label';
-    // Card data is untrusted (it comes from game.json) — textContent, never innerHTML.
-    label.textContent = game.title;
+    card.className = item.kind === 'system' ? 'card is-system' : 'card';
+    // Whether this card gets its dot is decided per render by showsDot (applyLayout) — for a game it
+    // depends on the rest of the row, not on that game alone.
     const dot = document.createElement('span');
     dot.className = 'card-dot';
-    card.append(label, dot);
-    const url = art.get(artKey(game));
-    if (url !== undefined && url !== null) {
-      card.style.backgroundImage = `url("${url}")`;
-      card.classList.add('has-art');
+    if (item.kind === 'system') {
+      // The label is written by localizeDocument on every language change; the attribute below is what it
+      // reads, and the initial value is set here so the card is named from the frame it is built in.
+      card.dataset['i18nAriaLabel'] = item.card.ariaKey;
+      card.setAttribute('aria-label', deps.getTranslator()(item.card.ariaKey));
+      card.append(systemCardIcon(item.card.id), dot);
+    } else {
+      const label = document.createElement('span');
+      label.className = 'card-label';
+      // Card data is untrusted (it comes from game.json) — textContent, never innerHTML.
+      label.textContent = item.game.title;
+      card.append(label, dot);
+      const url = art.get(artKey(item.game));
+      if (url !== undefined && url !== null) {
+        card.style.backgroundImage = `url("${url}")`;
+        card.classList.add('has-art');
+      }
     }
+    const key = itemKey(item);
     card.addEventListener('click', () => {
-      const position = games.findIndex((g) => g.id === game.id);
+      const position = items.findIndex((candidate) => itemKey(candidate) === key);
       if (position === -1) return;
       // Click on the selected card = enter it; click on another = select it (two-step, like a d-pad).
       if (position === index) {
@@ -214,9 +271,9 @@ export function createCarousel(deps: CarouselDeps): Carousel {
 
   function rebuild(): void {
     cards.clear();
-    const nodes = games.map((game) => {
-      const card = buildCard(game);
-      cards.set(game.id, card);
+    const nodes = items.map((item) => {
+      const card = buildCard(item);
+      cards.set(itemKey(item), card);
       return card;
     });
     strip.replaceChildren(...nodes);
@@ -234,11 +291,11 @@ export function createCarousel(deps: CarouselDeps): Carousel {
    */
   function reorderSmoothly(apply: () => void): void {
     const before = new Map<string, number>();
-    for (const [id, card] of cards) before.set(id, card.offsetLeft);
+    for (const [key, card] of cards) before.set(key, card.offsetLeft);
     apply();
     const shifted: HTMLElement[] = [];
-    for (const [id, card] of cards) {
-      const from = before.get(id);
+    for (const [key, card] of cards) {
+      const from = before.get(key);
       if (from === undefined) continue; // new to the row: it belongs where it is, and fades in there
       const dx = from - card.offsetLeft;
       if (Math.abs(dx) < 1) continue;
@@ -254,24 +311,23 @@ export function createCarousel(deps: CarouselDeps): Carousel {
     }
   }
 
-  /** Tells main what is on screen now. */
+  /** Tells main what is on screen now — a game, or nothing at all on a launcher card. */
   function announceSelection(): void {
     const current = selected();
     if (current === undefined) return;
-    deps.browseGame(current.id);
+    if (current.kind === 'game') deps.browseGame(current.game.id);
+    else deps.browseNone();
   }
 
   function setScreen(next: Screen): void {
-    // With 0 or 1 game there is nothing to flip through: the launcher stays on the plain bar screen (Р7).
-    const effective: Screen = next === 'carousel' && !exists() ? 'detail' : next;
-    if (effective === screen) return;
-    screen = effective;
-    app.dataset['screen'] = effective;
+    if (next === screen) return;
+    screen = next;
+    app.dataset['screen'] = next;
     // Coming back, the strip is unusable until the selected card is back at full size (RETURN_LOCK_MS);
     // leaving, nothing is locked — the detail screen has its own focus model.
-    lockedUntil = effective === 'carousel' ? performance.now() + RETURN_LOCK_MS : 0;
-    markReturning(effective === 'carousel');
-    deps.onScreenChange(effective);
+    lockedUntil = next === 'carousel' ? performance.now() + RETURN_LOCK_MS : 0;
+    markReturning(next === 'carousel');
+    deps.onScreenChange(next);
   }
 
   /**
@@ -310,7 +366,7 @@ export function createCarousel(deps: CarouselDeps): Carousel {
     if (isLocked()) return 'locked';
     // The user is steering now: a seed request still waiting for its list must not yank the strip later.
     pendingFocusId = null;
-    const next = clampIndex(index + delta, games.length);
+    const next = clampIndex(index + delta, items.length);
     if (next === index) return 'at-end'; // no move — the caller decides what a stop means, sound included
     const moved = next - index;
     index = next;
@@ -321,12 +377,12 @@ export function createCarousel(deps: CarouselDeps): Carousel {
     return 'moved';
   }
 
-  // The launcher starts on the plain bar screen; the first list with more than one game promotes it.
+  // The launcher starts on the plain bar screen; the first list promotes it to the carousel (applyLibrary).
   app.dataset['screen'] = screen;
 
   return {
     focusGame(id: string): void {
-      const position = games.findIndex((game) => game.id === id);
+      const position = items.findIndex((item) => item.kind === 'game' && item.game.id === id);
       if (position === -1) {
         pendingFocusId = id; // the list carrying it is still in flight — see the field
         return;
@@ -337,23 +393,32 @@ export function createCarousel(deps: CarouselDeps): Carousel {
       applyLayout();
       loadNearbyArt();
     },
+    focusSystem(): void {
+      const position = items.findIndex((item) => item.kind === 'system');
+      if (position === -1 || position === index) return;
+      pendingFocusId = null;
+      index = position;
+      applyLayout();
+      loadNearbyArt();
+    },
     setGames(list: readonly LibraryEntry[]): void {
-      // The selection is remembered BY ID, not by position: the list is re-ordered whenever a card is
-      // inserted or a session ends, and a positional cursor would silently land on a different game.
+      // The selection is remembered BY IDENTITY, not by position: the list is re-ordered whenever a card
+      // is inserted or a session ends, and a positional cursor would silently land on a different game.
+      // A launcher card survives every update by construction — it is in every list this builds.
       // A pending focus request wins over the current selection — it is the newer instruction of the two.
-      const currentId = pendingFocusId ?? selected()?.id;
-      games = list;
-      if (pendingFocusId !== null && games.some((game) => game.id === pendingFocusId)) {
+      const currentKey = pendingFocusId !== null ? `g:${pendingFocusId}` : (selected() === undefined ? undefined : itemKey(selected() as CarouselItem));
+      items = [...list.map((game): CarouselItem => ({ kind: 'game', game })), ...systemItems];
+      if (pendingFocusId !== null && list.some((game) => game.id === pendingFocusId)) {
         pendingFocusId = null;
       }
       index = clampIndex(
-        currentId === undefined
+        currentKey === undefined
           ? 0
           : Math.max(
               0,
-              games.findIndex((game) => game.id === currentId),
+              items.findIndex((item) => itemKey(item) === currentKey),
             ),
-        games.length,
+        items.length,
       );
       // Both together: applyLayout is what resizes the selected card, so measuring between the two would
       // compare against a width the row is about to change.
@@ -362,15 +427,17 @@ export function createCarousel(deps: CarouselDeps): Carousel {
         applyLayout();
       });
       loadNearbyArt();
-      // A list that shrank to a single game (or none) has no carousel left to stand on.
-      if (!exists() && screen === 'carousel') setScreen('detail');
     },
     move,
     activate,
     screen: () => screen,
     setScreen,
-    exists,
     selected,
+    setUnread(next: boolean): void {
+      if (unread === next) return;
+      unread = next;
+      applyLayout();
+    },
     setFlipping(next: boolean): void {
       if (flipping === next) return;
       flipping = next;

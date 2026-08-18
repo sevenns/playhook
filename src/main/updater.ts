@@ -71,7 +71,7 @@ export interface UpdaterDeps {
   /** Whether the Steam-shortcut feature exists on this machine (linux + packaged AppImage). */
   readonly isSteamAvailable: () => boolean;
   /** Applies the "always show the no-card screen" toggle (reconciles the launcher's visibility). */
-  readonly onAlwaysShowEmptyScreenChanged: (enabled: boolean) => void;
+  readonly onKeepOpenWithoutCardChanged: (enabled: boolean) => void;
   /** Pushes new audio volumes to the game renderer so they apply live. */
   readonly onVolumesChanged: (volumes: AudioVolumes) => void;
   /** Applies a navigation-sound-set change (re-reads + re-pushes the current sfx to the game window). */
@@ -187,10 +187,10 @@ export class UpdaterService {
           log.error('[updater] failed to persist prevent-screensaver:', cause),
         );
     });
-    ipcMain.on(IPC.settingsSetAlwaysShowEmptyScreen, (_event, on: boolean) => {
+    ipcMain.on(IPC.settingsSetKeepOpenWithoutCard, (_event, on: boolean) => {
       void this.deps.settings
-        .patch({ alwaysShowEmptyScreen: on })
-        .then(() => this.deps.onAlwaysShowEmptyScreenChanged(on))
+        .patch({ keepOpenWithoutCard: on })
+        .then(() => this.deps.onKeepOpenWithoutCardChanged(on))
         .catch((cause: unknown) =>
           log.error('[updater] failed to persist always-show-empty-screen:', cause),
         );
@@ -264,7 +264,7 @@ export class UpdaterService {
     }
     this.deps.onSummonHotkeyChanged(next.summonHotkeyEnabled);
     this.deps.onPreventScreensaverChanged(next.preventScreensaver);
-    this.deps.onAlwaysShowEmptyScreenChanged(next.alwaysShowEmptyScreen);
+    this.deps.onKeepOpenWithoutCardChanged(next.keepOpenWithoutCard);
     // A reset turns auto-launch back on — the watcher unit has to come back with it, or the setting
     // would say "on" while nothing is actually watching.
     await this.deps.onSteamAutoLaunchChanged(next.steamAutoLaunch);

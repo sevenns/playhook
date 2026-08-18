@@ -9,7 +9,7 @@ import { z } from 'zod';
 import { type AppSettings, type AutoUpdateMode, type LanguageMode } from '../shared/types';
 import { readJsonValidated, writeJsonAtomic } from './json-store';
 
-const settingsSchema = z.object({
+const settingsObject = z.object({
   schemaVersion: z.literal(1),
   // `.default` so a partial/older settings.json missing this field (e.g. a half-written file that lost
   // `autoUpdate` mid-write) still validates instead of failing the WHOLE parse → a full reset to defaults.
@@ -30,9 +30,10 @@ const settingsSchema = z.object({
   preventScreensaver: z.boolean().default(true),
   musicVolume: z.number().min(0).max(1).default(0.5),
   sfxVolume: z.number().min(0).max(1).default(1),
-  // Keep the empty "no card" screen visible instead of hiding to the tray. `.default(false)` keeps the
-  // original background-app behaviour for an older settings.json without the field.
-  alwaysShowEmptyScreen: z.boolean().default(false),
+  // Stay on screen with no card in instead of hiding to the tray. `.default(false)` keeps the original
+  // background-app behaviour for an older settings.json without the field; a file written under the old
+  // name (alwaysShowEmptyScreen) is carried over by the preprocess below.
+  keepOpenWithoutCard: z.boolean().default(false),
   // Disable trying silent mode for install-mode installers (they show their wizard instead). `.default(false)`
   // keeps the original silent behaviour for an older settings.json without the field.
   disableSilentInstall: z.boolean().default(false),
@@ -57,6 +58,27 @@ const settingsSchema = z.object({
   onlyGlobalAmbient: z.boolean().default(false),
 });
 
+/**
+ * `alwaysShowEmptyScreen` was renamed to `keepOpenWithoutCard` when the screen it was named after went
+ * away (the launcher cards replaced it); the SETTING is the same one, so a file written by an older
+ * build must keep its value. Without this the `.default(false)` above would swallow the missing key
+ * without a trace and quietly switch the toggle off for everyone who had turned it on.
+ *
+ * No schemaVersion bump — this is the same in-place style of migration `language`, `steamAppIdU32` and
+ * `soundSet` already use.
+ */
+const settingsSchema = z.preprocess((raw) => {
+  if (typeof raw !== 'object' || raw === null) return raw;
+  const record = raw as Record<string, unknown>;
+  if (!('alwaysShowEmptyScreen' in record) || 'keepOpenWithoutCard' in record) return raw;
+  const migrated: Record<string, unknown> = {
+    ...record,
+    keepOpenWithoutCard: record['alwaysShowEmptyScreen'],
+  };
+  delete migrated['alwaysShowEmptyScreen'];
+  return migrated;
+}, settingsObject);
+
 // Default preserves the pre-settings behaviour (silent download + install on next quit), so the
 // first run / a missing file migrates seamlessly to what the app did before this window existed.
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -69,7 +91,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   preventScreensaver: true,
   musicVolume: 0.5,
   sfxVolume: 1,
-  alwaysShowEmptyScreen: false,
+  keepOpenWithoutCard: false,
   disableSilentInstall: false,
   steamAppIdU32: null,
   steamAutoLaunch: true,

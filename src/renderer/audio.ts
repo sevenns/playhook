@@ -34,6 +34,13 @@ export interface AudioController {
    * the carousel never rebuilds the sound elements.
    */
   setBrowseMusic(url: string | null): void;
+  /**
+   * Whether NO game is on screen at all — the carousel is standing on one of the launcher's own cards.
+   * There the ambience plays, whatever is in the drive: a plain `browseMusic = null` would fall through
+   * to the CARD's music (that is the whole point of the fallback chain), and the launcher cards are meant
+   * to sound like the launcher, not like the game that happens to be inserted.
+   */
+  setIdle(idle: boolean): void;
   /** Sets the app-wide default ambience (data URL), or clears it when null. */
   setAmbient(url: string | null): void;
   /** The bundled UI sound set — every sound the app plays, on every screen. */
@@ -109,6 +116,8 @@ export function createAudioController(): AudioController {
   let browseMusic: string | null = null;
   let gameMusic: string | null = null;
   let ambient: string | null = null;
+  // No game on screen (a launcher card is selected) — see setIdle.
+  let idle = false;
 
   // The currently-primary player (fading IN or steady) and, during a crossfade, the outgoing one (fading
   // OUT). `activeUrl` mirrors the effective source we've committed to — the idempotence key.
@@ -252,7 +261,7 @@ export function createAudioController(): AudioController {
   };
 
   const applyEffective = (): void => {
-    const target = browseMusic ?? gameMusic ?? ambient;
+    const target = idle ? ambient : (browseMusic ?? gameMusic ?? ambient);
     if (target === activeUrl) return; // idempotent: same effective source → never restart playback
     if (wantPlay) crossfadeTo(target);
     else hardSwap(target);
@@ -268,6 +277,12 @@ export function createAudioController(): AudioController {
     setBrowseMusic(url: string | null): void {
       if (url === browseMusic) return;
       browseMusic = url;
+      applyEffective();
+    },
+
+    setIdle(next: boolean): void {
+      if (idle === next) return;
+      idle = next;
       applyEffective();
     },
 

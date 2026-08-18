@@ -287,7 +287,6 @@ body {
   pointer-events: auto;
 }
 
-/* The strip dims as a whole while the bar holds the focus (see the [data-bar-focus] block below). */
 #carousel-strip {
   position: absolute;
   /* The anchor: the same x=50 the bar content uses, so the selected card lines up with the title. */
@@ -353,6 +352,26 @@ body {
 #app[data-screen='detail'] .card.is-selected::after {
   animation: none;
   opacity: 0;
+}
+
+/* The launcher's own cards (Notifications / Settings / System): no artwork, a solid d2 plate with the
+   glyph punched out of it in d1 — the same inversion the focused rect-button uses. Selected, it grows to
+   136x204 from the base rule like any other card; its name appears in the bar's title line, not on it. */
+.card.is-system {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: var(--d2);
+  background-image: none;
+  color: var(--d1);
+}
+
+/* ~48 design px, the size the icons were exported at. currentColor, so the glyph follows the palette
+   through the plate above rather than carrying a colour of its own. */
+.card-icon {
+  width: calc(48 * var(--px));
+  height: calc(48 * var(--px));
+  fill: currentColor;
 }
 
 /* The title placeholder shown until the artwork arrives (a card may have none at all). */
@@ -496,38 +515,6 @@ body {
   pointer-events: none;
 }
 
-/* The bar holds the focus (Y, or right off the last card): the strip is no longer the surface being
-   driven, so it stops looking like one. Three things go together, and all three come back the moment the
-   focus returns to the cards:
-     - the selected card's pulsing ring — that ring IS the carousel's focus marker;
-     - the row itself dims, so "the cards are not what you are steering" reads at a glance;
-     - the bar copy, which names the selected card, fades to the same value as the row (title and status
-       move as one block, as everywhere else) — it stays readable, it just stops being the focus.
-   The size of the selected card is deliberately NOT touched: it is the strip's anchor, and shrinking it
-   would shove every card behind it sideways on a mere focus change. */
-#app[data-screen='carousel'][data-bar-focus] {
-  /* One knob for the whole dimmed surface — the row and the copy that names it must fade to the SAME
-     value, or the "this is not the active surface" reading falls apart into two unrelated effects. */
-  --strip-dim: 0.45;
-}
-#app[data-screen='carousel'][data-bar-focus] #carousel-strip {
-  opacity: var(--strip-dim);
-}
-#app[data-screen='carousel'][data-bar-focus] .card.is-selected::after {
-  opacity: 0;
-  animation: none;
-  /* Declared HERE and not in the base rule: entering this state fades the ring out (the after-change
-     style carries the transition), leaving it snaps the ring back — which is what a focus RETURN should
-     feel like. Putting it in the base rule instead would also fade the ring in on every flip. */
-  transition: opacity 0.2s ease;
-}
-/* The bar copy dims WITH the row rather than leaving: it still names the selected card, and that card is
-   still there — just not the thing being steered. Both lines move together, as everywhere else. The
-   status is scoped to `shown` so this never overrides its hidden default into a faint empty line. */
-#app[data-screen='carousel'][data-bar-focus] .title,
-#app[data-screen='carousel'][data-bar-focus][data-status='shown'] .status {
-  opacity: var(--strip-dim);
-}
 #app[data-screen='carousel'] .card.is-selected {
   /* The hand-back is a SWAP, same as the hand-over: this card is pixel-identical to the button it takes
      over from, so it must be fully opaque in the very frame the button goes — anything softer shows the
@@ -774,10 +761,13 @@ html:not(.mouse-asleep) .play-button:hover::after,
 
 /* ── Rect (Info) button — normal: no background, content d2; fills with d2 on hover/focus ── */
 
-/* Carousel level: Play is hidden (it is the selected card's stand-in for the morph — see below), but
-   More stays. It is the launcher-level menu here — System + Close — while the game's own actions live one
-   level deeper, on the detail screen. Reached with the mouse, or with Y, which hands the focus between
-   the strip and this button (see controls.ts). */
+/* Carousel level: neither bar button is there. Play is hidden (it is the selected card's stand-in for the
+   morph — see below), and More goes with it: the menu it opens is the GAME's, and the launcher's own
+   actions are cards in the row. The button stays in the DOM — the bar's focus model is built on it — so
+   it is hidden here rather than removed. */
+#app[data-screen='carousel'] #more-button {
+  display: none;
+}
 
 .rect-button {
   position: absolute;
@@ -1093,13 +1083,6 @@ html:not(.mouse-asleep) .rect-button:hover,
 #popup[data-view='confirm'] .popup-confirm,
 #popup[data-view='error'] .popup-error {
   display: flex;
-}
-
-/* …except on the carousel, where the menu is the LAUNCHER's (System + Close) and not a game's — the play
-   statistics of whichever card the row happens to stand on have no business in it. Beats the rule above
-   on specificity, so the panel stays out of the details view there. */
-#app[data-screen='carousel'] #popup[data-view='details'] .popup-info {
-  display: none;
 }
 
 /* The stats and the action items come in one after another as the popup opens: the column slides in as a
@@ -1545,29 +1528,6 @@ html:not(.mouse-asleep) .notification-item:hover .notification-dot {
   font-size: calc(24 * var(--px));
   line-height: calc(36 * var(--px));
   color: color-mix(in srgb, var(--fg) 75%, transparent);
-}
-
-/* The More menu's "Notifications" item carries the unread dot, which is why its label lives in a span of
-   its own: the other applyMenu* helpers write textContent straight into the button, and doing that here
-   would wipe the dot out with it. */
-/* Absent unless there is something unread: the label is centred inside the button, so a dot kept at
-   opacity 0 would still hold its 20px and push the word off-centre for good. */
-.menu-dot {
-  display: none;
-  width: calc(8 * var(--px));
-  height: calc(8 * var(--px));
-  border-radius: 50%;
-  background: var(--d2);
-  margin-left: calc(12 * var(--px));
-}
-
-#menu-notifications.has-unread .menu-dot {
-  display: block;
-}
-
-#menu-notifications.is-focused .menu-dot,
-html:not(.mouse-asleep) #menu-notifications:hover .menu-dot {
-  background: var(--d1);
 }
 
 /* ── The toast ──────────────────────────────────────────────────────────────
@@ -2458,10 +2418,8 @@ html:not(.mouse-asleep) .settings-option:hover,
    the card morph, which pins it to `0s linear` at a higher specificity than anything written here (see
    the [data-card-morph] rules above) — hiding it through that made the carousel snap back into place on
    the way out, as if it had been display:none. The strip's own `opacity 0.25s` is untouched by the morph
-   and runs in BOTH directions, which is exactly what the return needs. The [data-bar-focus] pair beats
-   that state's dim (0.45), which is on by definition here: this screen is entered from the More button. */
-#app[data-overlay] #carousel-strip,
-#app[data-overlay][data-bar-focus] #carousel-strip {
+   and runs in BOTH directions, which is exactly what the return needs. */
+#app[data-overlay] #carousel-strip {
   opacity: 0;
 }
 

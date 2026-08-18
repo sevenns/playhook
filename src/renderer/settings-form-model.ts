@@ -19,7 +19,7 @@ export type ToggleId =
   | 'prerelease'
   | 'summonHotkey'
   | 'preventScreensaver'
-  | 'alwaysShowEmptyScreen'
+  | 'keepOpenWithoutCard'
   | 'disableSilentInstall'
   | 'steamAutoLaunch'
   | 'onlyGlobalAmbient';
@@ -137,9 +137,9 @@ export function buildSettingsModel(settings: AppSettings, env: SettingsEnv): Set
     },
     {
       kind: 'toggle',
-      id: 'alwaysShowEmptyScreen',
-      label: { key: 'settings.alwaysShowEmpty' },
-      value: settings.alwaysShowEmptyScreen,
+      id: 'keepOpenWithoutCard',
+      label: { key: 'settings.keepOpenWithoutCard' },
+      value: settings.keepOpenWithoutCard,
     },
     {
       kind: 'toggle',

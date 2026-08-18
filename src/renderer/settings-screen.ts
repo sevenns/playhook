@@ -62,7 +62,7 @@ export interface SettingsScreenApi {
   setPrerelease(on: boolean): void;
   setSummonHotkey(on: boolean): void;
   setPreventScreensaver(on: boolean): void;
-  setAlwaysShowEmptyScreen(on: boolean): void;
+  setKeepOpenWithoutCard(on: boolean): void;
   setDisableSilentInstall(on: boolean): void;
   setSteamAutoLaunch(on: boolean): void;
   setSoundSet(set: string): void;
@@ -122,7 +122,7 @@ const TOGGLE_WRITERS: Readonly<Record<ToggleId, ToggleWriter>> = {
   prerelease: (api, value) => api.setPrerelease(value),
   summonHotkey: (api, value) => api.setSummonHotkey(value),
   preventScreensaver: (api, value) => api.setPreventScreensaver(value),
-  alwaysShowEmptyScreen: (api, value) => api.setAlwaysShowEmptyScreen(value),
+  keepOpenWithoutCard: (api, value) => api.setKeepOpenWithoutCard(value),
   disableSilentInstall: (api, value) => api.setDisableSilentInstall(value),
   steamAutoLaunch: (api, value) => api.setSteamAutoLaunch(value),
   onlyGlobalAmbient: (api, value) => api.setOnlyGlobalAmbient(value),
@@ -137,8 +137,8 @@ function withToggle(settings: AppSettings, id: ToggleId, value: boolean): AppSet
       return { ...settings, summonHotkeyEnabled: value };
     case 'preventScreensaver':
       return { ...settings, preventScreensaver: value };
-    case 'alwaysShowEmptyScreen':
-      return { ...settings, alwaysShowEmptyScreen: value };
+    case 'keepOpenWithoutCard':
+      return { ...settings, keepOpenWithoutCard: value };
     case 'disableSilentInstall':
       return { ...settings, disableSilentInstall: value };
     case 'steamAutoLaunch':
