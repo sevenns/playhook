@@ -54,7 +54,7 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'launcher.menu.quit': 'Закрыть Playhook',
   'launcher.menu.forceClose': 'Закрыть принудительно',
   'launcher.menu.goBack': 'Вернуться назад',
-  'launcher.menu.forget': 'Убрать из истории',
+  'launcher.menu.forget': 'Убрать из библиотеки',
   'launcher.menu.notifications': 'Уведомления',
   'launcher.menu.addGame': 'Добавить игру',
   'launcher.menu.settings': 'Настройки',
@@ -78,7 +78,7 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'launcher.confirm.reboot': 'Перезагрузить компьютер?',
   'launcher.confirm.kill': 'Закрыть игру принудительно? Несохранённый прогресс может быть потерян.',
   'launcher.confirm.forget':
-    'Убрать «{title}» из истории? Сейвы и статистика останутся — вставьте карту, и игра вернётся.',
+    'Убрать «{title}» из библиотеки? Сейвы и статистика останутся — вставьте карту, и игра вернётся.',
   'launcher.confirm.sleep': 'Перевести компьютер в спящий режим?',
   'launcher.installPathNote':
     'Не все установщики поддерживают тихий режим, поэтому при установке нужно указать следующий путь:',

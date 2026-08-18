@@ -70,7 +70,7 @@ export const en = {
   // Force-close the running game (Details menu item, visible only while a game is running).
   'launcher.menu.forceClose': 'Force close',
   'launcher.menu.goBack': 'Go back',
-  'launcher.menu.forget': 'Remove from history',
+  'launcher.menu.forget': 'Remove from library',
   'launcher.menu.notifications': 'Notifications',
   // Details menu entry that opens the Customize screen with no game behind it — the one way to CREATE a
   // game from inside the launcher.
@@ -101,7 +101,7 @@ export const en = {
   // may not get to write its save before syncing-out runs).
   'launcher.confirm.kill': 'Force close the game? Unsaved progress may be lost.',
   'launcher.confirm.forget':
-    'Remove "{title}" from the history? Its saves and playtime are kept — insert the card again and the game comes back.',
+    'Remove "{title}" from the library? Its saves and playtime are kept — insert the card again and the game comes back.',
   // Power-action confirmations — single-question form, matching the installer confirm convention.
   'launcher.confirm.shutdown': 'Shut down the PC?',
   'launcher.confirm.reboot': 'Reboot the PC?',
