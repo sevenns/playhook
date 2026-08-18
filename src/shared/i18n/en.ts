@@ -288,7 +288,7 @@ export const en = {
   'gameSettings.title': 'Title',
   'gameSettings.id': 'Id',
   'gameSettings.idChangedWarning':
-    'Changing the id detaches this game from its playtime, its save backups and its history entry on this PC.',
+    'Changing the id detaches this game from its playtime, its save backups and its library entry on this PC.',
   'gameSettings.launchMode': 'Launch type',
   'gameSettings.modeExecutable': 'Run from the card',
   'gameSettings.modeInstaller': 'Install from the card',
@@ -373,7 +373,7 @@ export const en = {
   'gameSettings.confirmDelete': 'Delete "{title}" from the manifest?',
   // The second half of the delete question. Its "No" is an ANSWER, not a way out — hence the last line:
   // backing out of the question is what cancels the deletion.
-  'gameSettings.confirmDeleteHistory': 'Remove "{title}" from the history as well?',
+  'gameSettings.confirmDeleteHistory': 'Remove "{title}" from the library as well?',
   'gameSettings.confirmDeleteHistoryNote':
     'Yes also drops its card from the carousel, with the artwork copied to this PC. No deletes the game and keeps the card. Closing this question cancels the deletion; the play time is kept either way.',
   'gameSettings.confirmDeleteNote':

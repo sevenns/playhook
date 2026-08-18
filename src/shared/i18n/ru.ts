@@ -58,7 +58,7 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'launcher.menu.notifications': 'Уведомления',
   'launcher.menu.addGame': 'Добавить игру',
   'launcher.menu.settings': 'Настройки',
-  'launcher.card.library': 'Библиотека игр',
+  'launcher.card.library': 'Библиотека',
   'launcher.card.notifications': 'Уведомления',
   'launcher.card.settings': 'Настройки',
   'launcher.card.system': 'Система',
@@ -244,7 +244,7 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'gameSettings.title': 'Название',
   'gameSettings.id': 'Идентификатор',
   'gameSettings.idChangedWarning':
-    'Смена идентификатора отвяжет игру от её наигранного времени, бэкапов сохранений и записи в истории на этом ПК.',
+    'Смена идентификатора отвяжет игру от её наигранного времени, бэкапов сохранений и записи в библиотеке на этом ПК.',
   'gameSettings.launchMode': 'Тип запуска',
   'gameSettings.modeExecutable': 'Запуск с карты',
   'gameSettings.modeInstaller': 'Установка с карты',
@@ -329,7 +329,7 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'gameSettings.confirmSwitchSource':
     'Добавить игру в другое место? Пути и настройки установщика будут очищены - название и остальное останутся.',
   'gameSettings.confirmDelete': 'Удалить "{title}" из манифеста?',
-  'gameSettings.confirmDeleteHistory': 'Убрать "{title}" ещё и из истории?',
+  'gameSettings.confirmDeleteHistory': 'Убрать "{title}" ещё и из библиотеки?',
   'gameSettings.confirmDeleteHistoryNote':
     'Да - карточка игры пропадёт из карусели вместе со скопированными на этот ПК картинками. Нет - игра удалится, карточка останется. Закрыть вопрос - отменить удаление; наигранное время сохранится в любом случае.',
   'gameSettings.confirmDeleteNote':
