@@ -199,7 +199,14 @@ const libraryScreen = createLibraryScreen({
     returnTo = 'library';
     controls.openAddGame();
   },
-  onClosed: () => controls.settingsClosed(),
+  onClosed: () => {
+    controls.settingsClosed();
+    // Opening this screen told main "nothing is on screen" (its card is a launcher card). Closing it
+    // hands the carousel back, so main has to hear what the row is standing on — which is not
+    // necessarily what it was: deleting a game from here moves the highlight onto its neighbour, and
+    // without this that neighbour would sit under the launcher's idle background and silence.
+    carousel.announce();
+  },
 });
 
 const toast = createToast({

@@ -205,7 +205,15 @@ export function pickKindFor(
   }
 }
 
-/** The manifest paths a row owns, for mapping a validator issue onto it. */
+/**
+ * The manifest paths a row owns, for mapping a validator issue onto it.
+ *
+ * Matched by prefix as well as exactly, because the validator names the exact spot INSIDE a value and a
+ * row owns the whole value: a bad process name comes back as `watchProcesses.0`, one bad launch argument
+ * as `install.args.2`. The row that holds the list is where the user goes to fix either of them, so an
+ * issue one level in has to land on it — otherwise the screen refuses to save over a problem it never
+ * points at.
+ */
 function issueOf(
   issues: ReadonlyMap<string, string>,
   ...paths: readonly string[]
@@ -213,6 +221,13 @@ function issueOf(
   for (const path of paths) {
     const message = issues.get(path);
     if (message !== undefined) return message;
+  }
+  // Second pass, so an exact owner always wins over one that merely contains the path.
+  for (const path of paths) {
+    const inside = `${path}.`;
+    for (const [candidate, message] of issues) {
+      if (candidate.startsWith(inside)) return message;
+    }
   }
   return undefined;
 }

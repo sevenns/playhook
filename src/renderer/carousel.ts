@@ -87,6 +87,14 @@ export interface Carousel {
   setScreen(screen: Screen): void;
   /** The selected item — a game or a launcher card. */
   selected(): CarouselItem | undefined;
+  /**
+   * Tells main what the row is standing on right now. The strip normally does this itself, on every
+   * move — this is for the times its selection changed while NOBODY was looking at it: a game deleted
+   * out of the Library takes its card with it, the cards behind close the gap, and the highlight ends up
+   * on a neighbour main was never told about. Left unsaid, that game's wallpaper, palette and music
+   * never arrive, and the row sits there under the launcher's idle background.
+   */
+  announce(): void;
   /** Marks the game AppState is busy with, so its card can pulse wherever it sits in the list. */
   setBusyGame(id: string | null): void;
   /** Whether the inbox holds anything unread — the Notifications card wears the same dot a game does. */
@@ -510,6 +518,9 @@ export function createCarousel(deps: CarouselDeps): Carousel {
         card.style.removeProperty('transition');
         card.style.removeProperty('opacity');
       }
+    },
+    announce(): void {
+      announceSelection();
     },
     setBusyGame(id: string | null): void {
       if (id === busyId) return;
