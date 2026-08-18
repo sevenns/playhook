@@ -2945,3 +2945,12 @@ html:not(.mouse-asleep) .picker-item:hover,
 #app[data-boot] .card {
   opacity: 0;
 }
+
+/* …and none of it is pressable while it is invisible: opacity 0 hides a button, it does not disarm it,
+   so a click landed on a menu nobody could see. The cards need a rule of their own — their
+   `pointer-events: auto` (see the carousel block) would otherwise undo the `none` inherited from #app.
+   The pad and the keyboard are fenced off in controls.ts (whileAwake), which this mirrors. */
+#app[data-boot],
+#app[data-boot] .card {
+  pointer-events: none;
+}

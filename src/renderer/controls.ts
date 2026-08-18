@@ -84,6 +84,13 @@ export interface ControlsDeps {
   onPopupClosed(): void;
   /** Opens a game's detail screen (a notification about a game leads there). Owned by app.ts. */
   openGameDetail(id: string): void;
+  /**
+   * Whether the boot screen is still up (app.ts owns the reveal). The whole UI is built and laid out
+   * behind the wallpaper — the bar sits at opacity 0, the cards are held at zero — so every surface is
+   * already drivable while nothing of it can be seen: A on the invisible row opened the Notifications
+   * card behind the boot image, and a direction flipped a carousel nobody was looking at.
+   */
+  isBooting(): boolean;
 }
 
 /**
@@ -1657,6 +1664,7 @@ export function createControls(deps: ControlsDeps): Controls {
     (event) => {
       // onCarousel() stays true under the Settings screen — without this the wheel would flip through the
       // strip behind the veil. Inside the screen the wheel scrolls its own list natively.
+      if (deps.isBooting()) return; // the row is behind the boot screen — see whileAwake
       if (overlays.isAnyOpen()) return;
       if (!onCarousel()) return;
       noteMouseActivity();
@@ -1681,25 +1689,42 @@ export function createControls(deps: ControlsDeps): Controls {
     // context-menu event main listens for, which is exactly how this broke copying the path.
     if (isOverSelectableText(event.target)) return;
     event.preventDefault();
+    if (deps.isBooting()) return; // the same fence the pad and the keyboard sit behind (see whileAwake)
     navBack();
     // AFTER, not before: navBack() is written for the gamepad and hides the cursor as its first act.
     // This click IS the mouse, so the cursor has to come back — and it is this call that restores it.
     noteMouseActivity();
   });
 
+  /**
+   * Wraps a primitive so it does nothing while the boot screen is up (see ControlsDeps.isBooting). Applied
+   * at the two DISPATCH points — the pad's handler map and the keyboard's keydown — rather than inside
+   * each primitive, so a surface added later is covered by construction. The mouse is fenced off in CSS
+   * (`#app[data-boot]` is pointer-events:none), and the wheel / right-click, which listen on the window
+   * and never touch that rule, check the flag themselves.
+   */
+  function whileAwake<A extends readonly unknown[]>(fn: (...args: A) => void): (...args: A) => void {
+    return (...args: A): void => {
+      if (deps.isBooting()) return;
+      fn(...args);
+    };
+  }
+
   const gamepad = createGamepadController(
     {
-      onLeft: navLeft,
-      onRight: navRight,
-      onUp: navUp,
-      onDown: navDown,
-      onA: navActivate,
-      onB: navBack,
-      onY: navY,
-      onX: navSecondary,
-      onShoulderLeft: () => navShoulder(-1),
-      onShoulderRight: () => navShoulder(1),
-      onTriggerRight: navCommit,
+      onLeft: whileAwake(navLeft),
+      onRight: whileAwake(navRight),
+      onUp: whileAwake(navUp),
+      onDown: whileAwake(navDown),
+      onA: whileAwake(navActivate),
+      onB: whileAwake(navBack),
+      onY: whileAwake(navY),
+      onX: whileAwake(navSecondary),
+      onShoulderLeft: whileAwake(() => navShoulder(-1)),
+      onShoulderRight: whileAwake(() => navShoulder(1)),
+      onTriggerRight: whileAwake(navCommit),
+      // NOT gated: a direction held across the reveal must still be able to end its run — this only tidies
+      // the flip spell and re-arms the `limit` latch, it drives nothing.
       onDirectionsReleased: endInput,
     },
     autoRepeat,
@@ -1774,6 +1799,10 @@ export function createControls(deps: ControlsDeps): Controls {
     if (handler === undefined) return;
     event.preventDefault(); // suppress the native default even on auto-repeat (e.g. Tab traversal)
     if (event.repeat) return; // the OS cadence is not ours — the timer below drives the run
+    // The boot fence, as a full return rather than a gated call (see whileAwake): the repeat timer armed
+    // below outlives the boot screen, so a direction merely GATED here would come back to life the moment
+    // the UI appeared and flip the row for a press made before it existed.
+    if (deps.isBooting()) return;
     handler(false);
     if (!REPEATABLE_KEYS.has(key)) return;
     stopKeyRepeat(); // a second direction takes the run over from the first

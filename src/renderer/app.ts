@@ -182,6 +182,9 @@ const controls = createControls({
   getNotifications: () => notificationItems,
   onPopupClosed: () => toast.resume(),
   openGameDetail: (id) => openGameDetail(id),
+  // Read lazily, like the carousel seam: the boot state is declared further down this module, and the
+  // first press cannot arrive before it exists.
+  isBooting: () => !bootRevealed,
   getBrowse: () => currentBrowse,
   audio,
   getTranslator,
