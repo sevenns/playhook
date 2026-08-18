@@ -3103,16 +3103,19 @@ html:not(.mouse-asleep) .picker-item:hover,
 }
 
 /* The glow BEHIND the selected cover: a pool of d2 spreading out of the middle of the card and showing
-   past its edges. It is one node of its own, first in the grid, rather than a pseudo-element of the card
-   — a child paints on TOP of its parent's background whatever its z-index, so a cover-sized card would
-   always have sat over it. As a sibling ahead of the cards it paints under all of them, and only the
-   part that reaches beyond the artwork is seen, which is the whole idea.
+   past its edges. A node of its own, not a pseudo-element of the card — a child paints on TOP of its
+   parent's background whatever its z-index, so the cover would have sat over it either way.
+   Its LAYER is the whole point: above the other covers, below its own. Under everything it would only
+   have shown through the 16 px gaps, and the selected card grows into those — leaving a ~10 px slit the
+   pulsing ring already crosses. Between the two layers the halo falls on the neighbours instead, which
+   is what light spilling out from behind a card actually does.
    It BREATHES with the ring — same 1.1s, same easing, so the two read as one heartbeat — and slides
    between cards on the morph, so it follows the selection instead of teleporting. */
 .library-glow {
   position: absolute;
   left: 0;
   top: 0;
+  z-index: 1;
   width: calc(200 * var(--px));
   height: calc(300 * var(--px));
   pointer-events: none;
@@ -3177,7 +3180,8 @@ html:not(.mouse-asleep) .picker-item:hover,
    not shift. z-index lifts it over them, since it now overlaps. */
 #app #library .library-grid .card.is-selected {
   --card-scale: 1.06;
-  z-index: 1;
+  /* Above the glow (z-index 1), which is itself above the other covers — see .library-glow. */
+  z-index: 2;
 }
 
 /* A held direction: the same trick the strip uses — a step exactly as long as the repeat interval, in
