@@ -189,7 +189,12 @@ const libraryScreen = createLibraryScreen({
   getGames: () => currentGames,
   // Read lazily for the same reason the carousel seam is: `controls` is created just below.
   onOpenGame: (id) => openGameDetail(id, 'library'),
-  onAddGame: () => controls.openAddGame(),
+  onAddGame: () => {
+    // The Customize screen closing is what brings the library back (see restoreOrigin) — cancelled or
+    // not. Set BEFORE the hand-over: openAddGame closes this screen on its way in.
+    returnTo = 'library';
+    controls.openAddGame();
+  },
   onClosed: () => controls.settingsClosed(),
 });
 
@@ -327,6 +332,13 @@ function restoreOrigin(): void {
   if (returnTo !== 'library') return;
   returnTo = 'carousel';
   libraryScreen.restore();
+  // …and undo what opening the game did to everything AROUND the screen. The detail screen took the
+  // game's wallpaper, its palette and its music with it; the library is a launcher surface and belongs
+  // over the launcher's own. The strip goes back to the Library card the screen was opened from (the
+  // only way in), and main is told nothing is on screen — the same thing selecting that card does.
+  carousel.focusSystem();
+  requestedBrowseId = null;
+  window.api.browseGame(null);
 }
 
 /**
@@ -360,6 +372,13 @@ function openGameDetail(id: string, origin: ReturnTo = 'carousel'): void {
   if (entry.active && gameOf(currentState)?.id !== id) window.api.selectGame(id);
   // A no-op when the strip is already on it (the carousel path), and the whole point when it is not.
   carousel.focusGame(id);
+  // The row is a SHORTLIST (MAX_STRIP_GAMES), so a game reached from the Library or from a notification
+  // may have no card in it — and then the morph would wear whichever card happens to be selected, i.e.
+  // another game's cover. Name the source explicitly in that case; null is an honest empty plate.
+  const onStrip = carousel.selected();
+  if (!(onStrip?.kind === 'game' && onStrip.game.id === id)) {
+    carousel.setDetailArt(libraryScreen.artFor(id));
+  }
   carousel.setScreen('detail');
 }
 

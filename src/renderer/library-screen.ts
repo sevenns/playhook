@@ -32,6 +32,8 @@ import { createSidebar, type SidebarEntry } from './screen-sidebar.js';
 const SINGLE_STEP_MS = 240;
 /** Fallback for --flip-step, should the property not be readable yet (controls.ts writes it at startup). */
 const FLIP_STEP_FALLBACK_MS = 143;
+/** How long a card that left the section fades for before its node goes (mirrors .is-leaving in CSS). */
+const LEAVE_MS = 220;
 
 export interface LibraryScreenDeps {
   readonly audio: AudioController;
@@ -85,6 +87,10 @@ export function createLibraryScreen(deps: LibraryScreenDeps): LibraryScreen {
   let cols = 1;
   let busyId: string | null = null;
   let flipping = false;
+  // A list arrived while the screen was away. The grid is NOT re-flowed then: it is still on screen,
+  // fading out under the detail screen, and cards moving during that fade is what read as a twitch.
+  // The next open/restore rebuilds it instead.
+  let stale = false;
   // The card nodes by game id: rebuilt lists reuse them, so a re-flow moves nodes instead of replacing
   // them — which is what lets the FLIP below animate, and what keeps a decoded cover on screen.
   const nodes = new Map<string, HTMLElement>();
@@ -204,7 +210,9 @@ export function createLibraryScreen(deps: LibraryScreenDeps): LibraryScreen {
       node.classList.toggle('shows-dot', game.active || game.id === busyId);
       node.classList.toggle('is-busy', game.id === busyId);
     });
-    if (active && current !== undefined) {
+    // Only while the screen is actually up: scrolling a grid that is fading out under the screen above
+    // it moves cards nobody asked to move, right in the user's eye line.
+    if (open && active && current !== undefined) {
       const node = nodeOf(current);
       if (node !== undefined) {
         if (instant) scroller.reveal(node, true);
@@ -249,9 +257,26 @@ export function createLibraryScreen(deps: LibraryScreenDeps): LibraryScreen {
     }
   }
 
+  /**
+   * Takes a card OUT of the grid without letting it vanish: frozen at the place it currently occupies,
+   * out of the flow (so the cards behind it close the gap straight away) and faded by the stylesheet.
+   * Switching sections otherwise looked like `display: none` — half the grid blinking out of existence.
+   */
+  function dismiss(node: HTMLElement): void {
+    const left = node.offsetLeft;
+    const top = node.offsetTop;
+    node.style.position = 'absolute';
+    node.style.left = `${left}px`;
+    node.style.top = `${top}px`;
+    node.classList.remove('is-selected');
+    node.classList.add('is-leaving');
+    window.setTimeout(() => node.remove(), LEAVE_MS);
+  }
+
   /** Builds the nodes of the current section and puts them in order, reusing whatever is still there. */
-  function syncNodes(): void {
+  function syncNodes(animate: boolean): void {
     shown = filterLibrary(games, filter);
+    const fresh: HTMLElement[] = [];
     const wanted = shown.map((game) => {
       const key = nodeKey(game.id);
       const existing = nodes.get(key);
@@ -262,13 +287,18 @@ export function createLibraryScreen(deps: LibraryScreenDeps): LibraryScreen {
         return existing;
       }
       const node = buildCard(game);
+      // Marked BEFORE it is inserted, so its first painted frame is the faded one and the transition
+      // has somewhere to come from.
+      if (animate) node.classList.add('is-entering');
       nodes.set(key, node);
+      fresh.push(node);
       return node;
     });
     for (const [key, node] of nodes) {
       if (shown.some((game) => nodeKey(game.id) === key)) continue;
-      node.remove();
       nodes.delete(key);
+      if (animate) dismiss(node);
+      else node.remove();
     }
     // In-order sync rather than replaceChildren: re-inserting a node the grid already holds would drop
     // its transition state, which is exactly what the FLIP above is measuring.
@@ -276,16 +306,23 @@ export function createLibraryScreen(deps: LibraryScreenDeps): LibraryScreen {
       const current = gridEl.children[at];
       if (current !== node) gridEl.insertBefore(node, current ?? null);
     });
+    if (fresh.length > 0) {
+      requestAnimationFrame(() => {
+        for (const node of fresh) node.classList.remove('is-entering');
+      });
+    }
     applyEmpty();
   }
 
-  /** Puts the whole section on screen from scratch (a section switch, a fresh open). */
-  function renderSection(): void {
-    syncNodes();
+  /** Puts the whole section on screen (a section switch, a fresh open, a list that arrived while away). */
+  function renderSection(animate: boolean): void {
+    if (animate) reorderSmoothly(() => syncNodes(true));
+    else syncNodes(false);
+    stale = false;
     index = clampIndex(index, 0, shown.length);
     measureColumns();
-    scroller.to(0, true);
-    applyLayout(true);
+    scroller.to(0, !animate);
+    applyLayout(!animate);
     requestAnimationFrame(() => scroller.fades());
   }
 
@@ -294,7 +331,7 @@ export function createLibraryScreen(deps: LibraryScreenDeps): LibraryScreen {
     if (next !== filter) {
       filter = next;
       index = 0;
-      renderSection();
+      renderSection(true);
     }
     if (!entered) return;
     enterGrid();
@@ -337,8 +374,9 @@ export function createLibraryScreen(deps: LibraryScreenDeps): LibraryScreen {
   function step(dir: GridDir, repeat: boolean): void {
     const move = gridStep(index, dir, shown.length, cols);
     if (move.result === 'to-sidebar') {
-      // A HELD left must not walk out through the level — the same rule every boundary in the UI obeys.
-      if (repeat) return;
+      // A held left hands over too, unlike the boundaries that leave a SCREEN: the column is the wall on
+      // this side, so running into it has to end in the column rather than against the first card. It
+      // goes no further — left in the column is a dead end.
       deps.audio.play('navigate');
       leaveGrid();
       return;
@@ -420,24 +458,37 @@ export function createLibraryScreen(deps: LibraryScreenDeps): LibraryScreen {
       sidebar.reset();
       sidebar.setFocused(true);
       sidebar.animateIn();
-      renderSection();
+      renderSection(false);
     },
     restore: () => {
       if (open) return;
       show();
-      // The nodes and the scroll position survived the trip, so nothing is rebuilt: the screen comes back
-      // exactly as it was left. Only the artwork window is re-run — it was paused while away.
-      loadWindowArt();
+      // The nodes and the scroll position survived the trip, so the screen comes back exactly as it was
+      // left — unless a list arrived while it was away, which is where that update finally lands.
+      if (stale) {
+        stale = false;
+        const previousId = selectedGame()?.id ?? null;
+        const previousIndex = index;
+        syncNodes(false);
+        const restored =
+          previousId === null ? -1 : shown.findIndex((game) => game.id === previousId);
+        index = restored === -1 ? clampIndex(previousIndex, 0, shown.length) : restored;
+        measureColumns();
+      }
+      applyLayout(true);
     },
     close,
     setGames: (list) => {
       games = list;
+      // While the screen is away the grid is left alone entirely — see `stale`. Re-flowing it there is
+      // both invisible work and, during the fade out to a detail screen, a visible twitch.
+      if (!open) {
+        stale = true;
+        return;
+      }
       const previousId = selectedGame()?.id ?? null;
       const previousIndex = index;
-      // The FLIP is for a grid somebody is LOOKING at; while the screen is away the nodes just take
-      // their new places, and the next restore() shows them already there.
-      if (open) reorderSmoothly(() => syncNodes());
-      else syncNodes();
+      reorderSmoothly(() => syncNodes(true));
       const restored = previousId === null ? -1 : shown.findIndex((game) => game.id === previousId);
       // Held BY IDENTITY: a card going in or out re-orders the whole list, and a positional cursor would
       // silently land on a different game. When the game itself is gone, its old place is the nearest
@@ -462,16 +513,18 @@ export function createLibraryScreen(deps: LibraryScreenDeps): LibraryScreen {
       if (game === undefined) return null;
       return deps.art.get(artKey(game)) ?? null;
     },
+    // The column repeats on a hold, exactly as the Settings one does — it is a list like any other, and
+    // holding a direction on it is how you get to the actions at its foot without four presses.
     navUp: (repeat = false) => {
       if (sidebar.hasFocus()) {
-        if (!repeat) sidebar.move(-1);
+        sidebar.move(-1);
         return;
       }
       step('up', repeat);
     },
     navDown: (repeat = false) => {
       if (sidebar.hasFocus()) {
-        if (!repeat) sidebar.move(1);
+        sidebar.move(1);
         return;
       }
       step('down', repeat);

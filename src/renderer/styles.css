@@ -3023,7 +3023,11 @@ html:not(.mouse-asleep) .picker-item:hover,
 /* --cols is measured in JS (library-screen.ts) rather than left to flex-wrap, because up/down are a
    ±cols step and the maths has to agree with the layout. The fallback of 1 is deliberate: a fallback
    of 6 would overflow the container on a 16:10 screen for the frame before the first measurement. */
+/* Positioned, because a card LEAVING the section is pulled out of the grid's flow and pinned where it
+   stood while it fades (see .is-leaving) — the cards behind it close the gap immediately instead of the
+   whole section blinking out. */
 .library-grid {
+  position: relative;
   display: grid;
   justify-content: center;
   align-content: start;
@@ -3064,7 +3068,63 @@ html:not(.mouse-asleep) .picker-item:hover,
      collapsing the selected card for the length of the animation. */
   --card-scale: 1;
   transform: scale(var(--card-scale));
-  transition: transform var(--morph) var(--morph-ease);
+  transition: transform var(--morph) var(--morph-ease), opacity var(--morph) ease;
+}
+
+/* A card arriving with a section (and one leaving it). Same shape both ways — smaller and transparent —
+   so switching sections reads as the grid re-forming rather than as rows blinking in and out. */
+#app #library .library-grid .card.is-entering,
+#app #library .library-grid .card.is-leaving {
+  opacity: 0;
+  --card-scale: 0.92;
+}
+
+#app #library .library-grid .card.is-leaving {
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* The selected card's glow: a pool of d2 blooming out of the middle of the cover. It BREATHES with the
+   ring around it — same 1.1s, same easing — so the two read as one heartbeat rather than two effects
+   competing; and it opens with a swell of its own the moment the selection lands, which is what makes
+   the highlight feel like it arrives rather than switches on. */
+#app #library .library-grid .card.is-selected::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: radial-gradient(
+    circle at 50% 50%,
+    color-mix(in srgb, var(--d2) 55%, transparent) 0%,
+    color-mix(in srgb, var(--d2) 26%, transparent) 40%,
+    transparent 72%
+  );
+  pointer-events: none;
+  animation: library-glow-in 0.34s var(--morph-ease) both,
+    library-glow-pulse 1.1s ease-in-out 0.34s infinite;
+}
+
+@keyframes library-glow-in {
+  from {
+    opacity: 0;
+    transform: scale(0.35);
+  }
+  to {
+    opacity: 0.62;
+    transform: scale(1);
+  }
+}
+
+@keyframes library-glow-pulse {
+  0%,
+  100% {
+    opacity: 0.62;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.92;
+    transform: scale(1.06);
+  }
 }
 
 /* Grown in place: the grid's geometry does not depend on which card is selected, so the neighbours must
@@ -3078,6 +3138,14 @@ html:not(.mouse-asleep) .picker-item:hover,
    linear, which glues the steps into one continuous glide instead of 143 ms of ease each. */
 #app[data-flipping] #library .library-grid .card {
   transition: transform var(--flip-step) linear;
+}
+
+/* Opening a game switches data-screen at once, which stops the STRIP's ring mid-pulse (see the rule by
+   card-ring-pulse) — on the grid that snap is the last thing seen of a card the user just pressed. Here
+   the highlight keeps breathing for the 0.35s the screen takes to fade, and leaves with it. */
+#app[data-screen='detail'] #library .library-grid .card.is-selected::after {
+  animation: card-ring-pulse 1.1s ease-in-out infinite;
+  opacity: 1;
 }
 
 /* The playable dot moves INSIDE the card, to its top-right corner: the grid is dense and there is no

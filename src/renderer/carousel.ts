@@ -12,6 +12,7 @@
 import type { LibraryEntry } from '../shared/types';
 import type { Translator } from '../shared/i18n/index.js';
 import {
+  MAX_STRIP_GAMES,
   RETURN_FAN_MS,
   RETURN_LOCK_MS,
   clampIndex,
@@ -110,6 +111,13 @@ export interface Carousel {
    * later. The key is the same `id@artRev` the row uses, so a stale revision simply misses.
    */
   primeArt(game: LibraryEntry, url: string): void;
+  /**
+   * The artwork the play button morphs out of, for a detail screen the STRIP cannot speak for: the row
+   * carries at most MAX_STRIP_GAMES games, so a game opened from the Library (or from a notification) may
+   * have no card here at all — and the selected card's cover would then be another game's. Cleared on the
+   * way back to the carousel; `null` is "this game has none", which is not the same as no override.
+   */
+  setDetailArt(url: string | null): void;
 }
 
 /** The row's identity for one item — the key of the DOM node, and what a list update keeps the selection by. */
@@ -147,6 +155,9 @@ export function createCarousel(deps: CarouselDeps): Carousel {
   // The revision is what keeps that cache honest: editing gridImage re-copies the assets,
   // main bumps `artRev`, and the new key misses the cache — no restart needed to see the new cover.
   const art = new Map<string, string | null>();
+  // The morph source set from outside for the current detail screen; undefined when the row speaks for
+  // itself (see setDetailArt).
+  let detailArt: string | null | undefined = undefined;
   // The card nodes, by itemKey — the launcher cards share the row with the games, so a raw game id would
   // not be unique enough to address a node by.
   const cards = new Map<string, HTMLElement>();
@@ -199,9 +210,11 @@ export function createCarousel(deps: CarouselDeps): Carousel {
     // is invisible (see the morph block in styles.css). A launcher card has none — and no detail screen
     // to morph into either.
     const url =
-      current === undefined || current.kind === 'system'
-        ? null
-        : (art.get(artKey(current.game)) ?? null);
+      detailArt !== undefined
+        ? detailArt
+        : current === undefined || current.kind === 'system'
+          ? null
+          : (art.get(artKey(current.game)) ?? null);
     playButton.style.setProperty('--card-art', url === null ? 'none' : `url("${url}")`);
   }
 
@@ -331,6 +344,9 @@ export function createCarousel(deps: CarouselDeps): Carousel {
     if (next === screen) return;
     screen = next;
     app.dataset['screen'] = next;
+    // The override belongs to ONE detail screen (see setDetailArt); back on the row the strip speaks for
+    // itself again.
+    if (next === 'carousel') detailArt = undefined;
     // Coming back, the strip is unusable until the selected card is back at full size (RETURN_LOCK_MS);
     // leaving, nothing is locked — the detail screen has its own focus model.
     lockedUntil = next === 'carousel' ? performance.now() + RETURN_LOCK_MS : 0;
@@ -409,14 +425,20 @@ export function createCarousel(deps: CarouselDeps): Carousel {
       applyLayout();
       loadNearbyArt();
     },
-    setGames(list: readonly LibraryEntry[]): void {
+    setGames(all: readonly LibraryEntry[]): void {
+      // Home shows a shortlist — the rest of the library has a screen of its own now (see
+      // MAX_STRIP_GAMES). Everything below still speaks of `list` because that IS the row's list.
+      const list = all.slice(0, MAX_STRIP_GAMES);
       // The selection is remembered BY IDENTITY, not by position: the list is re-ordered whenever a card
       // is inserted or a session ends, and a positional cursor would silently land on a different game.
       // A launcher card survives every update by construction — it is in every list this builds.
       // A pending focus request wins over the current selection — it is the newer instruction of the two.
       const currentKey = pendingFocusId !== null ? `g:${pendingFocusId}` : (selected() === undefined ? undefined : itemKey(selected() as CarouselItem));
       items = [...list.map((game): CarouselItem => ({ kind: 'game', game })), ...systemItems];
-      if (pendingFocusId !== null && list.some((game) => game.id === pendingFocusId)) {
+      // Cleared against the FULL list: once main has sent the game, the request has been answered one
+      // way or the other. A game past the cap simply has no card here to put the selection on, and
+      // leaving the request pending would re-aim every later update at a card that never comes.
+      if (pendingFocusId !== null && all.some((game) => game.id === pendingFocusId)) {
         pendingFocusId = null;
       }
       index = clampIndex(
@@ -448,6 +470,10 @@ export function createCarousel(deps: CarouselDeps): Carousel {
     },
     primeArt(game: LibraryEntry, url: string): void {
       art.set(artKey(game), url);
+    },
+    setDetailArt(url: string | null): void {
+      detailArt = url;
+      applyLayout();
     },
     setFlipping(next: boolean): void {
       if (flipping === next) return;
