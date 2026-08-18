@@ -92,6 +92,28 @@ describe('AppSettingsStore — atomic write + schema tolerance', () => {
     expect(settings.musicVolume).toBe(0.15);
     expect('customWallpaper' in settings).toBe(false);
   });
+
+  // `alwaysShowEmptyScreen` became `keepOpenWithoutCard` when the empty screen went away. Nothing else
+  // catches this: the schema's `.default(false)` swallows the missing key without a word, so a file
+  // written by an older build would silently switch the toggle back off for everyone who turned it on.
+  it('carries an older alwaysShowEmptyScreen over to keepOpenWithoutCard', async () => {
+    const legacy: Record<string, unknown> = { ...DEFAULT_SETTINGS, alwaysShowEmptyScreen: true };
+    delete legacy['keepOpenWithoutCard'];
+    await fs.writeFile(path.join(baseDir, 'settings.json'), JSON.stringify(legacy), 'utf8');
+    const settings = await new AppSettingsStore(baseDir).read();
+    expect(settings.keepOpenWithoutCard).toBe(true);
+    expect('alwaysShowEmptyScreen' in settings).toBe(false);
+  });
+
+  it('lets the new key win when a file somehow carries both', async () => {
+    const both: Record<string, unknown> = {
+      ...DEFAULT_SETTINGS,
+      keepOpenWithoutCard: false,
+      alwaysShowEmptyScreen: true,
+    };
+    await fs.writeFile(path.join(baseDir, 'settings.json'), JSON.stringify(both), 'utf8');
+    expect((await new AppSettingsStore(baseDir).read()).keepOpenWithoutCard).toBe(false);
+  });
 });
 
 describe('AppSettingsStore — theme normalization', () => {

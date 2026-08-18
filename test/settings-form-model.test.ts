@@ -78,7 +78,7 @@ describe('buildSettingsModel — composition', () => {
     expect(rowIds(general?.rows ?? [])).toEqual([
       'summonHotkey',
       'preventScreensaver',
-      'alwaysShowEmptyScreen',
+      'keepOpenWithoutCard',
       'disableSilentInstall',
       'steamAutoLaunch',
     ]);

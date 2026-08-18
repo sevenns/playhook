@@ -62,7 +62,7 @@ export interface SettingsScreenApi {
   setPrerelease(on: boolean): void;
   setSummonHotkey(on: boolean): void;
   setPreventScreensaver(on: boolean): void;
-  setAlwaysShowEmptyScreen(on: boolean): void;
+  setKeepOpenWithoutCard(on: boolean): void;
   setDisableSilentInstall(on: boolean): void;
   setSteamAutoLaunch(on: boolean): void;
   setSoundSet(set: string): void;
@@ -91,7 +91,15 @@ export interface SettingsScreenDeps {
 /** What controls.ts routes into. Mirrors the six primitives, plus open/close and the data pushes. */
 export interface SettingsScreen {
   isOpen(): boolean;
-  open(): void;
+  /**
+   * `sectionKey` deep-links to one section (an "update ready" notification lands on Updates).
+   *
+   * `silent` is for an entrance that has ALREADY sounded: the carousel's Settings card plays `button` as
+   * it is activated, exactly like entering a game, and the screen's own opening sound would be a second
+   * copy of the same one. Reached any other way (that same notification) the screen still speaks for
+   * itself — the popup it came out of goes silently there.
+   */
+  open(sectionKey?: MessageKey, options?: { readonly silent?: boolean }): void;
   close(): void;
   navUp(): void;
   navDown(): void;
@@ -122,7 +130,7 @@ const TOGGLE_WRITERS: Readonly<Record<ToggleId, ToggleWriter>> = {
   prerelease: (api, value) => api.setPrerelease(value),
   summonHotkey: (api, value) => api.setSummonHotkey(value),
   preventScreensaver: (api, value) => api.setPreventScreensaver(value),
-  alwaysShowEmptyScreen: (api, value) => api.setAlwaysShowEmptyScreen(value),
+  keepOpenWithoutCard: (api, value) => api.setKeepOpenWithoutCard(value),
   disableSilentInstall: (api, value) => api.setDisableSilentInstall(value),
   steamAutoLaunch: (api, value) => api.setSteamAutoLaunch(value),
   onlyGlobalAmbient: (api, value) => api.setOnlyGlobalAmbient(value),
@@ -137,8 +145,8 @@ function withToggle(settings: AppSettings, id: ToggleId, value: boolean): AppSet
       return { ...settings, summonHotkeyEnabled: value };
     case 'preventScreensaver':
       return { ...settings, preventScreensaver: value };
-    case 'alwaysShowEmptyScreen':
-      return { ...settings, alwaysShowEmptyScreen: value };
+    case 'keepOpenWithoutCard':
+      return { ...settings, keepOpenWithoutCard: value };
     case 'disableSilentInstall':
       return { ...settings, disableSilentInstall: value };
     case 'steamAutoLaunch':
@@ -246,9 +254,14 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
       schedulePreview();
     },
     onAction: (id) => {
-      deps.audio.play('button');
-      if (id === 'reset') deps.onResetRequested();
-      else navBack();
+      if (id === 'reset') {
+        deps.audio.play('button');
+        deps.onResetRequested();
+        return;
+      }
+      // Closing is a LEAVING gesture, and close() plays `back` for it — one gesture, one sound. A
+      // `button` here made the column's Close the only button in the app that sounded twice.
+      navBack();
     },
   });
   const optionsScroller = createScroller(optionsListEl);
@@ -784,6 +797,9 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
         toggleRow(index, row);
         break;
       case 'select':
+        // Two sounds, deliberately: `button` is the row being pressed, `popup-open` (openOptions) is the
+        // list appearing — the same pair a launcher card plays when it opens its surface.
+        deps.audio.play('button');
         pressFlash(target.el);
         openOptions(index, row);
         break;
@@ -994,10 +1010,10 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
 
   return {
     isOpen: () => open,
-    open: (section?: MessageKey) => {
+    open: (section?: MessageKey, options?: { readonly silent?: boolean }) => {
       if (open) return;
       open = true;
-      deps.audio.play('button');
+      if (options?.silent !== true) deps.audio.play('button');
       focusIndex = 0;
       app.dataset['overlay'] = 'settings';
       screen.setAttribute('aria-hidden', 'false');

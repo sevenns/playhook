@@ -36,7 +36,6 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'window.settings': 'Настройки',
 
   // ── Game launcher ────────────────────────────────────────────────────────────
-  'launcher.emptyTitle': 'Вставьте игровую карту',
   'launcher.errorTitle': 'Что-то пошло не так',
   'launcher.info.lastPlayed': 'Последний запуск',
   'launcher.info.playtime': 'Время в игре',
@@ -59,6 +58,9 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'launcher.menu.notifications': 'Уведомления',
   'launcher.menu.addGame': 'Добавить игру',
   'launcher.menu.settings': 'Настройки',
+  'launcher.card.notifications': 'Уведомления',
+  'launcher.card.settings': 'Настройки',
+  'launcher.card.system': 'Система',
   'launcher.confirm.install': 'Установить игру?',
   'launcher.confirm.uninstall': 'Удалить игру с компьютера?',
   'launcher.confirm.uninstallPrefix': 'Очистить Proton-префикс?',
@@ -136,7 +138,7 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'settings.summonHotkey': 'Показывать лаунчер сочетанием на геймпаде',
   'settings.summonHint': 'Зажмите Menu + View на геймпаде, чтобы вывести лаунчер на передний план.',
   'settings.preventScreensaver': 'Не гасить экран, пока открыт лаунчер',
-  'settings.alwaysShowEmpty': 'Всегда показывать экран без карты',
+  'settings.keepOpenWithoutCard': 'Держать лаунчер открытым без карты',
   'settings.disableSilentInstall': 'Отключить тихую установку (показывать мастер установщика)',
   'settings.steamAutoLaunch': 'Открывать Playhook в Steam при вставке карты (только Game Mode)',
   'settings.steamAutoLaunchHint':

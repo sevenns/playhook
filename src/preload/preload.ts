@@ -89,7 +89,7 @@ const CHANNELS = {
   settingsSetPrerelease: 'settings:set-prerelease',
   settingsSetSummonHotkey: 'settings:set-summon-hotkey',
   settingsSetPreventScreensaver: 'settings:set-prevent-screensaver',
-  settingsSetAlwaysShowEmptyScreen: 'settings:set-always-show-empty-screen',
+  settingsSetKeepOpenWithoutCard: 'settings:set-keep-open-without-card',
   settingsSetDisableSilentInstall: 'settings:set-disable-silent-install',
   settingsSetSteamAutoLaunch: 'settings:set-steam-auto-launch',
   settingsSetMusicVolume: 'settings:set-music-volume',
@@ -203,7 +203,7 @@ const api: RendererApi = {
   requestGrid(id: string): Promise<string | null> {
     return ipcRenderer.invoke(CHANNELS.libraryGridRequest, id) as Promise<string | null>;
   },
-  browseGame(id: string, immediate = false): void {
+  browseGame(id: string | null, immediate = false): void {
     ipcRenderer.send(CHANNELS.libraryBrowse, id, immediate);
   },
   forgetGame(id: string): void {
@@ -289,8 +289,8 @@ const api: RendererApi = {
   setPreventScreensaver(on: boolean): void {
     ipcRenderer.send(CHANNELS.settingsSetPreventScreensaver, on);
   },
-  setAlwaysShowEmptyScreen(on: boolean): void {
-    ipcRenderer.send(CHANNELS.settingsSetAlwaysShowEmptyScreen, on);
+  setKeepOpenWithoutCard(on: boolean): void {
+    ipcRenderer.send(CHANNELS.settingsSetKeepOpenWithoutCard, on);
   },
   setDisableSilentInstall(on: boolean): void {
     ipcRenderer.send(CHANNELS.settingsSetDisableSilentInstall, on);

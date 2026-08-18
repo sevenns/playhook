@@ -19,6 +19,7 @@ import { createGamepadController } from './gamepad.js';
 import { createWakeMeter } from './mouse-sleep.js';
 import type { NavSurface } from './nav-surface.js';
 import type { MoveResult } from './carousel.js';
+import type { SystemCardId } from './system-cards.js';
 import { type AudioController } from './audio.js';
 import { gameOf, phaseOf, steamBusy } from './state-view.js';
 import { req, reqQuery } from './dom.js';
@@ -83,6 +84,13 @@ export interface ControlsDeps {
   onPopupClosed(): void;
   /** Opens a game's detail screen (a notification about a game leads there). Owned by app.ts. */
   openGameDetail(id: string): void;
+  /**
+   * Whether the boot screen is still up (app.ts owns the reveal). The whole UI is built and laid out
+   * behind the wallpaper — the bar sits at opacity 0, the cards are held at zero — so every surface is
+   * already drivable while nothing of it can be seen: A on the invisible row opened the Notifications
+   * card behind the boot image, and a direction flipped a carousel nobody was looking at.
+   */
+  isBooting(): boolean;
 }
 
 /**
@@ -91,8 +99,9 @@ export interface ControlsDeps {
  * would otherwise keep running underneath (idle timer, wheel, Y).
  */
 export interface SettingsNav extends NavSurface {
-  /** `sectionKey` deep-links to one section — an "update ready" notification lands on Updates. */
-  open(sectionKey?: MessageKey): void;
+  /** `sectionKey` deep-links to one section — an "update ready" notification lands on Updates.
+   *  `silent` suppresses the screen's own opening sound — see SettingsScreen.open. */
+  open(sectionKey?: MessageKey, options?: { readonly silent?: boolean }): void;
   close(): void;
   /** Runs the reset once the shared confirm popup says yes. */
   resetSettings(): void;
@@ -129,10 +138,10 @@ export interface CarouselNav {
   move(delta: number): MoveResult;
   /** Enters the selected card's detail screen. */
   activate(): void;
-  /** Steps back from a detail screen to the strip; false when there is no carousel to return to. */
+  /** Steps back from a detail screen to the strip; false when the strip is already the screen. */
   leaveDetail(): boolean;
-  /** Whether a carousel exists at all (>1 game) — gates the Details menu's "Home" item. */
-  exists(): boolean;
+  /** Whether the inbox holds anything unread — the Notifications CARD wears the dot now. */
+  setUnread(unread: boolean): void;
 }
 
 export interface Controls {
@@ -145,10 +154,10 @@ export interface Controls {
   /** The Customize screen asked one of its questions — opens the same shared confirm popup. */
   confirmGameSettings(kind: 'reset' | 'delete' | 'delete-history' | 'discard' | 'switch-source'): void;
   /**
-   * Puts the focus back on the launcher's own strip — used after a game is added from the Details menu,
-   * where the highlight would otherwise stay on the More button the screen was opened from.
+   * Opens the surface one of the carousel's launcher cards stands for. The card plays the press sound
+   * itself (app.ts), so nothing here does — the surface's own popup-open follows it.
    */
-  focusStrip(): void;
+  openSystemCard(id: SystemCardId): void;
   /** Clears the game-dependent menu item for the idle/no-game screen. */
   clearGameButtons(): void;
   /** Per-render refresh: force-close the popup off the ready screen (or while steam-busy), then re-apply focus. */
@@ -239,9 +248,6 @@ export function createControls(deps: ControlsDeps): Controls {
     isAnyOpen: (): boolean => deps.settings.isOpen() || deps.gameSettings.isOpen(),
   };
 
-  // The app shell — carries the attributes CSS keys the screen-level states on (see setCarouselBarFocus).
-  const app = req('app');
-
   // Bar buttons.
   const playButton = req<HTMLButtonElement>('play-button');
   const moreButton = req<HTMLButtonElement>('more-button');
@@ -255,16 +261,11 @@ export function createControls(deps: ControlsDeps): Controls {
   const deleteNote = req('delete-note');
 
   // Action-stack buttons (grouped by view in the HTML).
-  const menuShutdown = req<HTMLButtonElement>('menu-shutdown');
   const menuInstallToggle = req<HTMLButtonElement>('menu-install-toggle');
   const menuKill = req<HTMLButtonElement>('menu-kill');
   const menuHome = req<HTMLButtonElement>('menu-home');
   const menuCustomize = req<HTMLButtonElement>('menu-customize');
   const menuForget = req<HTMLButtonElement>('menu-forget');
-  const menuNotifications = req<HTMLButtonElement>('menu-notifications');
-  const menuNotificationsLabel = req('menu-notifications-label');
-  const menuAddGame = req<HTMLButtonElement>('menu-add-game');
-  const menuSettings = req<HTMLButtonElement>('menu-settings');
   const menuClose = req<HTMLButtonElement>('menu-close');
   const powerShutdown = req<HTMLButtonElement>('power-shutdown');
   const powerReboot = req<HTMLButtonElement>('power-reboot');
@@ -297,6 +298,10 @@ export function createControls(deps: ControlsDeps): Controls {
   // Where B/Esc/veil returns FROM the confirm view: install/uninstall come from Details, the power
   // actions come from Power.
   let confirmReturnTo: 'details' | 'power' | 'settings' | 'game-settings' = 'details';
+  // How the CURRENT popup was entered: through the Details menu, or straight from a launcher card. It
+  // decides what B does in the Power / Notifications views — stepping back into a menu that was never
+  // opened would conjure a game's menu over the carousel.
+  let popupRoot: 'details' | 'direct' = 'details';
   /** The game the open remove-from-history confirm is about — captured when it opens (see openConfirm). */
   let forgetId: string | null = null;
 
@@ -371,10 +376,7 @@ export function createControls(deps: ControlsDeps): Controls {
     applyMenuHome(); // keep the "Home" item fresh (only when there is a carousel to go back to)
     applyMenuCustomize(); // …and "Customize", which only applies to a game we can reach the file of
     applyMenuForget(); // keep the "Remove from history" item fresh (history-only games)
-    applyMenuSystem(); // …and System, which belongs to the carousel level, not to a game
-    applyMenuSettings(); // …and Settings, which belongs to the carousel level too
-    applyMenuAddGame(); // …and "Add game", which sits right under it for the same reason
-    applyMenuNotifications(); // …and the inbox item, whose dot follows the unread count
+    popupRoot = 'details';
     setView('details');
     focusStackBottom(); // default focus: Close
     applyFocus(); // main highlight clears (focusActive false with a popup open)
@@ -506,20 +508,11 @@ export function createControls(deps: ControlsDeps): Controls {
   }
 
   /**
-   * The More item: its label, its unread dot, and whether it is there at all. The inbox belongs to the
-   * LAUNCHER, not to one game — so it follows System and Settings exactly: it lives on the carousel's
-   * menu, and stands down on a game's own. Same exception too: with NO carousel to go up to (a
-   * single-game card, the empty screen) that menu is the only menu there is, and hiding the item there
-   * would put the notifications out of reach entirely.
+   * The unread state: the same dot a game card wears, on the Notifications CARD in the row. The inbox
+   * belongs to the launcher, and the launcher's own cards are where it lives now.
    */
-  function applyMenuNotifications(): void {
-    if (menuFrozen()) return;
-    menuNotifications.classList.toggle('is-hidden', onGameScreen() && deps.carousel.exists());
-    menuNotificationsLabel.textContent = t()('launcher.menu.notifications');
-    menuNotifications.classList.toggle(
-      'has-unread',
-      deps.getNotifications().some((item) => !item.read),
-    );
+  function applyUnreadDot(): void {
+    deps.carousel.setUnread(deps.getNotifications().some((item) => !item.read));
   }
 
   /**
@@ -546,7 +539,28 @@ export function createControls(deps: ControlsDeps): Controls {
     deps.openGameDetail(item.gameId);
   }
 
-  // Power submenu (from Details → Shutdown): Shutdown / Reboot / Sleep. Each opens a Yes/No confirm.
+  /**
+   * One of the carousel's launcher cards was pressed. The three surfaces are the ones the Details menu
+   * used to hold at the launcher level; they are now reached from the row itself, which is why `popupRoot`
+   * is set to 'direct' — B out of them goes back to the cards, not into a menu nobody opened.
+   */
+  function openSystemCard(id: SystemCardId): void {
+    popupRoot = 'direct';
+    if (id === 'notifications') {
+      openNotifications();
+      return;
+    }
+    if (id === 'settings') {
+      // The card's own `button` (app.ts) is the sound of this press; the screen adds none of its own.
+      // The other two cards open a popup, whose `popup-open` is a different sound and layers fine.
+      openSettings(undefined, { silent: true });
+      return;
+    }
+    openPower();
+  }
+
+  // Power submenu (from a launcher card, or from Details → System on a game screen): Shutdown / Reboot /
+  // Sleep. Each opens a Yes/No confirm.
   function openPower(): void {
     setView('power');
     focusStackBottom(); // default focus: Close (bottom) — a safe non-destructive default
@@ -690,6 +704,12 @@ export function createControls(deps: ControlsDeps): Controls {
     switch (popupView) {
       case 'power':
       case 'notifications':
+        // Opened straight from a launcher card, there is no menu underneath to step back into: the level
+        // above these is the carousel itself, so the popup simply goes.
+        if (popupRoot === 'direct') {
+          closePopup();
+          break;
+        }
         audio.play('back');
         setView('details');
         focusStackBottom();
@@ -718,8 +738,8 @@ export function createControls(deps: ControlsDeps): Controls {
   // Opening/closing lives here because the bar focus does: the screen is entered from More and returns
   // to it. Everything INSIDE the screen belongs to settings-screen.ts.
 
-  function openSettings(sectionKey?: MessageKey): void {
-    deps.settings.open(sectionKey);
+  function openSettings(sectionKey?: MessageKey, options?: { readonly silent?: boolean }): void {
+    deps.settings.open(sectionKey, options);
     applyFocus(); // the bar highlight clears (focusActive is false with the screen open)
   }
 
@@ -730,7 +750,11 @@ export function createControls(deps: ControlsDeps): Controls {
     applyFocus();
   }
 
-  /** The screen closed itself (B / Esc / veil): put the highlight back on the More button it came from. */
+  /**
+   * The screen closed itself (B / Esc / veil): put the highlight back on the More button it came from —
+   * on a detail screen. Opened from a launcher card, the screen came from the CAROUSEL, where the bar is
+   * hidden and the row is the surface: there the highlight simply clears.
+   */
   function settingsClosed(): void {
     const items = mainFocusables();
     const more = items.indexOf(moreButton);
@@ -750,37 +774,6 @@ export function createControls(deps: ControlsDeps): Controls {
    */
   function onGameScreen(): boolean {
     return deps.carousel.screen() === 'detail';
-  }
-
-  /**
-   * System lives at the top level — the carousel — so the game's own menu is only about the game. With NO
-   * carousel to go up to (a single-game card, the empty screen) the detail menu is the only menu there
-   * is, and dropping System there would strand Shutdown / Minimize Playhook with no way to reach them.
-   */
-  function applyMenuSystem(): void {
-    if (menuFrozen()) return;
-    menuShutdown.classList.toggle('is-hidden', onGameScreen() && deps.carousel.exists());
-  }
-
-  /**
-   * Settings live at the launcher level (Home), not inside one game's menu — the same rule System
-   * follows, and the same exception: with NO carousel to go up to (a single-game card, the empty screen)
-   * the detail menu is the only menu there is, and hiding Settings there would put them out of reach.
-   */
-  function applyMenuSettings(): void {
-    if (menuFrozen()) return;
-    menuSettings.classList.toggle('is-hidden', onGameScreen() && deps.carousel.exists());
-  }
-
-  /**
-   * Adding a game is about the LIBRARY, not about the game on screen — the same level Settings and System
-   * live at, and hidden by the same rule: on a game's own menu, when there is a carousel to go up to.
-   */
-  function applyMenuAddGame(): void {
-    if (menuFrozen()) return;
-    const show = !(onGameScreen() && deps.carousel.exists());
-    menuAddGame.classList.toggle('is-hidden', !show);
-    if (show) menuAddGame.textContent = t()('launcher.menu.addGame');
   }
 
   function applyMenuInstallToggle(): void {
@@ -825,7 +818,7 @@ export function createControls(deps: ControlsDeps): Controls {
   // way back to the strip. Shown only on a detail screen that has a carousel behind it.
   function applyMenuHome(): void {
     if (menuFrozen()) return;
-    const show = deps.carousel.exists() && deps.carousel.screen() === 'detail';
+    const show = deps.carousel.screen() === 'detail';
     menuHome.classList.toggle('is-hidden', !show);
     if (show) menuHome.textContent = t()('launcher.menu.home');
   }
@@ -867,10 +860,6 @@ export function createControls(deps: ControlsDeps): Controls {
 
   const ALL_MAIN_BUTTONS: readonly HTMLButtonElement[] = [playButton, moreButton];
   let focusIndex = 0;
-  // Which SURFACE holds the focus on the carousel screen: the strip (false, the default) or the bar's
-  // More button (true). Y flips it — see navToggleBar. Meaningless on the detail screen, where the bar
-  // always has it, and reset whenever the carousel is left so returning to it starts on the strip.
-  let carouselBarFocus = false;
   // Whether the bar's focus highlight is "awake". It goes dormant when an active state (install / launch
   // / uninstall / steam) appears, so the highlight doesn't auto-jump onto a button the user didn't pick;
   // it wakes again only on an explicit gamepad move or a mouse hover. `wasActive` tracks the edge.
@@ -888,9 +877,9 @@ export function createControls(deps: ControlsDeps): Controls {
   const wakeMeter = createWakeMeter();
 
   function mainFocusables(): readonly HTMLButtonElement[] {
-    // On the carousel screen Play is not a button at all — it is the selected card's invisible stand-in
-    // for the morph (see styles.css) — so More is the whole bar there.
-    if (deps.carousel.screen() === 'carousel') return [moreButton];
+    // The carousel has no bar to focus at all: Play is the selected card's invisible stand-in for the
+    // morph (styles.css) and More is hidden there — the launcher-level actions are cards in the row now.
+    if (deps.carousel.screen() === 'carousel') return [];
     // Steam install/uninstall indicator up (phase stays 'ready'): the gear opens Steam's Downloads page
     // and More opens Details — both focusable.
     if (steamBusy(state())) return [playButton, moreButton];
@@ -910,17 +899,23 @@ export function createControls(deps: ControlsDeps): Controls {
   }
 
   // Main focus is meaningful on every DETAIL screen (the More button is always present there) with the
-  // popup closed. On the carousel the strip owns the selection instead — until Y hands the focus to the
-  // bar, which is the only way More is reachable there.
+  // popup closed. On the carousel the strip owns the selection, and nothing else on that screen can hold
+  // the focus at all.
   function focusActive(): boolean {
     if (popupView !== 'none') return false;
     // The Settings screen covers the bar (which is faded out and pointer-events:none underneath).
     if (overlays.isAnyOpen()) return false;
-    return deps.carousel.screen() === 'detail' || carouselBarFocus;
+    return deps.carousel.screen() === 'detail';
   }
 
   function applyFocus(): void {
     const items = mainFocusables();
+    // The carousel's empty bar: clamping against a length of 0 would push the index to -1 and quietly
+    // move the focus to Play the next time a detail screen is entered — wherever it had been left.
+    if (items.length === 0) {
+      ALL_MAIN_BUTTONS.forEach((btn) => btn.classList.remove('is-focused'));
+      return;
+    }
     focusIndex = Math.min(items.length - 1, Math.max(0, focusIndex));
     const active = focusActive() && focusRevealed;
     ALL_MAIN_BUTTONS.forEach((btn) => {
@@ -961,15 +956,6 @@ export function createControls(deps: ControlsDeps): Controls {
     idleTimer = window.setTimeout(() => {
       idleTimer = 0;
       setMouseAsleep(true);
-      // On the carousel the bar-focus spell is not a highlight that can simply go dormant: dropping it
-      // would leave the row dimmed with nothing focused anywhere — a dead screen. Hand the focus back to
-      // the cards instead, which is where an untouched carousel belongs.
-      // NOT while the menu that button opened is up, though: the focus is inside the popup then, and
-      // pulling the surface out from under it would light the row back up behind an open menu.
-      if (carouselBarFocus && popupView === 'none') {
-        setCarouselBarFocus(false);
-        return;
-      }
       if (focusRevealed && focusActive()) {
         focusRevealed = false;
         applyFocus();
@@ -1044,12 +1030,8 @@ export function createControls(deps: ControlsDeps): Controls {
     menuInstallToggle,
     menuKill,
     menuForget,
-    menuShutdown,
     menuHome,
     menuCustomize,
-    menuNotifications,
-    menuSettings,
-    menuAddGame,
     menuClose,
     notificationsClear,
     notificationsClose,
@@ -1075,12 +1057,8 @@ export function createControls(deps: ControlsDeps): Controls {
         if (!menuInstallToggle.classList.contains('is-hidden')) items.push(menuInstallToggle);
         if (!menuKill.classList.contains('is-hidden')) items.push(menuKill);
         if (!menuForget.classList.contains('is-hidden')) items.push(menuForget);
-        if (!menuShutdown.classList.contains('is-hidden')) items.push(menuShutdown);
         if (!menuHome.classList.contains('is-hidden')) items.push(menuHome);
         if (!menuCustomize.classList.contains('is-hidden')) items.push(menuCustomize);
-        if (!menuSettings.classList.contains('is-hidden')) items.push(menuSettings);
-        if (!menuAddGame.classList.contains('is-hidden')) items.push(menuAddGame);
-        if (!menuNotifications.classList.contains('is-hidden')) items.push(menuNotifications);
         items.push(menuClose);
         return items;
       }
@@ -1202,10 +1180,7 @@ export function createControls(deps: ControlsDeps): Controls {
 
   // Dispatch a stack button (shared by gamepad A and mouse click). Each opener/back plays its own sound.
   function triggerStackButton(btn: HTMLButtonElement): void {
-    if (btn === menuShutdown) {
-      audio.play('button');
-      openPower();
-    } else if (btn === menuInstallToggle) {
+    if (btn === menuInstallToggle) {
       audio.play('button');
       openConfirm(menuInstallToggle.dataset['action'] === 'install' ? 'install' : 'uninstall');
     } else if (btn === menuKill) {
@@ -1216,29 +1191,15 @@ export function createControls(deps: ControlsDeps): Controls {
       openConfirm('forget');
     } else if (btn.classList.contains('notification-item')) {
       activateNotification(btn);
-    } else if (btn === menuNotifications) {
-      audio.play('button');
-      openNotifications();
     } else if (btn === notificationsClear) {
       // The popup deliberately stays open on its empty state: "Clear all" answers "get rid of these",
       // not "take me out of here", and closing would hide the very result of the press.
       audio.play('button');
       window.api.clearNotifications();
-    } else if (btn === menuSettings) {
-      // The single entrance to Settings — the tray item is gone, so this works the same on the desktop
-      // and in Game Mode. The menu it was opened from closes first: the screen is a surface of its own.
-      // One gesture, one sound: the close is muted and the screen's own popup-open carries it (Р5).
-      closePopup({ silent: true });
-      openSettings();
     } else if (btn === menuCustomize) {
       // Like Settings: the menu it was opened from closes first — the screen is a surface of its own.
       closePopup({ silent: true });
       openCustomize();
-    } else if (btn === menuAddGame) {
-      // The same screen as Customize, opened with no game behind it (see GameSettingsNav.openNew).
-      closePopup({ silent: true });
-      deps.gameSettings.openNew();
-      applyFocus();
     } else if (btn === menuHome) {
       // Non-destructive, so no confirm: close the popup and hand control back to the strip.
       closePopup();
@@ -1494,7 +1455,7 @@ export function createControls(deps: ControlsDeps): Controls {
   const onCarousel = (): boolean => popupView === 'none' && deps.carousel.screen() === 'carousel';
   /** Whether the STRIP is the surface the nav keys drive — the carousel screen, minus the spell in which
    *  Y has handed the focus to the bar (then left/right/A belong to More, like on any other screen). */
-  const stripActive = (): boolean => onCarousel() && !carouselBarFocus;
+  const stripActive = (): boolean => onCarousel();
 
   // ── Held directions ────────────────────────────────────────────────────────
   // A repeat press means a direction is being held. It ends on an explicit release — the pad reports one
@@ -1557,13 +1518,6 @@ export function createControls(deps: ControlsDeps): Controls {
       if (!repeat && moved === 'at-end') audio.playLimit();
       return;
     }
-    // More sits to the RIGHT of the strip, so left is the way back to the cards — the exit the layout
-    // itself suggests, and the one a user will try before finding Y or B.
-    if (onCarousel() && carouselBarFocus) {
-      audio.play('navigate');
-      setCarouselBarFocus(false);
-      return;
-    }
     moveFocus(-1, repeat);
   }
   function navRight(repeat = false): void {
@@ -1577,13 +1531,10 @@ export function createControls(deps: ControlsDeps): Controls {
       return;
     }
     if (stripActive()) {
-      // Past the last card there is one thing left to the right: the More button. A HELD right stays
-      // pinned at the end instead — running down a long history is one gesture, and it must not end with
-      // the focus flung off the strip (and one A away from a menu nobody asked for). Release, press
-      // again, and the stop becomes the step. `locked` is the return-morph, where nothing happens at all.
-      if (deps.carousel.move(1) !== 'at-end' || repeat) return;
-      audio.play('navigate');
-      setCarouselBarFocus(true);
+      // The row ends at the last launcher card and there is nothing beyond it: a stop is a dead end and
+      // says so. A HELD right stays silent — one gesture running down a long history must not end in a
+      // sound. `locked` is the return-morph, where nothing happens at all.
+      if (deps.carousel.move(1) === 'at-end' && !repeat) audio.playLimit();
       return;
     }
     if (popupView === 'none') moveFocus(1, repeat);
@@ -1649,66 +1600,28 @@ export function createControls(deps: ControlsDeps): Controls {
       return;
     }
     if (deps.carousel.screen() === 'carousel') {
-      // The strip is the top level: there is nothing above home to go back TO, so rather than doing
-      // nothing, back hands the focus to More — the only other place on this screen — and hands it
-      // straight back on the next press. That makes B / Tab / Esc a round trip instead of a dead key.
-      audio.play(carouselBarFocus ? 'back' : 'navigate');
-      setCarouselBarFocus(!carouselBarFocus);
+      // The strip is the top level and the only surface on this screen: there is nothing above home to go
+      // back to, and nowhere else to hand the focus, so B is an honest dead end here.
+      audio.playLimit();
       return;
     }
     if (deps.carousel.leaveDetail()) audio.play('back');
   }
 
   /**
-   * Y: "put me on More". On the carousel that means handing the focus between the strip and the bar; on a
-   * detail screen, where both buttons are already in the same bar, it means jumping between Play and More
-   * — which is the same promise the button makes on home, and the reason it is worth having here: the
-   * hand that learned Y-then-A on the carousel was launching games with it on the detail screen instead.
-   * The highlight is woken along with it: the press IS the user pointing at where it should be. Coming
-   * BACK there are two more ways out, both meaning what they usually mean: B (back) and left.
+   * Y belongs to the OVERLAYS alone (the keyboard's Shift). It used to hand the focus to the More button —
+   * on the carousel, where More no longer exists, and on a detail screen, where left/right already walk
+   * between Play and More. Everywhere else it is an honest dead end.
    */
-  function navToggleBar(): void {
+  function navY(): void {
     noteGamepadActivity();
-    // With an overlay up, Y belongs to whatever is open there (the keyboard's Shift) — and if that
-    // surface has no use for it, it stays unassigned rather than handing the focus to a hidden bar.
     const overlay = overlays.active();
     if (overlay !== null) {
       if (overlay.navTertiary === undefined) audio.playLimit();
       else overlay.navTertiary();
       return;
     }
-    if (popupView !== 'none') {
-      audio.playLimit(); // the stacks are driven with the directions and A/B — Y has no part in them
-      return;
-    }
-    if (deps.carousel.screen() !== 'carousel') {
-      toggleMoreFocus();
-      return;
-    }
-    audio.play('navigate');
-    setCarouselBarFocus(!carouselBarFocus);
-  }
-
-  /** The detail screen's half of Y: the focus swaps between More and whatever else the bar offers. */
-  function toggleMoreFocus(): void {
-    if (!focusActive()) return; // the bar is not the surface driving the press — not a dead end
-    const items = mainFocusables();
-    const more = items.indexOf(moreButton);
-    if (more === -1) {
-      audio.playLimit(); // no More to jump to
-      return;
-    }
-    // Only More is focusable (a busy game, an installer): there is nothing to swap with, so Y wakes the
-    // highlight where it is rather than moving it somewhere that does not exist.
-    const next = focusRevealed && focusIndex === more ? (items.length > 1 ? 0 : more) : more;
-    if (focusRevealed && next === focusIndex) {
-      audio.playLimit(); // More is the only button here, and the highlight is already on it
-      return;
-    }
-    focusIndex = next;
-    focusRevealed = true;
-    audio.play('navigate');
-    applyFocus();
+    audio.playLimit();
   }
 
   /**
@@ -1745,28 +1658,6 @@ export function createControls(deps: ControlsDeps): Controls {
     overlays.active()?.navCommit?.();
   }
 
-  function setCarouselBarFocus(onBar: boolean): void {
-    carouselBarFocus = onBar;
-    // The strip stops reading as the active surface while the bar has the focus: the ring goes, the row
-    // dims and the bar copy (which names the selected card) hides. All of it is CSS off this attribute.
-    if (onBar) app.dataset['barFocus'] = 'on';
-    else delete app.dataset['barFocus'];
-    if (onBar) {
-      focusRevealed = true;
-      focusIndex = 0; // More is the whole bar on this screen — see mainFocusables
-    }
-    applyFocus();
-  }
-
-  /**
-   * Hands the focus back to the strip. Used after a game is added: the screen was opened from the Details
-   * menu, so the bar highlight is still sitting on More while the carousel now shows the new game.
-   */
-  function focusStrip(): void {
-    setCarouselBarFocus(false);
-    applyFocus();
-  }
-
   // The wheel flips through the carousel. Throttled: one notch of a mouse wheel is one event, but a
   // trackpad emits a stream of them, which would fly past a dozen cards per gesture.
   const WHEEL_THROTTLE_MS = 120;
@@ -1776,6 +1667,7 @@ export function createControls(deps: ControlsDeps): Controls {
     (event) => {
       // onCarousel() stays true under the Settings screen — without this the wheel would flip through the
       // strip behind the veil. Inside the screen the wheel scrolls its own list natively.
+      if (deps.isBooting()) return; // the row is behind the boot screen — see whileAwake
       if (overlays.isAnyOpen()) return;
       if (!onCarousel()) return;
       noteMouseActivity();
@@ -1800,25 +1692,42 @@ export function createControls(deps: ControlsDeps): Controls {
     // context-menu event main listens for, which is exactly how this broke copying the path.
     if (isOverSelectableText(event.target)) return;
     event.preventDefault();
+    if (deps.isBooting()) return; // the same fence the pad and the keyboard sit behind (see whileAwake)
     navBack();
     // AFTER, not before: navBack() is written for the gamepad and hides the cursor as its first act.
     // This click IS the mouse, so the cursor has to come back — and it is this call that restores it.
     noteMouseActivity();
   });
 
+  /**
+   * Wraps a primitive so it does nothing while the boot screen is up (see ControlsDeps.isBooting). Applied
+   * at the two DISPATCH points — the pad's handler map and the keyboard's keydown — rather than inside
+   * each primitive, so a surface added later is covered by construction. The mouse is fenced off in CSS
+   * (`#app[data-boot]` is pointer-events:none), and the wheel / right-click, which listen on the window
+   * and never touch that rule, check the flag themselves.
+   */
+  function whileAwake<A extends readonly unknown[]>(fn: (...args: A) => void): (...args: A) => void {
+    return (...args: A): void => {
+      if (deps.isBooting()) return;
+      fn(...args);
+    };
+  }
+
   const gamepad = createGamepadController(
     {
-      onLeft: navLeft,
-      onRight: navRight,
-      onUp: navUp,
-      onDown: navDown,
-      onA: navActivate,
-      onB: navBack,
-      onY: navToggleBar,
-      onX: navSecondary,
-      onShoulderLeft: () => navShoulder(-1),
-      onShoulderRight: () => navShoulder(1),
-      onTriggerRight: navCommit,
+      onLeft: whileAwake(navLeft),
+      onRight: whileAwake(navRight),
+      onUp: whileAwake(navUp),
+      onDown: whileAwake(navDown),
+      onA: whileAwake(navActivate),
+      onB: whileAwake(navBack),
+      onY: whileAwake(navY),
+      onX: whileAwake(navSecondary),
+      onShoulderLeft: whileAwake(() => navShoulder(-1)),
+      onShoulderRight: whileAwake(() => navShoulder(1)),
+      onTriggerRight: whileAwake(navCommit),
+      // NOT gated: a direction held across the reveal must still be able to end its run — this only tidies
+      // the flip spell and re-arms the `limit` latch, it drives nothing.
       onDirectionsReleased: endInput,
     },
     autoRepeat,
@@ -1893,6 +1802,10 @@ export function createControls(deps: ControlsDeps): Controls {
     if (handler === undefined) return;
     event.preventDefault(); // suppress the native default even on auto-repeat (e.g. Tab traversal)
     if (event.repeat) return; // the OS cadence is not ours — the timer below drives the run
+    // The boot fence, as a full return rather than a gated call (see whileAwake): the repeat timer armed
+    // below outlives the boot screen, so a direction merely GATED here would come back to life the moment
+    // the UI appeared and flip the row for a press made before it existed.
+    if (deps.isBooting()) return;
     handler(false);
     if (!REPEATABLE_KEYS.has(key)) return;
     stopKeyRepeat(); // a second direction takes the run over from the first
@@ -1925,10 +1838,6 @@ export function createControls(deps: ControlsDeps): Controls {
     applyMenuHome();
     applyMenuCustomize();
     applyMenuForget();
-    applyMenuSystem();
-    applyMenuSettings();
-    applyMenuAddGame();
-    applyMenuNotifications();
   }
 
   function clearGameButtons(): void {
@@ -1940,17 +1849,10 @@ export function createControls(deps: ControlsDeps): Controls {
     menuCustomize.classList.add('is-hidden'); // no game on screen → no manifest to customize
     menuForget.classList.add('is-hidden'); // no game on screen → nothing to remove from the history
     applyMenuHome(); // the carousel can still be there with no game on screen (history only)
-    applyMenuSystem();
-    applyMenuSettings();
-    applyMenuAddGame();
-    applyMenuNotifications();
   }
 
   function refresh(): void {
-    // The bar-focus spell belongs to the carousel: off that screen the bar has the focus anyway, and a
-    // stale true would send B to a strip that is no longer under it (and leave the row dimmed).
-    if (deps.carousel.screen() !== 'carousel' && carouselBarFocus) setCarouselBarFocus(false);
-    // The popup lives on every screen now (empty included — More there offers System + Close). Only a
+    // The popup lives on both screens (on the carousel it is what a launcher card opens). Only a
     // game-specific install/uninstall Confirm is void once the card is pulled (no game), so close that
     // one; Details/Power/power-Confirm/Error all remain valid with or without a card. A failed launch
     // returns to 'ready' first, THEN opens the error popup (separate IPC), so the error survives.
@@ -1989,7 +1891,7 @@ export function createControls(deps: ControlsDeps): Controls {
                 ? 'switch-game-source'
                 : 'discard-game-settings',
       ),
-    focusStrip,
+    openSystemCard,
     refresh,
     showError: openError,
     setGameMode: (value: boolean) => {
@@ -2003,7 +1905,7 @@ export function createControls(deps: ControlsDeps): Controls {
     /** Pause/resume acting on gamepad input (paused while the launcher is backgrounded — a game on top). */
     setGamepadPaused: (paused: boolean) => gamepad.setPaused(paused),
     applyNotifications: () => {
-      applyMenuNotifications();
+      applyUnreadDot();
       if (popupView === 'notifications') renderNotificationList();
     },
     isPopupOpen: () => popupView !== 'none',

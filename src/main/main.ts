@@ -285,7 +285,7 @@ async function bootstrap(): Promise<void> {
       preventScreensaverEnabled = enabled;
       recomputeKeepAwake();
     },
-    onAlwaysShowEmptyScreenChanged: (enabled) => controller.setAlwaysShowEmptyScreen(enabled),
+    onKeepOpenWithoutCardChanged: (enabled) => controller.setKeepOpenWithoutCard(enabled),
     // Game Mode auto-launch toggle (Steam Deck): installs or tears down the watcher unit. Turning it off
     // stops a separate process, so the memory is actually returned — that is the point of the option.
     onSteamAutoLaunchChanged: (enabled) => steamShortcut.applyAutoLaunch(enabled),
@@ -341,7 +341,7 @@ async function bootstrap(): Promise<void> {
   // Normally start hidden in the tray — the window appears only when a valid game card is detected
   // (GameController shows it on the 'ready' state). But if "always show the no-card screen" is enabled,
   // seed the controller with it now so it shows the empty screen at startup (reconciles: idle + no card).
-  controller.setAlwaysShowEmptyScreen(initialSettings.alwaysShowEmptyScreen);
+  controller.setKeepOpenWithoutCard(initialSettings.keepOpenWithoutCard);
 
   // Steam Deck Game Mode tile: writes Playhook into Steam's shortcuts.vdf as a non-Steam game. Available
   // only for a packaged AppImage on linux (the appid is derived from the launcher path, which a dev run

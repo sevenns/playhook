@@ -36,16 +36,19 @@
         <div id="hero-boot"></div>
       </div>
 
-      <!-- History carousel (the `carousel` screen): a horizontal strip of game cards sliding under a
-           fixed anchor — the selected card stays put, the row moves. The inserted card's games come first
+      <!-- History carousel (the `carousel` screen): a horizontal strip of cards sliding under a fixed
+           anchor — the selected card stays put, the row moves. The inserted card's games come first
            (marked with a dot: they can be launched right now), then the games played on this device
-           before. Cards are built from JS (carousel.ts); artwork is fetched per card, on demand. -->
+           before, and last the launcher's own cards — Notifications / Settings / System (system-cards.ts).
+           Every card is built from JS (carousel.ts); artwork is fetched per game card, on demand. -->
       <div id="carousel" aria-hidden="true">
         <div id="carousel-strip"></div>
       </div>
 
       <!-- Bottom bar (same layout for every screen): play / title / status + the More button on the
-           right. The empty (no-card) screen shows no Play; More there opens System + Close only. -->
+           right. On the carousel neither is shown — Play is the selected card's stand-in for the morph
+           and More is hidden (styles.css): the title line names the selected card, and the launcher's
+           own actions are cards in the row. -->
       <footer id="bottom-bar">
         <div class="bar-content">
           <!-- Play is a rounded square now; aria is STATIC ("Play") — the install action moved into the
@@ -74,7 +77,8 @@
           <div id="title" class="title"></div>
 
           <!-- More button: same rect-button component (invert-on-hover), three dots. Opens the Details
-               menu popup. Hidden on the empty screen; fades out while busy (like the old Info button). -->
+               menu popup — the GAME's menu, so it lives on the detail screen only (hidden on the carousel
+               by a rule in styles.css). -->
           <button id="more-button" class="rect-button" type="button" aria-label="More" data-i18n-aria-label="launcher.aria.more">
             <svg class="icon-more" viewBox="0 0 56 16" aria-hidden="true">
               <path d="M8 0C12.4183 0 16 3.58172 16 8C16 12.4183 12.4183 16 8 16C3.58172 16 0 12.4183 0 8C0 3.58172 3.58172 0 8 0Z" />
@@ -87,8 +91,9 @@
       </footer>
 
       <!-- Unified popup: ONE frosted veil + ONE right-side column (550px), whose content and action stack
-           switch by data-view (details / power / confirm / error) — a mirror of the popup state machine in
-           controls.ts. A single veil (vs one per section) avoids the cross-fade flicker of two identical
+           switch by data-view (details / power / notifications / confirm / error) — a mirror of the popup
+           state machine in controls.ts. `details` is a game's menu (reached from More on the detail
+           screen); `power` and `notifications` are opened straight from their carousel cards. A single veil (vs one per section) avoids the cross-fade flicker of two identical
            blur veils when moving Details ↔ Power: the veil stays, only the content changes.
            Default focus in every stack is the BOTTOM button (Close / No) — see controls.ts. -->
       <section id="popup" class="popup" aria-hidden="true" data-view="details">
@@ -154,28 +159,12 @@
               <!-- Drop this game from the history — shown only for a game that is NOT on the card and not
                    in the PC library (those are playable, not history). Text from JS, like its neighbours. -->
               <button id="menu-forget" class="text-button" type="button"></button>
-              <button id="menu-shutdown" class="text-button" type="button" data-i18n="launcher.menu.system">System</button>
               <!-- Back to the history carousel — the mouse counterpart of the B button (shown only on a
                    detail screen that HAS a carousel to return to). Text from JS, like its neighbours. -->
               <button id="menu-home" class="text-button" type="button"></button>
               <!-- Customize — the per-game manifest editor, offered only for a game that is on the card
                    or in the local library (an `active` game is the only one whose file we can reach). -->
               <button id="menu-customize" class="text-button" type="button"></button>
-              <!-- The ONLY way into Settings (the tray item is gone), so it shows on every screen —
-                   including the empty one, where More is still there. -->
-              <button id="menu-settings" class="text-button" type="button" data-i18n="launcher.menu.settings">Settings</button>
-              <!-- Add game — the same editor with no game behind it. It belongs to the launcher level
-                   like Settings above, and follows the same rule: hidden on a game's own menu when there
-                   is a carousel to reach the launcher level through. Text from JS, like its neighbours. -->
-              <button id="menu-add-game" class="text-button" type="button"></button>
-              <!-- Notifications — the inbox belongs to the launcher, not to one game, so it follows the
-                   same rule System and Settings do: it lives on the carousel's menu and stands down on a
-                   game's own. Two nodes rather than one: the label is rewritten from JS on every language
-                   change and would take the unread dot with it if the dot shared its text node. -->
-              <button id="menu-notifications" class="text-button" type="button">
-                <span class="menu-label" id="menu-notifications-label"></span
-                ><span class="menu-dot" id="menu-notifications-dot"></span>
-              </button>
               <button id="menu-close" class="text-button" type="button" data-i18n="launcher.menu.close">Close</button>
             </div>
             <div class="actions-group" data-group="power">

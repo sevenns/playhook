@@ -320,9 +320,9 @@ export class GameController {
   // kind of activity that leaves the state `ready`, so this is what stops a SECOND game from being
   // launched or installed underneath them (see onLaunchRequested).
   private steamBusyId: string | null = null;
-  // Mirror of AppSettings.alwaysShowEmptyScreen (seeded at startup, toggled live from the settings
-  // window): when true the launcher stays on the empty "no card" screen instead of hiding to the tray.
-  private alwaysShowEmptyScreen = false;
+  // Mirror of AppSettings.keepOpenWithoutCard (seeded at startup, toggled live from the settings
+  // window): when true the launcher stays on screen with no card in instead of hiding to the tray.
+  private keepOpenWithoutCard = false;
   private launchInFlight = false;
   // A manifest reload from the Customize screen is in flight. Unlike launchInFlight it does NOT
   // gate on state kind (the reload runs from `ready`), so onLaunchRequested/onUninstallRequested check
@@ -371,6 +371,12 @@ export class GameController {
   // — which describes one game's process and cannot represent "a history game while no card is in", nor
   // "browsing game B while game A installs". Null only when there is neither a card nor any history.
   private currentBrowse: BrowseInfo | null = null;
+  // The renderer parked the cursor on one of the launcher's own cards (browse:game with null). While it
+  // holds, main NEVER moves the cursor on its own — a card inserted, a session finished, a library
+  // reloaded: the row stays where the user left it (see browseToUnlessPinned). Only the renderer clears
+  // it, by browsing a game again. Not "main knowing about the UI": currentBrowse is the view model
+  // already, and this flag is what tells "the cursor was set on purpose" from "there is nothing to show".
+  private browsePinned = false;
   // Monotonic ticket for browse-asset reads: only the newest may push (see pushBrowseAssets).
   private browseAssetsSeq = 0;
   // Pending read of the browsed game's hero/music (see BROWSE_ASSETS_DEBOUNCE_MS).
@@ -836,7 +842,7 @@ export class GameController {
       this.enterReady(await this.buildGameInfo(selected, stats));
       // The card's own game is what you look at on insert (the single-game case is then exactly today's
       // screen: browse.id === AppState.game.id).
-      await this.browseTo(selected.raw.id);
+      await this.browseToUnlessPinned(selected.raw.id);
     }
     // …and only now the row, so it lands with the cursor already on the card it is about to put first.
     this.setLibrary(library);
@@ -883,7 +889,7 @@ export class GameController {
         this.setHero(await this.assets.readHeroAssets(selected));
         this.setCardMusic(await this.assets.readMusicDataUrl(selected));
         this.enterReady(await this.buildGameInfo(selected, this.statsById.get(selected.raw.id) ?? (await this.deps.stats.read(selected.raw.id))));
-        await this.browseTo(selected.raw.id);
+        await this.browseToUnlessPinned(selected.raw.id);
       }
     } else if (!this.cardPresent) {
       await this.reseedBrowse();
@@ -935,7 +941,7 @@ export class GameController {
       if (selected !== null && !this.cardPresent && this.deps.state.get().kind === 'ready') {
         const stats = this.statsById.get(selected.raw.id) ?? (await this.deps.stats.read(selected.raw.id));
         this.enterReady(await this.buildGameInfo(selected, stats));
-        await this.browseTo(selected.raw.id);
+        await this.browseToUnlessPinned(selected.raw.id);
       }
       return { ok: true };
     } finally {
@@ -954,7 +960,7 @@ export class GameController {
     this.setHero(await this.assets.readHeroAssets(manifest));
     this.setCardMusic(await this.assets.readMusicDataUrl(manifest));
     this.enterReady(await this.buildGameInfo(manifest, stats));
-    await this.browseTo(manifest.raw.id);
+    await this.browseToUnlessPinned(manifest.raw.id);
   }
 
   /**
@@ -1092,13 +1098,13 @@ export class GameController {
       return;
     }
     this.deps.state.set({ kind: 'idle' });
-    // Normally the background app hides to the tray when no card is present. With "always show the no-card
-    // screen" on, keep the launcher up on the empty screen instead — BUT only if it's currently on screen.
-    // If the user minimized it to the tray, pulling the card must not pop it back up (respect that intent).
+    // Normally the background app hides to the tray when no card is present. With "keep the launcher open
+    // without a card" on, it stays up instead — BUT only if it's currently on screen. If the user
+    // minimized it to the tray, pulling the card must not pop it back up (respect that intent).
     if (this.deps.isGamescope) {
-      // Game Mode: no tray — always keep the empty "insert a card" screen up (forces alwaysShowEmptyScreen).
+      // Game Mode: no tray — the launcher always stays up (forces keepOpenWithoutCard).
       this.deps.window.showAndFocus();
-    } else if (this.alwaysShowEmptyScreen) {
+    } else if (this.keepOpenWithoutCard) {
       if (this.deps.window.isShown()) this.deps.window.showAndFocus();
     } else {
       this.deps.window.hide();
@@ -1106,13 +1112,13 @@ export class GameController {
   }
 
   /**
-   * Applies the "always show the no-card screen" setting (seeded at startup, toggled live from the
+   * Applies the "keep the launcher open without a card" setting (seeded at startup, toggled live from the
    * settings window). Besides caching the flag it reconciles the launcher NOW when we're idle with no
-   * card: show the empty screen when turning it on, or hide back to the tray when turning it off. When a
-   * card is present (ready/busy) nothing changes — the launcher is already visible for the game.
+   * card: bring it up when turning it on, or hide back to the tray when turning it off. When a card is
+   * present (ready/busy) nothing changes — the launcher is already visible for the game.
    */
-  setAlwaysShowEmptyScreen(on: boolean): void {
-    this.alwaysShowEmptyScreen = on;
+  setKeepOpenWithoutCard(on: boolean): void {
+    this.keepOpenWithoutCard = on;
     const kind = this.deps.state.get().kind;
     // `ready` counts too when no card is in: that is a LOCAL game on screen, and the setting is about
     // whether the launcher sits there with no card — not about which screen it happens to show.
@@ -1212,7 +1218,7 @@ export class GameController {
     this.setCardMusic(await this.assets.readMusicDataUrl(manifest));
     this.enterReady(await this.buildGameInfo(manifest, stats));
     // Keep what's on screen in step with the selection (the renderer reads the title/stats from here).
-    await this.browseTo(manifest.raw.id);
+    await this.browseToUnlessPinned(manifest.raw.id);
   }
 
   /**
@@ -1662,7 +1668,7 @@ export class GameController {
       // 7. done
       this.enterReady(updatedInfo);
       // Refresh what's on screen too: the play time / launch count the detail screen shows just changed.
-      await this.browseTo(manifest.raw.id);
+      await this.browseToUnlessPinned(manifest.raw.id);
       window.showAndFocus();
     } catch (cause) {
       if (cause instanceof LaunchAbortedError) return; // application is shutting down
@@ -2356,7 +2362,17 @@ export class GameController {
    * this works while another game installs (and with no card at all).
    */
   private async onBrowseRequested(idRaw: unknown, immediateRaw: unknown): Promise<void> {
+    // A launcher card is selected: nothing is on screen. The INFO goes out at once (the title and the
+    // status line must clear as promptly as they do between games), while the heavy half rides the same
+    // debounce a game's does — a flip PAST the launcher cards must not tear the background and the music.
+    if (idRaw === null) {
+      this.browsePinned = true;
+      this.pushBrowse(null);
+      this.scheduleBrowseAssets(null, immediateRaw === true);
+      return;
+    }
     if (typeof idRaw !== 'string') return;
+    this.browsePinned = false;
     await this.browseTo(idRaw, immediateRaw === true);
   }
 
@@ -2406,8 +2422,21 @@ export class GameController {
     this.scheduleBrowseAssets(id, immediate);
   }
 
-  /** Debounced read+push of the browsed game's hero/music; a newer browse cancels the pending one. */
-  private scheduleBrowseAssets(id: string, immediate = false): void {
+  /**
+   * Where the cursor moves on main's own initiative — a card inserted, a library reloaded, a session
+   * finished. Refused while the user is parked on a launcher card: the position in the row is theirs, and
+   * an inserted card yanking the screen off Settings is exactly what this exists to prevent. Everything
+   * else keeps working meanwhile (state:update, hero:update and card:music are pushed regardless), so the
+   * new card is on screen the moment the user steps back onto a game themselves.
+   */
+  private async browseToUnlessPinned(id: string): Promise<void> {
+    if (this.browsePinned) return;
+    await this.browseTo(id);
+  }
+
+  /** Debounced read+push of the browsed game's hero/music; a newer browse cancels the pending one.
+   *  `null` is the launcher-card case: the same debounce, pushing empty assets at the end of it. */
+  private scheduleBrowseAssets(id: string | null, immediate = false): void {
     if (this.browseAssetsTimer !== null) clearTimeout(this.browseAssetsTimer);
     this.browseAssetsTimer = null;
     // `immediate` is the renderer saying the user has COMMITTED to this game (opened its screen) rather
@@ -2423,15 +2452,24 @@ export class GameController {
     }, BROWSE_ASSETS_DEBOUNCE_MS);
   }
 
-  private async pushBrowseAssets(id: string): Promise<void> {
+  private async pushBrowseAssets(id: string | null): Promise<void> {
     const seq = ++this.browseAssetsSeq;
     // Checked before EVERY push, not just on entry. Each read below is megabytes off the disk plus a
     // base64 encode, and the selection keeps moving while it runs — so a read started for a game the user
     // flipped past would otherwise land on the game they stopped on, dragging its background, its colours
     // and its music along. The sequence covers the other half: two reads in flight at once (a debounced
     // one and an immediate one) can finish out of order, and only the newest may speak.
-    const current = (): boolean => seq === this.browseAssetsSeq && this.currentBrowse?.id === id;
+    const current = (): boolean =>
+      seq === this.browseAssetsSeq &&
+      (id === null ? this.currentBrowse === null : this.currentBrowse?.id === id);
     if (!current()) return;
+    // A launcher card: no background and no music of its own. The renderer answers an empty payload with
+    // the idle wallpaper and the global ambience (see hero.applyIdleBackground / audio.setIdle).
+    if (id === null) {
+      this.pushBrowseHero(null);
+      this.pushBrowseMusic(null);
+      return;
+    }
     const manifest = this.games.find((m) => m.raw.id === id) ?? null;
     if (manifest !== null) {
       const hero = await this.assets.readHeroAssets(manifest);
@@ -2510,6 +2548,6 @@ export class GameController {
       this.pushBrowseMusic(null);
       return;
     }
-    await this.browseTo(next.id);
+    await this.browseToUnlessPinned(next.id);
   }
 }

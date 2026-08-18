@@ -38,6 +38,16 @@ describe('en dictionary integrity', () => {
       expect(value.length, `en[${key}] must be non-empty`).toBeGreaterThan(0);
     }
   });
+
+  // The launcher cards' captions are written from JS (no data-i18n to scan), and `ru` is a Partial — a
+  // forgotten translation compiles and merely falls back to English on screen. These three are the only
+  // guard against a Russian launcher naming its own cards in English.
+  it('names the launcher cards in BOTH locales', () => {
+    for (const key of ['launcher.card.notifications', 'launcher.card.settings', 'launcher.card.system'] as const) {
+      expect(en[key]?.length, `en[${key}] must be filled`).toBeGreaterThan(0);
+      expect(ru[key]?.length, `ru[${key}] must be filled`).toBeGreaterThan(0);
+    }
+  });
 });
 
 describe('plural (tp) via Intl.PluralRules', () => {

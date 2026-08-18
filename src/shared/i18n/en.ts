@@ -45,7 +45,6 @@ export const en = {
   'window.settings': 'Settings',
 
   // ── Game launcher renderer (index.html + app.ts/state-view.ts/controls.ts/hero.ts) ──
-  'launcher.emptyTitle': 'Insert a game card',
   'launcher.errorTitle': 'Something went wrong',
   'launcher.info.lastPlayed': 'Last Played',
   'launcher.info.playtime': 'Playtime',
@@ -77,6 +76,12 @@ export const en = {
   // game from inside the launcher.
   'launcher.menu.addGame': 'Add game',
   'launcher.menu.settings': 'Settings',
+  // The launcher's own cards at the tail of the carousel (system-cards.ts). The first two name themselves
+  // in the bar's title line while they are selected, exactly as a game does; the third shows no caption at
+  // all in the mockup, so its key is only ever read as the card's aria-label.
+  'launcher.card.notifications': 'Notifications',
+  'launcher.card.settings': 'Settings',
+  'launcher.card.system': 'System',
   // Confirmation popup copy (controls.ts). The Yes/No buttons use the shared common.* keys.
   'launcher.confirm.install': 'Do you want to install game?',
   'launcher.confirm.uninstall': 'Do you want to uninstall game from your PC?',
@@ -167,7 +172,7 @@ export const en = {
   // The launcher screen states the chord in one line (the settings window splits it around a <b>).
   'settings.summonHint': 'Hold Menu + View on your gamepad to bring the launcher to the front.',
   'settings.preventScreensaver': 'Keep the screen awake while the launcher is open',
-  'settings.alwaysShowEmpty': 'Always show the no-card screen',
+  'settings.keepOpenWithoutCard': 'Keep the launcher open without a card',
   'settings.disableSilentInstall': 'Disable silent installer mode (show the installer wizard)',
   // Steam Deck only — the row is hidden entirely elsewhere (see settings.ts / isSteamAvailable).
   'settings.steamAutoLaunch': 'Open Playhook in Steam when a card is inserted (Game Mode only)',
