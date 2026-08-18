@@ -13,6 +13,7 @@ import type { LibraryEntry } from '../shared/types';
 import type { Translator } from '../shared/i18n/index.js';
 import {
   MAX_STRIP_GAMES,
+  anchorIndex,
   RETURN_FAN_MS,
   RETURN_LOCK_MS,
   clampIndex,
@@ -170,6 +171,9 @@ export function createCarousel(deps: CarouselDeps): Carousel {
 
   const artKey = (game: LibraryEntry): string => `${game.id}@${game.artRev ?? ''}`;
 
+  /** How many of the row's cards are games — the launcher's own cards always follow them. */
+  const gameCount = (): number => items.filter((item) => item.kind === 'game').length;
+
   function selected(): CarouselItem | undefined {
     return items[index];
   }
@@ -189,7 +193,7 @@ export function createCarousel(deps: CarouselDeps): Carousel {
 
   /** The strip's translation + the per-card selected/active/busy state. Cheap; safe to call often. */
   function applyLayout(): void {
-    strip.style.setProperty('--strip-offset', String(stripOffset(index)));
+    strip.style.setProperty('--strip-offset', String(stripOffset(anchorIndex(index, gameCount()))));
     const current = selected();
     const currentKey = current === undefined ? null : itemKey(current);
     items.forEach((item, position) => {
@@ -202,7 +206,12 @@ export function createCarousel(deps: CarouselDeps): Carousel {
       // Past the shown window (see VISIBLE_CARDS): still laid out — the strip's offset is positional and
       // a removed node would shift every card after it — but faded out, so it slides in softly when the
       // selection reaches it instead of popping into existence at the row's end.
-      card.classList.toggle('is-beyond', !isWithinWindow(position, index));
+      // The launcher cards never wait off-view: the window is about a long history running off the right
+      // edge, and those four are the row's fixed furniture — the whole point of them is being reachable.
+      card.classList.toggle(
+        'is-beyond',
+        item.kind === 'game' && !isWithinWindow(position, index),
+      );
       // Its place in the fan the strip returns in (styles.css turns this into a transition-delay).
       card.style.setProperty('--fan', String(fanIndex(position, index)));
     });
