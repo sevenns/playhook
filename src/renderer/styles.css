@@ -1628,7 +1628,8 @@ html:not(.mouse-asleep) .notification-item:hover .notification-dot {
 }
 
 #app[data-overlay='settings'] #settings,
-#app[data-overlay='game-settings'] #game-settings {
+#app[data-overlay='game-settings'] #game-settings,
+#app[data-overlay='library'] #library {
   opacity: 1;
   pointer-events: auto;
 }
@@ -1662,7 +1663,8 @@ html:not(.mouse-asleep) .notification-item:hover .notification-dot {
 }
 
 #app[data-overlay='settings'] #settings .settings-veil,
-#app[data-overlay='game-settings'] #game-settings .settings-veil {
+#app[data-overlay='game-settings'] #game-settings .settings-veil,
+#app[data-overlay='library'] #library .settings-veil {
   opacity: 1;
 }
 
@@ -1681,7 +1683,8 @@ html:not(.mouse-asleep) .notification-item:hover .notification-dot {
 }
 
 #app[data-overlay='settings'] #settings .settings-column,
-#app[data-overlay='game-settings'] #game-settings .settings-column {
+#app[data-overlay='game-settings'] #game-settings .settings-column,
+#app[data-overlay='library'] #library .settings-column {
   opacity: 1;
   transform: none;
 }
@@ -2953,4 +2956,141 @@ html:not(.mouse-asleep) .picker-item:hover,
 #app[data-boot],
 #app[data-boot] .card {
   pointer-events: none;
+}
+
+
+/* ── Library ────────────────────────────────────────────────────────────────
+   The grid of covers. It reuses the #settings skeleton (veil, column, sidebar) and differs in two
+   things: the pane runs to the RIGHT EDGE of the screen, so the gap after the sidebar and the gap
+   before the edge come out equal (justify-content: center splits what is left over evenly), and the
+   pane holds .card nodes rather than rows.
+
+   EVERY rule here is prefixed with `#app #library` — two ids against the one that any carousel rule
+   carries. The cards share the .card class with the strip, and specificity is what keeps the strip's
+   sizes, its detail-screen fade and its flip transition off them, deterministically rather than by
+   the order the rules happen to sit in the file. Not one line of the carousel's CSS is touched. */
+
+#library .settings-column {
+  right: 0;
+}
+
+/* 0, not the 40 of #settings: the sidebar's own 380 already carries the gap, and the pane's padding
+   adds the rest — see the padding note below. */
+#library .settings-body {
+  gap: 0;
+}
+
+.library-pane {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+}
+
+/* The padding is not decoration: the selected card scales to 1.06 and its ring pulses to 1.035 ON TOP
+   of that (the ring is a child, so the two multiply), which puts its corner ~19 design px outside its
+   own box. The scroller clips on both axes, so anything less would slice the ring. */
+.library-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: none;
+  padding: calc(22 * var(--px));
+  /* Same edge treatment as .settings-list: fades driven from JS, none where there is nothing beyond. */
+  --fade-top: 0px;
+  --fade-bottom: 0px;
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 var(--fade-top),
+    #000 calc(100% - var(--fade-bottom)),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 var(--fade-top),
+    #000 calc(100% - var(--fade-bottom)),
+    transparent 100%
+  );
+}
+
+.library-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+/* --cols is measured in JS (library-screen.ts) rather than left to flex-wrap, because up/down are a
+   ±cols step and the maths has to agree with the layout. The fallback of 1 is deliberate: a fallback
+   of 6 would overflow the container on a 16:10 screen for the frame before the first measurement. */
+.library-grid {
+  display: grid;
+  justify-content: center;
+  align-content: start;
+  gap: calc(16 * var(--px));
+  grid-template-columns: repeat(var(--cols, 1), calc(200 * var(--px)));
+}
+
+.library-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 calc(60 * var(--px));
+  text-align: center;
+  font-weight: 500;
+  font-size: calc(28 * var(--px));
+  line-height: calc(38 * var(--px));
+  color: color-mix(in srgb, var(--fg) 70%, transparent);
+  pointer-events: none;
+  opacity: 1;
+  transition: opacity 0.2s ease;
+}
+
+.library-empty[aria-hidden='true'] {
+  opacity: 0;
+}
+
+#app #library .library-grid .card {
+  width: calc(200 * var(--px));
+  height: calc(300 * var(--px));
+  /* Pinned against #app[data-screen='detail'] .card: opening a game switches the screen at once while
+     this overlay takes 0.35s to fade, so without it every cover would blink to zero on the first frame
+     of the way out. */
+  opacity: 1;
+  /* The scale lives in a VARIABLE because the FLIP that reorders the grid writes an inline transform:
+     it composes translate() with scale(var(--card-scale)), and a literal here would be wiped by it,
+     collapsing the selected card for the length of the animation. */
+  --card-scale: 1;
+  transform: scale(var(--card-scale));
+  transition: transform var(--morph) var(--morph-ease);
+}
+
+/* Grown in place: the grid's geometry does not depend on which card is selected, so the neighbours must
+   not shift. z-index lifts it over them, since it now overlaps. */
+#app #library .library-grid .card.is-selected {
+  --card-scale: 1.06;
+  z-index: 1;
+}
+
+/* A held direction: the same trick the strip uses — a step exactly as long as the repeat interval, in
+   linear, which glues the steps into one continuous glide instead of 143 ms of ease each. */
+#app[data-flipping] #library .library-grid .card {
+  transition: transform var(--flip-step) linear;
+}
+
+/* The playable dot moves INSIDE the card, to its top-right corner: the grid is dense and there is no
+   room under a card for the carousel's hanging dot. Only geometry and the ring are set here — opacity
+   and the busy pulse stay with .card.shows-dot / .card.is-busy.shows-dot. The ring is the background
+   colour: the dot now lies over arbitrary artwork and would vanish on a bright cover. */
+#app #library .library-grid .card-dot {
+  left: auto;
+  bottom: auto;
+  margin-left: 0;
+  top: calc(12 * var(--px));
+  right: calc(12 * var(--px));
+  width: calc(12 * var(--px));
+  height: calc(12 * var(--px));
+  box-shadow: 0 0 0 calc(2 * var(--px)) color-mix(in srgb, var(--d1) 85%, transparent);
 }

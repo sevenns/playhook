@@ -73,6 +73,8 @@ export interface ControlsDeps {
   settings: SettingsNav;
   /** The Customize screen — the fifth surface, at the same level as Settings (see `overlays` below). */
   gameSettings: GameSettingsNav;
+  /** The Library screen — the sixth surface, at that same level. */
+  library: LibraryNav;
   /**
    * A direction is being HELD, i.e. the strip is flipping on its own (true), or it has just been let go
    * (false). The background subsystem holds its image for the duration — see hero.setFlipping.
@@ -128,6 +130,16 @@ export interface GameSettingsNav extends NavSurface {
 }
 
 /**
+ * The Library screen, the third overlay — and the one the "Add game" route runs through, which is why
+ * this module opens it: the screen it hands over to (Customize in add mode) is this module's to open.
+ */
+export interface LibraryNav extends NavSurface {
+  open(): void;
+  /** `silent` is a hand-over to another surface (the detail screen, Add game) — see LibraryScreen. */
+  close(silent?: boolean): void;
+}
+
+/**
  * What the interaction layer needs from the carousel. A narrow seam on purpose: the carousel owns its
  * strip and selection, this module owns which surface the buttons currently drive.
  */
@@ -158,6 +170,8 @@ export interface Controls {
    * itself (app.ts), so nothing here does — the surface's own popup-open follows it.
    */
   openSystemCard(id: SystemCardId): void;
+  /** "Add game", from the Library's column — the launcher's only route to creating a game. */
+  openAddGame(): void;
   /** Clears the game-dependent menu item for the idle/no-game screen. */
   clearGameButtons(): void;
   /** Per-render refresh: force-close the popup off the ready screen (or while steam-busy), then re-apply focus. */
@@ -243,9 +257,11 @@ export function createControls(deps: ControlsDeps): Controls {
     active: (): NavSurface | null => {
       if (deps.settings.isOpen()) return deps.settings;
       if (deps.gameSettings.isOpen()) return deps.gameSettings;
+      if (deps.library.isOpen()) return deps.library;
       return null;
     },
-    isAnyOpen: (): boolean => deps.settings.isOpen() || deps.gameSettings.isOpen(),
+    isAnyOpen: (): boolean =>
+      deps.settings.isOpen() || deps.gameSettings.isOpen() || deps.library.isOpen(),
   };
 
   // Bar buttons.
@@ -546,17 +562,31 @@ export function createControls(deps: ControlsDeps): Controls {
    */
   function openSystemCard(id: SystemCardId): void {
     popupRoot = 'direct';
-    if (id === 'notifications') {
-      openNotifications();
-      return;
+    // A switch with an exhaustive default, not a chain ending in openPower(): a card added to
+    // SYSTEM_CARDS and forgotten here used to fall through to "shut the machine down", and no type would
+    // have caught it. Now the missing branch is a compile error.
+    switch (id) {
+      case 'library':
+        // Same as Settings: the card's own `button` (app.ts) is this press's sound.
+        deps.library.open();
+        break;
+      case 'notifications':
+        openNotifications();
+        break;
+      case 'settings':
+        // The card's own `button` (app.ts) is the sound of this press; the screen adds none of its own.
+        // The other cards open a popup, whose `popup-open` is a different sound and layers fine.
+        openSettings(undefined, { silent: true });
+        break;
+      case 'power':
+        openPower();
+        break;
+      default: {
+        const exhaustive: never = id;
+        throw new Error(`unhandled launcher card ${String(exhaustive)}`);
+      }
     }
-    if (id === 'settings') {
-      // The card's own `button` (app.ts) is the sound of this press; the screen adds none of its own.
-      // The other two cards open a popup, whose `popup-open` is a different sound and layers fine.
-      openSettings(undefined, { silent: true });
-      return;
-    }
-    openPower();
+    applyFocus();
   }
 
   // Power submenu (from a launcher card, or from Details → System on a game screen): Shutdown / Reboot /
@@ -743,6 +773,18 @@ export function createControls(deps: ControlsDeps): Controls {
     applyFocus(); // the bar highlight clears (focusActive is false with the screen open)
   }
 
+  /**
+   * "Add game", from the Library's column: the ONE way to create a game from inside the launcher (the
+   * Details menu lost its item in 4c0d3dc, and openNew() has had no caller since). The library steps
+   * aside first — data-overlay holds one value at a time — and app.ts remembers to bring it back when the
+   * Customize screen closes.
+   */
+  function openAddGame(): void {
+    deps.library.close(true);
+    deps.gameSettings.openNew();
+    applyFocus();
+  }
+
   function openCustomize(): void {
     const browse = deps.getBrowse();
     if (browse === null || !browse.active) return; // the item's own rule, re-checked at the press
@@ -820,7 +862,7 @@ export function createControls(deps: ControlsDeps): Controls {
     if (menuFrozen()) return;
     const show = deps.carousel.screen() === 'detail';
     menuHome.classList.toggle('is-hidden', !show);
-    if (show) menuHome.textContent = t()('launcher.menu.home');
+    if (show) menuHome.textContent = t()('launcher.menu.goBack');
   }
 
   // ── Menu item: Remove from history (history-only games) ──────────────────────
@@ -1527,7 +1569,7 @@ export function createControls(deps: ControlsDeps): Controls {
     // wants, one step per repeat, and the screen has no "at the end, hand the focus over" rule.
     const overlay = popupView === 'none' ? overlays.active() : null;
     if (overlay !== null) {
-      overlay.navRight();
+      overlay.navRight(repeat);
       return;
     }
     if (stripActive()) {
@@ -1550,7 +1592,7 @@ export function createControls(deps: ControlsDeps): Controls {
     }
     const overlay = overlays.active();
     if (overlay !== null) {
-      overlay.navUp();
+      overlay.navUp(repeat);
       return;
     }
     // Nothing sits above the bar on the detail screen, so up leaves it: the strip the game was picked
@@ -1570,7 +1612,7 @@ export function createControls(deps: ControlsDeps): Controls {
     }
     const overlay = overlays.active();
     if (overlay !== null) {
-      overlay.navDown();
+      overlay.navDown(repeat);
       return;
     }
     // The other half of the vertical pair: down opens the selected card (what A does), up on the detail
@@ -1892,6 +1934,7 @@ export function createControls(deps: ControlsDeps): Controls {
                 : 'discard-game-settings',
       ),
     openSystemCard,
+    openAddGame,
     refresh,
     showError: openError,
     setGameMode: (value: boolean) => {

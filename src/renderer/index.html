@@ -322,6 +322,30 @@
           <div class="lightbox-caption" id="lightbox-caption"></div>
         </div>
       </section>
+
+      <!-- Library: the whole game list as a grid of covers, the sixth surface. Structurally another twin
+           of #settings (veil + column + sidebar), but its pane is a scroller full of cards rather than a
+           list of rows, and it runs to the RIGHT EDGE of the screen so the gap after the sidebar and the
+           gap before the edge read as equal. Its openness value is #app[data-overlay="library"].
+           #library-empty sits OUTSIDE the scroller on purpose: screen-scroller measures the pane's last
+           child, and a hidden node at the tail would zero the bottom fade. -->
+      <section id="library" class="settings" aria-hidden="true">
+        <div class="settings-veil"></div>
+        <div class="settings-column">
+          <div class="settings-header">
+            <div class="settings-title" data-i18n="launcher.card.library">Library</div>
+          </div>
+          <div class="settings-body">
+            <div class="settings-nav" id="library-nav"></div>
+            <div class="library-pane">
+              <div class="library-scroll" id="library-scroll">
+                <div class="library-grid" id="library-grid"></div>
+              </div>
+              <div class="library-empty" id="library-empty" aria-hidden="true"></div>
+            </div>
+          </div>
+        </div>
+      </section>
     </main>
     <script type="module" src="./app.js"></script>
   </body>

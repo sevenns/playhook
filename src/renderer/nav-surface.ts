@@ -7,11 +7,13 @@
 // likes: the point is that `left` means the same thing everywhere the user presses it.
 export interface NavSurface {
   isOpen(): boolean;
-  navUp(): void;
-  navDown(): void;
+  /** `repeat` marks a hold auto-repeat, exactly as it does for navLeft — surfaces that have no use for
+   *  it simply take no parameter. */
+  navUp(repeat?: boolean): void;
+  navDown(repeat?: boolean): void;
   /** `repeat` marks a hold auto-repeat: a held direction must not walk out through several levels. */
   navLeft(repeat?: boolean): void;
-  navRight(): void;
+  navRight(repeat?: boolean): void;
   navActivate(): void;
   navBack(): void;
   /**

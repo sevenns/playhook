@@ -103,6 +103,13 @@ export interface Carousel {
    * the flip ends on are the only ones anyone actually looks at.
    */
   setFlipping(flipping: boolean): void;
+  /**
+   * Seeds this cache with a cover somebody else already decoded — the Library screen, when a game is
+   * opened from its grid. applyLayout reads the cache SYNCHRONOUSLY to dress the play button for the
+   * morph, so without the hand-over the detail screen would open on an empty plate and fill in a frame
+   * later. The key is the same `id@artRev` the row uses, so a stale revision simply misses.
+   */
+  primeArt(game: LibraryEntry, url: string): void;
 }
 
 /** The row's identity for one item — the key of the DOM node, and what a list update keeps the selection by. */
@@ -438,6 +445,9 @@ export function createCarousel(deps: CarouselDeps): Carousel {
       if (unread === next) return;
       unread = next;
       applyLayout();
+    },
+    primeArt(game: LibraryEntry, url: string): void {
+      art.set(artKey(game), url);
     },
     setFlipping(next: boolean): void {
       if (flipping === next) return;

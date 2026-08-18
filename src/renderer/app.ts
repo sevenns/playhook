@@ -20,6 +20,8 @@ import {
 import { createOsk } from './osk.js';
 import { createFilePicker } from './file-picker.js';
 import { createCarousel } from './carousel.js';
+import { createCardArtCache } from './card-art.js';
+import { createLibraryScreen } from './library-screen.js';
 import { createToast } from './toast.js';
 import { formatDate, formatNotification, formatPlaytime } from './format.js';
 import { busyKindOf, gameOf, phaseOf, statusOf, steamBusy } from './state-view.js';
@@ -155,7 +157,12 @@ const gameSettingsScreen = createGameSettingsScreen({
   keyboard: osk,
   picker: filePicker,
   // Read lazily for the same reason the carousel seam is: `controls` is created just below.
-  onClosed: () => controls.settingsClosed(),
+  onClosed: () => {
+    controls.settingsClosed();
+    // Cancelled out of "Add game" — back to the library it was started from. On a SUCCESSFUL add this
+    // still runs first (the screen closes before it reports the new game), and showAddedGame undoes it.
+    restoreOrigin();
+  },
   onConfirmRequested: (kind) => controls.confirmGameSettings(kind),
   onAdded: (id) => showAddedGame(id),
   // Editing while the game runs is legal (Р3); DELETING it is not — the launcher would be left holding a
@@ -171,6 +178,21 @@ const gameSettingsScreen = createGameSettingsScreen({
 // Read lazily, for the same reason the carousel seam is: `controls` is created just below, and the two
 // point at each other — the plate shares its corner with the popup column, so it waits while a popup is
 // up and resumes when one closes.
+// ── Library screen (the sixth surface, see library-screen.ts) ───────────────
+// Its artwork cache is created here rather than inside it so the bound stays visible where the rest of
+// the renderer's memory decisions are: it is the library's alone, the carousel keeps its own.
+const libraryArt = createCardArtCache({ requestGrid: (id) => window.api.requestGrid(id) });
+const libraryScreen = createLibraryScreen({
+  audio,
+  getTranslator,
+  art: libraryArt,
+  getGames: () => currentGames,
+  // Read lazily for the same reason the carousel seam is: `controls` is created just below.
+  onOpenGame: (id) => openGameDetail(id, 'library'),
+  onAddGame: () => controls.openAddGame(),
+  onClosed: () => controls.settingsClosed(),
+});
+
 const toast = createToast({
   audio,
   isBlocked: () => controls.isPopupOpen(),
@@ -190,6 +212,7 @@ const controls = createControls({
   getTranslator,
   settings: settingsScreen,
   gameSettings: gameSettingsScreen,
+  library: libraryScreen,
   onFlipping: (flipping) => {
     if (flipping) {
       if (flipSettleTimer !== 0) {
@@ -199,6 +222,7 @@ const controls = createControls({
       stripFlipping = true;
       hero.setFlipping(true);
       carousel.setFlipping(true);
+      libraryScreen.setFlipping(true);
       return;
     }
     if (flipSettleTimer !== 0) return;
@@ -207,6 +231,7 @@ const controls = createControls({
       stripFlipping = false;
       hero.setFlipping(false);
       carousel.setFlipping(false);
+      libraryScreen.setFlipping(false);
       // The title stays hidden for the whole run (see textSwapPending) — this is where it comes back, on
       // the game the row finally came to rest on.
       render(currentState);
@@ -289,15 +314,40 @@ const carousel = createCarousel({
 });
 
 /**
+ * Where the screen ABOVE this one goes back to. A detail screen — and the Customize screen in add mode —
+ * can be reached from the carousel or from the Library, and "back" has to mean the place it was actually
+ * entered from. One flag for both, because it is one question: the surface underneath is either standing
+ * open behind them or it is not.
+ */
+type ReturnTo = 'carousel' | 'library';
+let returnTo: ReturnTo = 'carousel';
+
+/** Brings the Library back up if that is where the top screen was entered from. Consumes the flag. */
+function restoreOrigin(): void {
+  if (returnTo !== 'library') return;
+  returnTo = 'carousel';
+  libraryScreen.restore();
+}
+
+/**
  * Open one game's detail screen. Lifted out of the carousel's activate callback, because it is now
- * reached from two places: pressing a card, and pressing a notification about that game.
+ * reached from three places: pressing a card, pressing a notification about that game, and the Library's
+ * grid — which is what `origin` records, so B and up come back to the grid rather than to the strip.
  *
  * A game that is not in the list has nowhere to open — its card is out and its history record was
  * evicted — so the press simply does nothing rather than opening an empty screen.
  */
-function openGameDetail(id: string): void {
+function openGameDetail(id: string, origin: ReturnTo = 'carousel'): void {
   const entry = currentGames.find((game) => game.id === id);
   if (entry === undefined) return;
+  returnTo = origin;
+  if (origin === 'library') {
+    // The play button morphs out of the card's artwork, and it reads the CAROUSEL's cache synchronously
+    // — so the cover the grid already decoded is handed over, or the screen would open on an empty plate.
+    const url = libraryScreen.artFor(id);
+    if (url !== null) carousel.primeArt(entry, url);
+    libraryScreen.close(true);
+  }
   userChoseDetail = true;
   // Committing to a game outranks the debounce main applies while flipping: ask for its hero and music
   // NOW. Without this, opening a game straight out of a fast flip leaves the previous game's background
@@ -324,6 +374,11 @@ function openGameDetail(id: string): void {
  * With a single game there IS no carousel, and staying on that game's detail screen is the right answer.
  */
 function showAddedGame(id: string): void {
+  // The Customize screen reported the new game AFTER announcing it closed, so onClosed has already put
+  // the library back up. A brand-new game belongs on the carousel, in front of the user — and both
+  // happen in one task, so no frame is drawn in between and nothing flickers.
+  returnTo = 'carousel';
+  libraryScreen.close(true);
   userChoseDetail = false;
   carousel.focusGame(id);
   // focusGame moves the STRIP and nothing else — it does not tell main the browse cursor moved (a real
@@ -343,6 +398,9 @@ function showAddedGame(id: string): void {
 function leaveDetail(): boolean {
   if (carousel.screen() !== 'detail') return false;
   userChoseDetail = false;
+  // BEFORE setScreen: switching the level fires onScreenChange, whose refresh() has to see the library
+  // already open — otherwise the focus is computed for a carousel that is about to be covered again.
+  restoreOrigin();
   carousel.setScreen('carousel');
   return true;
 }
@@ -602,6 +660,7 @@ function render(state: AppState): void {
   // browse game B (whose status line is blank — see applyStatus).
   const busyGame = phase === 'busy' || busySteam ? (gameOf(state)?.id ?? null) : null;
   carousel.setBusyGame(busyGame);
+  libraryScreen.setBusyGame(busyGame);
 
   syncChatter(state);
   applyStatus();
@@ -764,6 +823,7 @@ function applyLocale(locale: Locale): void {
   // knows nothing about it. It keeps its focus and scroll position across the swap.
   settingsScreen.relocalize();
   gameSettingsScreen.relocalize();
+  libraryScreen.relocalize();
   // The notification list is built from JS too, and its text is ASSEMBLED from the kind rather than
   // stored — which is the whole reason it is not stored: a language change rewrites it in place.
   controls.applyNotifications();
@@ -937,6 +997,8 @@ void window.api.requestHero().then((assets) => {
 function applyLibrary(games: readonly LibraryEntry[]): void {
   currentGames = games;
   carousel.setGames(games);
+  // The grid re-flows the same way the strip does — the screen may be open while a card goes in or out.
+  libraryScreen.setGames(games);
   // main says nothing is on screen while the row is standing on a GAME: the user was parked on a launcher
   // card and this window is a fresh one (a reload re-seeds the list, but which of the three cards it was
   // is remembered nowhere), so the strip lands on games[0] with an idle background over it. Put it back on

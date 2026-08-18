@@ -69,7 +69,7 @@ export const en = {
   'launcher.menu.quit': 'Close Playhook',
   // Force-close the running game (Details menu item, visible only while a game is running).
   'launcher.menu.forceClose': 'Force close',
-  'launcher.menu.home': 'Home',
+  'launcher.menu.goBack': 'Go back',
   'launcher.menu.forget': 'Remove from history',
   'launcher.menu.notifications': 'Notifications',
   // Details menu entry that opens the Customize screen with no game behind it — the one way to CREATE a
@@ -79,9 +79,16 @@ export const en = {
   // The launcher's own cards at the tail of the carousel (system-cards.ts). The first two name themselves
   // in the bar's title line while they are selected, exactly as a game does; the third shows no caption at
   // all in the mockup, so its key is only ever read as the card's aria-label.
+  'launcher.card.library': 'Library',
   'launcher.card.notifications': 'Notifications',
   'launcher.card.settings': 'Settings',
   'launcher.card.system': 'System',
+  // The Library overlay: its two sidebar sections and the copy shown when a section has nothing in it.
+  'library.all': 'All',
+  'library.playable': 'Ready to play',
+  'library.empty': 'No games here yet.',
+  'library.emptyPlayable':
+    'Nothing is ready to play - insert a card or add a game from your PC.',
   // Confirmation popup copy (controls.ts). The Yes/No buttons use the shared common.* keys.
   'launcher.confirm.install': 'Do you want to install game?',
   'launcher.confirm.uninstall': 'Do you want to uninstall game from your PC?',

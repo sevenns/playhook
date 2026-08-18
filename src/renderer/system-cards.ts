@@ -8,7 +8,7 @@
 import type { MessageKey } from '../shared/i18n/index.js';
 
 /** Which launcher card this is (also the value carousel.ts reports to app.ts on activation). */
-export type SystemCardId = 'notifications' | 'settings' | 'power';
+export type SystemCardId = 'library' | 'notifications' | 'settings' | 'power';
 
 export interface SystemCard {
   readonly id: SystemCardId;
@@ -23,6 +23,7 @@ export interface SystemCard {
 
 /** The three cards, in the mockup's order (they always sit after the games, never between them). */
 export const SYSTEM_CARDS: readonly SystemCard[] = [
+  { id: 'library', titleKey: 'launcher.card.library', ariaKey: 'launcher.card.library' },
   {
     id: 'notifications',
     titleKey: 'launcher.card.notifications',
