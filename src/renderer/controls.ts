@@ -99,8 +99,9 @@ export interface ControlsDeps {
  * would otherwise keep running underneath (idle timer, wheel, Y).
  */
 export interface SettingsNav extends NavSurface {
-  /** `sectionKey` deep-links to one section — an "update ready" notification lands on Updates. */
-  open(sectionKey?: MessageKey): void;
+  /** `sectionKey` deep-links to one section — an "update ready" notification lands on Updates.
+   *  `silent` suppresses the screen's own opening sound — see SettingsScreen.open. */
+  open(sectionKey?: MessageKey, options?: { readonly silent?: boolean }): void;
   close(): void;
   /** Runs the reset once the shared confirm popup says yes. */
   resetSettings(): void;
@@ -550,7 +551,9 @@ export function createControls(deps: ControlsDeps): Controls {
       return;
     }
     if (id === 'settings') {
-      openSettings();
+      // The card's own `button` (app.ts) is the sound of this press; the screen adds none of its own.
+      // The other two cards open a popup, whose `popup-open` is a different sound and layers fine.
+      openSettings(undefined, { silent: true });
       return;
     }
     openPower();
@@ -735,8 +738,8 @@ export function createControls(deps: ControlsDeps): Controls {
   // Opening/closing lives here because the bar focus does: the screen is entered from More and returns
   // to it. Everything INSIDE the screen belongs to settings-screen.ts.
 
-  function openSettings(sectionKey?: MessageKey): void {
-    deps.settings.open(sectionKey);
+  function openSettings(sectionKey?: MessageKey, options?: { readonly silent?: boolean }): void {
+    deps.settings.open(sectionKey, options);
     applyFocus(); // the bar highlight clears (focusActive is false with the screen open)
   }
 

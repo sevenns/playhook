@@ -91,7 +91,15 @@ export interface SettingsScreenDeps {
 /** What controls.ts routes into. Mirrors the six primitives, plus open/close and the data pushes. */
 export interface SettingsScreen {
   isOpen(): boolean;
-  open(): void;
+  /**
+   * `sectionKey` deep-links to one section (an "update ready" notification lands on Updates).
+   *
+   * `silent` is for an entrance that has ALREADY sounded: the carousel's Settings card plays `button` as
+   * it is activated, exactly like entering a game, and the screen's own opening sound would be a second
+   * copy of the same one. Reached any other way (that same notification) the screen still speaks for
+   * itself — the popup it came out of goes silently there.
+   */
+  open(sectionKey?: MessageKey, options?: { readonly silent?: boolean }): void;
   close(): void;
   navUp(): void;
   navDown(): void;
@@ -246,9 +254,14 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
       schedulePreview();
     },
     onAction: (id) => {
-      deps.audio.play('button');
-      if (id === 'reset') deps.onResetRequested();
-      else navBack();
+      if (id === 'reset') {
+        deps.audio.play('button');
+        deps.onResetRequested();
+        return;
+      }
+      // Closing is a LEAVING gesture, and close() plays `back` for it — one gesture, one sound. A
+      // `button` here made the column's Close the only button in the app that sounded twice.
+      navBack();
     },
   });
   const optionsScroller = createScroller(optionsListEl);
@@ -994,10 +1007,10 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
 
   return {
     isOpen: () => open,
-    open: (section?: MessageKey) => {
+    open: (section?: MessageKey, options?: { readonly silent?: boolean }) => {
       if (open) return;
       open = true;
-      deps.audio.play('button');
+      if (options?.silent !== true) deps.audio.play('button');
       focusIndex = 0;
       app.dataset['overlay'] = 'settings';
       screen.setAttribute('aria-hidden', 'false');
