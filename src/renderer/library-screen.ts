@@ -12,6 +12,7 @@ import type { MessageKey, Translator } from '../shared/i18n/index.js';
 import { type AudioController } from './audio.js';
 import { artKey, type CardArtCache } from './card-art.js';
 import { req } from './dom.js';
+import { createEntrance } from './entrance.js';
 import { clampIndex } from './index-math.js';
 import {
   filterLibrary,
@@ -34,6 +35,10 @@ const SINGLE_STEP_MS = 240;
 const FLIP_STEP_FALLBACK_MS = 143;
 /** How long a card that left the section fades for before its node goes (mirrors .is-leaving in CSS). */
 const LEAVE_MS = 220;
+/** How long the staggered arrival of a section runs before the marks come off (mirrors .is-entering). */
+const ENTRANCE_MS = 700;
+/** The stagger stops counting here: past a dozen cards the wave is a wait, not a wave. */
+const ENTRANCE_STEPS = 11;
 
 export interface LibraryScreenDeps {
   readonly audio: AudioController;
@@ -75,7 +80,6 @@ export function createLibraryScreen(deps: LibraryScreenDeps): LibraryScreen {
   const gridEl = req('library-grid');
   const scrollEl = req('library-scroll');
   const emptyEl = req('library-empty');
-  const glowEl = req('library-glow');
   const scroller = createScroller(scrollEl);
 
   const t = (): Translator => deps.getTranslator();
@@ -97,6 +101,11 @@ export function createLibraryScreen(deps: LibraryScreenDeps): LibraryScreen {
   const nodes = new Map<string, HTMLElement>();
   // The same nodes by ARTWORK key, so an eviction (which knows only the key) finds what to un-paint.
   const painted = new Map<string, HTMLElement>();
+
+  // The section's arrival, as the rest of the launcher plays it: the class goes on the CARDS present at
+  // the moment of arming, never on the grid around them (see entrance.ts). `:not(.is-leaving)` keeps the
+  // cards on their way out of it — they are already running an animation of their own.
+  const entrance = createEntrance(gridEl, '.card:not(.is-leaving)', ENTRANCE_MS);
 
   const sidebar = createSidebar(req('library-nav'), {
     audio: deps.audio,
@@ -212,10 +221,6 @@ export function createLibraryScreen(deps: LibraryScreenDeps): LibraryScreen {
       node.classList.toggle('is-busy', game.id === busyId);
     });
     const selectedNode = active && current !== undefined ? nodeOf(current) : undefined;
-    glowEl.classList.toggle('is-on', selectedNode !== undefined);
-    if (selectedNode !== undefined) {
-      glowEl.style.transform = `translate(${selectedNode.offsetLeft}px, ${selectedNode.offsetTop}px)`;
-    }
     // Only while the screen is actually up: scrolling a grid that is fading out under the screen above
     // it moves cards nobody asked to move, right in the user's eye line.
     if (open && selectedNode !== undefined) {
@@ -287,18 +292,22 @@ export function createLibraryScreen(deps: LibraryScreenDeps): LibraryScreen {
   function syncNodes(animate: boolean): void {
     shown = filterLibrary(games, filter);
     const fresh: HTMLElement[] = [];
-    const wanted = shown.map((game) => {
+    const wanted = shown.map((game, at) => {
       const key = nodeKey(game.id);
       const existing = nodes.get(key);
+      // The stagger is positional, so it is written on every pass — a card that moved forward in the
+      // list must arrive earlier than it did last time, not keep its old place in the wave.
+      const stagger = String(Math.min(at, ENTRANCE_STEPS));
       if (existing !== undefined) {
+        existing.style.setProperty('--card-index', stagger);
         const label = existing.querySelector('.card-label');
         if (label !== null && label.textContent !== game.title) label.textContent = game.title;
         existing.setAttribute('aria-label', game.title);
         return existing;
       }
       const node = buildCard(game);
-      // Marked BEFORE it is inserted, so its first painted frame is the faded one and the transition
-      // has somewhere to come from.
+      node.style.setProperty('--card-index', stagger);
+      // Marked BEFORE it is inserted, so its very first painted frame is the one the arrival starts from.
       if (animate) node.classList.add('is-entering');
       nodes.set(key, node);
       fresh.push(node);
@@ -313,29 +322,37 @@ export function createLibraryScreen(deps: LibraryScreenDeps): LibraryScreen {
     }
     if (leaving.length > 0) dismissAll(leaving);
     // In-order sync rather than replaceChildren: re-inserting a node the grid already holds would drop
-    // its transition state, which is exactly what the FLIP above is measuring. The offset of one is the
-    // glow, which is the grid's first child and belongs under every card (see index.html).
+    // its transition state, which is exactly what the FLIP above is measuring.
     wanted.forEach((node, at) => {
-      const current = gridEl.children[at + 1];
+      const current = gridEl.children[at];
       if (current !== node) gridEl.insertBefore(node, current ?? null);
     });
-    if (fresh.length > 0) {
-      requestAnimationFrame(() => {
-        for (const node of fresh) node.classList.remove('is-entering');
-      });
+    // Dropped on a timer, not on the next frame: the mark now drives an ANIMATION, and taking it off a
+    // frame later would cut the arrival off at its first step. Same reasoning as entrance.ts, which owns
+    // the marks when a whole section arrives — this path is for the cards a live list update adds.
+    for (const node of fresh) {
+      window.setTimeout(() => node.classList.remove('is-entering'), ENTRANCE_MS);
     }
     applyEmpty();
   }
 
-  /** Puts the whole section on screen (a section switch, a fresh open, a list that arrived while away). */
+  /**
+   * Puts a whole section on screen (a section switch, a fresh open, a list that arrived while away).
+   *
+   * Deliberately NOT the FLIP that a live re-flow uses. A section switch also sends the scroll back to
+   * the top, and a card sliding to its new place while the whole grid is scrolling under it moves twice
+   * at once — which is what made switching sections after scrolling look broken. Here the scroll snaps
+   * and the section ARRIVES instead, in the launcher's own staggered wave (see entrance.ts): one
+   * movement, and the same one the Settings pane plays when its section changes.
+   */
   function renderSection(animate: boolean): void {
-    if (animate) reorderSmoothly(() => syncNodes(true));
-    else syncNodes(false);
+    syncNodes(animate);
     stale = false;
     index = clampIndex(index, 0, shown.length);
     measureColumns();
-    scroller.to(0, !animate);
-    applyLayout(!animate);
+    scroller.to(0, true);
+    applyLayout(true);
+    if (animate) entrance.play();
     requestAnimationFrame(() => scroller.fades());
   }
 

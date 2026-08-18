@@ -379,6 +379,10 @@ function openGameDetail(id: string, origin: ReturnTo = 'carousel'): void {
   if (!(onStrip?.kind === 'game' && onStrip.game.id === id)) {
     carousel.setDetailArt(libraryScreen.artFor(id));
   }
+  // Keeps the row out of sight for this screen — it has no hand-over to play here (see the rule in
+  // styles.css). Cleared by leaveDetail / showAddedGame, i.e. wherever the carousel becomes the screen.
+  if (origin === 'library') app.dataset['detailFrom'] = 'library';
+  else delete app.dataset['detailFrom'];
   carousel.setScreen('detail');
 }
 
@@ -398,6 +402,7 @@ function showAddedGame(id: string): void {
   // happen in one task, so no frame is drawn in between and nothing flickers.
   returnTo = 'carousel';
   libraryScreen.close(true);
+  delete app.dataset['detailFrom'];
   userChoseDetail = false;
   carousel.focusGame(id);
   // focusGame moves the STRIP and nothing else — it does not tell main the browse cursor moved (a real
@@ -417,6 +422,7 @@ function showAddedGame(id: string): void {
 function leaveDetail(): boolean {
   if (carousel.screen() !== 'detail') return false;
   userChoseDetail = false;
+  delete app.dataset['detailFrom'];
   // BEFORE setScreen: switching the level fires onScreenChange, whose refresh() has to see the library
   // already open — otherwise the focus is computed for a carousel that is about to be covered again.
   restoreOrigin();
