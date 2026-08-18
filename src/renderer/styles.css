@@ -3117,8 +3117,12 @@ html:not(.mouse-asleep) .picker-item:hover,
    reads as the grid re-forming rather than as covers blinking in and out. Animations, not transitions —
    the arrival is staggered by the card's place in the list (--card-index, written by library-screen.ts),
    which is the shape every other list in this launcher arrives in (see .setting-row.is-entering). */
+/* `backwards`, not `both`: the fill has to cover the card's WAIT for its turn in the wave, and nothing
+   after. A forwards fill keeps the animation owning `transform` once it is over, and for as long as the
+   mark is on the card that means selecting it snaps instead of growing — the transition below never gets
+   a say. */
 #app #library .library-grid .card.is-entering {
-  animation: library-card-in 0.26s cubic-bezier(0.2, 0, 0.2, 1) both;
+  animation: library-card-in 0.26s cubic-bezier(0.2, 0, 0.2, 1) backwards;
   animation-delay: calc(var(--card-index, 0) * 24ms);
 }
 

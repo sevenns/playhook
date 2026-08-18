@@ -12,7 +12,6 @@ import type { MessageKey, Translator } from '../shared/i18n/index.js';
 import { type AudioController } from './audio.js';
 import { artKey, type CardArtCache } from './card-art.js';
 import { req } from './dom.js';
-import { createEntrance } from './entrance.js';
 import { clampIndex } from './index-math.js';
 import {
   filterLibrary,
@@ -103,6 +102,8 @@ export function createLibraryScreen(deps: LibraryScreenDeps): LibraryScreen {
   // same reason. Short enough that a single press still reads as instant.
   let previewTimer = 0;
   let previewFilter: LibraryFilter | null = null;
+  /** Pending end of the arrival wave — the marks come off every POOLED node, see playEntrance. */
+  let entranceTimer = 0;
   // Every card node ever built, by game id — a POOL, not "what the grid holds right now". A section
   // switch only takes nodes out of the grid: their covers are painted on them, and rebuilding a card on
   // the way back to "All" would show its title again while the artwork was re-fetched (and, on a held
@@ -110,11 +111,6 @@ export function createLibraryScreen(deps: LibraryScreenDeps): LibraryScreen {
   const nodes = new Map<string, HTMLElement>();
   // The same nodes by ARTWORK key, so an eviction (which knows only the key) finds what to un-paint.
   const painted = new Map<string, HTMLElement>();
-
-  // The section's arrival, as the rest of the launcher plays it: the class goes on the CARDS present at
-  // the moment of arming, never on the grid around them (see entrance.ts). `:not(.is-leaving)` keeps the
-  // cards on their way out of it — they are already running an animation of their own.
-  const entrance = createEntrance(gridEl, '.card:not(.is-leaving)', ENTRANCE_MS);
 
   const sidebar = createSidebar(req('library-nav'), {
     audio: deps.audio,
@@ -292,6 +288,7 @@ export function createLibraryScreen(deps: LibraryScreenDeps): LibraryScreen {
       node.style.left = `${place.left}px`;
       node.style.top = `${place.top}px`;
       node.classList.remove('is-selected');
+      node.classList.remove('is-entering'); // it is leaving; the arrival it was mid-way through is moot
       node.classList.add('is-leaving');
       // Checked again on the way out: a fast switch back puts this very node in the grid again (it lives
       // in the pool), and the timer must not then pull it out from under the section that took it.
@@ -325,8 +322,6 @@ export function createLibraryScreen(deps: LibraryScreenDeps): LibraryScreen {
       }
       const node = buildCard(game);
       node.style.setProperty('--card-index', stagger);
-      // Marked BEFORE it is inserted, so its very first painted frame is the one the arrival starts from.
-      if (animate) node.classList.add('is-entering');
       nodes.set(key, node);
       fresh.push(node);
       return node;
@@ -348,13 +343,29 @@ export function createLibraryScreen(deps: LibraryScreenDeps): LibraryScreen {
       const current = gridEl.children[at];
       if (current !== node) gridEl.insertBefore(node, current ?? null);
     });
-    // Dropped on a timer, not on the next frame: the mark now drives an ANIMATION, and taking it off a
-    // frame later would cut the arrival off at its first step. Same reasoning as entrance.ts, which owns
-    // the marks when a whole section arrives — this path is for the cards a live list update adds.
-    for (const node of fresh) {
-      window.setTimeout(() => node.classList.remove('is-entering'), ENTRANCE_MS);
-    }
+    if (animate && fresh.length > 0) playEntrance(fresh);
     applyEmpty();
+  }
+
+  /**
+   * Plays the arrival on `cards` and takes the marks off again when it is over.
+   *
+   * The clean-up walks the POOL, not the grid — and that is the whole point. entrance.ts clears by
+   * querying the container, which is right for a list whose rows only ever leave by being destroyed;
+   * here a card can step out of the grid and live on in the pool, and a mark left on it that way is
+   * permanent. It matters because the mark drives an ANIMATION: while it is there the animation owns
+   * `transform`, so the card stops growing on selection and starts snapping instead — some cards
+   * animating and some not, with no way to tell which from looking at them.
+   */
+  function playEntrance(cards: readonly HTMLElement[]): void {
+    for (const node of cards) node.classList.remove('is-entering');
+    void gridEl.offsetWidth; // re-adding a class the node already carries plays nothing at all
+    for (const node of cards) node.classList.add('is-entering');
+    if (entranceTimer !== 0) window.clearTimeout(entranceTimer);
+    entranceTimer = window.setTimeout(() => {
+      entranceTimer = 0;
+      for (const node of nodes.values()) node.classList.remove('is-entering');
+    }, ENTRANCE_MS);
   }
 
   /**
@@ -373,7 +384,7 @@ export function createLibraryScreen(deps: LibraryScreenDeps): LibraryScreen {
     measureColumns();
     scroller.to(0, true);
     applyLayout(true);
-    if (animate) entrance.play();
+    if (animate) playEntrance([...nodes.values()].filter((node) => node.isConnected));
     requestAnimationFrame(() => scroller.fades());
   }
 
