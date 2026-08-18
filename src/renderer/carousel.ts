@@ -157,14 +157,16 @@ export function createCarousel(deps: CarouselDeps): Carousel {
   }
 
   /**
-   * Whether a card shows its dot. For a game it only earns its place when it TELLS the two kinds of entry
-   * apart — with no history in the row every card would wear one — or when that game is busy, where the
-   * pulsing dot is the only sign of an install/run happening elsewhere in the list. On the Notifications
-   * card the same dot means the same thing it used to mean beside the menu item: something is unread.
+   * Whether a card shows its dot. For a game it marks "this one is playable right now" — it is on the
+   * inserted card or in the local library — unconditionally: the mark belongs to the game, and holding it
+   * back until the row also holds history entries made a card silently change meaning as the history grew.
+   * A busy game keeps it too, where the pulsing dot is the only sign of an install/run happening
+   * elsewhere in the list. On the Notifications card the same dot means what it meant beside the old menu
+   * item: something is unread.
    */
-  function showsDot(item: CarouselItem, hasHistory: boolean): boolean {
+  function showsDot(item: CarouselItem): boolean {
     if (item.kind === 'system') return item.card.id === 'notifications' && unread;
-    return (item.game.active && hasHistory) || item.game.id === busyId;
+    return item.game.active || item.game.id === busyId;
   }
 
   /** The strip's translation + the per-card selected/active/busy state. Cheap; safe to call often. */
@@ -172,14 +174,13 @@ export function createCarousel(deps: CarouselDeps): Carousel {
     strip.style.setProperty('--strip-offset', String(stripOffset(index)));
     const current = selected();
     const currentKey = current === undefined ? null : itemKey(current);
-    const hasHistory = items.some((item) => item.kind === 'game' && !item.game.active);
     items.forEach((item, position) => {
       const key = itemKey(item);
       const card = cards.get(key);
       if (card === undefined) return;
       card.classList.toggle('is-selected', key === currentKey);
       card.classList.toggle('is-busy', item.kind === 'game' && item.game.id === busyId);
-      card.classList.toggle('shows-dot', showsDot(item, hasHistory));
+      card.classList.toggle('shows-dot', showsDot(item));
       // Past the shown window (see VISIBLE_CARDS): still laid out — the strip's offset is positional and
       // a removed node would shift every card after it — but faded out, so it slides in softly when the
       // selection reaches it instead of popping into existence at the row's end.

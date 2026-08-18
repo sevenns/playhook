@@ -391,12 +391,10 @@ body {
   display: none;
 }
 
-/* The 8x8 dot marking a game that is ON THE INSERTED CARD (launchable right now); history games have
-   none. It hangs below the card, clear of the artwork. */
-/* The dot marks "this game is on the inserted card". It is only shown when that MEANS something: when
-   the row also holds history entries (otherwise every card would carry one and it says nothing), or when
-   this game is busy — there the pulse is the only cue that an install/run is going on elsewhere in the
-   list. carousel.ts computes it and sets .shows-dot. */
+/* The 8x8 dot marking a game that is playable RIGHT NOW — on the inserted card or in the local library;
+   history games have none. It hangs below the card, clear of the artwork. A busy game wears it too, where
+   the pulse is the only cue that an install/run is going on elsewhere in the list. carousel.ts computes
+   it and sets .shows-dot. */
 .card-dot {
   position: absolute;
   left: 50%;
