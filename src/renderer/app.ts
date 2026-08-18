@@ -161,7 +161,11 @@ const gameSettingsScreen = createGameSettingsScreen({
     controls.settingsClosed();
     // Cancelled out of "Add game" — back to the library it was started from. On a SUCCESSFUL add this
     // still runs first (the screen closes before it reports the new game), and showAddedGame undoes it.
-    restoreOrigin();
+    //
+    // Only when this screen was the TOP one, though. Reached through More → Customize it sits over a
+    // DETAIL screen, and that screen is what closing it returns to — the Library's turn comes later,
+    // when the detail screen itself is left (leaveDetail consumes the same flag).
+    if (carousel.screen() !== 'detail') restoreOrigin();
   },
   onConfirmRequested: (kind) => controls.confirmGameSettings(kind),
   onAdded: (id) => showAddedGame(id),
