@@ -27,6 +27,16 @@ export function pxUnit(): number {
   return Number.isFinite(parsed) ? (parsed * window.innerHeight) / 100 : 1;
 }
 
+/**
+ * A pace other than the default one. The Library grid needs it: while a direction is HELD its rows must
+ * scroll at exactly the repeat interval and in `linear`, so the steps glue into one continuous glide
+ * instead of easing in and out 143 ms at a time (the same trick the carousel's strip plays in CSS).
+ */
+export interface GlideOptions {
+  readonly durationMs: number;
+  readonly linear: boolean;
+}
+
 export interface Scroller {
   /** Animates (or jumps) to a scrollTop. */
   to(top: number, instant?: boolean): void;
@@ -34,6 +44,10 @@ export interface Scroller {
   fades(): void;
   /** Brings `target` into view, keeping SCROLL_MARGIN_PX of context beyond it. */
   reveal(target: HTMLElement, instant?: boolean): void;
+  /** `to`, at a caller-chosen pace. */
+  glide(top: number, options: GlideOptions): void;
+  /** `reveal`, at a caller-chosen pace. */
+  revealGlide(target: HTMLElement, options: GlideOptions): void;
 }
 
 export function createScroller(box: HTMLElement): Scroller {
@@ -41,6 +55,10 @@ export function createScroller(box: HTMLElement): Scroller {
   let from = 0;
   let startedAt = 0;
   let frame = 0;
+  // The pace of the animation currently running. Held in state rather than read from the constants,
+  // because a caller may ask for another one (see GlideOptions) — the defaults are what `to` passes.
+  let durationMs = SCROLL_MS;
+  let linear = false;
 
   const clamp = (top: number): number =>
     Math.min(Math.max(0, top), Math.max(0, box.scrollHeight - box.clientHeight));
@@ -76,8 +94,8 @@ export function createScroller(box: HTMLElement): Scroller {
   };
 
   const step = (): void => {
-    const progress = Math.min(1, (performance.now() - startedAt) / SCROLL_MS);
-    box.scrollTop = from + (target - from) * easeInOut(progress);
+    const progress = Math.min(1, (performance.now() - startedAt) / durationMs);
+    box.scrollTop = from + (target - from) * (linear ? progress : easeInOut(progress));
     fades();
     if (progress >= 1) {
       box.scrollTop = target;
@@ -88,7 +106,7 @@ export function createScroller(box: HTMLElement): Scroller {
     frame = requestAnimationFrame(step);
   };
 
-  const to = (top: number, instant = false): void => {
+  const move = (top: number, instant: boolean, ms: number, isLinear: boolean): void => {
     const goal = clamp(top);
     if (instant) {
       if (frame !== 0) cancelAnimationFrame(frame);
@@ -98,24 +116,37 @@ export function createScroller(box: HTMLElement): Scroller {
       fades();
       return;
     }
-    if (frame !== 0 && Math.abs(goal - target) < 0.5) return; // already heading there
+    // Already heading there AT THE SAME PACE — a re-aim that only changes the pace still has to restart,
+    // or a held direction would keep gliding on the single-step easing it began with.
+    const sameGoal = frame !== 0 && Math.abs(goal - target) < 0.5;
+    if (sameGoal && ms === durationMs && isLinear === linear) return;
     target = goal;
     from = box.scrollTop;
     startedAt = performance.now();
+    durationMs = ms;
+    linear = isLinear;
     if (frame === 0) frame = requestAnimationFrame(step);
   };
 
-  const reveal = (el: HTMLElement, instant = false): void => {
+  const revealWith = (el: HTMLElement, instant: boolean, ms: number, isLinear: boolean): void => {
     const margin = SCROLL_MARGIN_PX * pxUnit();
     const top = el.offsetTop - box.offsetTop;
     const bottom = top + el.offsetHeight;
     const viewTop = box.scrollTop;
     const viewBottom = viewTop + box.clientHeight;
-    if (top - margin < viewTop) to(top - margin, instant);
-    else if (bottom + margin > viewBottom) to(bottom + margin - box.clientHeight, instant);
-    else fades();
+    if (top - margin < viewTop) move(top - margin, instant, ms, isLinear);
+    else if (bottom + margin > viewBottom) {
+      move(bottom + margin - box.clientHeight, instant, ms, isLinear);
+    } else fades();
   };
 
+  const to = (top: number, instant = false): void => move(top, instant, SCROLL_MS, false);
+  const reveal = (el: HTMLElement, instant = false): void => revealWith(el, instant, SCROLL_MS, false);
+  const glide = (top: number, options: GlideOptions): void =>
+    move(top, false, options.durationMs, options.linear);
+  const revealGlide = (el: HTMLElement, options: GlideOptions): void =>
+    revealWith(el, false, options.durationMs, options.linear);
+
   box.addEventListener('scroll', () => fades(), { passive: true });
-  return { to, fades, reveal };
+  return { to, fades, reveal, glide, revealGlide };
 }

@@ -5,6 +5,7 @@ import {
   CARD_W,
   FAN_MAX,
   GAP,
+  MAX_STRIP_GAMES,
   STEP,
   cardLeft,
   clampIndex,
@@ -14,6 +15,7 @@ import {
   stripOffset,
   VISIBLE_CARDS,
 } from '../src/renderer/carousel-geometry';
+import { SYSTEM_CARDS } from '../src/renderer/system-cards';
 
 describe('stripOffset', () => {
   it('does not shift the strip for the first card', () => {
@@ -115,5 +117,15 @@ describe('isWithinWindow (how many cards the row shows)', () => {
         expect(isWithinWindow(index, selected)).toBe(true);
       }
     }
+  });
+});
+
+describe('MAX_STRIP_GAMES', () => {
+  it('keeps Home a shortlist: 9 games plus the launcher cards is 13 cards', () => {
+    expect(MAX_STRIP_GAMES + SYSTEM_CARDS.length).toBe(13);
+  });
+
+  it('is not wider than the shown window — a capped row is never partly out of view', () => {
+    expect(MAX_STRIP_GAMES).toBeLessThanOrEqual(VISIBLE_CARDS);
   });
 });

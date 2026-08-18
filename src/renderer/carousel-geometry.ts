@@ -62,6 +62,14 @@ export function isWithinWindow(index: number, selected: number, size = VISIBLE_C
   return index < selected + size;
 }
 
+/**
+ * How many GAMES the strip carries at most. Home is a shortlist, not the whole library: with the four
+ * launcher cards after them the row tops out at 13 cards, and everything past that lives on the Library
+ * screen, which is built for it. The list arrives already ordered (card first, then the PC library, then
+ * history), so the cap keeps the most relevant ones — it never re-sorts.
+ */
+export const MAX_STRIP_GAMES = 9;
+
 /** How many places of stagger the returning strip is allowed to spread over (see fanIndex). */
 export const FAN_MAX = 4;
 

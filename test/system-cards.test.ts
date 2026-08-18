@@ -5,12 +5,18 @@ import { describe, expect, it } from 'vitest';
 import { SYSTEM_CARDS } from '../src/renderer/system-cards';
 
 describe('SYSTEM_CARDS', () => {
-  it('holds exactly the three launcher cards, in the mockup order', () => {
-    expect(SYSTEM_CARDS.map((card) => card.id)).toEqual(['notifications', 'settings', 'power']);
+  it('holds exactly the four launcher cards, in the mockup order', () => {
+    expect(SYSTEM_CARDS.map((card) => card.id)).toEqual([
+      'library',
+      'notifications',
+      'settings',
+      'power',
+    ]);
   });
 
-  it('names the first two in the title line and leaves the power card unnamed', () => {
+  it('names all but the power card in the title line', () => {
     expect(SYSTEM_CARDS.map((card) => card.titleKey)).toEqual([
+      'launcher.card.library',
       'launcher.card.notifications',
       'launcher.card.settings',
       // The mockup shows no caption for it — app.ts writes an empty title line rather than a name.

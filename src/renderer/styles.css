@@ -277,6 +277,7 @@ body {
   opacity: 1;
 }
 
+
 /* The container stays transparent to the mouse even here, and the CARDS take the clicks instead. It is a
    full-width band (see the box above) painted at z-index 1, so it lies right across the bottom bar — made
    hit-testable it swallows every click meant for the bar's own buttons, More included. Nothing is bound to
@@ -467,6 +468,20 @@ body {
 }
 #app[data-screen='carousel'][data-card-morph='off'] #carousel {
   /* No button to wait for — the container must be up from frame one or the card would grow unseen. */
+  transition: opacity 0s linear;
+}
+
+/* …and none of that applies when the detail screen was entered from the LIBRARY. The row's grace period
+   exists so the selected CARD can hand its geometry to #play-button — but a game opened from the Library
+   was never on the row (the strip sat hidden behind the screen), and it spends those 240ms re-aiming at
+   the game just picked. With the screen cut away rather than faded, that is 240ms of a carousel visibly
+   rebuilding itself, which is exactly what it was.
+   It has to sit HERE, after the morph rules, and carry two attributes: `[data-card-morph='off']` is the
+   one that bites — the flag is off at that instant, because `browse` still describes the launcher card
+   the Library was opened from, so the delay it pins would otherwise win on specificity and hold the row
+   on screen for its whole 240ms. app.ts sets the flag on the way in and clears it on the way back. */
+#app[data-detail-from='library'][data-screen='detail'] #carousel {
+  opacity: 0;
   transition: opacity 0s linear;
 }
 #app[data-screen='carousel'] .card {
@@ -1628,7 +1643,8 @@ html:not(.mouse-asleep) .notification-item:hover .notification-dot {
 }
 
 #app[data-overlay='settings'] #settings,
-#app[data-overlay='game-settings'] #game-settings {
+#app[data-overlay='game-settings'] #game-settings,
+#app[data-overlay='library'] #library {
   opacity: 1;
   pointer-events: auto;
 }
@@ -1662,7 +1678,8 @@ html:not(.mouse-asleep) .notification-item:hover .notification-dot {
 }
 
 #app[data-overlay='settings'] #settings .settings-veil,
-#app[data-overlay='game-settings'] #game-settings .settings-veil {
+#app[data-overlay='game-settings'] #game-settings .settings-veil,
+#app[data-overlay='library'] #library .settings-veil {
   opacity: 1;
 }
 
@@ -1681,7 +1698,8 @@ html:not(.mouse-asleep) .notification-item:hover .notification-dot {
 }
 
 #app[data-overlay='settings'] #settings .settings-column,
-#app[data-overlay='game-settings'] #game-settings .settings-column {
+#app[data-overlay='game-settings'] #game-settings .settings-column,
+#app[data-overlay='library'] #library .settings-column {
   opacity: 1;
   transform: none;
 }
@@ -2421,6 +2439,15 @@ html:not(.mouse-asleep) .settings-option:hover,
   opacity: 0;
 }
 
+/* …and for the LIBRARY it goes at once, with no fade of its own. That screen is the one you come back
+   INTO from a detail screen: it fades in over 0.35s, and the row spends those same milliseconds sliding
+   onto the game just left and re-fanning its cards — all of it in plain sight through a veil that is
+   still half transparent. Cut instead, the row re-arranges in private. Only the way IN is instant: on
+   the way out the transition is back, so closing the screen brings the row up as softly as ever. */
+#app[data-overlay='library'] #carousel-strip {
+  transition: none;
+}
+
 #app[data-overlay] #carousel {
   pointer-events: none;
 }
@@ -2953,4 +2980,212 @@ html:not(.mouse-asleep) .picker-item:hover,
 #app[data-boot],
 #app[data-boot] .card {
   pointer-events: none;
+}
+
+
+/* ── Library ────────────────────────────────────────────────────────────────
+   The grid of covers. It reuses the #settings skeleton (veil, column, sidebar) and differs in two
+   things: the pane runs to the RIGHT EDGE of the screen, so the gap after the sidebar and the gap
+   before the edge come out equal (justify-content: center splits what is left over evenly), and the
+   pane holds .card nodes rather than rows.
+
+   EVERY rule here is prefixed with `#app #library` — two ids against the one that any carousel rule
+   carries. The cards share the .card class with the strip, and specificity is what keeps the strip's
+   sizes, its detail-screen fade and its flip transition off them, deterministically rather than by
+   the order the rules happen to sit in the file. Not one line of the carousel's CSS is touched. */
+
+#library .settings-column {
+  right: 0;
+}
+
+/* Handing over to the detail screen and coming back is NOT a fade: for the 0.35s a fade takes, the
+   carousel underneath is visible through the veil rebuilding itself — the strip fanning back in, the
+   title swapping — which reads as the launcher glitching rather than as a screen changing. The class is
+   put on for exactly one frame around the swap (library-screen.ts). */
+#library.is-instant,
+#library.is-instant .settings-veil,
+#library.is-instant .settings-column {
+  transition: none;
+}
+
+/* 0, not the 40 of #settings: the sidebar's own 380 already carries the gap, and the pane's padding
+   adds the rest — see the padding note below. */
+#library .settings-body {
+  gap: 0;
+}
+
+.library-pane {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+}
+
+/* The padding is not decoration: the selected card scales to 1.06 and its ring pulses to 1.035 ON TOP
+   of that (the ring is a child, so the two multiply), which puts its corner ~19 design px outside its
+   own box. The scroller clips on both axes, so anything less would slice the ring. 44 leaves room for a
+   decoration that reaches further, and costs nothing: even on a 16:10 screen the column count is the
+   same as it would be at 22. */
+.library-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: none;
+  padding: calc(44 * var(--px));
+  /* Same edge treatment as .settings-list: fades driven from JS, none where there is nothing beyond. */
+  --fade-top: 0px;
+  --fade-bottom: 0px;
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 var(--fade-top),
+    #000 calc(100% - var(--fade-bottom)),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 var(--fade-top),
+    #000 calc(100% - var(--fade-bottom)),
+    transparent 100%
+  );
+}
+
+.library-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+/* --cols is measured in JS (library-screen.ts) rather than left to flex-wrap, because up/down are a
+   ±cols step and the maths has to agree with the layout. The fallback of 1 is deliberate: a fallback
+   of 6 would overflow the container on a 16:10 screen for the frame before the first measurement. */
+/* Positioned, because a card LEAVING the section is pulled out of the grid's flow and pinned where it
+   stood while it fades (see .is-leaving) — the cards behind it close the gap immediately instead of the
+   whole section blinking out. */
+.library-grid {
+  position: relative;
+  display: grid;
+  justify-content: center;
+  align-content: start;
+  gap: calc(16 * var(--px));
+  grid-template-columns: repeat(var(--cols, 1), calc(200 * var(--px)));
+}
+
+.library-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 calc(60 * var(--px));
+  text-align: center;
+  font-weight: 500;
+  font-size: calc(28 * var(--px));
+  line-height: calc(38 * var(--px));
+  color: color-mix(in srgb, var(--fg) 70%, transparent);
+  pointer-events: none;
+  opacity: 1;
+  transition: opacity 0.2s ease;
+}
+
+.library-empty[aria-hidden='true'] {
+  opacity: 0;
+}
+
+#app #library .library-grid .card {
+  width: calc(200 * var(--px));
+  height: calc(300 * var(--px));
+  /* Pinned against #app[data-screen='detail'] .card: opening a game switches the screen at once while
+     this overlay takes 0.35s to fade, so without it every cover would blink to zero on the first frame
+     of the way out. */
+  opacity: 1;
+  /* The scale lives in a VARIABLE because the FLIP that reorders the grid writes an inline transform:
+     it composes translate() with scale(var(--card-scale)), and a literal here would be wiped by it,
+     collapsing the selected card for the length of the animation. */
+  --card-scale: 1;
+  transform: scale(var(--card-scale));
+  /* Pinned, and NOT decoration: the strip's shrink-into-the-corner rule
+     (#app[data-screen='detail'][data-card-morph='off'] .card.is-selected) sets `bottom left`, and it
+     reaches this card too — the id count keeps its width/height off, but transform-origin is not
+     declared here, so it would be inherited from there and the 1.06 scale would jump upwards the moment
+     a game without a Play button was opened. */
+  transform-origin: center;
+  transition: transform var(--morph) var(--morph-ease), opacity var(--morph) ease;
+}
+
+/* A card arriving with its section, and one leaving it: the same movement played each way, so a switch
+   reads as the grid re-forming rather than as covers blinking in and out. Animations, not transitions —
+   the arrival is staggered by the card's place in the list (--card-index, written by library-screen.ts),
+   which is the shape every other list in this launcher arrives in (see .setting-row.is-entering). */
+/* `backwards`, not `both`: the fill has to cover the card's WAIT for its turn in the wave, and nothing
+   after. A forwards fill keeps the animation owning `transform` once it is over, and for as long as the
+   mark is on the card that means selecting it snaps instead of growing — the transition below never gets
+   a say. */
+#app #library .library-grid .card.is-entering {
+  animation: library-card-in 0.26s cubic-bezier(0.2, 0, 0.2, 1) backwards;
+  animation-delay: calc(var(--card-index, 0) * 24ms);
+}
+
+#app #library .library-grid .card.is-leaving {
+  pointer-events: none;
+  z-index: 0;
+  animation: library-card-out 0.22s cubic-bezier(0.4, 0, 1, 1) both;
+}
+
+@keyframes library-card-in {
+  from {
+    opacity: 0;
+    transform: scale(0.9) translateY(calc(14 * var(--px)));
+  }
+  to {
+    opacity: 1;
+    transform: scale(var(--card-scale, 1));
+  }
+}
+
+@keyframes library-card-out {
+  from {
+    opacity: 1;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+}
+
+/* Grown in place: the grid's geometry does not depend on which card is selected, so the neighbours must
+   not shift. z-index lifts it over them, since it now overlaps. */
+#app #library .library-grid .card.is-selected {
+  --card-scale: 1.06;
+  z-index: 1;
+}
+
+/* A held direction: the same trick the strip uses — a step exactly as long as the repeat interval, in
+   linear, which glues the steps into one continuous glide instead of 143 ms of ease each. */
+#app[data-flipping] #library .library-grid .card {
+  transition: transform var(--flip-step) linear;
+}
+
+/* Opening a game switches data-screen at once, which stops the STRIP's ring mid-pulse (see the rule by
+   card-ring-pulse) — on the grid that snap is the last thing seen of a card the user just pressed. Here
+   the highlight keeps breathing for the 0.35s the screen takes to fade, and leaves with it. */
+#app[data-screen='detail'] #library .library-grid .card.is-selected::after {
+  animation: card-ring-pulse 1.1s ease-in-out infinite;
+  opacity: 1;
+}
+
+/* The playable dot moves INSIDE the card, to its top-right corner: the grid is dense and there is no
+   room under a card for the carousel's hanging dot. Only geometry and the ring are set here — opacity
+   and the busy pulse stay with .card.shows-dot / .card.is-busy.shows-dot. The ring is the background
+   colour: the dot now lies over arbitrary artwork and would vanish on a bright cover. */
+#app #library .library-grid .card-dot {
+  left: auto;
+  bottom: auto;
+  margin-left: 0;
+  top: calc(12 * var(--px));
+  right: calc(12 * var(--px));
+  width: calc(12 * var(--px));
+  height: calc(12 * var(--px));
+  box-shadow: 0 0 0 calc(2 * var(--px)) color-mix(in srgb, var(--d1) 85%, transparent);
 }

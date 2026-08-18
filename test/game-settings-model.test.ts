@@ -154,6 +154,33 @@ describe('the rules that are not visibility', () => {
     expect(title.error).toBe('is required');
   });
 
+  it('maps an issue INSIDE a value onto the row that owns it', () => {
+    // The validator names the offending element ("dd" in the watched-process list), not the field —
+    // and the field is the only thing the user can be sent to.
+    const built = model(
+      { watchProcesses: ['dd'] },
+      { issues: new Map([['watchProcesses.0', 'must be a .exe name']]) },
+    );
+    const list = row(built, 'watchProcesses');
+    if (list?.kind !== 'list') throw new Error('unreachable');
+    expect(list.error).toBe('must be a .exe name');
+  });
+
+  it('prefers the row that owns a path exactly over one that merely contains it', () => {
+    const built = model(
+      { launchMode: 'installer', install: { ...emptyFormModel().install, args: ['a'] } },
+      {
+        issues: new Map([
+          ['install.args', 'expected array'],
+          ['install.args.0', 'must be a string'],
+        ]),
+      },
+    );
+    const args = row(built, 'install.args');
+    if (args?.kind !== 'list') throw new Error('unreachable');
+    expect(args.error).toBe('expected array');
+  });
+
   it('hides Delete when the environment says it cannot run, and shows it otherwise', () => {
     expect(ids(model({}, { canDelete: false }))).not.toContain('delete');
     expect(ids(model({}, { canDelete: true }))).toContain('delete');

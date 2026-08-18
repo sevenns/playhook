@@ -69,8 +69,8 @@ export const en = {
   'launcher.menu.quit': 'Close Playhook',
   // Force-close the running game (Details menu item, visible only while a game is running).
   'launcher.menu.forceClose': 'Force close',
-  'launcher.menu.home': 'Home',
-  'launcher.menu.forget': 'Remove from history',
+  'launcher.menu.goBack': 'Go back',
+  'launcher.menu.forget': 'Remove from library',
   'launcher.menu.notifications': 'Notifications',
   // Details menu entry that opens the Customize screen with no game behind it — the one way to CREATE a
   // game from inside the launcher.
@@ -79,9 +79,16 @@ export const en = {
   // The launcher's own cards at the tail of the carousel (system-cards.ts). The first two name themselves
   // in the bar's title line while they are selected, exactly as a game does; the third shows no caption at
   // all in the mockup, so its key is only ever read as the card's aria-label.
+  'launcher.card.library': 'Library',
   'launcher.card.notifications': 'Notifications',
   'launcher.card.settings': 'Settings',
   'launcher.card.system': 'System',
+  // The Library overlay: its two sidebar sections and the copy shown when a section has nothing in it.
+  'library.all': 'All',
+  'library.playable': 'Ready to play',
+  'library.empty': 'No games here yet.',
+  'library.emptyPlayable':
+    'Nothing is ready to play - insert a card or add a game from your PC.',
   // Confirmation popup copy (controls.ts). The Yes/No buttons use the shared common.* keys.
   'launcher.confirm.install': 'Do you want to install game?',
   'launcher.confirm.uninstall': 'Do you want to uninstall game from your PC?',
@@ -94,7 +101,7 @@ export const en = {
   // may not get to write its save before syncing-out runs).
   'launcher.confirm.kill': 'Force close the game? Unsaved progress may be lost.',
   'launcher.confirm.forget':
-    'Remove "{title}" from the history? Its saves and playtime are kept — insert the card again and the game comes back.',
+    'Remove "{title}" from the library? Its saves and playtime are kept — insert the card again and the game comes back.',
   // Power-action confirmations — single-question form, matching the installer confirm convention.
   'launcher.confirm.shutdown': 'Shut down the PC?',
   'launcher.confirm.reboot': 'Reboot the PC?',
@@ -281,7 +288,7 @@ export const en = {
   'gameSettings.title': 'Title',
   'gameSettings.id': 'Id',
   'gameSettings.idChangedWarning':
-    'Changing the id detaches this game from its playtime, its save backups and its history entry on this PC.',
+    'Changing the id detaches this game from its playtime, its save backups and its library entry on this PC.',
   'gameSettings.launchMode': 'Launch type',
   'gameSettings.modeExecutable': 'Run from the card',
   'gameSettings.modeInstaller': 'Install from the card',
@@ -366,7 +373,7 @@ export const en = {
   'gameSettings.confirmDelete': 'Delete "{title}" from the manifest?',
   // The second half of the delete question. Its "No" is an ANSWER, not a way out — hence the last line:
   // backing out of the question is what cancels the deletion.
-  'gameSettings.confirmDeleteHistory': 'Remove "{title}" from the history as well?',
+  'gameSettings.confirmDeleteHistory': 'Remove "{title}" from the library as well?',
   'gameSettings.confirmDeleteHistoryNote':
     'Yes also drops its card from the carousel, with the artwork copied to this PC. No deletes the game and keeps the card. Closing this question cancels the deletion; the play time is kept either way.',
   'gameSettings.confirmDeleteNote':
