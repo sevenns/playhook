@@ -777,11 +777,20 @@ void window.api.requestState().then((state) => {
 // What is on screen (title / stats / active / GameInfo). Subscribe BEFORE the seed, like every other
 // channel here, so a push arriving in between isn't lost.
 function applyBrowse(browse: BrowseInfo | null): void {
+  // Whether there WAS a game on screen a moment ago — the detail screen below acts on the transition, not
+  // on the state (at startup there is no game on screen yet either, and that is not a game going away).
+  const hadGame = currentBrowse !== null;
   currentBrowse = browse;
   // The Customize screen is about ONE game's file. When the card carrying it is pulled or swapped —
   // everything under the screen is rebuilt by then — there is nothing left to edit, so it closes rather
   // than staying open over a game that is gone (see the plan, Р6.2).
   gameSettingsScreen.applyBrowse(browse);
+  // The game the screen was about is GONE — the last history entry was forgotten, the card was pulled —
+  // and main has nothing to put in its place. A detail screen is one game's screen, so with no game there
+  // is nothing left for it to show: step back to the row, which is what the user would otherwise be
+  // looking at a launcher card's "detail screen" instead of. `userChoseDetail` is cleared with it (that
+  // is what leaveDetail does) — the choice was about a game that no longer exists.
+  if (hadGame && browse === null && carousel.screen() === 'detail') leaveDetail();
   // Main moved the screen onto a game we didn't ask for — inserting a card switches to ITS game — so the
   // strip must follow, or the title/background belong to one game while the highlighted card is another.
   // Guarded by the requested id: while flipping, a late answer must NOT drag the selection backwards.
@@ -796,7 +805,15 @@ void window.api.requestBrowse().then((browse) => {
   applyBrowse(browse);
   // The seed carries the INFO only; asking main to browse the same game again replays its hero/music, so
   // a reloaded window doesn't come back with a blank background.
-  if (browse !== null) window.api.browseGame(browse.id);
+  if (browse !== null) {
+    window.api.browseGame(browse.id);
+    return;
+  }
+  // Nothing on screen — the user is parked on a launcher card. There is no game for main to replay, but
+  // the audio engine still has to be told: left at its default it would fall through to the inserted
+  // card's music and play a game's theme under a launcher card until the user moved off it.
+  audio.setBrowseMusic(null, true);
+  syncMusic();
 });
 
 // The browsed game's background: a channel of its own, so a history game can be shown without touching
@@ -816,8 +833,7 @@ window.api.onBrowseMusic((url) => {
   // On the same (debounced) channel as the background, for the same reason: a launcher card means the
   // ambience, and switching to it while merely flipping PAST the card would tear the music. Not in
   // applyBrowse — that one rides the instant channel.
-  audio.setIdle(currentBrowse === null);
-  audio.setBrowseMusic(url);
+  audio.setBrowseMusic(url, currentBrowse === null);
   syncMusic();
 });
 

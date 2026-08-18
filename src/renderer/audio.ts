@@ -28,19 +28,24 @@ export interface AudioController {
   /** Sets the inserted card's own background music (data URL), or clears it when null. */
   setCardMusic(url: string | null): void;
   /**
-   * Music of the game currently ON SCREEN (the carousel's browse channel), which wins over the card's own
-   * music: with the card pulled you are looking at a history game and must hear ITS theme. null falls back
-   * to the card music, then to the ambience. Music only — the SFX set is untouched, so flipping through
-   * the carousel never rebuilds the sound elements.
+   * What is ON SCREEN, musically — the carousel's browse channel, in ONE statement:
+   *  • `url` — the browsed game's own music, which wins over the card's (with the card pulled you are
+   *    looking at a history game and must hear ITS theme); null falls back to the card music, then to
+   *    the ambience;
+   *  • `idle` — there is no game on screen at all, the row is standing on one of the launcher's own
+   *    cards. Then the ambience plays whatever is in the drive: a plain null would fall through to the
+   *    CARD's music, and these cards are meant to sound like the launcher, not like the inserted game.
+   *
+   * The two are ONE call rather than two setters because they always arrive together, and applying them
+   * one at a time passes through a third source in between — idle off while the url is still null is the
+   * CARD's music — which starts a cross-fade the next call immediately interrupts. An interrupted
+   * cross-fade drops the outgoing element outright (see crossfadeTo), and that is heard as the music
+   * being cut off rather than faded.
+   *
+   * Music only — the SFX set is untouched, so flipping through the carousel never rebuilds the sound
+   * elements.
    */
-  setBrowseMusic(url: string | null): void;
-  /**
-   * Whether NO game is on screen at all — the carousel is standing on one of the launcher's own cards.
-   * There the ambience plays, whatever is in the drive: a plain `browseMusic = null` would fall through
-   * to the CARD's music (that is the whole point of the fallback chain), and the launcher cards are meant
-   * to sound like the launcher, not like the game that happens to be inserted.
-   */
-  setIdle(idle: boolean): void;
+  setBrowseMusic(url: string | null, idle: boolean): void;
   /** Sets the app-wide default ambience (data URL), or clears it when null. */
   setAmbient(url: string | null): void;
   /** The bundled UI sound set — every sound the app plays, on every screen. */
@@ -116,8 +121,8 @@ export function createAudioController(): AudioController {
   let browseMusic: string | null = null;
   let gameMusic: string | null = null;
   let ambient: string | null = null;
-  // No game on screen (a launcher card is selected) — see setIdle.
-  let idle = false;
+  // No game on screen (a launcher card is selected) — see setBrowseMusic.
+  let browseIdle = false;
 
   // The currently-primary player (fading IN or steady) and, during a crossfade, the outgoing one (fading
   // OUT). `activeUrl` mirrors the effective source we've committed to — the idempotence key.
@@ -261,7 +266,7 @@ export function createAudioController(): AudioController {
   };
 
   const applyEffective = (): void => {
-    const target = idle ? ambient : (browseMusic ?? gameMusic ?? ambient);
+    const target = browseIdle ? ambient : (browseMusic ?? gameMusic ?? ambient);
     if (target === activeUrl) return; // idempotent: same effective source → never restart playback
     if (wantPlay) crossfadeTo(target);
     else hardSwap(target);
@@ -274,16 +279,11 @@ export function createAudioController(): AudioController {
       applyEffective();
     },
 
-    setBrowseMusic(url: string | null): void {
-      if (url === browseMusic) return;
+    setBrowseMusic(url: string | null, idle: boolean): void {
+      if (url === browseMusic && idle === browseIdle) return;
       browseMusic = url;
-      applyEffective();
-    },
-
-    setIdle(next: boolean): void {
-      if (idle === next) return;
-      idle = next;
-      applyEffective();
+      browseIdle = idle;
+      applyEffective(); // both fields first, THEN one apply — see the interface note
     },
 
     setAmbient(url: string | null): void {
