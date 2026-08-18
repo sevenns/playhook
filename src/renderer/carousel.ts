@@ -206,12 +206,7 @@ export function createCarousel(deps: CarouselDeps): Carousel {
       // Past the shown window (see VISIBLE_CARDS): still laid out — the strip's offset is positional and
       // a removed node would shift every card after it — but faded out, so it slides in softly when the
       // selection reaches it instead of popping into existence at the row's end.
-      // The launcher cards never wait off-view: the window is about a long history running off the right
-      // edge, and those four are the row's fixed furniture — the whole point of them is being reachable.
-      card.classList.toggle(
-        'is-beyond',
-        item.kind === 'game' && !isWithinWindow(position, index),
-      );
+      card.classList.toggle('is-beyond', !isWithinWindow(position, index));
       // Its place in the fan the strip returns in (styles.css turns this into a transition-delay).
       card.style.setProperty('--fan', String(fanIndex(position, index)));
     });

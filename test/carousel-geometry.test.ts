@@ -138,8 +138,12 @@ describe('anchorIndex', () => {
     expect(anchorIndex(8, 9)).toBe(8);
   });
 
-  it('stops at the last game, so the launcher cards stay put as the highlight walks them', () => {
-    for (const index of [9, 10, 11, 12]) expect(anchorIndex(index, 9)).toBe(8);
+  it('brings the FIRST launcher card up to the anchor like any other card', () => {
+    expect(anchorIndex(9, 9)).toBe(9);
+  });
+
+  it('stops there, so the launcher cards beside it stay put as the highlight walks them', () => {
+    for (const index of [10, 11, 12]) expect(anchorIndex(index, 9)).toBe(9);
   });
 
   it('leaves the strip unmoved when there are no games at all', () => {

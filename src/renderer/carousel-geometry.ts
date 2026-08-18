@@ -63,18 +63,19 @@ export function isWithinWindow(index: number, selected: number, size = VISIBLE_C
 }
 
 /**
- * Which card the strip aligns itself to — the selection, until the selection walks onto the launcher
- * cards at its tail. There the strip STOPS and the highlight travels on by itself, so all four of them
- * stay where they were instead of sliding leftwards one by one as the selection eats through them.
+ * Which card the strip aligns itself to: the selection, until the selection reaches the FIRST launcher
+ * card. That one still rides up to the anchor like any other — it is the row's last real destination —
+ * and from there the strip stands still while the highlight walks the remaining launcher cards on its
+ * own. They are a fixed block of four; once the first of them is at the anchor the rest are already in
+ * view beside it, and sliding them leftwards one at a time only takes them away again.
  *
- * Stopping exactly at the last GAME is not a detail: while a game is selected the anchor invariant above
- * still holds, which is what the play button's morph rests on (the selected card and the button occupy
- * the same box at that instant). The launcher cards have no detail screen to morph into, so the strip is
- * free to stand still for them.
+ * Every GAME keeps the anchor invariant above, which is what the play button's morph rests on: the
+ * selected card and the button occupy the same box at the instant the screen changes. The launcher cards
+ * have no detail screen to morph into, so the strip is free to stop for them.
  */
 export function anchorIndex(index: number, gameCount: number): number {
   if (gameCount <= 0) return 0;
-  return Math.min(index, gameCount - 1);
+  return Math.min(index, gameCount);
 }
 
 /**
