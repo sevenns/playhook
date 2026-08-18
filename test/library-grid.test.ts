@@ -17,9 +17,10 @@ const game = (id: string, active: boolean): LibraryEntry => ({ id, title: id, ac
 
 describe('gridColumns', () => {
   it('fits 6 columns into a 16:9 screen and 5 into a Steam Deck one', () => {
-    // 1920 - 500 (sidebar edge) - 44 (padding) = 1376; the Deck is 1728 design px wide, so 1184.
-    expect(gridColumns(1376)).toBe(6);
-    expect(gridColumns(1184)).toBe(5);
+    // 1920 - 500 (sidebar edge) - 88 (the scroller's padding, both sides) = 1332; the Deck is 1728
+    // design px wide, so 1140.
+    expect(gridColumns(1332)).toBe(6);
+    expect(gridColumns(1140)).toBe(5);
   });
 
   it('counts the trailing card with no gap after it', () => {

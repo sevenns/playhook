@@ -2974,6 +2974,16 @@ html:not(.mouse-asleep) .picker-item:hover,
   right: 0;
 }
 
+/* Handing over to the detail screen and coming back is NOT a fade: for the 0.35s a fade takes, the
+   carousel underneath is visible through the veil rebuilding itself — the strip fanning back in, the
+   title swapping — which reads as the launcher glitching rather than as a screen changing. The class is
+   put on for exactly one frame around the swap (library-screen.ts). */
+#library.is-instant,
+#library.is-instant .settings-veil,
+#library.is-instant .settings-column {
+  transition: none;
+}
+
 /* 0, not the 40 of #settings: the sidebar's own 380 already carries the gap, and the pane's padding
    adds the rest — see the padding note below. */
 #library .settings-body {
@@ -2989,14 +2999,16 @@ html:not(.mouse-asleep) .picker-item:hover,
 
 /* The padding is not decoration: the selected card scales to 1.06 and its ring pulses to 1.035 ON TOP
    of that (the ring is a child, so the two multiply), which puts its corner ~19 design px outside its
-   own box. The scroller clips on both axes, so anything less would slice the ring. */
+   own box — and the glow behind it (see .library-glow) reaches further still. The scroller clips on both
+   axes, so a smaller padding would slice both. 44 is what the layout can spare: even on a 16:10 screen
+   it still leaves room for the same number of columns. */
 .library-scroll {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
   scrollbar-width: none;
-  padding: calc(22 * var(--px));
+  padding: calc(44 * var(--px));
   /* Same edge treatment as .settings-list: fades driven from JS, none where there is nothing beyond. */
   --fade-top: 0px;
   --fade-bottom: 0px;
@@ -3068,6 +3080,12 @@ html:not(.mouse-asleep) .picker-item:hover,
      collapsing the selected card for the length of the animation. */
   --card-scale: 1;
   transform: scale(var(--card-scale));
+  /* Pinned, and NOT decoration: the strip's shrink-into-the-corner rule
+     (#app[data-screen='detail'][data-card-morph='off'] .card.is-selected) sets `bottom left`, and it
+     reaches this card too — the id count keeps its width/height off, but transform-origin is not
+     declared here, so it would be inherited from there and the 1.06 scale would jump upwards the moment
+     a game without a Play button was opened. */
+  transform-origin: center;
   transition: transform var(--morph) var(--morph-ease), opacity var(--morph) ease;
 }
 
@@ -3084,33 +3102,61 @@ html:not(.mouse-asleep) .picker-item:hover,
   z-index: 0;
 }
 
-/* The selected card's glow: a pool of d2 blooming out of the middle of the cover. It BREATHES with the
-   ring around it — same 1.1s, same easing — so the two read as one heartbeat rather than two effects
-   competing; and it opens with a swell of its own the moment the selection lands, which is what makes
-   the highlight feel like it arrives rather than switches on. */
-#app #library .library-grid .card.is-selected::before {
+/* The glow BEHIND the selected cover: a pool of d2 spreading out of the middle of the card and showing
+   past its edges. It is one node of its own, first in the grid, rather than a pseudo-element of the card
+   — a child paints on TOP of its parent's background whatever its z-index, so a cover-sized card would
+   always have sat over it. As a sibling ahead of the cards it paints under all of them, and only the
+   part that reaches beyond the artwork is seen, which is the whole idea.
+   It BREATHES with the ring — same 1.1s, same easing, so the two read as one heartbeat — and slides
+   between cards on the morph, so it follows the selection instead of teleporting. */
+.library-glow {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: calc(200 * var(--px));
+  height: calc(300 * var(--px));
+  pointer-events: none;
+  opacity: 0;
+  transition: transform var(--morph) var(--morph-ease), opacity 0.2s ease;
+}
+
+.library-glow.is-on {
+  opacity: 1;
+}
+
+.library-glow::after {
   content: '';
   position: absolute;
-  inset: 0;
-  border-radius: inherit;
+  inset: calc(-40 * var(--px));
+  /* An ELLIPSE, not a circle: the node is 200x300, and a circle reaches the card's side edge long before
+     its top one — the halo then showed at the sides and died out above and below. The stops are set so
+     the gradient still carries weight where the card's own edge is (~72-79% of the way out), because
+     that ring is the only part ever seen: the covers are opaque and packed 16 apart. */
   background: radial-gradient(
-    circle at 50% 50%,
-    color-mix(in srgb, var(--d2) 55%, transparent) 0%,
-    color-mix(in srgb, var(--d2) 26%, transparent) 40%,
-    transparent 72%
+    ellipse at 50% 50%,
+    color-mix(in srgb, var(--d2) 70%, transparent) 0%,
+    color-mix(in srgb, var(--d2) 45%, transparent) 45%,
+    color-mix(in srgb, var(--d2) 18%, transparent) 76%,
+    transparent 100%
   );
-  pointer-events: none;
   animation: library-glow-in 0.34s var(--morph-ease) both,
     library-glow-pulse 1.1s ease-in-out 0.34s infinite;
 }
 
+/* Held direction: the glow travels on the same clock as the cards, or it would lag a step behind them. */
+#app[data-flipping] .library-glow {
+  transition: transform var(--flip-step) linear, opacity 0.2s ease;
+}
+
+/* The bloom: it opens out of the middle of the cover, so the highlight ARRIVES rather than switches on.
+   It stops just short of full, which is where the pulse below picks it up. */
 @keyframes library-glow-in {
   from {
     opacity: 0;
-    transform: scale(0.35);
+    transform: scale(0.3);
   }
   to {
-    opacity: 0.62;
+    opacity: 0.75;
     transform: scale(1);
   }
 }
@@ -3118,12 +3164,12 @@ html:not(.mouse-asleep) .picker-item:hover,
 @keyframes library-glow-pulse {
   0%,
   100% {
-    opacity: 0.62;
+    opacity: 0.75;
     transform: scale(1);
   }
   50% {
-    opacity: 0.92;
-    transform: scale(1.06);
+    opacity: 1;
+    transform: scale(1.08);
   }
 }
 

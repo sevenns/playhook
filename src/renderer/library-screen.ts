@@ -75,6 +75,7 @@ export function createLibraryScreen(deps: LibraryScreenDeps): LibraryScreen {
   const gridEl = req('library-grid');
   const scrollEl = req('library-scroll');
   const emptyEl = req('library-empty');
+  const glowEl = req('library-glow');
   const scroller = createScroller(scrollEl);
 
   const t = (): Translator => deps.getTranslator();
@@ -210,14 +211,16 @@ export function createLibraryScreen(deps: LibraryScreenDeps): LibraryScreen {
       node.classList.toggle('shows-dot', game.active || game.id === busyId);
       node.classList.toggle('is-busy', game.id === busyId);
     });
+    const selectedNode = active && current !== undefined ? nodeOf(current) : undefined;
+    glowEl.classList.toggle('is-on', selectedNode !== undefined);
+    if (selectedNode !== undefined) {
+      glowEl.style.transform = `translate(${selectedNode.offsetLeft}px, ${selectedNode.offsetTop}px)`;
+    }
     // Only while the screen is actually up: scrolling a grid that is fading out under the screen above
     // it moves cards nobody asked to move, right in the user's eye line.
-    if (open && active && current !== undefined) {
-      const node = nodeOf(current);
-      if (node !== undefined) {
-        if (instant) scroller.reveal(node, true);
-        else scroller.revealGlide(node, pace());
-      }
+    if (open && selectedNode !== undefined) {
+      if (instant) scroller.reveal(selectedNode, true);
+      else scroller.revealGlide(selectedNode, pace());
     }
     loadWindowArt();
   }
@@ -258,19 +261,26 @@ export function createLibraryScreen(deps: LibraryScreenDeps): LibraryScreen {
   }
 
   /**
-   * Takes a card OUT of the grid without letting it vanish: frozen at the place it currently occupies,
-   * out of the flow (so the cards behind it close the gap straight away) and faded by the stylesheet.
-   * Switching sections otherwise looked like `display: none` — half the grid blinking out of existence.
+   * Takes cards OUT of the grid without letting them vanish: each is frozen at the place it currently
+   * occupies, out of the flow (so the ones behind close the gap straight away) and faded by the
+   * stylesheet. Switching sections otherwise looked like `display: none` — half the grid blinking out.
+   *
+   * Measured in FULL before anything is moved. Freezing one card re-flows the grid, so measuring and
+   * pinning them one at a time read every card's position after its predecessors had already left —
+   * which piled the whole section onto the first card's place and faded it out as one lump.
    */
-  function dismiss(node: HTMLElement): void {
-    const left = node.offsetLeft;
-    const top = node.offsetTop;
-    node.style.position = 'absolute';
-    node.style.left = `${left}px`;
-    node.style.top = `${top}px`;
-    node.classList.remove('is-selected');
-    node.classList.add('is-leaving');
-    window.setTimeout(() => node.remove(), LEAVE_MS);
+  function dismissAll(leaving: readonly HTMLElement[]): void {
+    const places = leaving.map((node) => ({ left: node.offsetLeft, top: node.offsetTop }));
+    leaving.forEach((node, at) => {
+      const place = places[at];
+      if (place === undefined) return;
+      node.style.position = 'absolute';
+      node.style.left = `${place.left}px`;
+      node.style.top = `${place.top}px`;
+      node.classList.remove('is-selected');
+      node.classList.add('is-leaving');
+      window.setTimeout(() => node.remove(), LEAVE_MS);
+    });
   }
 
   /** Builds the nodes of the current section and puts them in order, reusing whatever is still there. */
@@ -294,16 +304,19 @@ export function createLibraryScreen(deps: LibraryScreenDeps): LibraryScreen {
       fresh.push(node);
       return node;
     });
+    const leaving: HTMLElement[] = [];
     for (const [key, node] of nodes) {
       if (shown.some((game) => nodeKey(game.id) === key)) continue;
       nodes.delete(key);
-      if (animate) dismiss(node);
+      if (animate) leaving.push(node);
       else node.remove();
     }
+    if (leaving.length > 0) dismissAll(leaving);
     // In-order sync rather than replaceChildren: re-inserting a node the grid already holds would drop
-    // its transition state, which is exactly what the FLIP above is measuring.
+    // its transition state, which is exactly what the FLIP above is measuring. The offset of one is the
+    // glow, which is the grid's first child and belongs under every card (see index.html).
     wanted.forEach((node, at) => {
-      const current = gridEl.children[at];
+      const current = gridEl.children[at + 1];
       if (current !== node) gridEl.insertBefore(node, current ?? null);
     });
     if (fresh.length > 0) {
@@ -400,14 +413,32 @@ export function createLibraryScreen(deps: LibraryScreenDeps): LibraryScreen {
     ];
   }
 
+  /**
+   * Drops the screen's fade for one frame. A hand-over to the detail screen (and the way back) must be a
+   * CUT: through a 0.35s fade the carousel underneath is seen re-assembling itself — the strip fanning
+   * back in, the title swapping — and that reads as the launcher glitching, not as a screen changing.
+   */
+  function withoutTransition(swap: () => void): void {
+    screen.classList.add('is-instant');
+    swap();
+    void screen.offsetWidth; // land the swapped state in this frame, before the class comes off
+    requestAnimationFrame(() => screen.classList.remove('is-instant'));
+  }
+
   function close(silent = false): void {
     if (!open) return;
     open = false;
-    delete app.dataset['overlay'];
-    screen.setAttribute('aria-hidden', 'true');
+    const hide = (): void => {
+      delete app.dataset['overlay'];
+      screen.setAttribute('aria-hidden', 'true');
+    };
     // A silent close is a hand-over to another surface (the detail screen, Add game): it sounds and
     // re-focuses for itself, and announcing this one would fight it.
-    if (silent) return;
+    if (silent) {
+      withoutTransition(hide);
+      return;
+    }
+    hide();
     deps.audio.play('back');
     deps.onClosed();
   }
@@ -462,7 +493,9 @@ export function createLibraryScreen(deps: LibraryScreenDeps): LibraryScreen {
     },
     restore: () => {
       if (open) return;
-      show();
+      // The other half of the cut (see withoutTransition): the screen is back in the frame the detail
+      // screen leaves, so its rebuild is never on show.
+      withoutTransition(show);
       // The nodes and the scroll position survived the trip, so the screen comes back exactly as it was
       // left — unless a list arrived while it was away, which is where that update finally lands.
       if (stale) {
