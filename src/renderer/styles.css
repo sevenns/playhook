@@ -2439,6 +2439,15 @@ html:not(.mouse-asleep) .settings-option:hover,
   opacity: 0;
 }
 
+/* …and for the LIBRARY it goes at once, with no fade of its own. That screen is the one you come back
+   INTO from a detail screen: it fades in over 0.35s, and the row spends those same milliseconds sliding
+   onto the game just left and re-fanning its cards — all of it in plain sight through a veil that is
+   still half transparent. Cut instead, the row re-arranges in private. Only the way IN is instant: on
+   the way out the transition is back, so closing the screen brings the row up as softly as ever. */
+#app[data-overlay='library'] #carousel-strip {
+  transition: none;
+}
+
 #app[data-overlay] #carousel {
   pointer-events: none;
 }

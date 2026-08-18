@@ -555,9 +555,10 @@ export function createLibraryScreen(deps: LibraryScreenDeps): LibraryScreen {
     },
     restore: () => {
       if (open) return;
-      // The other half of the cut (see withoutTransition): the screen is back in the frame the detail
-      // screen leaves, so its rebuild is never on show.
-      withoutTransition(show);
+      // With its own entrance, unlike the hand-over OUT of here (see withoutTransition): coming back is
+      // the screen arriving, and it should look like it. What made the fade unusable was the carousel
+      // rebuilding itself underneath — and that is hidden for as long as this screen is up (styles.css).
+      show();
       // The nodes and the scroll position survived the trip, so the screen comes back exactly as it was
       // left — unless a list arrived while it was away, which is where that update finally lands.
       if (stale) {
