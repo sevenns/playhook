@@ -45,19 +45,47 @@ describe('writeFileAtomic', () => {
   // replace fail outright (EPERM), which is what left settings silently unsaved — so it is the WINDOWS
   // CI job that exercises the fallback here. On posix `rename` only needs write on the DIRECTORY, so the
   // same case goes through the normal atomic path; the assertion holds either way, which is the point.
-  it('still writes when the target is read-only', async () => {
-    const target = path.join(dir, 'settings.json');
-    await fs.writeFile(target, 'old');
-    await fs.chmod(target, 0o444);
-    await writeFileAtomic(target, 'new');
-    expect(await fs.readFile(target, 'utf8')).toBe('new');
-    expect(await fs.readdir(dir)).toEqual(['settings.json']);
-  });
+  // The explicit timeout is for the Windows job specifically: there this case really does fail the
+  // replace and ride out REPLACE_ATTEMPTS of backoff (~1.4s) before the fallback lands, which is close
+  // enough to vitest's 5s default to go flaky on a loaded runner. On posix it finishes in milliseconds.
+  it(
+    'still writes when the target is read-only',
+    async () => {
+      const target = path.join(dir, 'settings.json');
+      await fs.writeFile(target, 'old');
+      await fs.chmod(target, 0o444);
+      await writeFileAtomic(target, 'new');
+      expect(await fs.readFile(target, 'utf8')).toBe('new');
+      expect(await fs.readdir(dir)).toEqual(['settings.json']);
+    },
+    20000,
+  );
 
   it('propagates a failure that no fallback can rescue (unwritable directory)', async () => {
     const target = path.join(dir, 'missing-dir', 'settings.json');
     await expect(writeFileAtomic(target, 'x')).rejects.toThrow();
   });
+
+  // The fallback, forced on EVERY platform: a read-only DIRECTORY refuses the rename (the replace needs
+  // to unlink the old name, which is a directory permission) while the existing file itself stays
+  // writable — which is precisely the shape the fallback is for. Without it this write is simply lost.
+  // Skipped as root, who bypasses the permission check and would make the assertion meaningless.
+  const asRoot = typeof process.getuid === 'function' && process.getuid() === 0;
+  it.skipIf(asRoot || process.platform === 'win32')(
+    'falls back to an in-place write when the replace is refused',
+    async () => {
+      const target = path.join(dir, 'settings.json');
+      await fs.writeFile(target, 'old');
+      await fs.chmod(dir, 0o555);
+      try {
+        await writeFileAtomic(target, 'new');
+        expect(await fs.readFile(target, 'utf8')).toBe('new');
+      } finally {
+        await fs.chmod(dir, 0o755);
+      }
+    },
+    20000,
+  );
 
   it('leaves no .tmp behind when the write fails', async () => {
     await expect(writeFileAtomic(path.join(dir, 'missing-dir', 'x.json'), 'x')).rejects.toThrow();

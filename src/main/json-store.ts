@@ -63,11 +63,28 @@ export async function writeJsonAtomic(filePath: string, value: unknown): Promise
  * write, where a torn file costs the user every non-Steam shortcut they have). `writeJsonAtomic` is now a
  * thin wrapper over this — see its doc comment for why the final step is a bare `fs.rename`.
  */
+/**
+ * How many times the replace is retried before the fallback below takes over. Deliberately short of the
+ * default five (~6.2s): the codes that reach the fallback — a read-only attribute, an ACL without delete
+ * — do not clear up on their own, so the extra waiting buys nothing and the user watches a toggle hang
+ * for six seconds on its way to working. A genuinely busy file (an antivirus mid-scan) still gets three
+ * tries and ~1.4s, and anything not covered by the fallback keeps failing exactly as it did.
+ */
+const REPLACE_ATTEMPTS = 3;
+
 export async function writeFileAtomic(filePath: string, data: string | Buffer): Promise<void> {
   const tmp = tmpNameFor(filePath);
-  await writeRaw(tmp, data);
   try {
-    await withRetry(() => fs.rename(tmp, filePath));
+    await writeRaw(tmp, data);
+  } catch (cause) {
+    // The temp could not even be STAGED — the directory itself refuses new files. Writing through the
+    // existing target is still worth a try: that needs permission on the file, not on its directory.
+    if (!isPermissionError(cause)) throw cause;
+    await writeThrough(filePath, data, cause);
+    return;
+  }
+  try {
+    await withRetry(() => fs.rename(tmp, filePath), REPLACE_ATTEMPTS);
     return;
   } catch (cause) {
     if (!isPermissionError(cause)) {
@@ -132,14 +149,30 @@ async function replaceInPlace(
     // fall through to the non-atomic write
   }
   try {
+    await writeThrough(filePath, data, original);
+  } finally {
+    await fs.rm(tmp, { force: true }).catch(() => undefined);
+  }
+}
+
+/**
+ * Writes straight over `filePath`, giving up atomicity — an interrupted write can leave the file torn.
+ * Reached only once the safe path has genuinely failed: a settings file that cannot be saved AT ALL is a
+ * worse outcome than one with a small window of risk. `original` is re-thrown when even this does not
+ * land, so the caller still learns the real reason rather than a symptom of the recovery.
+ */
+async function writeThrough(
+  filePath: string,
+  data: string | Buffer,
+  original: unknown,
+): Promise<void> {
+  try {
     await writeRaw(filePath, data);
-    await fs.rm(tmp, { force: true }).catch(() => undefined);
-    log.warn(
-      `[store] "${filePath}" could not be replaced atomically; wrote it in place instead:`,
-      original,
-    );
   } catch {
-    await fs.rm(tmp, { force: true }).catch(() => undefined);
     throw original;
   }
+  log.warn(
+    `[store] "${filePath}" could not be replaced atomically; wrote it in place instead:`,
+    original,
+  );
 }

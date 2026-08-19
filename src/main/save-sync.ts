@@ -22,10 +22,20 @@ function errorCode(cause: unknown): string | undefined {
   return undefined;
 }
 
-/** Retry with exponential backoff on "busy" files (EBUSY and related). Exported for unit tests. */
-export async function withRetry<T>(operation: () => Promise<T>): Promise<T> {
+/**
+ * Retry with exponential backoff on "busy" files (EBUSY and related). Exported for unit tests.
+ *
+ * `attempts` is a parameter because the full run is not always the right wait: the default five take
+ * ~6.2s before giving up, which is what a save sync SHOULD spend riding out an antivirus scan, and far
+ * more than a caller with a working fallback of its own should spend before reaching for it (see
+ * writeFileAtomic, where a refused replace is usually permanent rather than busy).
+ */
+export async function withRetry<T>(
+  operation: () => Promise<T>,
+  attempts: number = MAX_ATTEMPTS,
+): Promise<T> {
   let lastError: unknown;
-  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
     try {
       return await operation();
     } catch (cause) {
