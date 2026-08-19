@@ -553,7 +553,20 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     // each time would drop the hover state and flicker under the cursor for no reason.
     if (signature === columnSignature) return;
     columnSignature = signature;
+    const selectedBefore = sidebar.selected()?.id;
     sidebar.render(entries);
+    // The column can rebuild WITHOUT the entry the cursor was standing on — an action that stops applying
+    // the moment it is pressed ("Move to card…", which leaves the column as soon as a move begins). The
+    // sidebar's own fallback is its first entry, and it reports that to nobody, so the cursor ends up
+    // naming one section while the pane still shows another. Put it back on the section actually on
+    // screen: `select` only moves the cursor (no onSection), which is the point — the pane must not move.
+    if (
+      selectedBefore !== undefined &&
+      sidebar.selected()?.id !== selectedBefore &&
+      paneKey !== null
+    ) {
+      sidebar.select(paneKey);
+    }
   }
 
   function columnEntries(from: GameSettingsModel): readonly SidebarEntry[] {
