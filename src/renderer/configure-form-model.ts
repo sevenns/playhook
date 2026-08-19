@@ -13,11 +13,12 @@
 //                key (a bad `install.type` marks the whole `install` block corrupt).
 
 /**
- * The four mutually-exclusive launch methods (mirrors the manifest superRefine). `pc` — a game already
- * installed on this machine, addressed by absolute path — is only valid in the PC library, and is the
- * ONLY mode valid there; the form gets that constraint from the selected root, not from the text.
+ * The launch methods (mirrors the manifest superRefine). `pc` - a game already installed on this
+ * machine, addressed by absolute path - is only valid in the PC library. `none` is the PC-library draft
+ * state (no launch method chosen yet) - also only valid there; the form gets both constraints from the
+ * selected root, not from the text (see `launchModesFor`/`draftModeFor` in game-settings-model.ts).
  */
-export type LaunchMode = 'executable' | 'installer' | 'steam' | 'pc';
+export type LaunchMode = 'executable' | 'installer' | 'steam' | 'pc' | 'none';
 
 /**
  * Derives a manifest `id` from a game's display name for the Configure form: accents stripped, lowercased,
@@ -551,6 +552,17 @@ function buildManifestObject(
     if (model.umuGameId !== '') out.umuGameId = model.umuGameId;
   } else if (model.launchMode === 'steam') {
     out.steam = buildSteam(model.steam);
+  } else if (model.launchMode === 'none') {
+    // PC-library draft: no launch block is written at all (that IS the draft state — see manifest.ts
+    // resolveOne). Only the launch-adjacent fields that don't belong to any specific block are kept, so
+    // filling them in before a method is chosen survives Save instead of silently vanishing (every other
+    // branch here is the only place that writes them).
+    const args = nonEmpty(model.args);
+    if (args.length > 0) out.args = args;
+    if (model.runAsAdmin) out.runAsAdmin = true;
+    const winetricks = nonEmpty(model.winetricks);
+    if (winetricks.length > 0) out.winetricks = winetricks;
+    if (model.umuGameId !== '') out.umuGameId = model.umuGameId;
   } else {
     if (model.executable !== '') out.executable = model.executable;
     const args = nonEmpty(model.args);
@@ -677,18 +689,22 @@ export type NewGameSlotsResult =
   | { readonly ok: false; readonly message: string };
 
 /**
- * The slot list a screen ADDING a game starts from: everything the root already carries, plus one blank
- * slot at the end for the game being written. `text` is null when the root has no game.json at all (a
- * blank card, a PC library with no local game yet) — the normal case here, and the reason this cannot
- * simply be `textToGames`, which rejects an empty games array.
+ * The slot list a screen ADDING (or moving in) a game starts from: everything the root already carries,
+ * plus one slot at the end for `model` — a blank one for a new game, or a carried-over one for a move
+ * (see `carryFormToCard`). `text` is null when the root has no game.json at all (a blank card, a PC
+ * library with no local game yet) — the normal case here, and the reason this cannot simply be
+ * `textToGames`, which rejects an empty games array.
  *
- * The new game is a real slot rather than a special case beside the list on purpose: `slotIndex` is what
- * the validator's `games.<i>.<field>` paths are matched against, so a game held outside the list would
- * have its own problems reported as somebody else's — and Save would go green on an empty form.
+ * The inserted game is a real slot rather than a special case beside the list on purpose: `slotIndex` is
+ * what the validator's `games.<i>.<field>` paths are matched against, so a game held outside the list
+ * would have its own problems reported as somebody else's — and Save would go green on an empty form.
  */
-export function slotsWithNewGame(text: string | null, launchMode: LaunchMode): NewGameSlotsResult {
-  const blank: GameFormState = { model: emptyFormModel(launchMode), rest: {}, corrupt: {} };
-  if (text === null || text.trim() === '') return { ok: true, slots: [blank], index: 0 };
+export function slotsWithInsertedGame(
+  text: string | null,
+  model: ManifestFormModel,
+): NewGameSlotsResult {
+  const inserted: GameFormState = { model, rest: {}, corrupt: {} };
+  if (text === null || text.trim() === '') return { ok: true, slots: [inserted], index: 0 };
   const parsed = textToGames(text);
   if (!parsed.ok) return { ok: false, message: parsed.message };
   const existing: GameFormState[] = parsed.games.map((game, index) =>
@@ -696,7 +712,12 @@ export function slotsWithNewGame(text: string | null, launchMode: LaunchMode): N
       ? { model: game.model, rest: game.rest, corrupt: game.corrupt }
       : { raw: parsed.values[index] },
   );
-  return { ok: true, slots: [...existing, blank], index: existing.length };
+  return { ok: true, slots: [...existing, inserted], index: existing.length };
+}
+
+/** `slotsWithInsertedGame` with a blank slot — the Add-game screen's starting point. */
+export function slotsWithNewGame(text: string | null, launchMode: LaunchMode): NewGameSlotsResult {
+  return slotsWithInsertedGame(text, emptyFormModel(launchMode));
 }
 
 /**

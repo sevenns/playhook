@@ -9,6 +9,11 @@ mandate to rewrite what already works.
 - **main** owns all game logic (fs, registry, process control, FFI). **renderer** is stateless UI.
 - They talk **only over IPC**. The renderer never touches fs/registry; main never touches the DOM.
 - Preload bridges are typed and sandboxed (`contextIsolation: true`, `sandbox: true`).
+- A **pure** function BOTH sides must compute identically (no fs/electron either way) lives in
+  `src/shared/` alongside `types.ts` and `i18n/` — not duplicated in each layer, and not placed under
+  `src/main/`: `tsconfig.renderer.json` does not include it and esbuild builds the renderer for the
+  browser, so a `node:*` import there breaks the build, not just the convention. See
+  `src/shared/asset-move-names.ts` (move-to-card asset names, computed identically in main and renderer).
 
 ## Error-handling convention
 

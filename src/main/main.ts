@@ -314,6 +314,10 @@ async function bootstrap(): Promise<void> {
     toManifestPcSavePath: (absolute) => platform.savePathResolver.toManifestPcSavePath(absolute),
     findGameSource: (id) => controller.findGameSource(id),
     notify: (input) => notifications.notify(input),
+    resolveManifest: (id) => controller.findManifest(id),
+    isBusy: () => controller.isBusy(),
+    pcStore: store,
+    savePathResolver: platform.savePathResolver,
   });
   gameConfig.init();
 

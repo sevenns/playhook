@@ -30,6 +30,7 @@ import { app, ipcMain } from 'electron';
 import {
   IPC,
   MANIFEST_FILENAME,
+  type ConfigMoveResult,
   type ConfigPickKind,
   type ConfigPickResult,
   type ConfigReadResult,
@@ -43,9 +44,11 @@ import {
   type GameConfigListDirRequest,
   type GameConfigReadResult,
   type GameConfigSaveRequest,
+  type GameMoveRequest,
   type ListDirResult,
   type ManifestSource,
   type NotificationInput,
+  type ResolvedManifest,
 } from '../shared/types';
 import { type Translator } from '../shared/i18n/index';
 import { AUDIO_EXTENSIONS, IMAGE_EXTENSIONS, readImageDataUrl } from './asset-reader';
@@ -58,7 +61,16 @@ import {
 } from './config-paths';
 import { describeManifestContent, listAllMountpoints, listDriveCandidates } from './drive-watcher';
 import { addedGamesOf, rootReadResult } from './game-config-add';
+import {
+  countGamesWithId,
+  expectedGameFilePath,
+  findGameInText,
+  planAssetCopies,
+  removeGameFromManifestText,
+} from './game-move';
 import { type PcLibraryStore } from './pc-library';
+import { type PcStore } from './pc-store';
+import { type SavePathResolver } from './platform/types';
 import { resolveInside, validateManifestText } from './manifest';
 import { writeFileAtomic } from './save-sync';
 import { describe } from './util';
@@ -87,6 +99,40 @@ function isEmptyManifestList(text: string): boolean {
  * what a DriveWatcher insert/removal amounts to for this service) and after any save.
  */
 const CANDIDATES_TTL_MS = 2000;
+
+/**
+ * A move that SUCCEEDED but not entirely cleanly. Kept as a discriminated value rather than as the
+ * user-facing sentence it turns into: the sentence is localized (comparing against it would break the
+ * moment the UI language changes mid-transaction) and there can be more than one of these in one move.
+ */
+type MoveWarning = 'save-skipped' | 'duplicate';
+
+const MOVE_WARNING_MESSAGE: Readonly<Record<MoveWarning, 'gameConfig.moveSaveSkipped' | 'gameConfig.moveDuplicateWarning'>> = {
+  'save-skipped': 'gameConfig.moveSaveSkipped',
+  duplicate: 'gameConfig.moveDuplicateWarning',
+};
+
+const MOVE_WARNING_NOTIFICATION: Readonly<
+  Record<MoveWarning, 'game-move-save-skipped' | 'game-move-duplicate'>
+> = {
+  'save-skipped': 'game-move-save-skipped',
+  duplicate: 'game-move-duplicate',
+};
+
+/** One asset copied onto the card by a move, and whether the destination was already occupied — a
+ * rollback removes only what the move itself created (an overwrite cannot be undone, so deleting a file
+ * that predates us would turn a failed move into data loss). */
+interface AssetCopyRecord {
+  readonly to: string;
+  readonly existedBefore: boolean;
+}
+
+/** The save folder a move copied INTO, if any. `existedBefore` distinguishes "we made this folder" (undo
+ * = remove it) from "it was already there and empty" (undo = empty it again, keeping the folder). */
+interface SaveCopyRecord {
+  dir: string | null;
+  existedBefore: boolean;
+}
 
 /** The extensions a field accepts, with the two asset lists filled in from the AssetReader. */
 function extensionsFor(kind: ConfigPickKind): readonly string[] | null {
@@ -147,6 +193,24 @@ export interface GameConfigDeps {
    * asks for a save, not for a notification.
    */
   readonly notify: (input: NotificationInput) => void;
+  /**
+   * The full RESOLVED manifest of one game, by id (GameController.findManifest) — unlike `findGameSource`,
+   * moveToCard needs the actual resolved asset paths and the raw fields (steam/pcSavePath) to plan the
+   * asset/save copies, not just where the file lives.
+   */
+  readonly resolveManifest: (id: string) => ResolvedManifest | null;
+  /**
+   * Whether ANY game is currently running/installing/uninstalling (GameController.isBusy) — moveToCard's
+   * own re-check of the guard the "Move to card…" menu item already applies in the renderer (Р2.5).
+   */
+  readonly isBusy: () => boolean;
+  /** Drops a game's sync-state baseline (PcStore.removeSyncState) — moveToCard clears the "pc" slot once
+   * a game leaves the library (Р2.5/Р2.7): the local backup ↔ save-folder pairing it described is gone. */
+  readonly pcStore: Pick<PcStore, 'removeSyncState'>;
+  /** Resolves a manifest's `pcSavePath` to the LIVE save folder on this machine (platform.savePathResolver)
+   * — moveToCard copies from there, not from the PC-library backup, so a stale backup can never
+   * overwrite a fresher save (see the plan, Р2.5 step 3). */
+  readonly savePathResolver: Pick<SavePathResolver, 'resolvePcSavePath'>;
 }
 
 export class GameConfigService {
@@ -186,6 +250,10 @@ export class GameConfigService {
     );
     ipcMain.handle(IPC.gameConfigReadRoot, (_event, root: unknown): Promise<ConfigRootReadResult> =>
       this.readRoot(typeof root === 'string' ? root : ''),
+    );
+    ipcMain.handle(
+      IPC.gameConfigMoveToCard,
+      (_event, payload: GameMoveRequest): Promise<ConfigMoveResult> => this.moveToCard(payload),
     );
   }
 
@@ -441,6 +509,331 @@ export class GameConfigService {
     return applied.ok
       ? { saved: true, applied: 'applied' }
       : { saved: true, applied: 'failed', message: applied.message };
+  }
+
+  // ── Move to card (Р2.5): a local game leaves the PC library and lands on a card, in one transaction ──
+  // Two writes (the card's game.json, the library's) cannot be two separate gameConfig:save calls from the
+  // renderer without a window where the game exists in both places or neither — so the whole thing runs
+  // here. Order: checks (nothing written) → copy assets → copy saves → write the card → write the
+  // library → apply/notify → drop the stale sync-state baseline. A failure before the library write rolls
+  // back everything copied to the card; `fromText` is applied ONLY after the card write has already
+  // succeeded, and never otherwise (see moveToCard's own comments for exactly where).
+  private async moveToCard(request: GameMoveRequest): Promise<ConfigMoveResult> {
+    const t = this.deps.getTranslator();
+
+    // 1. Checks — nothing is written until every one of these passes.
+    if (!(await this.isAllowedRoot(request.fromRoot)) || !(await this.isAllowedRoot(request.toRoot))) {
+      return { moved: false, message: t('errors.driveUnavailable') };
+    }
+    if (
+      (await this.signatureOf(request.fromRoot)) !== request.fromSignature ||
+      (await this.signatureOf(request.toRoot)) !== request.toSignature
+    ) {
+      return { moved: false, message: t('errors.mediaChanged') };
+    }
+    if (this.deps.isBusy()) {
+      return { moved: false, message: t('gameConfig.moveGameBusy') };
+    }
+    // A move must not rename: everything this PC remembers about the game is keyed by id (stats, the
+    // history record, the pending-flush queue), so a rename mid-move would orphan the lot. The renderer
+    // hides the id row while a move is pending; this is the server-side half of that rule, and it is what
+    // makes addressing the two sides by two different ids below provably equivalent.
+    if (request.fromId !== request.id) {
+      return { moved: false, message: t('gameConfig.moveIdChanged') };
+    }
+    if (countGamesWithId(request.id, request.toText) !== 1) {
+      return { moved: false, message: t('gameConfig.moveIdTaken') };
+    }
+    const toValidation = validateManifestText(request.toText, t, 'card');
+    if (!toValidation.ok) {
+      return { moved: false, message: this.firstIssueMessage(toValidation.issues, t) };
+    }
+    // fromText is derived HERE, from a fresh read — never trusted from the renderer (see game-move.ts).
+    // Addressed by `fromId` (what the game was READ with), never by the editable `id`.
+    const fromRead = await this.readConfig(request.fromRoot);
+    if (!fromRead.ok) return { moved: false, message: fromRead.message };
+    // removeGameFromManifestText is a silent no-op for an id that isn't there, which would write the
+    // library back UNCHANGED and report a successful move — so the game's presence is asserted first.
+    if (countGamesWithId(request.fromId, fromRead.text) !== 1) {
+      return { moved: false, message: t('errors.gameNotFound') };
+    }
+    const fromText = removeGameFromManifestText(request.fromId, fromRead.text);
+    if (fromText === null) return { moved: false, message: t('errors.configInvalid') };
+    const fromValidation = validateManifestText(fromText, t, 'pc');
+    if (!fromValidation.ok) {
+      // Our own slot is gone from this text, so whatever is wrong belongs to a game that stays behind —
+      // say so, or the user reads it as a complaint about the game they are moving.
+      return {
+        moved: false,
+        message: t('gameConfig.moveLibraryInvalid', {
+          reason: this.firstIssueMessage(fromValidation.issues, t),
+        }),
+      };
+    }
+    const manifest = this.deps.resolveManifest(request.fromId);
+    if (manifest === null || manifest.source !== 'pc') {
+      return { moved: false, message: t('errors.gameNotFound') };
+    }
+    const targetRaw = findGameInText(request.id, request.toText);
+    if (targetRaw === null) return { moved: false, message: t('errors.gameNotFound') };
+    // The game's OWN files (its exe) must already be on the card — otherwise the card would read as
+    // having an invalid game.json the instant it is inserted (see the plan, Р2.6).
+    const expectedFile = expectedGameFilePath(targetRaw);
+    if (expectedFile !== null) {
+      const resolvedFile = resolveInside(request.toRoot, expectedFile);
+      if (resolvedFile === null || !(await fse.pathExists(resolvedFile))) {
+        return { moved: false, message: t('gameConfig.moveFilesNotOnCard') };
+      }
+    }
+    // The card's game.json exactly as it stands right now — the ONLY faithful "before" picture for the
+    // step-5 rollback. Reconstructing it by subtracting our slot back out of `toText` would restore a
+    // re-serialization of the renderer's making instead (different top-level shape for a single-game
+    // card), and would lean on `toSignature === ''` to tell "there was no file" from "there was one".
+    const toBefore = await this.readManifestSnapshot(request.toRoot);
+    if (!toBefore.ok) return { moved: false, message: toBefore.message };
+
+    const gameTitle = typeof targetRaw['title'] === 'string' ? targetRaw['title'] : request.id;
+    // What went not-quite-right, as DATA rather than as prose: the outcomes below drive both the
+    // notifications and the result's `warning`, and more than one of them can happen in a single move.
+    const warnings: MoveWarning[] = [];
+
+    // 2. Copy assets (hero/grid/music), under the deterministic names the renderer already wrote into
+    // toText — see asset-move-names.ts. `existedBefore` is recorded per destination so a rollback removes
+    // only what this move created: deleting a file that was already there would destroy it outright,
+    // since the overwrite has no undo.
+    const copied: AssetCopyRecord[] = [];
+    const saveCopy: SaveCopyRecord = { dir: null, existedBefore: false };
+    const undo = async (): Promise<void> => {
+      await this.rollbackMoveCopies(copied, saveCopy);
+    };
+    try {
+      for (const plan of planAssetCopies(manifest, request.id, request.toRoot)) {
+        const existedBefore = await fse.pathExists(plan.to);
+        await fse.ensureDir(path.dirname(plan.to));
+        await fse.copy(plan.from, plan.to, { overwrite: true });
+        copied.push({ to: plan.to, existedBefore });
+      }
+    } catch (cause) {
+      await undo();
+      return {
+        moved: false,
+        message: t('errors.cannotWriteManifest', { file: MANIFEST_FILENAME, cause: describe(cause) }),
+      };
+    }
+
+    // 3. Copy saves — only when the TARGET manifest actually names a saveOnCard folder, and only from the
+    // LIVE save location (never the pc-games/saves/<id> backup): with no card-side baseline yet, the first
+    // sync-in falls back to the deterministic card→pc direction (save-sync.ts), so copying anything but the
+    // freshest state here would make that fallback destructive instead of harmless.
+    const targetSaveOnCard =
+      typeof targetRaw['saveOnCard'] === 'string' ? targetRaw['saveOnCard'] : undefined;
+    if (targetSaveOnCard !== undefined) {
+      const saveTargetDir = resolveInside(request.toRoot, targetSaveOnCard);
+      if (saveTargetDir === null) {
+        await undo();
+        return { moved: false, message: t('gameConfig.pickOutsideCard') };
+      }
+      const sourceDir = await this.liveOrBackupSaveDir(manifest);
+      if (sourceDir !== null) {
+        const targetExisted = await fse.pathExists(saveTargetDir);
+        const targetNonEmpty = targetExisted && (await fse.readdir(saveTargetDir)).length > 0;
+        if (targetNonEmpty) {
+          warnings.push('save-skipped');
+        } else {
+          try {
+            await fse.ensureDir(path.dirname(saveTargetDir));
+            await fse.copy(sourceDir, saveTargetDir, { overwrite: true });
+            // Recorded even when the folder was already there (empty): what has to be undone is what we
+            // PUT IN it, not merely the folder we may or may not have created.
+            saveCopy.dir = saveTargetDir;
+            saveCopy.existedBefore = targetExisted;
+          } catch (cause) {
+            await undo();
+            return {
+              moved: false,
+              message: t('errors.cannotWriteManifest', {
+                file: MANIFEST_FILENAME,
+                cause: describe(cause),
+              }),
+            };
+          }
+        }
+      }
+    }
+
+    // 4. Write the card. On disk to this exact moment on, `fromText` is the only thing left to apply —
+    // everything above only touched the CARD side.
+    try {
+      await writeFileAtomic(path.join(request.toRoot, MANIFEST_FILENAME), request.toText);
+    } catch (cause) {
+      await undo();
+      return {
+        moved: false,
+        message: t('errors.cannotWriteManifest', { file: MANIFEST_FILENAME, cause: describe(cause) }),
+      };
+    }
+
+    // 5. Write the library. A failure here triggers a best-effort rollback of the card (step 4) back to
+    // its pre-move bytes — `fromText` is NEVER applied when this happens (see the plan, Р2.5's rollback
+    // note): applying it would make the game disappear from the PC library without landing on the card,
+    // which is worse than the duplicate a failed rollback leaves behind.
+    const fromWrite = await this.writePcLibraryText(fromText, t);
+    if (!fromWrite.ok) {
+      const restored = await this.rollbackCardWrite(request.toRoot, toBefore.text);
+      await undo();
+      if (restored) return { moved: false, message: fromWrite.message };
+      // The card write is stuck AND the library still has the game too — a defined outcome (a card game
+      // shadows its local twin, README.md "Local games"), not corruption, but worth a loud log: two
+      // independent writes failed back to back to get here.
+      log.error(
+        `[game-move] id=${request.id}: card write kept but the library write failed and the card` +
+          ` rollback ALSO failed — the game now exists in both places (${fromWrite.message})`,
+      );
+      warnings.push('duplicate');
+    }
+
+    // 6. Apply / defer, exactly like an ordinary card save.
+    this.invalidateCandidates();
+    let applied: 'applied' | 'deferred';
+    if (request.toRoot === this.deps.getActiveRoot()) {
+      const reload = await this.deps.reloadManifest(request.toRoot);
+      applied = 'applied';
+      if (!reload.ok) {
+        log.warn(`[game-move] id=${request.id}: moved, but reloading the active card failed: ${reload.message}`);
+      }
+    } else {
+      applied = 'deferred';
+      this.deps.notify({ kind: 'game-moved-deferred', gameTitle });
+    }
+    // Every warning gets its own notification: the screen closes on a successful move, so `warning` on the
+    // result has nobody left to show it (and the duplicate case must not be the log's secret alone).
+    for (const kind of warnings) {
+      this.deps.notify({ kind: MOVE_WARNING_NOTIFICATION[kind], gameTitle });
+    }
+
+    // 7. The library backup ↔ save-folder pairing this baseline described is gone now that the game has
+    // left the library — a stale one would read as a false conflict if the game is ever moved back. Only
+    // when the library write actually went through: in the duplicate case the game is still there, and
+    // its baseline is still the truth.
+    if (fromWrite.ok) await this.deps.pcStore.removeSyncState(request.fromId, 'pc');
+
+    const warning = warnings.map((kind) => t(MOVE_WARNING_MESSAGE[kind])).join(' ');
+    return { moved: true, applied, ...(warning !== '' ? { warning } : {}) };
+  }
+
+  /**
+   * The manifest text of a root as it stands right now, or null when the root carries no game.json. An
+   * unreadable-but-present file is an ERROR rather than a null: null means "delete the file to undo", and
+   * guessing that for a file we simply failed to read would destroy it.
+   */
+  private async readManifestSnapshot(
+    root: string,
+  ): Promise<
+    { readonly ok: true; readonly text: string | null } | { readonly ok: false; readonly message: string }
+  > {
+    const file = path.join(root, MANIFEST_FILENAME);
+    if (!(await fse.pathExists(file))) return { ok: true, text: null };
+    try {
+      return { ok: true, text: await fse.readFile(file, 'utf8') };
+    } catch (cause) {
+      return {
+        ok: false,
+        message: this.deps.getTranslator()('errors.cannotReadManifest', {
+          file: MANIFEST_FILENAME,
+          cause: describe(cause),
+        }),
+      };
+    }
+  }
+
+  private firstIssueMessage(
+    issues: readonly { readonly path: string; readonly message: string }[],
+    t: Translator,
+  ): string {
+    const first = issues[0];
+    return first !== undefined ? `${first.path}: ${first.message}` : t('errors.configInvalid');
+  }
+
+  /** The folder a move copies saves FROM: the live location if it (and its container) exist, else the
+   * PC-library's own backup (`saves/<id>`) as a fallback. Null when neither has anything to copy. */
+  private async liveOrBackupSaveDir(manifest: ResolvedManifest): Promise<string | null> {
+    if (manifest.pcSavePath !== undefined) {
+      const live = await this.deps.savePathResolver.resolvePcSavePath(manifest, manifest.pcSavePath);
+      if (live !== null && live.containerExists && (await fse.pathExists(live.path))) {
+        return live.path;
+      }
+    }
+    if (manifest.saveOnCardPath !== undefined && (await fse.pathExists(manifest.saveOnCardPath))) {
+      return manifest.saveOnCardPath;
+    }
+    return null;
+  }
+
+  /**
+   * Undoes what steps 2/3 put on the CARD — never touches the PC library.
+   *
+   * An asset whose destination was ALREADY occupied is deliberately left alone: the copy overwrote it and
+   * there is nothing to restore, so removing it would turn "the move failed" into "and your file is gone
+   * too". The saves folder is emptied rather than removed when it predates the move.
+   */
+  private async rollbackMoveCopies(
+    copied: readonly AssetCopyRecord[],
+    saveCopy: SaveCopyRecord,
+  ): Promise<void> {
+    for (const asset of copied) {
+      if (asset.existedBefore) continue;
+      try {
+        await fse.remove(asset.to);
+      } catch (cause) {
+        log.warn(`[game-move] failed to roll back copied asset "${asset.to}":`, describe(cause));
+      }
+    }
+    if (saveCopy.dir === null) return;
+    try {
+      await fse.remove(saveCopy.dir);
+      if (saveCopy.existedBefore) await fse.ensureDir(saveCopy.dir);
+    } catch (cause) {
+      log.warn(`[game-move] failed to roll back the copied save folder "${saveCopy.dir}":`, describe(cause));
+    }
+  }
+
+  /**
+   * Best-effort revert of the card's game.json after the library write failed post-write: writes back the
+   * bytes the card carried before the move, or deletes the file when it had none (`toTextBefore === null`).
+   * Returns whether the revert itself succeeded.
+   */
+  private async rollbackCardWrite(toRoot: string, toTextBefore: string | null): Promise<boolean> {
+    try {
+      if (toTextBefore === null) await fse.remove(path.join(toRoot, MANIFEST_FILENAME));
+      else await writeFileAtomic(path.join(toRoot, MANIFEST_FILENAME), toTextBefore);
+      return true;
+    } catch (cause) {
+      log.warn(`[game-move] failed to roll back the card write at "${toRoot}":`, describe(cause));
+      return false;
+    }
+  }
+
+  /** Writes (or removes, if empty) the PC library's game.json and reloads it — the shared half of
+   * savePcLibrary that moveToCard also needs, without savePcLibrary's ConfigSaveResult shape. */
+  private async writePcLibraryText(
+    text: string,
+    t: Translator,
+  ): Promise<{ readonly ok: true } | { readonly ok: false; readonly message: string }> {
+    const emptied = isEmptyManifestList(text);
+    try {
+      if (emptied) await this.deps.pcLibrary.removeManifest();
+      else await writeFileAtomic(path.join(this.deps.pcLibrary.root, MANIFEST_FILENAME), text);
+    } catch (cause) {
+      return {
+        ok: false,
+        message: t('errors.cannotWriteManifest', { file: MANIFEST_FILENAME, cause: describe(cause) }),
+      };
+    }
+    const reload = await this.deps.reloadPcLibrary();
+    if (!reload.ok) {
+      log.warn(`[game-move] library write applied, but the reload failed: ${reload.message}`);
+    }
+    return { ok: true };
   }
 
   /**

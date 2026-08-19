@@ -441,6 +441,84 @@ describe('pc mode (a local game on this PC)', () => {
   });
 });
 
+describe('none mode (PC-library draft — no launch method chosen yet, Р1)', () => {
+  it('emits no launch block at all, but keeps args/runAsAdmin/winetricks/umuGameId', () => {
+    const model: ManifestFormModel = {
+      ...emptyFormModel('none'),
+      id: 'hades',
+      title: 'Hades',
+      heroImage: ['assets/hero.jpg'],
+      args: ['-windowed'],
+      runAsAdmin: true,
+      winetricks: ['dotnet48'],
+      umuGameId: 'umu-hades',
+    };
+    const parsed = JSON.parse(formModelToText(model, {}, {})) as Record<string, unknown>;
+    expect(parsed).not.toHaveProperty('pc');
+    expect(parsed).not.toHaveProperty('steam');
+    expect(parsed).not.toHaveProperty('install');
+    expect(parsed).not.toHaveProperty('executable');
+    expect(parsed['args']).toEqual(['-windowed']);
+    expect(parsed['runAsAdmin']).toBe(true);
+    expect(parsed['winetricks']).toEqual(['dotnet48']);
+    expect(parsed['umuGameId']).toBe('umu-hades');
+  });
+
+  it('serializes into a manifest the PC-library validator accepts as a draft', () => {
+    const model: ManifestFormModel = {
+      ...emptyFormModel('none'),
+      id: 'hades',
+      title: 'Hades',
+      heroImage: ['assets/hero.jpg'],
+    };
+    expect(validateManifestText(formModelToText(model, {}, {}), t, 'pc').ok).toBe(true);
+  });
+
+  it('round-trips args/runAsAdmin/winetricks/umuGameId — nothing vanishes silently on Save', () => {
+    const model: ManifestFormModel = {
+      ...emptyFormModel('none'),
+      id: 'hades',
+      title: 'Hades',
+      heroImage: ['assets/hero.jpg'],
+      args: ['-windowed'],
+      runAsAdmin: true,
+      winetricks: ['dotnet48'],
+      umuGameId: 'umu-hades',
+    };
+    const reparsed = parseOk(formModelToText(model, {}, {}));
+    // textToFormModel has no `source` — it defaults to 'executable' here; the screen corrects that via
+    // draftModeFor once it knows the manifest is from the PC library (see game-settings-model.test.ts).
+    expect(reparsed.model.args).toEqual(['-windowed']);
+    expect(reparsed.model.runAsAdmin).toBe(true);
+    expect(reparsed.model.winetricks).toEqual(['dotnet48']);
+    expect(reparsed.model.umuGameId).toBe('umu-hades');
+  });
+
+  it('unknown/corrupt keys still survive the round-trip in none mode', () => {
+    const model: ManifestFormModel = { ...emptyFormModel('none'), id: 'hades', title: 'Hades' };
+    const rest = { customLauncherHint: 'wine' };
+    const corrupt = { launchTimeoutSec: 'soon' };
+    const parsed = JSON.parse(formModelToText(model, rest, corrupt)) as Record<string, unknown>;
+    expect(parsed['customLauncherHint']).toBe('wine');
+    expect(parsed['launchTimeoutSec']).toBe('soon');
+  });
+
+  it('switching pc -> none -> pc does not lose the typed pc.executable path', () => {
+    const exe = path.join(path.resolve(path.sep), 'Games', 'Hades', 'Hades.exe');
+    const withPath: ManifestFormModel = {
+      ...emptyFormModel('pc'),
+      pc: { executable: exe, rest: {} },
+    };
+    const draft: ManifestFormModel = { ...withPath, launchMode: 'none' };
+    const backToPc: ManifestFormModel = { ...draft, launchMode: 'pc' };
+    expect(backToPc.pc.executable).toBe(exe);
+  });
+
+  it('emptyFormModel("none") is a valid, blank model', () => {
+    expect(launchModeOf(emptyFormModel('none'))).toBe('none');
+  });
+});
+
 describe('steam mode in the PC library (a Steam game installed on this PC)', () => {
   const steamText = JSON.stringify({
     schemaVersion: 1,

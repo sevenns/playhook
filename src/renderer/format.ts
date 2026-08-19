@@ -39,6 +39,12 @@ export function formatNotification(item: AppNotification, t: Translator): string
       return t('notifications.gameUninstalled', { title: item.gameTitle });
     case 'game-added-deferred':
       return t('notifications.gameAddedDeferred', { title: item.gameTitle });
+    case 'game-moved-deferred':
+      return t('notifications.gameMovedDeferred', { title: item.gameTitle });
+    case 'game-move-save-skipped':
+      return t('notifications.gameMoveSaveSkipped', { title: item.gameTitle });
+    case 'game-move-duplicate':
+      return t('notifications.gameMoveDuplicate', { title: item.gameTitle });
   }
 }
 

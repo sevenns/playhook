@@ -17,6 +17,7 @@ import type {
   AudioVolumes,
   AutoUpdateMode,
   BrowseInfo,
+  ConfigMoveResult,
   ConfigPickResult,
   ConfigRootReadResult,
   ConfigSaveResult,
@@ -27,6 +28,7 @@ import type {
   GameConfigReadResult,
   GameConfigSaveRequest,
   GameLibrary,
+  GameMoveRequest,
   HeroAssets,
   LanguageMode,
   ListDirResult,
@@ -109,6 +111,7 @@ const CHANNELS = {
   gameConfigListDir: 'gameConfig:list-dir',
   gameConfigSources: 'gameConfig:sources',
   gameConfigReadRoot: 'gameConfig:read-root',
+  gameConfigMoveToCard: 'gameConfig:move-to-card',
   clipboardRead: 'clipboard:read',
   // Notifications — the inbox lives in main; these are its two surfaces in the renderer.
   notificationsUpdate: 'notifications:update',
@@ -364,6 +367,9 @@ const api: RendererApi = {
   },
   readGameConfigRoot(root: string): Promise<ConfigRootReadResult> {
     return ipcRenderer.invoke(CHANNELS.gameConfigReadRoot, root) as Promise<ConfigRootReadResult>;
+  },
+  moveGameConfigToCard(request: GameMoveRequest): Promise<ConfigMoveResult> {
+    return ipcRenderer.invoke(CHANNELS.gameConfigMoveToCard, request) as Promise<ConfigMoveResult>;
   },
   readClipboard(): Promise<string> {
     return ipcRenderer.invoke(CHANNELS.clipboardRead) as Promise<string>;

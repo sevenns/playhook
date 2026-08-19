@@ -141,6 +141,7 @@ const gameSettingsApi: GameSettingsScreenApi = {
   sources: () => window.api.listGameConfigSources(),
   readRoot: (root) => window.api.readGameConfigRoot(root),
   forgetHistory: (id) => window.api.forgetGame(id),
+  moveToCard: (request) => window.api.moveGameConfigToCard(request),
 };
 const filePicker = createFilePicker({
   audio,
@@ -683,6 +684,7 @@ function render(state: AppState): void {
     browse !== null &&
     browse.active &&
     browse.game?.unavailable !== true &&
+    browse.game?.unconfigured !== true &&
     !(phase === 'ready' && browse.game?.requiresInstall === true && !busySteam);
   app.dataset['cardMorph'] = hasPlay ? 'on' : 'off';
 

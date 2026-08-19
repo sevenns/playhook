@@ -3,11 +3,19 @@
 // all now that the JSON tab is gone, and a field shown for the wrong launch mode produces a manifest the
 // validator rejects.
 import { describe, expect, it } from 'vitest';
-import { emptyFormModel, type ManifestFormModel } from '../src/renderer/configure-form-model';
+import {
+  emptyFormModel,
+  formModelToText,
+  type ManifestFormModel,
+} from '../src/renderer/configure-form-model';
+import { validateManifestText } from '../src/main/manifest';
+import { createTranslator } from '../src/shared/i18n/index';
 import {
   buildGameSettingsModel,
   carryFormAcrossSources,
+  carryFormToCard,
   defaultLaunchMode,
+  draftModeFor,
   hasSourceBoundValues,
   launchModesFor,
   pickKindFor,
@@ -19,6 +27,7 @@ import {
 
 const baseEnv: GameSettingsEnv = {
   mode: 'edit',
+  move: false,
   sources: [],
   sourceLabel: null,
   source: 'card',
@@ -53,14 +62,46 @@ function row(built: GameSettingsModel, id: GameRowId) {
 }
 
 describe('launchModesFor / defaultLaunchMode', () => {
-  it('offers a card the three card modes and a local library only its two', () => {
+  it('offers a card the three card modes and a local library its three (incl. the draft)', () => {
     expect(launchModesFor('card')).toEqual(['executable', 'installer', 'steam']);
-    expect(launchModesFor('pc')).toEqual(['pc', 'steam']);
+    expect(launchModesFor('pc')).toEqual(['pc', 'steam', 'none']);
   });
 
-  it('starts a blank form in the only mode its source would validate', () => {
+  it('starts a blank form in the only mode its source would validate — never the draft', () => {
     expect(defaultLaunchMode('card')).toBe('executable');
     expect(defaultLaunchMode('pc')).toBe('pc');
+  });
+});
+
+describe('draftModeFor', () => {
+  it('reinterprets a launch-block-less PC-library form as the draft mode', () => {
+    expect(draftModeFor(emptyFormModel(), 'pc')).toBe('none');
+  });
+
+  it('leaves a launch-block-less CARD form alone (a genuinely blank card form)', () => {
+    expect(draftModeFor(emptyFormModel(), 'card')).toBe('executable');
+  });
+
+  it('leaves the mode alone once any of the four launch blocks is filled in (pc)', () => {
+    expect(
+      draftModeFor({ ...emptyFormModel(), pc: { executable: 'C:\\g.exe', rest: {} } }, 'pc'),
+    ).toBe('executable');
+  });
+
+  it('leaves the mode alone once any of the four launch blocks is filled in (steam)', () => {
+    expect(draftModeFor({ ...emptyFormModel(), steam: { appid: '480', rest: {} } }, 'pc')).toBe(
+      'executable',
+    );
+  });
+
+  it('leaves the mode alone once any of the four launch blocks is filled in (executable)', () => {
+    expect(draftModeFor({ ...emptyFormModel(), executable: 'g/g.exe' }, 'pc')).toBe('executable');
+  });
+
+  it('leaves the mode alone once any of the four launch blocks is filled in (install / copyToPc)', () => {
+    expect(
+      draftModeFor({ ...emptyFormModel(), copyToPc: true }, 'pc'),
+    ).toBe('executable');
   });
 });
 
@@ -110,6 +151,45 @@ describe('field visibility per launch mode', () => {
   it('offers the card save folder only for a card (a local game has no card to copy to)', () => {
     expect(ids(model({}))).toContain('saveOnCard');
     expect(ids(model({ launchMode: 'pc' }, { source: 'pc' }))).not.toContain('saveOnCard');
+  });
+
+  // The id addresses BOTH halves of a move (which slot leaves the PC library, which stats/saves follow the
+  // game), so it must not be editable while one is pending — main refuses a move that renames.
+  it('hides the id row while a move is pending, and shows it otherwise', () => {
+    expect(ids(model({}, { source: 'pc', move: false }))).toContain('id');
+    expect(ids(model({}, { source: 'pc', move: true }))).not.toContain('id');
+  });
+
+  it('drops the id-changed warning along with the row during a move', () => {
+    const built = ids(
+      model({ id: 'renamed' }, { source: 'pc', move: true, loadedId: 'hades' }),
+    );
+    expect(built).not.toContain('note.idChanged');
+  });
+
+  it('labels Save as the move action and drops Discard while a move is pending', () => {
+    const built = model({}, { source: 'pc', move: true, dirty: true });
+    expect(ids(built)).not.toContain('reset');
+    const save = row(built, 'save');
+    expect(save !== undefined && 'label' in save && 'key' in save.label ? save.label.key : '').toBe(
+      'gameSettings.moveToCard',
+    );
+  });
+
+  it('none mode (the PC-library draft): hides every launch-method field, keeps args and the rest', () => {
+    const built = ids(model({ launchMode: 'none' }, { source: 'pc' }));
+    expect(built).not.toContain('executable');
+    expect(built).not.toContain('pc.executable');
+    expect(built).not.toContain('install.installer');
+    expect(built).not.toContain('steam.appid');
+    expect(built).not.toContain('runAsAdmin');
+    expect(built).not.toContain('copyToPc');
+    expect(built).toContain('args');
+    expect(built).toContain('watchProcesses');
+    expect(built).toContain('heroImage');
+    expect(built).toContain('pcSavePath');
+    expect(built).toContain('winetricks');
+    expect(built).toContain('umuGameId');
   });
 });
 
@@ -385,6 +465,12 @@ describe('carryFormAcrossSources / hasSourceBoundValues', () => {
     );
   });
 
+  it('drops the draft mode when moving a PC-library draft to a card (a card cannot be one)', () => {
+    expect(carryFormAcrossSources(filled({ launchMode: 'none' }), 'card').launchMode).toBe(
+      'executable',
+    );
+  });
+
   // Steam is the one mode both sources accept — and its appid names a game, not a place on a disk.
   it('lets a Steam game travel in either direction, appid included', () => {
     const steam = filled({ launchMode: 'steam', steam: { appid: '1145360', rest: {} } });
@@ -405,5 +491,108 @@ describe('carryFormAcrossSources / hasSourceBoundValues', () => {
     expect(
       hasSourceBoundValues({ ...emptyFormModel('executable'), heroImage: ['art/hero.jpg'] }),
     ).toBe(true);
+  });
+});
+
+// Moving a REAL local game onto a card (Р2.2) — unlike carryFormAcrossSources (a half-filled ADD form
+// with nothing of the old root's to keep), this carries actual game data across, including art/music,
+// whose paths become the deterministic destination names (see asset-move-names.ts).
+describe('carryFormToCard', () => {
+  const pcGame = (over: Partial<ManifestFormModel> = {}): ManifestFormModel => ({
+    ...emptyFormModel('pc'),
+    id: 'hades',
+    title: 'Hades',
+    pc: { executable: 'C:\\Games\\Hades\\Hades.exe', rest: {} },
+    args: ['-windowed'],
+    runAsAdmin: true,
+    watchProcesses: ['hades.exe'],
+    heroImage: ['assets/hero-1.jpg', 'assets/hero-2.png'],
+    gridImage: 'assets/grid.jpg',
+    backgroundMusic: 'assets/theme.ogg',
+    saveOnCard: '', // forbidden in the pc dialect — never set to begin with
+    pcSavePath: '%APPDATA%/Hades',
+    launchTimeoutSec: '45',
+    killTimeoutSec: '90',
+    winetricks: ['corefonts'],
+    umuGameId: '1145360',
+    ...over,
+  });
+
+  it('keeps the name, the launch-adjacent fields and the timings', () => {
+    const moved = carryFormToCard(pcGame());
+    expect(moved.id).toBe('hades');
+    expect(moved.title).toBe('Hades');
+    expect(moved.args).toEqual(['-windowed']);
+    expect(moved.runAsAdmin).toBe(true);
+    expect(moved.watchProcesses).toEqual(['hades.exe']);
+    expect(moved.launchTimeoutSec).toBe('45');
+    expect(moved.killTimeoutSec).toBe('90');
+    expect(moved.winetricks).toEqual(['corefonts']);
+    expect(moved.umuGameId).toBe('1145360');
+  });
+
+  it('rewrites art/music to the deterministic destination names, in order', () => {
+    const moved = carryFormToCard(pcGame());
+    expect(moved.heroImage).toEqual(['assets/hades-hero-1.jpg', 'assets/hades-hero-2.png']);
+    expect(moved.gridImage).toBe('assets/hades-grid.jpg');
+    expect(moved.backgroundMusic).toBe('assets/hades-music.ogg');
+  });
+
+  it('drops pc.executable, pcSavePath, saveOnCard and any install/copyToPc', () => {
+    const moved = carryFormToCard(
+      pcGame({ copyToPc: true, copyInstall: { installer: 'x', type: 'copy', runAsAdmin: false, args: [], winetricks: [], rest: {} } }),
+    );
+    expect(moved.pc.executable).toBe('');
+    expect(moved.pcSavePath).toBe('');
+    expect(moved.saveOnCard).toBe('');
+    expect(moved.copyToPc).toBe(false);
+    expect(moved.copyInstall.installer).toBe('');
+    expect(moved.install.installer).toBe('');
+  });
+
+  it('launchMode: steam survives, pc/none become executable', () => {
+    expect(carryFormToCard(pcGame({ launchMode: 'pc' })).launchMode).toBe('executable');
+    expect(carryFormToCard(pcGame({ launchMode: 'none' })).launchMode).toBe('executable');
+    const steam = pcGame({ launchMode: 'steam', steam: { appid: '1145360', rest: {} } });
+    const moved = carryFormToCard(steam);
+    expect(moved.launchMode).toBe('steam');
+    expect(moved.steam.appid).toBe('1145360');
+  });
+
+  it('leaves art/music empty when the source game has none', () => {
+    const moved = carryFormToCard(
+      pcGame({ heroImage: [], gridImage: '', backgroundMusic: '' }),
+    );
+    expect(moved.heroImage).toEqual([]);
+    expect(moved.gridImage).toBe('');
+    expect(moved.backgroundMusic).toBe('');
+  });
+
+  it('produces a manifest the CARD validator accepts once executable + saveOnCard/pcSavePath are filled in', () => {
+    const t = createTranslator('en');
+    const moved: ManifestFormModel = {
+      ...carryFormToCard(pcGame()),
+      executable: 'Hades/Hades.exe',
+      saveOnCard: 'saves',
+      pcSavePath: '%APPDATA%/Hades',
+    };
+    const text = formModelToText(moved, {}, {});
+    expect(validateManifestText(text, t, 'card').ok).toBe(true);
+  });
+
+  it('rejects an absolute pcSavePath carried straight over (the card allowlist still rules there)', () => {
+    const t = createTranslator('en');
+    const moved: ManifestFormModel = {
+      ...carryFormToCard(pcGame()),
+      executable: 'Hades/Hades.exe',
+      saveOnCard: 'saves',
+      // pcGame()'s pcSavePath was carried over via `{...carryFormToCard(...)}`? No — carryFormToCard
+      // resets it to '', so simulate the mistake of typing the absolute PC-side value back in by hand.
+      pcSavePath: 'C:\\Users\\me\\AppData\\Roaming\\Hades',
+    };
+    const text = formModelToText(moved, {}, {});
+    const result = validateManifestText(text, t, 'card');
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.issues.some((issue) => issue.path === 'pcSavePath')).toBe(true);
   });
 });

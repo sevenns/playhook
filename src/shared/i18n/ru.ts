@@ -113,6 +113,7 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'launcher.installChatter9': 'Уговариваем прогрессбар не врать...',
   'launcher.installChatter10': 'Прогреваем SSD для важного дела...',
   'launcher.state.gameFilesMissing': 'Файлы игры не найдены',
+  'launcher.state.launchNotConfigured': 'Запуск не настроен',
   'launcher.state.running': 'Игра запущена...',
   'launcher.state.killing': 'Принудительное закрытие...',
   'launcher.state.syncingOut': 'Сохранение прогресса...',
@@ -190,9 +191,21 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'gameConfig.pickNeedsFile': 'Для этого поля нужен файл.',
   'gameConfig.pickWrongType': 'Такой тип файла не подходит для этого поля.',
   'gameConfig.listFailed': 'Не удалось открыть эту папку.',
+  'gameConfig.moveGameBusy': 'Дождитесь окончания текущей установки или запуска и попробуйте снова.',
+  'gameConfig.moveIdTaken': 'На этой карте уже есть игра с таким же id.',
+  'gameConfig.moveIdChanged':
+    'Во время переноса id менять нельзя - сначала перенесите игру, потом переименуйте её на карте.',
+  'gameConfig.moveLibraryInvalid':
+    'Сначала нужно починить проблему в другой игре PC-библиотеки: {reason}',
+  'gameConfig.moveFilesNotOnCard': 'Сначала положите файлы самой игры на карту.',
+  'gameConfig.moveSaveSkipped':
+    'В папке сейвов на карте уже что-то было, поэтому сейвы с ПК не скопированы.',
+  'gameConfig.moveDuplicateWarning':
+    'Игра теперь на карте, но не удалось убрать её из PC-библиотеки - она есть в обоих местах.',
 
   // ── Customize screen: what the SCREEN itself says (game-settings-*.ts) ──────
   'launcher.menu.customize': 'Настройки игры',
+  'launcher.menu.moveToCard': 'Перенести на карту…',
 
   // ── Notifications (the toast + the Notifications popup) ────────────────────
   'notifications.updateReady': 'Обновление {version} готово - установится при перезапуске',
@@ -200,6 +213,12 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'notifications.gameUninstalled': '{title} удалена',
   'notifications.gameAddedDeferred':
     '{title} записана на карту. Появится, когда эта карта станет активной.',
+  'notifications.gameMovedDeferred':
+    '{title} перенесена на карту. Появится, когда эта карта станет активной.',
+  'notifications.gameMoveSaveSkipped':
+    '{title} перенесена на карту, но в папке сейвов на карте уже что-то было - сейвы с ПК не скопированы.',
+  'notifications.gameMoveDuplicate':
+    '{title} записана на карту, но её не удалось убрать из PC-библиотеки - теперь она есть в обоих местах. Удалите локальную копию через настройки игры.',
   'notifications.empty': 'Уведомлений нет',
   'notifications.clearAll': 'Очистить всё',
   'notifications.yesterday': 'вчера, {time}',
@@ -250,6 +269,8 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'gameSettings.modeInstaller': 'Установка с карты',
   'gameSettings.modeSteam': 'Steam',
   'gameSettings.modePc': 'Установлена на этом ПК',
+  'gameSettings.modeNone': 'Пока не настроен',
+  'gameSettings.modeNoneHint': 'Игра не запустится, пока это не заполнено',
   'gameSettings.mixedLaunchModes':
     'В манифесте описано несколько типов запуска. Останется только выбранный, остальные при сохранении удалятся.',
   'gameSettings.executable': 'Исполняемый файл',
@@ -303,6 +324,7 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'gameSettings.umuGameIdAuto': 'автоматически',
   'gameSettings.umuGameIdHint': 'Применяет protonfix конкретной игры вместо общего (Linux).',
   'gameSettings.save': 'Сохранить',
+  'gameSettings.moveToCard': 'Перенести на карту',
   'gameSettings.add': 'Добавить',
   'gameSettings.reset': 'Отменить правки',
   'gameSettings.delete': 'Удалить игру',
@@ -328,6 +350,10 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'gameSettings.confirmDiscard': 'Выйти без сохранения? Изменения будут потеряны.',
   'gameSettings.confirmSwitchSource':
     'Добавить игру в другое место? Пути и настройки установщика будут очищены - название и остальное останутся.',
+  'gameSettings.confirmCancelMove':
+    'Прервать перенос игры на карту? Пока ничего не записано - игра останется в PC-библиотеке.',
+  'gameSettings.moveToCardTitle': 'Перенести на карту…',
+  'gameSettings.moveNoCards': 'Вставьте карту, чтобы перенести на неё игру.',
   'gameSettings.confirmDelete': 'Удалить "{title}" из манифеста?',
   'gameSettings.confirmDeleteHistory': 'Убрать "{title}" ещё и из библиотеки?',
   'gameSettings.confirmDeleteHistoryNote':
@@ -392,7 +418,8 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'manifest.pcWithSaveOnCard':
     'saveOnCard недопустим для локальной игры (резервную копию хранит Playhook)',
   'manifest.pcOnCard': 'блок pc допустим только для локальных игр, но не на карте',
-  'manifest.pcOrSteamRequired': 'для локальной игры обязателен блок pc или блок steam',
+  'manifest.executableOnPcLibrary': 'executable недопустим в PC-библиотеке (используйте pc.executable)',
+  'manifest.installOnPcLibrary': 'install недопустим в PC-библиотеке (используйте pc.executable)',
   'manifest.pcExecutableAbsolute': 'pc.executable должен быть абсолютным путём: {path}',
   'manifest.pcSavePathPrefix': 'pcSavePath должен начинаться с {prefixes}',
   'manifest.pcSavePathPrefixOrAbsolute':

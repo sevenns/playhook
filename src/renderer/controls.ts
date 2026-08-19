@@ -42,7 +42,11 @@ type ConfirmMode =
   // an answer rather than a cancel — see the confirmNo branch in triggerStackButton.
   | 'delete-game-history'
   | 'discard-game-settings'
-  | 'switch-game-source';
+  | 'switch-game-source'
+  // Leaving the screen (B/veil/Close) while a "Move to card…" is pending — drops the pending move and
+  // returns the form to the PC library's baseline, WITHOUT closing the screen (see game-settings-screen.ts
+  // PendingMove). Kept apart from 'discard-game-settings', whose "Yes" closes the whole screen.
+  | 'cancel-move-game-settings';
 // Gamepad A doesn't trigger :active, so flash a press class to play the scale-down animation.
 const PRESS_MS = 130;
 /** How far the pointer must travel before hover may take the focus again (see armHover). */
@@ -115,7 +119,8 @@ export interface SettingsNav extends NavSurface {
  * (adding a game) then costs one line here instead of a rewrite of every primitive.
  */
 export interface GameSettingsNav extends NavSurface {
-  open(id: string): void;
+  /** `move: true` starts the screen straight into "Move to card…" (Р2.1). */
+  open(id: string, options?: { readonly move?: boolean }): void;
   /** Opens the same screen to CREATE a game — the "Add game" item of the Details menu. */
   openNew(): void;
   close(): void;
@@ -125,7 +130,7 @@ export interface GameSettingsNav extends NavSurface {
   deletesLocalGame(): boolean;
   /** The shared confirm popup said yes to one of the screen's questions. */
   confirmAccepted(
-    kind: 'reset' | 'delete' | 'delete-history' | 'discard' | 'switch-source',
+    kind: 'reset' | 'delete' | 'delete-history' | 'discard' | 'switch-source' | 'cancel-move',
   ): void;
 }
 
@@ -164,7 +169,9 @@ export interface Controls {
   /** The Settings screen asked to reset — opens the shared confirm popup (No returns to Settings). */
   confirmResetSettings(): void;
   /** The Customize screen asked one of its questions — opens the same shared confirm popup. */
-  confirmGameSettings(kind: 'reset' | 'delete' | 'delete-history' | 'discard' | 'switch-source'): void;
+  confirmGameSettings(
+    kind: 'reset' | 'delete' | 'delete-history' | 'discard' | 'switch-source' | 'cancel-move',
+  ): void;
   /**
    * Opens the surface one of the carousel's launcher cards stands for. The card plays the press sound
    * itself (app.ts), so nothing here does — the surface's own popup-open follows it.
@@ -281,6 +288,7 @@ export function createControls(deps: ControlsDeps): Controls {
   const menuKill = req<HTMLButtonElement>('menu-kill');
   const menuHome = req<HTMLButtonElement>('menu-home');
   const menuCustomize = req<HTMLButtonElement>('menu-customize');
+  const menuMoveToCard = req<HTMLButtonElement>('menu-move-to-card');
   const menuForget = req<HTMLButtonElement>('menu-forget');
   const menuClose = req<HTMLButtonElement>('menu-close');
   const powerShutdown = req<HTMLButtonElement>('power-shutdown');
@@ -391,6 +399,7 @@ export function createControls(deps: ControlsDeps): Controls {
     applyMenuKill(); // keep the force-close item's visibility fresh (running-only)
     applyMenuHome(); // keep the "Home" item fresh (only when there is a carousel to go back to)
     applyMenuCustomize(); // …and "Customize", which only applies to a game we can reach the file of
+    applyMenuMoveToCard(); // …and "Move to card…", local (PC-library) games only
     applyMenuForget(); // keep the "Remove from history" item fresh (history-only games)
     popupRoot = 'details';
     setView('details');
@@ -551,7 +560,13 @@ export function createControls(deps: ControlsDeps): Controls {
     }
     // A game written to a card that is not active has no entry in the library to open — the notification
     // says where it went, and pressing it does nothing beyond dismissing it.
-    if (item.kind === 'game-added-deferred') return;
+    if (
+      item.kind === 'game-added-deferred' ||
+      item.kind === 'game-moved-deferred' ||
+      item.kind === 'game-move-save-skipped' ||
+      item.kind === 'game-move-duplicate'
+    )
+      return;
     deps.openGameDetail(item.gameId);
   }
 
@@ -662,9 +677,10 @@ export function createControls(deps: ControlsDeps): Controls {
       mode === 'delete-game' ||
       mode === 'delete-game-history' ||
       mode === 'discard-game-settings' ||
-      mode === 'switch-game-source'
+      mode === 'switch-game-source' ||
+      mode === 'cancel-move-game-settings'
     ) {
-      // The Customize screen's three questions. Same shape as the Settings reset: the screen stays open
+      // The Customize screen's questions. Same shape as the Settings reset: the screen stays open
       // underneath, so "No" simply closes the popup and hands control back to it.
       confirmReturnTo = 'game-settings';
       popup.dataset['mode'] = mode;
@@ -677,9 +693,11 @@ export function createControls(deps: ControlsDeps): Controls {
             ? t()('gameSettings.confirmDiscard')
             : mode === 'switch-game-source'
               ? t()('gameSettings.confirmSwitchSource')
-              : mode === 'delete-game-history'
-                ? t()('gameSettings.confirmDeleteHistory', { title: browse?.title ?? '' })
-                : t()('gameSettings.confirmDelete', { title: browse?.title ?? '' });
+              : mode === 'cancel-move-game-settings'
+                ? t()('gameSettings.confirmCancelMove')
+                : mode === 'delete-game-history'
+                  ? t()('gameSettings.confirmDeleteHistory', { title: browse?.title ?? '' })
+                  : t()('gameSettings.confirmDelete', { title: browse?.title ?? '' });
       // The second question's own note: what each of ITS answers costs. It matters more than the first
       // one's, because "No" here does not mean "never mind" — it deletes the game and keeps the card.
       if (mode === 'delete-game-history') {
@@ -792,6 +810,14 @@ export function createControls(deps: ControlsDeps): Controls {
     applyFocus();
   }
 
+  /** Same screen as Customize, opened straight into "Move to card…" — the item's own rule, re-checked. */
+  function openMoveToCard(): void {
+    const browse = deps.getBrowse();
+    if (browse === null || !browse.active || browse.game?.source !== 'pc') return;
+    deps.gameSettings.open(browse.id, { move: true });
+    applyFocus();
+  }
+
   /**
    * The screen closed itself (B / Esc / veil): put the highlight back on the More button it came from —
    * on a detail screen. Opened from a launcher card, the screen came from the CAROUSEL, where the bar is
@@ -880,6 +906,19 @@ export function createControls(deps: ControlsDeps): Controls {
     const show = onGameScreen() && browse !== null && browse.active;
     menuCustomize.classList.toggle('is-hidden', !show);
     if (show) menuCustomize.textContent = t()('launcher.menu.customize');
+  }
+
+  // ── Menu item: Move to card… (a local game only) ──────────────────────────────
+  // Offered alongside Customize, only for a game whose manifest lives in the PC library — a card game has
+  // nowhere to move TO that would mean anything. Hidden while the game is busy (install/uninstall/Steam
+  // activity), same guard as Delete on the Customize screen itself (game-settings-screen.ts canDelete).
+  function applyMenuMoveToCard(): void {
+    if (menuFrozen()) return;
+    const browse = deps.getBrowse();
+    const busy = phaseOf(state()) === 'busy' || steamBusy(state());
+    const show =
+      onGameScreen() && browse !== null && browse.active && browse.game?.source === 'pc' && !busy;
+    menuMoveToCard.classList.toggle('is-hidden', !show);
   }
 
   function applyMenuForget(): void {
@@ -1074,6 +1113,7 @@ export function createControls(deps: ControlsDeps): Controls {
     menuForget,
     menuHome,
     menuCustomize,
+    menuMoveToCard,
     menuClose,
     notificationsClear,
     notificationsClose,
@@ -1101,6 +1141,7 @@ export function createControls(deps: ControlsDeps): Controls {
         if (!menuForget.classList.contains('is-hidden')) items.push(menuForget);
         if (!menuHome.classList.contains('is-hidden')) items.push(menuHome);
         if (!menuCustomize.classList.contains('is-hidden')) items.push(menuCustomize);
+        if (!menuMoveToCard.classList.contains('is-hidden')) items.push(menuMoveToCard);
         items.push(menuClose);
         return items;
       }
@@ -1185,6 +1226,8 @@ export function createControls(deps: ControlsDeps): Controls {
     const game = screenGame();
     // A local game whose files are gone: there is nothing to start, and the status line already says so.
     if (game?.unavailable === true) return audio.playLimit();
+    // A local game with no launch method configured yet: same dead end, different reason.
+    if (game?.unconfigured === true) return audio.playLimit();
     // Steam download in progress: the gear opens Steam's Downloads page, where the user can
     // pause/resume (we can't control that programmatically).
     if (game?.steamInstalling === true) {
@@ -1242,6 +1285,9 @@ export function createControls(deps: ControlsDeps): Controls {
       // Like Settings: the menu it was opened from closes first — the screen is a surface of its own.
       closePopup({ silent: true });
       openCustomize();
+    } else if (btn === menuMoveToCard) {
+      closePopup({ silent: true });
+      openMoveToCard();
     } else if (btn === menuHome) {
       // Non-destructive, so no confirm: close the popup and hand control back to the strip.
       closePopup();
@@ -1357,6 +1403,10 @@ export function createControls(deps: ControlsDeps): Controls {
       case 'switch-game-source':
         audio.play('button');
         deps.gameSettings.confirmAccepted('switch-source');
+        break;
+      case 'cancel-move-game-settings':
+        audio.play('back');
+        deps.gameSettings.confirmAccepted('cancel-move');
         break;
     }
   }
@@ -1879,6 +1929,7 @@ export function createControls(deps: ControlsDeps): Controls {
     applyMenuKill();
     applyMenuHome();
     applyMenuCustomize();
+    applyMenuMoveToCard();
     applyMenuForget();
   }
 
@@ -1889,6 +1940,7 @@ export function createControls(deps: ControlsDeps): Controls {
     menuInstallToggle.classList.add('is-hidden');
     menuKill.classList.add('is-hidden');
     menuCustomize.classList.add('is-hidden'); // no game on screen → no manifest to customize
+    menuMoveToCard.classList.add('is-hidden'); // no game on screen → nothing to move
     menuForget.classList.add('is-hidden'); // no game on screen → nothing to remove from the history
     applyMenuHome(); // the carousel can still be there with no game on screen (history only)
   }
@@ -1931,7 +1983,9 @@ export function createControls(deps: ControlsDeps): Controls {
               ? 'delete-game-history'
               : kind === 'switch-source'
                 ? 'switch-game-source'
-                : 'discard-game-settings',
+                : kind === 'cancel-move'
+                  ? 'cancel-move-game-settings'
+                  : 'discard-game-settings',
       ),
     openSystemCard,
     openAddGame,

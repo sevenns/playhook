@@ -222,7 +222,7 @@ export function createLibraryScreen(deps: LibraryScreenDeps): LibraryScreen {
       const node = nodeOf(game);
       if (node === undefined) return;
       node.classList.toggle('is-selected', active && at === index);
-      node.classList.toggle('shows-dot', game.active || game.id === busyId);
+      node.classList.toggle('shows-dot', (game.active && game.unconfigured !== true) || game.id === busyId);
       node.classList.toggle('is-busy', game.id === busyId);
     });
     const selectedNode = active && current !== undefined ? nodeOf(current) : undefined;

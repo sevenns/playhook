@@ -43,6 +43,27 @@ const notificationSchema = z.discriminatedUnion('kind', [
     read: z.boolean(),
     gameTitle: z.string(),
   }),
+  z.object({
+    kind: z.literal('game-moved-deferred'),
+    id: z.string(),
+    at: z.number(),
+    read: z.boolean(),
+    gameTitle: z.string(),
+  }),
+  z.object({
+    kind: z.literal('game-move-save-skipped'),
+    id: z.string(),
+    at: z.number(),
+    read: z.boolean(),
+    gameTitle: z.string(),
+  }),
+  z.object({
+    kind: z.literal('game-move-duplicate'),
+    id: z.string(),
+    at: z.number(),
+    read: z.boolean(),
+    gameTitle: z.string(),
+  }),
 ]);
 
 const inboxSchema = z.object({

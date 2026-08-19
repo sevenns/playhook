@@ -9,6 +9,11 @@
 // intact. This module only decides how that state is PRESENTED.
 import { MAX_HERO_IMAGES, type ConfigPickKind, type ManifestSource } from '../shared/types';
 import type { MessageKey } from '../shared/i18n/index';
+import {
+  movedGridAssetPath,
+  movedHeroAssetPath,
+  movedMusicAssetPath,
+} from '../shared/asset-move-names';
 import { emptyFormModel } from './configure-form-model';
 import type { InstallType, LaunchMode, ManifestFormModel } from './configure-form-model';
 import type {
@@ -110,6 +115,9 @@ export interface GameSettingsEnv {
    * inferring all of that from the length of a list reads like a puzzle.
    */
   readonly mode: 'edit' | 'add';
+  /** A "Move to card…" target has been chosen (Р2.2) — Save is labelled and routed for a move instead of
+   * an ordinary edit; Reset/Delete make no sense mid-move and are left out by the screen's own canDelete. */
+  readonly move: boolean;
   /** Where a NEW game may go — the roots offered by the source row. Empty in edit mode (no such row). */
   readonly sources: readonly CoreOption[];
   /**
@@ -148,14 +156,38 @@ export interface GameSettingsEnv {
   readonly canDelete: boolean;
 }
 
-/** The launch modes a source allows. A card cannot host a `pc` game; a local game is only ever one. */
+/**
+ * The launch modes a source allows. A card cannot host a `pc` game (or the `none` draft state — a card
+ * is portable and must stay resolvable on its own, see the plan's assumption 3); a local game is only
+ * ever one, but may also be a draft with none configured yet (Р1).
+ */
 export function launchModesFor(source: ManifestSource): readonly LaunchMode[] {
-  return source === 'pc' ? ['pc', 'steam'] : ['executable', 'installer', 'steam'];
+  return source === 'pc' ? ['pc', 'steam', 'none'] : ['executable', 'installer', 'steam'];
 }
 
-/** The mode a blank form of this source starts in — the only one that would validate. */
+/** The mode a blank form of this source starts in — the only one that would validate. A fresh local
+ * game defaults to `pc`, not the `none` draft state — leaving it unconfigured is something the user
+ * chooses, not the form's starting point. */
 export function defaultLaunchMode(source: ManifestSource): LaunchMode {
   return source === 'pc' ? 'pc' : 'executable';
+}
+
+/**
+ * The mode a freshly-parsed EXISTING manifest should actually show, correcting for what
+ * `textToFormModel` cannot know (it has no `source`): given a PC-library manifest with none of the four
+ * launch blocks, it defaults `launchMode` to `'executable'` — indistinguishable, from the form alone,
+ * from a genuinely blank CARD form (where `'executable'` is exactly right). The screen calls this right
+ * after `textToFormModel`/`textToGames` and uses its result instead of `model.launchMode`.
+ */
+export function draftModeFor(model: ManifestFormModel, source: ManifestSource): LaunchMode {
+  const hasAnyLaunchBlock =
+    model.pc.executable !== '' ||
+    model.steam.appid !== '' ||
+    model.executable !== '' ||
+    model.install.installer !== '' ||
+    model.copyToPc ||
+    model.copyInstall.installer !== '';
+  return source === 'pc' && !hasAnyLaunchBlock ? 'none' : model.launchMode;
 }
 
 const LAUNCH_MODE_LABEL: Readonly<Record<LaunchMode, MessageKey>> = {
@@ -163,6 +195,7 @@ const LAUNCH_MODE_LABEL: Readonly<Record<LaunchMode, MessageKey>> = {
   installer: 'gameSettings.modeInstaller',
   steam: 'gameSettings.modeSteam',
   pc: 'gameSettings.modePc',
+  none: 'gameSettings.modeNone',
 };
 
 const INSTALL_TYPE_OPTIONS: readonly CoreOption[] = [
@@ -263,32 +296,36 @@ export function buildGameSettingsModel(
       hint: { key: 'gameSettings.sourceHint' },
     });
   }
-  basics.push(
-    {
-      kind: 'text',
-      id: 'title',
-      label: { key: 'gameSettings.title' },
-      value: form.title,
-      placeholder: { key: 'gameSettings.notSet' },
-      ...error('title'),
-    },
-    {
+  basics.push({
+    kind: 'text',
+    id: 'title',
+    label: { key: 'gameSettings.title' },
+    value: form.title,
+    placeholder: { key: 'gameSettings.notSet' },
+    ...error('title'),
+  });
+  // Absent while a move is pending: the id is what BOTH halves of the move are addressed by (which slot
+  // leaves the PC library, which stats/saves follow the game), so a move that also renames would orphan
+  // all of it — see the plan's assumption 4, and the matching refusal in GameConfigService.moveToCard.
+  // Renaming stays available as an ordinary edit, before or after the move.
+  if (!env.move) {
+    basics.push({
       kind: 'text',
       id: 'id',
       label: { key: 'gameSettings.id' },
       value: form.id,
       placeholder: { key: 'gameSettings.notSet' },
       ...error('id'),
-    },
-  );
-  // The id is the key of everything this PC remembers about the game; changing it orphans all of it.
-  if (env.loadedId !== '' && form.id !== env.loadedId) {
-    basics.push({
-      kind: 'note',
-      id: 'note.idChanged',
-      text: { key: 'gameSettings.idChangedWarning' },
-      tone: 'warning',
     });
+    // The id is the key of everything this PC remembers about the game; changing it orphans all of it.
+    if (env.loadedId !== '' && form.id !== env.loadedId) {
+      basics.push({
+        kind: 'note',
+        id: 'note.idChanged',
+        text: { key: 'gameSettings.idChangedWarning' },
+        tone: 'warning',
+      });
+    }
   }
 
   const launch: GameSettingsRow[] = [];
@@ -309,6 +346,7 @@ export function buildGameSettingsModel(
       value: candidate,
       labelKey: LAUNCH_MODE_LABEL[candidate],
     })),
+    ...(mode === 'none' ? { hint: { key: 'gameSettings.modeNoneHint' as const } } : {}),
   });
   if (mode === 'pc') {
     launch.push({
@@ -351,6 +389,10 @@ export function buildGameSettingsModel(
       placeholder: { key: 'gameSettings.listEmpty' },
       ...error('args'),
     });
+  }
+  // runAsAdmin elevates a specific executable — meaningless before one is chosen, unlike `args`, which
+  // the user may legitimately want to pre-fill ahead of picking a launch method.
+  if (mode !== 'steam' && mode !== 'none') {
     launch.push({
       kind: 'toggle',
       id: 'runAsAdmin',
@@ -575,12 +617,18 @@ export function buildGameSettingsModel(
   actions.push({
     kind: 'action',
     id: 'save',
-    label: { key: env.mode === 'add' ? 'gameSettings.add' : 'gameSettings.save' },
+    label: {
+      key: env.move
+        ? 'gameSettings.moveToCard'
+        : env.mode === 'add'
+          ? 'gameSettings.add'
+          : 'gameSettings.save',
+    },
     disabled: !env.canSave || !env.dirty,
   });
   // "Discard edits" re-reads the manifest to get the game back as it was — in add mode there is no such
-  // game, so the action has nothing to mean. Close is still there, which is how one leaves.
-  if (env.mode === 'edit') {
+  // game, and mid-move it would drop the very thing being set up (Back/cancel-move is that path instead).
+  if (env.mode === 'edit' && !env.move) {
     actions.push({
       kind: 'action',
       id: 'reset',
@@ -685,6 +733,41 @@ export function hasSourceBoundValues(form: ManifestFormModel): boolean {
  * Wiping the lot would be simpler, and would mean re-typing the title on a gamepad keyboard because a
  * radio button was changed.
  */
+/**
+ * Moves a LOADED PC-library form onto a card (Р2.2 — the pure half of "Move to card…"). Unlike
+ * `carryFormAcrossSources` (which starts a NEW, half-filled ADD form and has nothing of the old root's to
+ * keep), this carries a REAL game's data across: everything the card dialect can express survives,
+ * including the artwork/music, whose paths become the DETERMINISTIC names the game gets on the
+ * destination (see asset-move-names.ts) — main copies the actual files under those same names, so the
+ * renderer never has to wait for a copy to finish before it can show a valid target manifest.
+ *
+ * What is dropped: `pc.executable` (an absolute path is forbidden on a card), `pcSavePath` (a %PREFIX%
+ * string on a card vs. an absolute/lone value in the library — different enough that re-typing it is
+ * safer than guessing), `saveOnCard`/install/copyToPc (meaningless coming FROM a source with none of
+ * them). `launchMode`: `steam` survives (an appid names a game, not a place on disk); `pc`/`none` becomes
+ * `executable` — the user fills in the card-relative path themselves, which is the whole point of the
+ * screen staying open after the target is chosen.
+ */
+export function carryFormToCard(form: ManifestFormModel): ManifestFormModel {
+  return {
+    ...emptyFormModel(form.launchMode === 'steam' ? 'steam' : 'executable'),
+    id: form.id,
+    title: form.title,
+    args: form.args,
+    runAsAdmin: form.runAsAdmin,
+    watchProcesses: form.watchProcesses,
+    heroImage: form.heroImage.map((source, index) => movedHeroAssetPath(form.id, index, source)),
+    gridImage: form.gridImage === '' ? '' : movedGridAssetPath(form.id, form.gridImage),
+    backgroundMusic:
+      form.backgroundMusic === '' ? '' : movedMusicAssetPath(form.id, form.backgroundMusic),
+    launchTimeoutSec: form.launchTimeoutSec,
+    killTimeoutSec: form.killTimeoutSec,
+    winetricks: form.winetricks,
+    umuGameId: form.umuGameId,
+    steam: form.steam,
+  };
+}
+
 export function carryFormAcrossSources(
   form: ManifestFormModel,
   next: ManifestSource,

@@ -141,12 +141,9 @@ find one. Without it the card is cropped from the first `heroImage`.
 
 Not every game lives on a card. A game that is already installed on this machine can be added to the
 launcher as a local game, and from then on it behaves like any other: its own hero art, carousel card,
-music, stats, save sync and Play button — with or without a card inserted. Its manifest is edited the
-same way a card game's is, through **More ⋯ → Customize**.
-
-> **Adding** a local game is not in the UI right now: the tray editor that used to do it is gone, and
-> the launcher screen that replaces it lands in the next release. Until then, write the `pc-games/game.json`
-> below by hand — everything else about local games works as described.
+music, stats, save sync and Play button — with or without a card inserted. **More ⋯ → Add game** adds
+one from the launcher itself (pick "This PC" as the source); an existing one is edited the same way a
+card game's is, through **More ⋯ → Customize**.
 
 Local games are stored in `%APPDATA%/playhook/pc-games/` (`~/.config/playhook/pc-games/` on Linux),
 which is laid out exactly like a card: a `game.json`, an `assets/` folder for the art and music you
@@ -209,6 +206,23 @@ accepts. Instead of `pc`, give it a `steam` block:
   the local entry is hidden until the card is removed.
 - Paths here are **not portable**: they are written in this machine's native form, since this library
   never travels (a card's `game.json`, by contrast, must work on both Windows and the Deck).
+
+**Draft games.** A local game may be saved with no launch method at all — no `pc`, no `steam`. Use this
+to fill in everything else (title, art, music, timings, `watchProcesses`) before you know how the game
+will actually be started. A draft is visible in the carousel and stays fully editable through Customize,
+but it has no dot and no Play button — the status line reads *Launch is not set up*. Save & Apply is
+still available once you fill in `pc` or `steam`.
+
+**Moving a local game to a card.** **More ⋯ → Move to card…** (a local game only) copies a game's
+metadata, art, music and save backup onto a card you pick, and removes it from the PC library once the
+write succeeds — the game itself, however, is **not** copied: put its files on the card yourself first
+(under whatever relative path you're about to give `executable`), or the move is refused with a message
+saying so. On the Customize screen this shows up as the form growing new fields once you have picked a
+target card (an `executable`/`install` block and, if you want save sync, `saveOnCard` + `pcSavePath`) —
+fill those in and Save the same way you would for an ordinary card game. Nothing is written anywhere
+until you do; backing out (Back, or the popup that closes the launcher screen) leaves both sides exactly
+as they were. If the target card isn't the one currently inserted, the move still succeeds — a
+notification says so, and the game shows up on the carousel once that card is.
 
 On the Steam Deck in **Game Mode** the launcher is started by a card being inserted, so local games are
 reachable there only if you open Playhook's tile yourself.
