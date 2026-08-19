@@ -1608,7 +1608,11 @@ export function createControls(deps: ControlsDeps): Controls {
     noteGamepadActivity();
     if (repeat) noteFlip();
     if (popupView !== 'none') {
-      if (!repeat) moveStackFocus(-1);
+      // Held presses move here like they do in every other vertical list: the notification inbox is a
+      // LIST, long enough that stepping it one press at a time is work, and the shorter action stacks
+      // follow the same rule so a hold means one thing everywhere. The focus wraps (moveStackFocus), so
+      // there is no edge to stop at — a hold simply keeps going until it is released.
+      moveStackFocus(-1);
       return;
     }
     const overlay = overlays.active();
@@ -1628,7 +1632,7 @@ export function createControls(deps: ControlsDeps): Controls {
     noteGamepadActivity();
     if (repeat) noteFlip();
     if (popupView !== 'none') {
-      if (!repeat) moveStackFocus(1);
+      moveStackFocus(1); // see navUp — a held direction runs the stack, same as any other list
       return;
     }
     const overlay = overlays.active();
@@ -1819,9 +1823,9 @@ export function createControls(deps: ControlsDeps): Controls {
     backspace: navBack,
     escape: navBack,
   };
-  // The four directions are the exception to the edge model: holding one flips through the carousel or
-  // runs down the Settings list, matching the gamepad's hold-to-repeat (a held direction inside a popup
-  // stack is dropped by navUp/navDown themselves). The repeat is OURS, on a timer — the OS supplies its
+  // The four directions are the exception to the edge model: holding one flips through the carousel,
+  // runs down the Settings list or through a popup stack, matching the gamepad's hold-to-repeat. The
+  // repeat is OURS, on a timer — the OS supplies its
   // own, but at a rate and an initial delay that are the user's system settings, not ours, so the two
   // input models would drift apart (and chaining one run into the next would be impossible: the OS
   // restarts its full delay on every new key). Native repeats are dropped. Every other key stays one

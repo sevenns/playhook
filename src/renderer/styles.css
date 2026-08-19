@@ -1527,11 +1527,10 @@ html:not(.mouse-asleep) .text-button:hover,
   text-align: right;
 }
 
+/* NOT clamped: an entry is read once and acted on, so a notification that says something long (a move
+   that landed on an inactive card, or one that could not clean up after itself) has to say all of it —
+   two lines cut exactly the part that tells the user what to DO. The list scrolls, so height is free. */
 .notification-text {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  overflow: hidden;
   line-height: calc(34 * var(--px));
 }
 
@@ -1649,11 +1648,10 @@ html:not(.mouse-asleep) .notification-item:hover .notification-dot {
   }
 }
 
+/* Unclamped for the same reason as .notification-text: the plate is on screen for six seconds and then
+   gone, so anything it cuts is simply never read. The plate's width is capped (.toast max-width), so a
+   long message grows downwards rather than across the screen. */
 .toast-text {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  overflow: hidden;
   font-weight: 500;
   font-size: calc(28 * var(--px));
   line-height: calc(38 * var(--px));
