@@ -50,7 +50,8 @@ export async function readJsonValidated<S extends z.ZodTypeAny>(
  * window where the file is ABSENT (ENOENT → a silent fallback to defaults on the next read). `fs.rename`
  * maps to MoveFileEx (MOVEFILE_REPLACE_EXISTING) on Windows — an atomic same-volume replace, so an
  * interrupted write leaves either the old or the new complete file, never a truncated/missing one. A
- * transient EBUSY/EPERM (AV/indexer holding the target) is retried. Callers must ensure the parent
+ * transient EBUSY/EPERM (AV/indexer holding the target) is retried, and a target that refuses the
+ * replace outright falls back to an in-place write (see replaceInPlace). Callers must ensure the parent
  * directory exists (a drive-root parent already does; nested dirs need an ensureDir first).
  */
 export async function writeJsonAtomic(filePath: string, value: unknown): Promise<void> {
@@ -63,11 +64,82 @@ export async function writeJsonAtomic(filePath: string, value: unknown): Promise
  * thin wrapper over this — see its doc comment for why the final step is a bare `fs.rename`.
  */
 export async function writeFileAtomic(filePath: string, data: string | Buffer): Promise<void> {
-  const tmp = `${filePath}.tmp`;
-  if (typeof data === 'string') {
-    await fs.writeFile(tmp, data, 'utf8');
-  } else {
-    await fs.writeFile(tmp, data);
+  const tmp = tmpNameFor(filePath);
+  await writeRaw(tmp, data);
+  try {
+    await withRetry(() => fs.rename(tmp, filePath));
+    return;
+  } catch (cause) {
+    if (!isPermissionError(cause)) {
+      await fs.rm(tmp, { force: true }).catch(() => undefined);
+      throw cause;
+    }
+    await replaceInPlace(filePath, tmp, data, cause);
   }
-  await withRetry(() => fs.rename(tmp, filePath));
+}
+
+let tmpCounter = 0;
+
+/**
+ * A temp name unique to THIS write. A shared `<file>.tmp` is shared mutable state between concurrent
+ * writers of the same file: both write the one temp, the first rename consumes it, and the second fails
+ * with ENOENT on a file that was never theirs — which is exactly how the history index lost five writes
+ * in a row while several games were being copied into it at once. The pid keeps two processes (the GUI
+ * and the Game Mode daemon share `%APPDATA%`) from colliding on the counter.
+ */
+function tmpNameFor(filePath: string): string {
+  tmpCounter += 1;
+  return `${filePath}.${process.pid}.${tmpCounter}.tmp`;
+}
+
+function isPermissionError(cause: unknown): boolean {
+  if (!(cause instanceof Error) || !('code' in cause)) return false;
+  const code = (cause as { readonly code?: unknown }).code;
+  return code === 'EPERM' || code === 'EACCES';
+}
+
+async function writeRaw(target: string, data: string | Buffer): Promise<void> {
+  if (typeof data === 'string') await fs.writeFile(target, data, 'utf8');
+  else await fs.writeFile(target, data);
+}
+
+/**
+ * Last resort when the atomic replace is refused OUTRIGHT (not the transient EBUSY/EPERM withRetry
+ * already rides out): the rename needs DELETE on the existing target, which is a different right from
+ * "may write to it", and a file can be left without it by something other than this app — a read-only
+ * attribute, or an ACL inherited from an install under another account (a per-user install taking over a
+ * `%APPDATA%` file an all-users one created is the case that surfaced this).
+ *
+ * So: clear the read-only attribute and try the atomic path once more; failing that, write THROUGH the
+ * existing file, which needs only write access. That gives up atomicity — an interrupted write can leave
+ * the file torn — which is why it is reached only after the safe path has genuinely failed: a settings
+ * file that cannot be saved at all is a worse outcome than one with a small window of risk, and the
+ * caller is told either way (the original error is re-thrown if even this does not land).
+ */
+async function replaceInPlace(
+  filePath: string,
+  tmp: string,
+  data: string | Buffer,
+  original: unknown,
+): Promise<void> {
+  try {
+    // On Windows this is the read-only ATTRIBUTE (the only bit chmod maps to there); on posix it restores
+    // owner/group write. Best-effort: a target that is missing or already writable just falls through.
+    await fs.chmod(filePath, 0o666).catch(() => undefined);
+    await fs.rename(tmp, filePath);
+    return;
+  } catch {
+    // fall through to the non-atomic write
+  }
+  try {
+    await writeRaw(filePath, data);
+    await fs.rm(tmp, { force: true }).catch(() => undefined);
+    log.warn(
+      `[store] "${filePath}" could not be replaced atomically; wrote it in place instead:`,
+      original,
+    );
+  } catch {
+    await fs.rm(tmp, { force: true }).catch(() => undefined);
+    throw original;
+  }
 }
