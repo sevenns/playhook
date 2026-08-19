@@ -3032,7 +3032,11 @@ html:not(.mouse-asleep) .picker-item:hover,
   overflow-y: auto;
   overflow-x: hidden;
   scrollbar-width: none;
-  padding: calc(44 * var(--px));
+  /* Top is its own value, smaller than the other three sides: .settings-nav has NO top padding of its
+     own (its first item's centered content sits close to the very top of the column), so the full 44
+     up here read as the grid starting visibly lower than the sidebar. ~20 is the least this can be
+     without slicing a selected first-row card's ring — see the note below. */
+  padding: calc(20 * var(--px)) calc(44 * var(--px)) calc(44 * var(--px));
   /* Same edge treatment as .settings-list: fades driven from JS, none where there is nothing beyond. */
   --fade-top: 0px;
   --fade-bottom: 0px;

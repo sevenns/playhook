@@ -246,7 +246,7 @@ export const en = {
 
   // ── Customize screen: what the SCREEN itself says (game-settings-*.ts) ──────
   'launcher.menu.customize': 'Customize',
-  'launcher.menu.moveToCard': 'Move to card…',
+  'launcher.menu.moveToCard': 'Move to card',
 
   // ── Notifications (the toast + the Notifications popup) ────────────────────
   // The TEXT of a notification is assembled here rather than stored with it: the UI language changes
@@ -313,7 +313,7 @@ export const en = {
   'gameSettings.modeExecutable': 'Run from the card',
   'gameSettings.modeInstaller': 'Install from the card',
   'gameSettings.modeSteam': 'Steam',
-  'gameSettings.modePc': 'Installed on this PC',
+  'gameSettings.modePc': 'Executable file',
   'gameSettings.modeNone': 'Not set up yet',
   'gameSettings.modeNoneHint': 'The game will not start until this is filled in',
   'gameSettings.mixedLaunchModes':
@@ -395,7 +395,7 @@ export const en = {
     'Add the game somewhere else? The paths and the install settings are cleared — the name and the rest stay.',
   'gameSettings.confirmCancelMove':
     'Stop moving this game to a card? Nothing has been written yet — the game stays in the PC library.',
-  'gameSettings.moveToCardTitle': 'Move to card…',
+  'gameSettings.moveToCardTitle': 'Move to card',
   'gameSettings.moveNoCards': 'Insert a card to move this game onto it.',
   'gameSettings.confirmDelete': 'Delete "{title}" from the manifest?',
   // The second half of the delete question. Its "No" is an ANSWER, not a way out — hence the last line:

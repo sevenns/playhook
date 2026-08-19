@@ -205,7 +205,7 @@ export const ru: Partial<Record<MessageKey, string>> = {
 
   // ── Customize screen: what the SCREEN itself says (game-settings-*.ts) ──────
   'launcher.menu.customize': 'Настройки игры',
-  'launcher.menu.moveToCard': 'Перенести на карту…',
+  'launcher.menu.moveToCard': 'Перенести на карту',
 
   // ── Notifications (the toast + the Notifications popup) ────────────────────
   'notifications.updateReady': 'Обновление {version} готово - установится при перезапуске',
@@ -268,7 +268,7 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'gameSettings.modeExecutable': 'Запуск с карты',
   'gameSettings.modeInstaller': 'Установка с карты',
   'gameSettings.modeSteam': 'Steam',
-  'gameSettings.modePc': 'Установлена на этом ПК',
+  'gameSettings.modePc': 'Исполняемый файл',
   'gameSettings.modeNone': 'Пока не настроен',
   'gameSettings.modeNoneHint': 'Игра не запустится, пока это не заполнено',
   'gameSettings.mixedLaunchModes':
@@ -352,7 +352,7 @@ export const ru: Partial<Record<MessageKey, string>> = {
     'Добавить игру в другое место? Пути и настройки установщика будут очищены - название и остальное останутся.',
   'gameSettings.confirmCancelMove':
     'Прервать перенос игры на карту? Пока ничего не записано - игра останется в PC-библиотеке.',
-  'gameSettings.moveToCardTitle': 'Перенести на карту…',
+  'gameSettings.moveToCardTitle': 'Перенести на карту',
   'gameSettings.moveNoCards': 'Вставьте карту, чтобы перенести на неё игру.',
   'gameSettings.confirmDelete': 'Удалить "{title}" из манифеста?',
   'gameSettings.confirmDeleteHistory': 'Убрать "{title}" ещё и из библиотеки?',
