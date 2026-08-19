@@ -69,6 +69,7 @@ export type GameRowId =
   | 'note.status'
   | 'save'
   | 'reset'
+  | 'move-to-card'
   | 'delete'
   | 'close';
 
@@ -92,12 +93,6 @@ export interface GameSettingsModel {
   readonly sections: readonly GameSettingsSection[];
   /** Shown beside the screen title — the game's own name, so the screen says whose settings these are. */
   readonly title: string;
-  /**
-   * What the screen is CALLED, when it is not the default "Customize" — add mode names itself instead.
-   * The heading is the model's to decide for the same reason the rows are: the controller would
-   * otherwise write a second copy of the same condition into the DOM.
-   */
-  readonly headingKey?: MessageKey;
   /**
    * Where the manifest came from, for the header line beside the title. It used to be a row of its own,
    * which put a read-only fact in the middle of the editable ones; up in the header it answers "whose
@@ -154,6 +149,12 @@ export interface GameSettingsEnv {
    * card without a manifest at all — the rule the Configure window already enforced).
    */
   readonly canDelete: boolean;
+  /**
+   * Whether "Move to card…" may be started right now: a local (PC-library) game, in edit mode, not busy
+   * (same guard as Delete), and no move already pending — computed by the screen, which alone knows
+   * about PendingMove.
+   */
+  readonly canMove: boolean;
 }
 
 /**
@@ -636,6 +637,13 @@ export function buildGameSettingsModel(
       disabled: !env.dirty,
     });
   }
+  if (env.canMove) {
+    actions.push({
+      kind: 'action',
+      id: 'move-to-card',
+      label: { key: 'gameSettings.moveToCard' },
+    });
+  }
   if (env.canDelete) {
     actions.push({
       kind: 'action',
@@ -648,7 +656,6 @@ export function buildGameSettingsModel(
 
   return {
     title: form.title,
-    ...(env.mode === 'add' ? { headingKey: 'gameSettings.addTitle' as const } : {}),
     // The candidate's own label when there is one ("E:\\ — 3 games"), so the header says the same thing
     // the source row does; a bare mountpoint is what it falls back to, as in edit mode.
     source:
@@ -741,12 +748,17 @@ export function hasSourceBoundValues(form: ManifestFormModel): boolean {
  * destination (see asset-move-names.ts) — main copies the actual files under those same names, so the
  * renderer never has to wait for a copy to finish before it can show a valid target manifest.
  *
- * What is dropped: `pc.executable` (an absolute path is forbidden on a card), `pcSavePath` (a %PREFIX%
- * string on a card vs. an absolute/lone value in the library — different enough that re-typing it is
- * safer than guessing), `saveOnCard`/install/copyToPc (meaningless coming FROM a source with none of
- * them). `launchMode`: `steam` survives (an appid names a game, not a place on disk); `pc`/`none` becomes
- * `executable` — the user fills in the card-relative path themselves, which is the whole point of the
- * screen staying open after the target is chosen.
+ * What is dropped: `pc.executable` (an absolute path is forbidden on a card), `saveOnCard`/install/
+ * copyToPc (meaningless coming FROM a source with none of them). `launchMode`: `steam` survives (an
+ * appid names a game, not a place on disk); `pc`/`none` becomes `executable` — the user fills in the
+ * card-relative path themselves, which is the whole point of the screen staying open after the target
+ * is chosen.
+ *
+ * `pcSavePath` is the one field that is CONDITIONALLY kept: on a card it must be a `%PREFIX%/…` string,
+ * while the PC library also accepts a bare absolute path (a local game's saves typically sit right next
+ * to its .exe). A `%PREFIX%` value is already exactly what the card format wants, so it survives as-is;
+ * an absolute one is dropped here (this function is pure — it cannot ask main to convert it), but the
+ * screen follows up with that conversion once a target is actually chosen — see `adoptMoveTarget`.
  */
 export function carryFormToCard(form: ManifestFormModel): ManifestFormModel {
   return {
@@ -760,6 +772,7 @@ export function carryFormToCard(form: ManifestFormModel): ManifestFormModel {
     gridImage: form.gridImage === '' ? '' : movedGridAssetPath(form.id, form.gridImage),
     backgroundMusic:
       form.backgroundMusic === '' ? '' : movedMusicAssetPath(form.id, form.backgroundMusic),
+    pcSavePath: form.pcSavePath.startsWith('%') ? form.pcSavePath : '',
     launchTimeoutSec: form.launchTimeoutSec,
     killTimeoutSec: form.killTimeoutSec,
     winetricks: form.winetricks,

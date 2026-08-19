@@ -119,8 +119,7 @@ export interface SettingsNav extends NavSurface {
  * (adding a game) then costs one line here instead of a rewrite of every primitive.
  */
 export interface GameSettingsNav extends NavSurface {
-  /** `move: true` starts the screen straight into "Move to card…" (Р2.1). */
-  open(id: string, options?: { readonly move?: boolean }): void;
+  open(id: string): void;
   /** Opens the same screen to CREATE a game — the "Add game" item of the Details menu. */
   openNew(): void;
   close(): void;
@@ -288,7 +287,6 @@ export function createControls(deps: ControlsDeps): Controls {
   const menuKill = req<HTMLButtonElement>('menu-kill');
   const menuHome = req<HTMLButtonElement>('menu-home');
   const menuCustomize = req<HTMLButtonElement>('menu-customize');
-  const menuMoveToCard = req<HTMLButtonElement>('menu-move-to-card');
   const menuForget = req<HTMLButtonElement>('menu-forget');
   const menuClose = req<HTMLButtonElement>('menu-close');
   const powerShutdown = req<HTMLButtonElement>('power-shutdown');
@@ -399,7 +397,6 @@ export function createControls(deps: ControlsDeps): Controls {
     applyMenuKill(); // keep the force-close item's visibility fresh (running-only)
     applyMenuHome(); // keep the "Home" item fresh (only when there is a carousel to go back to)
     applyMenuCustomize(); // …and "Customize", which only applies to a game we can reach the file of
-    applyMenuMoveToCard(); // …and "Move to card…", local (PC-library) games only
     applyMenuForget(); // keep the "Remove from history" item fresh (history-only games)
     popupRoot = 'details';
     setView('details');
@@ -810,14 +807,6 @@ export function createControls(deps: ControlsDeps): Controls {
     applyFocus();
   }
 
-  /** Same screen as Customize, opened straight into "Move to card…" — the item's own rule, re-checked. */
-  function openMoveToCard(): void {
-    const browse = deps.getBrowse();
-    if (browse === null || !browse.active || browse.game?.source !== 'pc') return;
-    deps.gameSettings.open(browse.id, { move: true });
-    applyFocus();
-  }
-
   /**
    * The screen closed itself (B / Esc / veil): put the highlight back on the More button it came from —
    * on a detail screen. Opened from a launcher card, the screen came from the CAROUSEL, where the bar is
@@ -906,19 +895,6 @@ export function createControls(deps: ControlsDeps): Controls {
     const show = onGameScreen() && browse !== null && browse.active;
     menuCustomize.classList.toggle('is-hidden', !show);
     if (show) menuCustomize.textContent = t()('launcher.menu.customize');
-  }
-
-  // ── Menu item: Move to card… (a local game only) ──────────────────────────────
-  // Offered alongside Customize, only for a game whose manifest lives in the PC library — a card game has
-  // nowhere to move TO that would mean anything. Hidden while the game is busy (install/uninstall/Steam
-  // activity), same guard as Delete on the Customize screen itself (game-settings-screen.ts canDelete).
-  function applyMenuMoveToCard(): void {
-    if (menuFrozen()) return;
-    const browse = deps.getBrowse();
-    const busy = phaseOf(state()) === 'busy' || steamBusy(state());
-    const show =
-      onGameScreen() && browse !== null && browse.active && browse.game?.source === 'pc' && !busy;
-    menuMoveToCard.classList.toggle('is-hidden', !show);
   }
 
   function applyMenuForget(): void {
@@ -1113,7 +1089,6 @@ export function createControls(deps: ControlsDeps): Controls {
     menuForget,
     menuHome,
     menuCustomize,
-    menuMoveToCard,
     menuClose,
     notificationsClear,
     notificationsClose,
@@ -1141,7 +1116,6 @@ export function createControls(deps: ControlsDeps): Controls {
         if (!menuForget.classList.contains('is-hidden')) items.push(menuForget);
         if (!menuHome.classList.contains('is-hidden')) items.push(menuHome);
         if (!menuCustomize.classList.contains('is-hidden')) items.push(menuCustomize);
-        if (!menuMoveToCard.classList.contains('is-hidden')) items.push(menuMoveToCard);
         items.push(menuClose);
         return items;
       }
@@ -1285,9 +1259,6 @@ export function createControls(deps: ControlsDeps): Controls {
       // Like Settings: the menu it was opened from closes first — the screen is a surface of its own.
       closePopup({ silent: true });
       openCustomize();
-    } else if (btn === menuMoveToCard) {
-      closePopup({ silent: true });
-      openMoveToCard();
     } else if (btn === menuHome) {
       // Non-destructive, so no confirm: close the popup and hand control back to the strip.
       closePopup();
@@ -1929,7 +1900,6 @@ export function createControls(deps: ControlsDeps): Controls {
     applyMenuKill();
     applyMenuHome();
     applyMenuCustomize();
-    applyMenuMoveToCard();
     applyMenuForget();
   }
 
@@ -1940,7 +1910,6 @@ export function createControls(deps: ControlsDeps): Controls {
     menuInstallToggle.classList.add('is-hidden');
     menuKill.classList.add('is-hidden');
     menuCustomize.classList.add('is-hidden'); // no game on screen → no manifest to customize
-    menuMoveToCard.classList.add('is-hidden'); // no game on screen → nothing to move
     menuForget.classList.add('is-hidden'); // no game on screen → nothing to remove from the history
     applyMenuHome(); // the carousel can still be there with no game on screen (history only)
   }

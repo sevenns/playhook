@@ -205,7 +205,6 @@ export const ru: Partial<Record<MessageKey, string>> = {
 
   // ── Customize screen: what the SCREEN itself says (game-settings-*.ts) ──────
   'launcher.menu.customize': 'Настройки игры',
-  'launcher.menu.moveToCard': 'Перенести на карту',
 
   // ── Notifications (the toast + the Notifications popup) ────────────────────
   'notifications.updateReady': 'Обновление {version} готово - установится при перезапуске',
@@ -246,7 +245,7 @@ export const ru: Partial<Record<MessageKey, string>> = {
     'X - отметить, A - выбрать, B - на уровень выше, Y - действия, влево/вправо - сменить колонку',
 
   'gameSettings.screenTitle': 'Настройки игры',
-  'gameSettings.addTitle': 'Добавление игры',
+  'gameSettings.addTitle': 'Добавить игру',
   'gameSettings.loading': 'Читаем манифест...',
   'gameSettings.sectionBasics': 'Основное',
   'gameSettings.sectionLaunch': 'Запуск',

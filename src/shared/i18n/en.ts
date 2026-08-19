@@ -246,7 +246,6 @@ export const en = {
 
   // ── Customize screen: what the SCREEN itself says (game-settings-*.ts) ──────
   'launcher.menu.customize': 'Customize',
-  'launcher.menu.moveToCard': 'Move to card',
 
   // ── Notifications (the toast + the Notifications popup) ────────────────────
   // The TEXT of a notification is assembled here rather than stored with it: the UI language changes

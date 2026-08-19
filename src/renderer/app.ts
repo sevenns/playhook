@@ -142,6 +142,7 @@ const gameSettingsApi: GameSettingsScreenApi = {
   readRoot: (root) => window.api.readGameConfigRoot(root),
   forgetHistory: (id) => window.api.forgetGame(id),
   moveToCard: (request) => window.api.moveGameConfigToCard(request),
+  acceptPath: (request) => window.api.acceptGameConfigPaths(request),
 };
 const filePicker = createFilePicker({
   audio,

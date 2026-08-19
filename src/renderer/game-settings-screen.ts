@@ -28,6 +28,7 @@ import type {
   ConfigSaveResult,
   ConfigValidationResult,
   DriveCandidate,
+  GameConfigAcceptRequest,
   GameConfigReadResult,
   GameConfigSaveRequest,
   GameMoveRequest,
@@ -104,6 +105,10 @@ export interface GameSettingsScreenApi {
   forgetHistory(id: string): void;
   /** Moves a local (PC-library) game onto a card in one transaction (see the plan, Р2.5). */
   moveToCard(request: GameMoveRequest): Promise<ConfigMoveResult>;
+  /** The same conversion the in-launcher picker uses (main re-checks/converts a picked path) — used
+   * outside a Browse to carry an absolute PC-side pcSavePath over as a %PREFIX% string when moving a
+   * game onto a card, without making the user re-pick the same folder. */
+  acceptPath(request: GameConfigAcceptRequest): Promise<ConfigPickResult>;
 }
 
 /**
@@ -160,9 +165,8 @@ export interface GameSettingsScreenDeps {
 }
 
 export interface GameSettingsScreen extends NavSurface {
-  /** Opens the screen for one game, reading its manifest. `move: true` starts it straight into "Move to
-   * card…" (Р2.1) — a local game only; the screen re-checks that itself. */
-  open(id: string, options?: { readonly move?: boolean }): void;
+  /** Opens the screen for one game, reading its manifest. */
+  open(id: string): void;
   /** Opens the same screen with no game behind it — the form CREATES one (see `mode`). */
   openNew(): void;
   close(): void;
@@ -208,6 +212,8 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   const navEl = req('game-settings-nav');
   const statusEl = req('game-settings-status');
   const headingEl = req('game-settings-heading');
+  /** The screen's own name — "Customize" or "Add game". See the note on the element in index.html. */
+  const titleEl = req('game-settings-title');
   const menuEl = req('game-settings-options');
   const menuListEl = req('game-settings-options-list');
   const menuVeil = menuEl.querySelector<HTMLElement>('.settings-options-veil');
@@ -260,6 +266,15 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     readonly targetIndex: number;
     readonly targetSignature: string;
     readonly targetBaselineOtherIssues: ReadonlySet<string>;
+    /**
+     * Destination (card) path → source (PC-library) path, for the hero/grid images `carryFormToCard`
+     * carried over unedited. The files those destination paths name are NOT on the card yet — main only
+     * copies them once Save actually commits the move — so a thumbnail/lightbox for one of them has to
+     * read the PC-library copy, which is the only place the bytes exist right now. A path the user
+     * replaced via Browse after choosing the target is deliberately absent here: it already names a real
+     * file on the target card (browseInto only ever offers paths that are already there).
+     */
+    readonly sourceAssetPaths: ReadonlyMap<string, string>;
   }
   let pendingMove: PendingMove | null = null;
   let form: ManifestFormModel = emptyFormModel();
@@ -360,6 +375,14 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     return origin.source === 'pc' ? true : slots.length >= 2;
   }
 
+  /** Whether "Move to card…" (the action row above Delete) may run right now — a card has nowhere to
+   * move TO that would mean anything, so this is local games only; same busy guard as Delete. */
+  function canMove(): boolean {
+    if (pendingMove !== null) return false;
+    if (origin === null || deps.isBusy()) return false;
+    return origin.source === 'pc';
+  }
+
   function canSave(): boolean {
     const move = pendingMove;
     if (move !== null) {
@@ -403,6 +426,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       // A game that does not exist yet cannot be deleted — and for the PC library canDelete() says yes
       // to anything, so without this the column would offer "Delete game" on the Add screen.
       canDelete: mode === 'edit' && canDelete(),
+      canMove: mode === 'edit' && canMove(),
     });
   }
 
@@ -582,11 +606,10 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     // patching it against the new section's values would write them into the old section's rows.
     flushPreview();
     const next = currentModel();
-    headingEl.textContent = screenHeading(
-      next,
-      t(),
-      mode === 'add' ? 'gameSettings.addTitle' : undefined,
+    titleEl.textContent = t()(
+      mode === 'add' ? 'gameSettings.addTitle' : 'gameSettings.screenTitle',
     );
+    headingEl.textContent = screenHeading(next);
     // Source first, then the game — it reads as a location and its contents ("E:\ · Hades"). The
     // parentheses went with the swap: a parenthetical is an aside, and an aside cannot come first.
     sourceEl.textContent = next === null ? '' : `${rowLabelText(next.source, t())} ·`;
@@ -694,25 +717,37 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
    */
   const thumbnails = new Map<string, string | null>();
 
+  /** Cache key includes the root: the same card-relative STRING can name different bytes in the PC
+   * library and on a move's target card (see assetPreviewRoot), and thumbnails must not conflate them. */
   async function thumbnailFor(root: string, path: string): Promise<string | null> {
-    const cached = thumbnails.get(path);
+    const key = `${root} ${path}`;
+    const cached = thumbnails.get(key);
     if (cached !== undefined) return cached;
     const url = await deps.api.imagePreview(root, path);
-    thumbnails.set(path, url);
+    thumbnails.set(key, url);
     return url;
   }
 
   /** Reads the artwork rows' thumbnails (one invoke per path) and drops them into their rows. */
   async function refreshThumbnails(): Promise<void> {
-    const root = origin?.root;
-    if (root === undefined) return;
+    if (origin === null) return;
+    // Card-relative during a pending move (see assetPreviewRoot): a hero/grid image the move carried
+    // over unedited previews from the PC library, everything else from wherever the form is pointed.
+    const thumbnailAt = (path: string): { readonly root: string; readonly relative: string } | null =>
+      assetPreviewRoot(path);
     for (const row of rendered) {
       const source = row.row;
       if (source.kind === 'list' && source.preview !== undefined) {
-        const urls = await Promise.all(source.items.map((item) => thumbnailFor(root, item)));
+        const urls = await Promise.all(
+          source.items.map((item) => {
+            const at = thumbnailAt(item);
+            return at === null ? Promise.resolve(null) : thumbnailFor(at.root, at.relative);
+          }),
+        );
         applyThumbnails(row, urls, source.preview, source.items);
       } else if (source.kind === 'path' && source.preview !== undefined) {
-        const url = source.value === '' ? null : await thumbnailFor(root, source.value);
+        const at = source.value === '' ? null : thumbnailAt(source.value);
+        const url = at === null ? null : await thumbnailFor(at.root, at.relative);
         applyThumbnails(row, [url], source.preview, [source.value]);
       }
     }
@@ -1156,11 +1191,28 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     pushMenu(asMenu({ title: rowTitle(row), entries }));
   }
 
+  /**
+   * Which root a card-relative path should be read FROM: normally wherever the form is currently pointed
+   * at, but a hero/grid image carried over by a pending move is an exception — main has not copied it to
+   * the target card yet (that only happens on Save), so it has to be read from the PC library, where the
+   * bytes still are. See PendingMove.sourceAssetPaths.
+   */
+  function assetPreviewRoot(relative: string): { readonly root: string; readonly relative: string } | null {
+    const move = pendingMove;
+    if (move !== null) {
+      const source = move.sourceAssetPaths.get(relative);
+      if (source !== undefined) return origin === null ? null : { root: origin.root, relative: source };
+      return { root: move.target.root, relative };
+    }
+    return origin === null ? null : { root: origin.root, relative };
+  }
+
   /** Opens the artwork at full size. Nothing but a look — B (or the veil) closes it. */
   async function showImage(relative: string): Promise<void> {
-    const root = pendingMove !== null ? pendingMove.target.root : origin?.root;
-    if (root === undefined || relative === '') return;
-    const url = await deps.api.imagePreview(root, relative);
+    if (relative === '') return;
+    const at = assetPreviewRoot(relative);
+    if (at === null) return;
+    const url = await deps.api.imagePreview(at.root, at.relative);
     if (url === null) return; // a preview that could not be read never became a surface — and never sounds
     deps.audio.play('popup-open');
     lightboxImage.src = url;
@@ -1517,18 +1569,28 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       setStatus(result.message);
       return;
     }
+    const originalPcSavePath = form.pcSavePath;
     const carried = carryFormToCard(form);
     const parsed = slotsWithInsertedGame(result.hasManifest ? result.text : null, carried);
     if (!parsed.ok) {
       setStatus(parsed.message);
       return;
     }
+    // dest → source, by matching position in the two arrays carryFormToCard read and wrote — see
+    // PendingMove.sourceAssetPaths.
+    const sourceAssetPaths = new Map<string, string>();
+    form.heroImage.forEach((source, index) => {
+      const dest = carried.heroImage[index];
+      if (dest !== undefined) sourceAssetPaths.set(dest, source);
+    });
+    if (carried.gridImage !== '') sourceAssetPaths.set(carried.gridImage, form.gridImage);
     pendingMove = {
       target: candidate,
       targetSlots: parsed.slots,
       targetIndex: parsed.index,
       targetSignature: result.signature,
       targetBaselineOtherIssues: new Set(),
+      sourceAssetPaths,
     };
     form = carried;
     rest = {};
@@ -1541,6 +1603,23 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     // baselineOtherIssues for a normal edit — a bad neighbour on the target card is not ours to fix either.
     if (pendingMove !== null) {
       pendingMove = { ...pendingMove, targetBaselineOtherIssues: new Set(otherIssues) };
+    }
+    // Best-effort backfill: an absolute pcSavePath (the common shape for a local, non-Steam game — see
+    // %PREFIX%/%APPDATA% handling in manifest.ts) was dropped by carryFormToCard because a card cannot
+    // store one. Converting it into the %PREFIX% form a card DOES accept needs main (the same conversion
+    // the picker itself makes), so it happens here, after the target is already adopted, instead of
+    // blocking on it — a folder that no longer exists or sits outside every known base just leaves the
+    // field for the user to fill in, exactly as it did before this backfill existed.
+    if (form.pcSavePath === '' && originalPcSavePath !== '') {
+      const converted = await deps.api.acceptPath({
+        root: candidate.root,
+        kind: 'pc-save',
+        paths: [originalPcSavePath],
+      });
+      if (open && mode === 'edit' && gameId === forGame && token === adoptToken && pendingMove !== null) {
+        const first = converted.ok ? converted.paths[0] : undefined;
+        if (first !== undefined) updateForm({ ...form, pcSavePath: first });
+      }
     }
   }
 
@@ -1951,6 +2030,11 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
         deps.audio.play('button');
         deps.onConfirmRequested('reset');
         return;
+      case 'move-to-card':
+        if (mode === 'add' || pendingMove !== null) return deps.audio.playLimit();
+        deps.audio.play('button'); // beginMove's own popup-open follows, like every other menu it opens
+        void beginMove();
+        return;
       case 'delete':
         if (mode === 'add') return deps.audio.playLimit();
         deps.audio.play('button');
@@ -2174,17 +2258,11 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
 
   return {
     isOpen: () => open,
-    open: (id: string, options?: { readonly move?: boolean }) => {
+    open: (id: string) => {
       if (open) return;
       mode = 'edit';
       resetScreenState();
-      const wantsMove = options?.move === true;
-      // The sound waits for the read to land — an unreadable game never became a screen. beginMove chains
-      // off the SAME read rather than a second one, so a "Move to card…" press shows exactly the game the
-      // menu item was pressed for, even if the read is slow.
-      void load(id).then(() => {
-        if (wantsMove) void beginMove();
-      });
+      void load(id); // the sound waits for the read to land — an unreadable game never became a screen
     },
     openNew: () => {
       if (open) return;
@@ -2278,7 +2356,12 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
           relocalizeGameSections(listEl, { ...model, sections: [section] }, t());
         }
         for (const row of rendered) relocalizeGameRow(row, t());
-        headingEl.textContent = screenHeading(model, t());
+        // The screen's own name is mode-aware and JS-set, so it is re-read here too — localizeDocument
+        // does not touch it (no data-i18n) and would overwrite the mode if it did.
+        titleEl.textContent = t()(
+          mode === 'add' ? 'gameSettings.addTitle' : 'gameSettings.screenTitle',
+        );
+        headingEl.textContent = screenHeading(model);
         sourceEl.textContent = `${rowLabelText(model.source, t())} ·`;
         // The column and the status strip ARE labels — rebuilt, not patched.
         renderColumn(model);

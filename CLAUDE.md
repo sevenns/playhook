@@ -4,6 +4,17 @@ Conventions for extending Playhook safely. These were distilled from an architec
 was: **add features without breaking existing behaviour.** Follow them for new code; they are not a
 mandate to rewrite what already works.
 
+## UI text
+
+- **Never type a literal `...` or `…` in user-facing text** (i18n strings, HTML fallback text, anything
+  rendered through the app's own font). The bundled font (M PLUS Rounded 1c) draws periods and the
+  ellipsis glyph CENTERED vertically — the CJK convention, not the Latin one — so they sit above the
+  baseline and read as a row of raised dots instead of trailing punctuation. `styles.css` carves those
+  two code points out of the font (see the `@font-face … unicode-range: U+002E, U+2026` overrides right
+  after the four real ones) so the fallback stack draws them properly wherever they DO appear — including
+  text this app does not author, like a game's own title — but that is a safety net, not a licence: new
+  copy should still be worded so nothing trails off, rather than leaning on the override.
+
 ## Layers (do not blur)
 
 - **main** owns all game logic (fs, registry, process control, FFI). **renderer** is stateless UI.

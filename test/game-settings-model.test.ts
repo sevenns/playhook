@@ -41,6 +41,7 @@ const baseEnv: GameSettingsEnv = {
   canSave: true,
   dirty: false,
   canDelete: true,
+  canMove: false,
 };
 
 function model(
@@ -266,6 +267,13 @@ describe('the rules that are not visibility', () => {
     expect(ids(model({}, { canDelete: true }))).toContain('delete');
   });
 
+  it('shows "Move to card…" only when the environment says it may run, placed above Delete', () => {
+    expect(ids(model({}, { canMove: false, canDelete: true }))).not.toContain('move-to-card');
+    const built = ids(model({}, { canMove: true, canDelete: true }));
+    expect(built).toContain('move-to-card');
+    expect(built.indexOf('move-to-card')).toBeLessThan(built.indexOf('delete'));
+  });
+
   it('disables Save with nothing to save, and while the validator is unhappy', () => {
     const clean = row(model({}, { dirty: false, canSave: true }), 'save');
     if (clean?.kind !== 'action') throw new Error('unreachable');
@@ -332,9 +340,12 @@ describe('add mode', () => {
     expect(ids(built)).toContain('close');
   });
 
-  it('titles the screen after what it does, and labels the source as the picker does', () => {
+  // What the SCREEN is called ("Add game" vs "Customize") is not the model's to say — it follows `mode`,
+  // which the controller already has, and it lives in its own element (see .settings-title in index.html).
+  // The model only names the GAME, which has no name yet while one is being added.
+  it('names the game, which is nothing yet, and labels the source as the picker does', () => {
     const built = model({}, addEnv);
-    expect(built.headingKey).toBe('gameSettings.addTitle');
+    expect(built.title).toBe('');
     expect(built.source).toEqual({ text: 'E:\\ — 3 games' });
   });
 
@@ -342,7 +353,6 @@ describe('add mode', () => {
     const built = model({});
     expect(ids(built)).not.toContain('source');
     expect(ids(built)).toContain('reset');
-    expect(built.headingKey).toBeUndefined();
   });
 });
 
@@ -538,16 +548,24 @@ describe('carryFormToCard', () => {
     expect(moved.backgroundMusic).toBe('assets/hades-music.ogg');
   });
 
-  it('drops pc.executable, pcSavePath, saveOnCard and any install/copyToPc', () => {
+  it('drops pc.executable, saveOnCard and any install/copyToPc', () => {
     const moved = carryFormToCard(
       pcGame({ copyToPc: true, copyInstall: { installer: 'x', type: 'copy', runAsAdmin: false, args: [], winetricks: [], rest: {} } }),
     );
     expect(moved.pc.executable).toBe('');
-    expect(moved.pcSavePath).toBe('');
     expect(moved.saveOnCard).toBe('');
     expect(moved.copyToPc).toBe(false);
     expect(moved.copyInstall.installer).toBe('');
     expect(moved.install.installer).toBe('');
+  });
+
+  it('pcSavePath: a %PREFIX% string survives (already card-shaped), an absolute one does not', () => {
+    expect(carryFormToCard(pcGame({ pcSavePath: '%APPDATA%/Hades' })).pcSavePath).toBe(
+      '%APPDATA%/Hades',
+    );
+    expect(
+      carryFormToCard(pcGame({ pcSavePath: 'C:\\Games\\Hades\\Saves' })).pcSavePath,
+    ).toBe('');
   });
 
   it('launchMode: steam survives, pc/none become executable', () => {

@@ -165,10 +165,6 @@
               <!-- Customize — the per-game manifest editor, offered only for a game that is on the card
                    or in the local library (an `active` game is the only one whose file we can reach). -->
               <button id="menu-customize" class="text-button" type="button"></button>
-              <!-- Move a local (PC-library) game to a card — offered only for a local game, not busy.
-                   Text is static (unlike its neighbours, its visibility does not depend on game phase in
-                   a way that needs a JS-set label), but visibility itself is JS-driven. -->
-              <button id="menu-move-to-card" class="text-button" type="button" data-i18n="launcher.menu.moveToCard">Move to card</button>
               <button id="menu-close" class="text-button" type="button" data-i18n="launcher.menu.close">Close</button>
             </div>
             <div class="actions-group" data-group="power">
@@ -254,7 +250,11 @@
         <div class="settings-veil"></div>
         <div class="settings-column">
           <div class="settings-header">
-            <div class="settings-title" data-i18n="gameSettings.screenTitle">Customize</div>
+            <!-- Set from JS (game-settings-screen.ts render/relocalize), not via data-i18n: this screen
+                 has TWO names — "Customize" for a game that exists, "Add game" while one is being
+                 created — and localizeDocument would overwrite the mode-aware value on every language
+                 push. The English text here is only the pre-seed fallback, as elsewhere. -->
+            <div class="settings-title" id="game-settings-title">Customize</div>
             <!-- The game's own name, from JS: it says WHOSE settings these are, which matters the moment
                  a card carries more than one game — followed, in the same breath, by where its manifest
                  lives. ONE group, so the two read as a phrase ("Hades (E:\)") instead of drifting to

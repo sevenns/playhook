@@ -401,8 +401,6 @@ export interface Stats {
 export interface GameInfo {
   readonly id: string;
   readonly title: string;
-  /** Where this game's manifest lives — a card, or the PC library. Drives "Move to card…" (PC only). */
-  readonly source: ManifestSource;
   readonly lastPlayedAt: string | null;
   readonly totalPlaySeconds: number;
   readonly launchCount: number;

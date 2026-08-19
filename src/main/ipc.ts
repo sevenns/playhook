@@ -2171,7 +2171,6 @@ export class GameController {
     return {
       id: manifest.raw.id,
       title: manifest.raw.title,
-      source: manifest.source,
       lastPlayedAt: stats.lastPlayedAt,
       totalPlaySeconds: stats.totalPlaySeconds,
       launchCount: stats.launchCount,
