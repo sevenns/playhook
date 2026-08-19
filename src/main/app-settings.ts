@@ -30,10 +30,12 @@ const settingsObject = z.object({
   preventScreensaver: z.boolean().default(true),
   musicVolume: z.number().min(0).max(1).default(0.5),
   sfxVolume: z.number().min(0).max(1).default(1),
-  // Stay on screen with no card in instead of hiding to the tray. `.default(false)` keeps the original
-  // background-app behaviour for an older settings.json without the field; a file written under the old
-  // name (alwaysShowEmptyScreen) is carried over by the preprocess below.
-  keepOpenWithoutCard: z.boolean().default(false),
+  // Stay on screen with no card in instead of hiding to the tray. Defaults ON: the launcher grew its own
+  // reasons to be up without a card (the library, the local PC games, the settings), so vanishing to the
+  // tray the moment a card is pulled hides a UI that still has something to show. A file written under
+  // the old name (alwaysShowEmptyScreen) is carried over by the preprocess below; a file that already has
+  // the key keeps whatever the user chose, so this only changes what a FRESH install does.
+  keepOpenWithoutCard: z.boolean().default(true),
   // Disable trying silent mode for install-mode installers (they show their wizard instead). `.default(false)`
   // keeps the original silent behaviour for an older settings.json without the field.
   disableSilentInstall: z.boolean().default(false),
@@ -91,7 +93,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   preventScreensaver: true,
   musicVolume: 0.5,
   sfxVolume: 1,
-  keepOpenWithoutCard: false,
+  keepOpenWithoutCard: true,
   disableSilentInstall: false,
   steamAppIdU32: null,
   steamAutoLaunch: true,
