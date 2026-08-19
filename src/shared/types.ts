@@ -670,7 +670,12 @@ export type AppNotification =
    * behaviour rather than corruption (an inserted card shadows its local twin), but the user has to be
    * told, because the screen reports the move as done and closes.
    */
-  | (NotificationBase & { readonly kind: 'game-move-duplicate'; readonly gameTitle: string });
+  | (NotificationBase & { readonly kind: 'game-move-duplicate'; readonly gameTitle: string })
+  /**
+   * A settings change could not be written to disk, so it did not stick. Carries no detail: the cause is
+   * in the log, and the only thing the user can act on is that their setting did not save.
+   */
+  | (NotificationBase & { readonly kind: 'settings-write-failed' });
 
 // Distributes over the union so each member loses the base fields on its own (a plain Omit would
 // collapse the three into one non-discriminated object).

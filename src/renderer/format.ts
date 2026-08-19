@@ -45,6 +45,8 @@ export function formatNotification(item: AppNotification, t: Translator): string
       return t('notifications.gameMoveSaveSkipped', { title: item.gameTitle });
     case 'game-move-duplicate':
       return t('notifications.gameMoveDuplicate', { title: item.gameTitle });
+    case 'settings-write-failed':
+      return t('notifications.settingsWriteFailed');
   }
 }
 

@@ -259,6 +259,8 @@ export const en = {
     '{title} was moved to the card. It shows up once that card is the active one.',
   'notifications.gameMoveSaveSkipped':
     '{title} was moved to the card, but its save folder there already had something in it — the PC saves were left uncopied.',
+  'notifications.settingsWriteFailed':
+    'Your settings could not be saved and will be back as they were on the next start. Playhook has no write access to its settings file.',
   'notifications.gameMoveDuplicate':
     '{title} was written to the card, but could not be removed from the PC library — it now exists in both places. Remove the local copy through Customize.',
   'notifications.empty': 'No notifications',

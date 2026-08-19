@@ -64,6 +64,12 @@ const notificationSchema = z.discriminatedUnion('kind', [
     read: z.boolean(),
     gameTitle: z.string(),
   }),
+  z.object({
+    kind: z.literal('settings-write-failed'),
+    id: z.string(),
+    at: z.number(),
+    read: z.boolean(),
+  }),
 ]);
 
 const inboxSchema = z.object({

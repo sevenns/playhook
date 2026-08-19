@@ -561,7 +561,8 @@ export function createControls(deps: ControlsDeps): Controls {
       item.kind === 'game-added-deferred' ||
       item.kind === 'game-moved-deferred' ||
       item.kind === 'game-move-save-skipped' ||
-      item.kind === 'game-move-duplicate'
+      item.kind === 'game-move-duplicate' ||
+      item.kind === 'settings-write-failed'
     )
       return;
     deps.openGameDetail(item.gameId);

@@ -39,6 +39,8 @@ export class NotificationsService {
   // is this list written down. Loaded once in init().
   private items: readonly AppNotification[] = [];
   private lastNotifiedUpdateVersion: string | null = null;
+  /** Whether this run already told the user their settings cannot be saved — see notifySettingsWriteFailed. */
+  private settingsWriteFailureReported = false;
   // Toasts that arrived while the user was away, waiting for them to come back. Held by ID rather than
   // by value: an entry the user cleared in the meantime must not resurface as a plate.
   private deferredIds: readonly string[] = [];
@@ -94,6 +96,19 @@ export class NotificationsService {
     if (this.lastNotifiedUpdateVersion === version) return;
     this.lastNotifiedUpdateVersion = version;
     this.notify({ kind: 'update-ready', version });
+  }
+
+  /**
+   * "Your settings could not be saved." Deduplicated for the RUN, in memory: whatever makes the file
+   * unwritable (a read-only attribute, an ACL from an install under another account) does not heal
+   * itself, so every later toggle fails the same way — and one dragged volume slider alone is dozens of
+   * writes. In-memory rather than persisted, unlike the update marker: the next launch may well be able
+   * to write again, and then there is nothing to say.
+   */
+  notifySettingsWriteFailed(): void {
+    if (this.settingsWriteFailureReported) return;
+    this.settingsWriteFailureReported = true;
+    this.notify({ kind: 'settings-write-failed' });
   }
 
   /**
