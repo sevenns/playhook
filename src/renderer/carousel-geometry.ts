@@ -11,8 +11,8 @@ export const CARD_H = 135;
 /** Selected card size (it grows in place, anchored at its bottom-left corner). */
 export const SEL_W = 136;
 export const SEL_H = 204;
-/** Gap between cards. */
-export const GAP = 16;
+/** Gap between cards. MIRRORED by #carousel-strip's `gap` in styles.css. */
+export const GAP = 24;
 
 /** The distance one card advances the strip. */
 export const STEP = CARD_W + GAP;

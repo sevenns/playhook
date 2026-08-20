@@ -339,7 +339,8 @@ body {
   bottom: calc(30 * var(--px));
   display: flex;
   align-items: flex-end;
-  gap: calc(16 * var(--px));
+  /* MIRRORS GAP in carousel-geometry.ts — the offsets are computed there and cannot read this. */
+  gap: calc(24 * var(--px));
   transform: translateX(calc(var(--strip-offset, 0) * var(--px)));
   transition: transform var(--morph) var(--morph-ease), opacity 0.25s ease;
 }
@@ -3131,7 +3132,8 @@ html:not(.mouse-asleep) .picker-item:hover,
   display: grid;
   justify-content: center;
   align-content: start;
-  gap: calc(16 * var(--px));
+  /* MIRRORS LIB_GAP in library-grid.ts — the column count is worked out there from this same number. */
+  gap: calc(24 * var(--px));
   grid-template-columns: repeat(var(--cols, 1), calc(200 * var(--px)));
 }
 

@@ -27,10 +27,10 @@ describe('stripOffset', () => {
 
   it('advances by one card + gap per index', () => {
     expect(STEP).toBe(CARD_W + GAP);
-    // 90 (card) + 16 (gap) — the step measured off the mockup, where consecutive unselected cards sit
-    // at x=202/308/414.
-    expect(stripOffset(1)).toBe(-106);
-    expect(stripOffset(3)).toBe(-318);
+    // Against STEP rather than a literal: the gap is a design decision that has already moved once
+    // (16 -> 24), and a hard-coded step turns that into a failing test rather than a wider row.
+    expect(stripOffset(1)).toBe(-STEP);
+    expect(stripOffset(3)).toBe(-3 * STEP);
   });
 
   it('is linear — the step between neighbours never depends on where you are', () => {
