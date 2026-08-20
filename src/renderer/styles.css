@@ -28,6 +28,47 @@
   src: url('./fonts/MPLUSRounded1c-ExtraBold.ttf') format('truetype');
 }
 
+/* M PLUS Rounded 1c renders '.' and '…' vertically centered — the CJK convention for punctuation, not the
+   Latin one — so a period, and worse, a run of them ("...", or a game title ending in one), sits noticeably
+   above the baseline and reads as a row of raised dots rather than an ellipsis. There is no glyph-level
+   fix from CSS alone, so these TWO code points are carved out of the bundled font family and left for the
+   next entry in the font stack (`'Segoe UI', system-ui, sans-serif` below) to draw instead: a `src` that
+   cannot resolve to anything makes THIS family claim no coverage for them, which is what makes a browser's
+   normal per-character fallback kick in — it is not specific to any one string, so it also covers text this
+   app does not author itself (a game's own title, if it happens to end in one). One override per weight the
+   four real faces above declare, so the substitution holds at every weight actually used in the UI.
+   Global rule for anything written here: don't rely on this being reliable everywhere it might render (a
+   downloaded update note, a future export) — prefer wording that has nothing trailing rather than typing a
+   literal '...' or '…'. */
+@font-face {
+  font-family: 'M PLUS Rounded 1c';
+  font-style: normal;
+  font-weight: 300;
+  unicode-range: U+002E, U+2026;
+  src: local('.unavailable-glyph-source');
+}
+@font-face {
+  font-family: 'M PLUS Rounded 1c';
+  font-style: normal;
+  font-weight: 400;
+  unicode-range: U+002E, U+2026;
+  src: local('.unavailable-glyph-source');
+}
+@font-face {
+  font-family: 'M PLUS Rounded 1c';
+  font-style: normal;
+  font-weight: 500;
+  unicode-range: U+002E, U+2026;
+  src: local('.unavailable-glyph-source');
+}
+@font-face {
+  font-family: 'M PLUS Rounded 1c';
+  font-style: normal;
+  font-weight: 800;
+  unicode-range: U+002E, U+2026;
+  src: local('.unavailable-glyph-source');
+}
+
 /* The two palette colors are declared as TYPED custom properties so they can be TRANSITIONED: a plain
    `--d1` is just a token and jumps instantly, which made the bar, the buttons and the popup snap to the
    new game's colors while the hero image was still cross-fading. With a `<color>` syntax the browser
@@ -1486,11 +1527,10 @@ html:not(.mouse-asleep) .text-button:hover,
   text-align: right;
 }
 
+/* NOT clamped: an entry is read once and acted on, so a notification that says something long (a move
+   that landed on an inactive card, or one that could not clean up after itself) has to say all of it —
+   two lines cut exactly the part that tells the user what to DO. The list scrolls, so height is free. */
 .notification-text {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  overflow: hidden;
   line-height: calc(34 * var(--px));
 }
 
@@ -1608,11 +1648,10 @@ html:not(.mouse-asleep) .notification-item:hover .notification-dot {
   }
 }
 
+/* Unclamped for the same reason as .notification-text: the plate is on screen for six seconds and then
+   gone, so anything it cuts is simply never read. The plate's width is capped (.toast max-width), so a
+   long message grows downwards rather than across the screen. */
 .toast-text {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  overflow: hidden;
   font-weight: 500;
   font-size: calc(28 * var(--px));
   line-height: calc(38 * var(--px));
@@ -3032,7 +3071,11 @@ html:not(.mouse-asleep) .picker-item:hover,
   overflow-y: auto;
   overflow-x: hidden;
   scrollbar-width: none;
-  padding: calc(44 * var(--px));
+  /* Top is its own value, smaller than the other three sides: .settings-nav has NO top padding of its
+     own (its first item's centered content sits close to the very top of the column), so the full 44
+     up here read as the grid starting visibly lower than the sidebar. ~20 is the least this can be
+     without slicing a selected first-row card's ring — see the note below. */
+  padding: calc(20 * var(--px)) calc(44 * var(--px)) calc(44 * var(--px));
   /* Same edge treatment as .settings-list: fades driven from JS, none where there is nothing beyond. */
   --fade-top: 0px;
   --fade-bottom: 0px;

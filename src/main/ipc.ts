@@ -322,7 +322,9 @@ export class GameController {
   private steamBusyId: string | null = null;
   // Mirror of AppSettings.keepOpenWithoutCard (seeded at startup, toggled live from the settings
   // window): when true the launcher stays on screen with no card in instead of hiding to the tray.
-  private keepOpenWithoutCard = false;
+  // Initialized to the SCHEMA's default so the sliver between constructing this controller and the seed
+  // behaves like the setting it mirrors — keep the two in step if that default ever changes.
+  private keepOpenWithoutCard = true;
   private launchInFlight = false;
   // A manifest reload from the Customize screen is in flight. Unlike launchInFlight it does NOT
   // gate on state kind (the reload runs from `ready`), so onLaunchRequested/onUninstallRequested check
@@ -979,6 +981,28 @@ export class GameController {
     return { root: manifest.root, source: manifest.source };
   }
 
+  /** The full RESOLVED manifest of one game, by id — what moveToCard needs to plan its asset/save copies
+   * (findGameSource only answers where the file lives, not what it resolves to). */
+  findManifest(id: string): ResolvedManifest | null {
+    return this.games.find((game) => game.raw.id === id) ?? null;
+  }
+
+  /**
+   * Whether ANY game is currently running/installing/uninstalling (incl. a Steam op in flight) —
+   * main's server-side mirror of the renderer's own isBusy (app.ts), which gates Delete on the Customize
+   * screen and — new here — Move to card (GameConfigService.moveToCard, Р2.5): a move started while the
+   * game is mid-launch would race the launcher's own manifest handling.
+   */
+  isBusy(): boolean {
+    const kind = this.deps.state.get().kind;
+    return (
+      kind === 'running' ||
+      kind === 'installing' ||
+      kind === 'uninstalling' ||
+      this.steamBusyId !== null
+    );
+  }
+
   /** Logs the local games the inserted card currently shadows (same id — the card wins, see `games`). */
   private warnShadowedLocalGames(): void {
     const cardIds = new Set(this.cardGames.map((manifest) => manifest.raw.id));
@@ -1151,6 +1175,13 @@ export class GameController {
     if (snapshot.game.unavailable === true) {
       log.info(`[launch] refused id=${manifest.raw.id}: "${manifest.executablePath}" is not on disk`);
       this.sendError(this.t('launcher.state.gameFilesMissing'));
+      return;
+    }
+    // A local draft with no launch method chosen yet — same guard, different reason. The renderer already
+    // disables Play, but a gamepad press must not slip past it into runLaunchSequence.
+    if (snapshot.game.unconfigured === true) {
+      log.info(`[launch] refused id=${manifest.raw.id}: no launch method is configured`);
+      this.sendError(this.t('launcher.state.launchNotConfigured'));
       return;
     }
     // A Steam download/removal of ANOTHER game is in flight. Every other kind of activity moves the state
@@ -2138,6 +2169,7 @@ export class GameController {
     // by-source check would strip its Play button. Steam's own "not installed" is `requiresInstall`.
     const unavailable =
       manifest.raw.pc !== undefined && !(await fse.pathExists(manifest.executablePath));
+    const unconfigured = manifest.unconfigured === true;
     return {
       id: manifest.raw.id,
       title: manifest.raw.title,
@@ -2155,6 +2187,7 @@ export class GameController {
       ...(steamPaused ? { steamPaused: true } : {}),
       ...(steamPausedProgress !== undefined ? { steamPausedProgress } : {}),
       ...(unavailable ? { unavailable: true } : {}),
+      ...(unconfigured ? { unconfigured: true } : {}),
     };
   }
 
@@ -2289,6 +2322,7 @@ export class GameController {
           title: game.title,
           active: true,
           ...(stored !== null ? { artRev: stored.savedAt } : {}),
+          ...(game.unconfigured === true ? { unconfigured: true as const } : {}),
         };
       }),
       ...this.deps.library
@@ -2307,7 +2341,7 @@ export class GameController {
   /** One source's games, most recently played first — the per-group ordering refreshLibrary applies. */
   private orderedForCarousel(
     manifests: readonly ResolvedManifest[],
-  ): readonly { readonly id: string; readonly title: string }[] {
+  ): readonly { readonly id: string; readonly title: string; readonly unconfigured?: true }[] {
     return byRecentlyPlayed(
       manifests.map((manifest) => ({
         id: manifest.raw.id,
@@ -2316,6 +2350,7 @@ export class GameController {
           this.statsById.get(manifest.raw.id)?.lastPlayedAt ??
           this.deps.library.entry(manifest.raw.id)?.lastPlayedAt ??
           null,
+        ...(manifest.unconfigured === true ? { unconfigured: true as const } : {}),
       })),
     );
   }

@@ -208,14 +208,10 @@ const manifestSchema = z
           message: 'manifest.watchProcessesRequired',
         });
       }
-    } else if (v.executable === undefined) {
-      // Non-steam game: an executable is mandatory (its meaning depends on install mode — see readManifest).
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['executable'],
-        message: 'manifest.executableRequired',
-      });
     }
+    // Whether a non-steam, non-pc game NEEDS `executable` depends on `source` (a card always does; the PC
+    // library allows a draft with no launch method configured yet), which this schema does not know — see
+    // resolveOne / pushGameSemanticIssues, which enforce it per source instead.
   });
 
 // MAX_HERO_IMAGES (the card-format cap on hero backgrounds) lives in shared/types.ts: the Configure form
@@ -616,22 +612,38 @@ async function resolveOne(
   if (source === 'card' && raw.pc !== undefined) {
     return { ok: false, message: t('manifest.pcOnCard') };
   }
-  if (source === 'pc' && raw.pc === undefined && raw.steam === undefined) {
-    return { ok: false, message: t('manifest.pcOrSteamRequired') };
-  }
   // The PC library keeps its OWN save backup (`saves/<id>`, substituted below), so a `saveOnCard` there
   // names a folder that would be silently overwritten by that substitution. The schema catches it next to
   // a `pc` block; this catches it next to a `steam` one, where the schema has no reason to.
   if (source === 'pc' && raw.saveOnCard !== undefined) {
     return { ok: false, message: t('manifest.pcWithSaveOnCard') };
   }
+  // PC-library dialect: `executable`/`install` describe a card-relative game, and the library has no card
+  // root to resolve one against. Without this, a PC-library entry naming a bare `executable` would fall
+  // into the "normal game" branch below and resolve it relative to pc-games/ — an unplanned fifth launch
+  // mode. The schema no longer requires ANY launch method (see the draft branch below), so this check is
+  // now the only thing keeping that combination out for source 'pc'.
+  if (source === 'pc' && raw.executable !== undefined) {
+    return { ok: false, message: t('manifest.executableOnPcLibrary') };
+  }
+  if (source === 'pc' && raw.install !== undefined) {
+    return { ok: false, message: t('manifest.installOnPcLibrary') };
+  }
+  // The card dialect still requires an explicit launch method — the schema used to enforce this for every
+  // source; relaxing it for the PC-library draft state (above) means the card's requirement has to be
+  // stated somewhere. Formally redundant with the raw.executable === undefined guards in the branches
+  // below (each launch-method branch checks it again for its own mode), kept as one documented statement.
+  if (source === 'card' && raw.steam === undefined && raw.executable === undefined) {
+    return { ok: false, message: t('manifest.executableRequired') };
+  }
 
-  // Critical branch: the meaning of `executable` depends on the mode. Keep the four paths
-  // explicit so the normal flow is provably untouched.
+  // Critical branch: the meaning of `executable` depends on the mode. Keep the paths explicit so the
+  // normal flow is provably untouched.
   let executablePath: string;
   let cwd: string;
   let installResolved: ResolvedManifest['install'];
   let steamResolved: ResolvedManifest['steam'];
+  let unconfigured: true | undefined;
   if (raw.pc !== undefined) {
     // PC mode: the executable is an ABSOLUTE path on this machine, stored in the native form of the OS
     // that wrote it (the PC library never travels — see ManifestSource). Its existence is deliberately
@@ -650,6 +662,12 @@ async function resolveOne(
     executablePath = '';
     cwd = '';
     steamResolved = { appid: raw.steam.appid };
+  } else if (source === 'pc') {
+    // Draft: no pc, no steam, and (per the checks above) no executable/install either — the game is
+    // visible in the PC library but has no configured way to launch it yet (Р1 — unconfigured launch).
+    executablePath = '';
+    cwd = '';
+    unconfigured = true;
   } else if (raw.install === undefined) {
     // Normal game: `executable` is card-relative and MUST exist on the card (unchanged behaviour).
     // The schema guarantees `executable` is present here (non-steam ⇒ required); guard defensively.
@@ -790,6 +808,7 @@ async function resolveOne(
     ...(backgroundMusicPath !== undefined ? { backgroundMusicPath } : {}),
     ...(installResolved !== undefined ? { install: installResolved } : {}),
     ...(steamResolved !== undefined ? { steam: steamResolved } : {}),
+    ...(unconfigured === true ? { unconfigured: true as const } : {}),
   };
   return { ok: true, manifest };
 }
@@ -877,14 +896,25 @@ function pushGameSemanticIssues(
   if (source === 'card' && raw.pc !== undefined) {
     issues.push({ path: field('pc'), message: t('manifest.pcOnCard') });
   }
+  // The card dialect still requires an explicit launch method — the editor's half of the check resolveOne
+  // makes (the schema no longer enforces this on its own, to allow the PC-library draft state).
+  if (source === 'card' && raw.steam === undefined && raw.executable === undefined) {
+    issues.push({ path: field('executable'), message: t('manifest.executableRequired') });
+  }
   if (source === 'pc') {
-    if (raw.pc === undefined && raw.steam === undefined) {
-      issues.push({ path: field('pc'), message: t('manifest.pcOrSteamRequired') });
-    } else if (raw.pc !== undefined && !path.isAbsolute(path.normalize(raw.pc.executable))) {
+    if (raw.pc !== undefined && !path.isAbsolute(path.normalize(raw.pc.executable))) {
       issues.push({
         path: field('pc.executable'),
         message: t('manifest.pcExecutableAbsolute', { path: raw.pc.executable }),
       });
+    }
+    // Mirrors resolveOne: a PC-library entry has no card root to resolve a card-relative launch method
+    // against. Draft (neither pc, steam, executable, nor install) is the only other shape allowed.
+    if (raw.executable !== undefined) {
+      issues.push({ path: field('executable'), message: t('manifest.executableOnPcLibrary') });
+    }
+    if (raw.install !== undefined) {
+      issues.push({ path: field('install'), message: t('manifest.installOnPcLibrary') });
     }
     // Mirrors resolveOne: the library supplies the backup side itself, so naming one is always an error.
     if (raw.saveOnCard !== undefined) {

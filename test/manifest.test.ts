@@ -146,9 +146,14 @@ describe('validateManifestText', () => {
     expect(result.ok).toBe(false);
   });
 
-  it('rejects a non-steam manifest with no executable (schema)', () => {
+  it('rejects a non-steam CARD manifest with no executable (semantic — the schema no longer requires it, to allow the PC-library draft state)', () => {
     const result = validateManifestText(JSON.stringify({ schemaVersion: 1, id: 'x', title: 'X' }), t);
     expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.issues.some((i) => i.path === 'executable')).toBe(true);
+      // heroRequired fires in the same pass now that the schema itself no longer short-circuits.
+      expect(result.issues.some((i) => i.path === 'heroImage')).toBe(true);
+    }
   });
 
   it('rejects steam mode without watchProcesses (schema)', () => {
@@ -549,7 +554,7 @@ describe('validateManifestText — pc mode', () => {
     if (!result.ok) expect(result.issues.some((i) => i.path === 'pc')).toBe(true);
   });
 
-  it('rejects a manifest without a pc block for source "pc"', () => {
+  it('rejects a card-dialect executable in the PC library (B1 — no fifth launch mode)', () => {
     const text = JSON.stringify({
       schemaVersion: 1,
       id: 'x',
@@ -559,7 +564,17 @@ describe('validateManifestText — pc mode', () => {
     });
     const result = validateManifestText(text, t, 'pc');
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.issues.some((i) => i.path === 'pc')).toBe(true);
+    if (!result.ok) expect(result.issues.some((i) => i.path === 'executable')).toBe(true);
+  });
+
+  it('accepts a draft with no launch method configured yet', () => {
+    const text = JSON.stringify({
+      schemaVersion: 1,
+      id: 'x',
+      title: 'X',
+      heroImage: 'assets/hero.jpg',
+    });
+    expect(validateManifestText(text, t, 'pc').ok).toBe(true);
   });
 
   it('rejects a relative pc.executable', () => {
@@ -621,7 +636,7 @@ describe('validateManifestText — a STEAM game in the PC library', () => {
     expect(validateManifestText(steamGame(), t, 'pc').ok).toBe(true);
   });
 
-  it('still rejects a library manifest that is neither pc nor steam', () => {
+  it('still rejects a card-dialect executable in the PC library, even with steam-shaped fields absent', () => {
     const text = JSON.stringify({
       schemaVersion: 1,
       id: 'x',
@@ -631,7 +646,7 @@ describe('validateManifestText — a STEAM game in the PC library', () => {
     });
     const result = validateManifestText(text, t, 'pc');
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.issues.some((i) => i.path === 'pc')).toBe(true);
+    if (!result.ok) expect(result.issues.some((i) => i.path === 'executable')).toBe(true);
   });
 
   it('rejects saveOnCard for a LOCAL steam game (the library keeps the backup itself)', () => {
@@ -735,6 +750,29 @@ describe('readManifests — pc source', () => {
     const result = await readManifests(pcRoot, env, resolveInstallDir, { source: 'pc' });
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.manifests).toEqual([]);
+  });
+
+  it('rejects an install block in the PC library, even without executable (B1)', async () => {
+    await write({
+      schemaVersion: 1,
+      id: 'x',
+      title: 'X',
+      install: { installer: 's.exe', type: 'nsis' },
+    });
+    const result = await readManifests(pcRoot, env, resolveInstallDir, { source: 'pc' });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.manifests).toEqual([]);
+  });
+
+  it('resolves a draft PC game with no launch method and marks it unconfigured', async () => {
+    await write({ schemaVersion: 1, id: 'x', title: 'X', heroImage: 'assets/hero.jpg' });
+    const result = await readManifests(pcRoot, env, resolveInstallDir, { source: 'pc' });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const manifest = result.manifests[0];
+    expect(manifest?.unconfigured).toBe(true);
+    expect(manifest?.executablePath).toBe('');
+    expect(manifest?.cwd).toBe('');
   });
 
   it('treats a missing game.json as an empty library', async () => {

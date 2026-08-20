@@ -300,6 +300,8 @@ export interface ResolvedManifest {
   readonly steam?: {
     readonly appid: number;
   };
+  /** PC library only: no launch method chosen yet — the game is visible but cannot be started. */
+  readonly unconfigured?: true;
 }
 
 /**
@@ -355,6 +357,12 @@ export interface LibraryEntry {
    * Absent while the background copy hasn't produced a record yet.
    */
   readonly artRev?: string;
+  /**
+   * PC library only: no launch method chosen yet. `active` stays true (the game IS the current local
+   * library — Customize must stay reachable), so consumers that gate on "ready to play" (the carousel
+   * dot, the "Ready to play" section, Play itself) must check this flag too, not `active` alone.
+   */
+  readonly unconfigured?: true;
 }
 
 /** The carousel list, already in display order — the renderer never sorts it (see orderForCarousel). */
@@ -463,6 +471,13 @@ export interface GameInfo {
    * verified at read time (and whose absence drops them from the card instead).
    */
   readonly unavailable?: boolean;
+  /**
+   * PC mode only: no launch method has been configured yet (a saved draft — see ResolvedManifest). The
+   * card stays in the library, fully editable, but Play is hidden and the status line is left EMPTY (the
+   * absent button already says it — see state-view.ts `statusOf`) — checked BEFORE `unavailable`, which
+   * does not apply (there is no executable to be missing).
+   */
+  readonly unconfigured?: boolean;
 }
 
 /** The flow state machine (discriminated union). */
@@ -642,7 +657,26 @@ export type AppNotification =
    * happened: the launcher's library cannot show it until that card becomes active. There is no `gameId`
    * on purpose — the id names nothing the launcher can open, so pressing this entry only dismisses it.
    */
-  | (NotificationBase & { readonly kind: 'game-added-deferred'; readonly gameTitle: string });
+  | (NotificationBase & { readonly kind: 'game-added-deferred'; readonly gameTitle: string })
+  /** Same as `game-added-deferred`, but for a local game MOVED onto a card that is not active (Р2.5). */
+  | (NotificationBase & { readonly kind: 'game-moved-deferred'; readonly gameTitle: string })
+  /**
+   * A move to card succeeded, but its save folder already existed and was NOT empty on the card — the
+   * game's PC-side saves were left uncopied rather than overwriting someone else's progress there.
+   */
+  | (NotificationBase & { readonly kind: 'game-move-save-skipped'; readonly gameTitle: string })
+  /**
+   * The worst outcome a move can end in: the card was written, removing the game from the PC library
+   * failed, and undoing the card write failed too — so the game now exists in BOTH places. Defined
+   * behaviour rather than corruption (an inserted card shadows its local twin), but the user has to be
+   * told, because the screen reports the move as done and closes.
+   */
+  | (NotificationBase & { readonly kind: 'game-move-duplicate'; readonly gameTitle: string })
+  /**
+   * A settings change could not be written to disk, so it did not stick. Carries no detail: the cause is
+   * in the log, and the only thing the user can act on is that their setting did not save.
+   */
+  | (NotificationBase & { readonly kind: 'settings-write-failed' });
 
 // Distributes over the union so each member loses the base fields on its own (a plain Omit would
 // collapse the three into one non-discriminated object).
@@ -837,6 +871,11 @@ export const IPC = {
    * screen — the chosen root may not carry a single game yet, which `hasManifest` states outright.
    * Payload the root; answers with ConfigRootReadResult. */
   gameConfigReadRoot: 'gameConfig:read-root',
+  /** game-renderer → main (invoke): moves a local (PC-library) game onto a card in one transaction — the
+   * whole point being that the renderer cannot do "write the card, then write the library" as two
+   * gameConfig:save calls without a window where the game exists twice or nowhere (see the plan, Р2.5).
+   * Payload GameMoveRequest; answers with ConfigMoveResult. */
+  gameConfigMoveToCard: 'gameConfig:move-to-card',
   /** game-renderer → main (invoke): the system clipboard as text, for the on-screen keyboard's Paste.
    * Reading it belongs to main like every other environment fact; the renderer is sandboxed and its own
    * clipboard API would need a permission prompt that Game Mode has nowhere to show. No payload. */
@@ -1013,6 +1052,51 @@ export interface GameConfigSaveRequest {
   readonly signature: string;
   readonly text: string;
 }
+
+/**
+ * Payload for gameConfig:move-to-card — moving a local (PC-library) game onto a card (see the plan Р2.5).
+ * `fromText` is deliberately NOT part of this payload: main derives the PC library's post-move text
+ * itself, from a fresh read, by removing the game being moved (see game-move.ts) — the same
+ * never-trust-the-renderer's-derived-text stance the rest of this file takes for the writable side of a
+ * save (GameConfigService.save re-validates instead of trusting the renderer's verdict).
+ */
+export interface GameMoveRequest {
+  /** The id the moved game carries in `toText` — i.e. what it will be called ON THE CARD. */
+  readonly id: string;
+  /**
+   * The id the game was READ with, and the only thing the PC-library side of the move is addressed by
+   * (which slot to remove, whose manifest to resolve, whose sync-state to drop).
+   *
+   * Separate from `id` on purpose: `id` comes from an editable form field, so the two can disagree, and
+   * addressing the library by the EDITED value would remove — and copy the assets and saves of — whichever
+   * other local game happens to answer to it. main additionally refuses a move where they differ at all:
+   * a rename would orphan everything keyed by the old id (stats, history, pending-flush) — see the plan's
+   * assumption 4 — so the rename belongs in a separate Save, before or after the move.
+   */
+  readonly fromId: string;
+  readonly fromRoot: string;
+  /** The signature gameConfig:read gave for the PC library — a mismatch means it changed underneath us. */
+  readonly fromSignature: string;
+  readonly toRoot: string;
+  /** The signature the target card was read against (gameConfig:sources / gameConfig:read-root). */
+  readonly toSignature: string;
+  /** The target card's WHOLE game.json text, with the moved game's slot already inserted. */
+  readonly toText: string;
+}
+
+/**
+ * Result of a PC → card move. `moved` false → nothing changed on EITHER side (message tells why).
+ * `applied` mirrors ConfigSaveResult's meaning for the TARGET card. There is no `warning` counterpart:
+ * a move that succeeded but skipped something non-fatal (an existing non-empty save folder on the card,
+ * a library write that could not be undone) closes the screen, so the only place left to say it is a
+ * notification — which is where main sends it.
+ */
+export type ConfigMoveResult =
+  | {
+      readonly moved: true;
+      readonly applied: 'applied' | 'deferred';
+    }
+  | { readonly moved: false; readonly message: string };
 
 /**
  * Payload for gameConfig:accept-path: absolute path(s) the in-launcher picker chose, and what field they
@@ -1209,6 +1293,8 @@ export interface RendererApi {
   listGameConfigSources(): Promise<readonly DriveCandidate[]>;
   /** The manifest text of one ROOT, for adding a game to it (the root may carry no game yet). */
   readGameConfigRoot(root: string): Promise<ConfigRootReadResult>;
+  /** Moves a local (PC-library) game onto a card in one transaction (see GameMoveRequest). */
+  moveGameConfigToCard(request: GameMoveRequest): Promise<ConfigMoveResult>;
   /** The clipboard as text, for the on-screen keyboard's Paste key. Empty when there is nothing to paste. */
   readClipboard(): Promise<string>;
 

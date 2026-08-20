@@ -42,7 +42,11 @@ type ConfirmMode =
   // an answer rather than a cancel — see the confirmNo branch in triggerStackButton.
   | 'delete-game-history'
   | 'discard-game-settings'
-  | 'switch-game-source';
+  | 'switch-game-source'
+  // Leaving the screen (B/veil/Close) while a "Move to card…" is pending — drops the pending move and
+  // returns the form to the PC library's baseline, WITHOUT closing the screen (see game-settings-screen.ts
+  // PendingMove). Kept apart from 'discard-game-settings', whose "Yes" closes the whole screen.
+  | 'cancel-move-game-settings';
 // Gamepad A doesn't trigger :active, so flash a press class to play the scale-down animation.
 const PRESS_MS = 130;
 /** How far the pointer must travel before hover may take the focus again (see armHover). */
@@ -125,7 +129,7 @@ export interface GameSettingsNav extends NavSurface {
   deletesLocalGame(): boolean;
   /** The shared confirm popup said yes to one of the screen's questions. */
   confirmAccepted(
-    kind: 'reset' | 'delete' | 'delete-history' | 'discard' | 'switch-source',
+    kind: 'reset' | 'delete' | 'delete-history' | 'discard' | 'switch-source' | 'cancel-move',
   ): void;
 }
 
@@ -164,7 +168,9 @@ export interface Controls {
   /** The Settings screen asked to reset — opens the shared confirm popup (No returns to Settings). */
   confirmResetSettings(): void;
   /** The Customize screen asked one of its questions — opens the same shared confirm popup. */
-  confirmGameSettings(kind: 'reset' | 'delete' | 'delete-history' | 'discard' | 'switch-source'): void;
+  confirmGameSettings(
+    kind: 'reset' | 'delete' | 'delete-history' | 'discard' | 'switch-source' | 'cancel-move',
+  ): void;
   /**
    * Opens the surface one of the carousel's launcher cards stands for. The card plays the press sound
    * itself (app.ts), so nothing here does — the surface's own popup-open follows it.
@@ -551,7 +557,14 @@ export function createControls(deps: ControlsDeps): Controls {
     }
     // A game written to a card that is not active has no entry in the library to open — the notification
     // says where it went, and pressing it does nothing beyond dismissing it.
-    if (item.kind === 'game-added-deferred') return;
+    if (
+      item.kind === 'game-added-deferred' ||
+      item.kind === 'game-moved-deferred' ||
+      item.kind === 'game-move-save-skipped' ||
+      item.kind === 'game-move-duplicate' ||
+      item.kind === 'settings-write-failed'
+    )
+      return;
     deps.openGameDetail(item.gameId);
   }
 
@@ -662,9 +675,10 @@ export function createControls(deps: ControlsDeps): Controls {
       mode === 'delete-game' ||
       mode === 'delete-game-history' ||
       mode === 'discard-game-settings' ||
-      mode === 'switch-game-source'
+      mode === 'switch-game-source' ||
+      mode === 'cancel-move-game-settings'
     ) {
-      // The Customize screen's three questions. Same shape as the Settings reset: the screen stays open
+      // The Customize screen's questions. Same shape as the Settings reset: the screen stays open
       // underneath, so "No" simply closes the popup and hands control back to it.
       confirmReturnTo = 'game-settings';
       popup.dataset['mode'] = mode;
@@ -677,9 +691,11 @@ export function createControls(deps: ControlsDeps): Controls {
             ? t()('gameSettings.confirmDiscard')
             : mode === 'switch-game-source'
               ? t()('gameSettings.confirmSwitchSource')
-              : mode === 'delete-game-history'
-                ? t()('gameSettings.confirmDeleteHistory', { title: browse?.title ?? '' })
-                : t()('gameSettings.confirmDelete', { title: browse?.title ?? '' });
+              : mode === 'cancel-move-game-settings'
+                ? t()('gameSettings.confirmCancelMove')
+                : mode === 'delete-game-history'
+                  ? t()('gameSettings.confirmDeleteHistory', { title: browse?.title ?? '' })
+                  : t()('gameSettings.confirmDelete', { title: browse?.title ?? '' });
       // The second question's own note: what each of ITS answers costs. It matters more than the first
       // one's, because "No" here does not mean "never mind" — it deletes the game and keeps the card.
       if (mode === 'delete-game-history') {
@@ -1185,6 +1201,8 @@ export function createControls(deps: ControlsDeps): Controls {
     const game = screenGame();
     // A local game whose files are gone: there is nothing to start, and the status line already says so.
     if (game?.unavailable === true) return audio.playLimit();
+    // A local game with no launch method configured yet: same dead end, different reason.
+    if (game?.unconfigured === true) return audio.playLimit();
     // Steam download in progress: the gear opens Steam's Downloads page, where the user can
     // pause/resume (we can't control that programmatically).
     if (game?.steamInstalling === true) {
@@ -1357,6 +1375,10 @@ export function createControls(deps: ControlsDeps): Controls {
       case 'switch-game-source':
         audio.play('button');
         deps.gameSettings.confirmAccepted('switch-source');
+        break;
+      case 'cancel-move-game-settings':
+        audio.play('back');
+        deps.gameSettings.confirmAccepted('cancel-move');
         break;
     }
   }
@@ -1587,7 +1609,11 @@ export function createControls(deps: ControlsDeps): Controls {
     noteGamepadActivity();
     if (repeat) noteFlip();
     if (popupView !== 'none') {
-      if (!repeat) moveStackFocus(-1);
+      // Held presses move here like they do in every other vertical list: the notification inbox is a
+      // LIST, long enough that stepping it one press at a time is work, and the shorter action stacks
+      // follow the same rule so a hold means one thing everywhere. The focus wraps (moveStackFocus), so
+      // there is no edge to stop at — a hold simply keeps going until it is released.
+      moveStackFocus(-1);
       return;
     }
     const overlay = overlays.active();
@@ -1607,7 +1633,7 @@ export function createControls(deps: ControlsDeps): Controls {
     noteGamepadActivity();
     if (repeat) noteFlip();
     if (popupView !== 'none') {
-      if (!repeat) moveStackFocus(1);
+      moveStackFocus(1); // see navUp — a held direction runs the stack, same as any other list
       return;
     }
     const overlay = overlays.active();
@@ -1798,9 +1824,9 @@ export function createControls(deps: ControlsDeps): Controls {
     backspace: navBack,
     escape: navBack,
   };
-  // The four directions are the exception to the edge model: holding one flips through the carousel or
-  // runs down the Settings list, matching the gamepad's hold-to-repeat (a held direction inside a popup
-  // stack is dropped by navUp/navDown themselves). The repeat is OURS, on a timer — the OS supplies its
+  // The four directions are the exception to the edge model: holding one flips through the carousel,
+  // runs down the Settings list or through a popup stack, matching the gamepad's hold-to-repeat. The
+  // repeat is OURS, on a timer — the OS supplies its
   // own, but at a rate and an initial delay that are the user's system settings, not ours, so the two
   // input models would drift apart (and chaining one run into the next would be impossible: the OS
   // restarts its full delay on every new key). Native repeats are dropped. Every other key stays one
@@ -1931,7 +1957,9 @@ export function createControls(deps: ControlsDeps): Controls {
               ? 'delete-game-history'
               : kind === 'switch-source'
                 ? 'switch-game-source'
-                : 'discard-game-settings',
+                : kind === 'cancel-move'
+                  ? 'cancel-move-game-settings'
+                  : 'discard-game-settings',
       ),
     openSystemCard,
     openAddGame,

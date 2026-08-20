@@ -192,7 +192,7 @@ export function createCarousel(deps: CarouselDeps): Carousel {
    */
   function showsDot(item: CarouselItem): boolean {
     if (item.kind === 'system') return item.card.id === 'notifications' && unread;
-    return item.game.active || item.game.id === busyId;
+    return (item.game.active && item.game.unconfigured !== true) || item.game.id === busyId;
   }
 
   /** The strip's translation + the per-card selected/active/busy state. Cheap; safe to call often. */

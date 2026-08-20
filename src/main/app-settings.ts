@@ -30,10 +30,12 @@ const settingsObject = z.object({
   preventScreensaver: z.boolean().default(true),
   musicVolume: z.number().min(0).max(1).default(0.5),
   sfxVolume: z.number().min(0).max(1).default(1),
-  // Stay on screen with no card in instead of hiding to the tray. `.default(false)` keeps the original
-  // background-app behaviour for an older settings.json without the field; a file written under the old
-  // name (alwaysShowEmptyScreen) is carried over by the preprocess below.
-  keepOpenWithoutCard: z.boolean().default(false),
+  // Stay on screen with no card in instead of hiding to the tray. Defaults ON: the launcher grew its own
+  // reasons to be up without a card (the library, the local PC games, the settings), so vanishing to the
+  // tray the moment a card is pulled hides a UI that still has something to show. A file written under
+  // the old name (alwaysShowEmptyScreen) is carried over by the preprocess below; a file that already has
+  // the key keeps whatever the user chose, so this only changes what a FRESH install does.
+  keepOpenWithoutCard: z.boolean().default(true),
   // Disable trying silent mode for install-mode installers (they show their wizard instead). `.default(false)`
   // keeps the original silent behaviour for an older settings.json without the field.
   disableSilentInstall: z.boolean().default(false),
@@ -61,8 +63,8 @@ const settingsObject = z.object({
 /**
  * `alwaysShowEmptyScreen` was renamed to `keepOpenWithoutCard` when the screen it was named after went
  * away (the launcher cards replaced it); the SETTING is the same one, so a file written by an older
- * build must keep its value. Without this the `.default(false)` above would swallow the missing key
- * without a trace and quietly switch the toggle off for everyone who had turned it on.
+ * build must keep its value. Without this the `.default(true)` above would swallow the missing key
+ * without a trace and force the toggle ON for everyone who had deliberately turned it off.
  *
  * No schemaVersion bump — this is the same in-place style of migration `language`, `steamAppIdU32` and
  * `soundSet` already use.
@@ -91,7 +93,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   preventScreensaver: true,
   musicVolume: 0.5,
   sfxVolume: 1,
-  keepOpenWithoutCard: false,
+  keepOpenWithoutCard: true,
   disableSilentInstall: false,
   steamAppIdU32: null,
   steamAutoLaunch: true,
@@ -116,6 +118,13 @@ export class AppSettingsStore {
   constructor(
     private readonly baseDir: string,
     private readonly onChange?: (next: AppSettings) => void,
+    /**
+     * Called when a write FAILS, for the one thing every caller would otherwise have to notice on its
+     * own: a settings change that silently did not stick. Each setter already logs its own failure, but
+     * the user is looking at a toggle that flipped back — or, for the language, at a UI that did not
+     * change at all — with nothing to explain it. Optional, like `onChange` (the daemon passes neither).
+     */
+    private readonly onWriteFailed?: (cause: unknown) => void,
   ) {
     this.settingsPath = path.join(baseDir, 'settings.json');
   }
@@ -145,8 +154,15 @@ export class AppSettingsStore {
 
   /** The actual atomic write — called ONLY from inside a queued op, so it never enqueues (would deadlock). */
   private async persist(next: AppSettings): Promise<void> {
-    await fse.ensureDir(this.baseDir);
-    await writeJsonAtomic(this.settingsPath, next);
+    try {
+      await fse.ensureDir(this.baseDir);
+      await writeJsonAtomic(this.settingsPath, next);
+    } catch (cause) {
+      // Reported here rather than at each setter's own catch: every one of them fails the same way and
+      // for the same reason, and the user needs telling once, not per setting.
+      this.onWriteFailed?.(cause);
+      throw cause;
+    }
     this.onChange?.(next);
   }
 

@@ -143,6 +143,7 @@ export const en = {
   'launcher.installChatter10': 'Warming up the SSD for the big moment...',
   // A local (PC) game whose executable is no longer on disk — the card stays, only Play is disabled.
   'launcher.state.gameFilesMissing': 'Game files not found',
+  'launcher.state.launchNotConfigured': 'Launch is not set up',
   'launcher.state.running': 'Running...',
   'launcher.state.killing': 'Force closing...',
   'launcher.state.syncingOut': 'Saving progress...',
@@ -230,6 +231,15 @@ export const en = {
   'gameConfig.pickNeedsFile': 'Pick a file for this field.',
   'gameConfig.pickWrongType': 'That file type does not fit this field.',
   'gameConfig.listFailed': 'This folder could not be opened.',
+  // Move to card (Р2.5) — GameConfigService.moveToCard.
+  'gameConfig.moveGameBusy': 'Wait for the current install or launch to finish, then try again.',
+  'gameConfig.moveIdTaken': 'This card already has a game with the same id.',
+  'gameConfig.moveIdChanged':
+    'The id cannot be changed while moving the game — move it first, then rename it on the card.',
+  'gameConfig.moveLibraryInvalid':
+    'Another game in the PC library has a problem that has to be fixed first: {reason}',
+  'gameConfig.moveFilesNotOnCard': "Copy the game's own files onto the card first.",
+  'gameConfig.moveAssetMissing': 'This file is gone from the PC and cannot be moved: {path}',
 
   // ── Customize screen: what the SCREEN itself says (game-settings-*.ts) ──────
   'launcher.menu.customize': 'Customize',
@@ -242,6 +252,14 @@ export const en = {
   'notifications.gameUninstalled': '{title} has been removed',
   'notifications.gameAddedDeferred':
     '{title} was written to the card. It shows up once that card is the active one.',
+  'notifications.gameMovedDeferred':
+    '{title} was moved to the card. It shows up once that card is the active one.',
+  'notifications.gameMoveSaveSkipped':
+    '{title} was moved to the card, but its save folder there already had something in it — the PC saves were left uncopied.',
+  'notifications.settingsWriteFailed':
+    'Your settings could not be saved and will be back as they were on the next start. Playhook has no write access to its settings file.',
+  'notifications.gameMoveDuplicate':
+    '{title} was written to the card, but could not be removed from the PC library — it now exists in both places. Remove the local copy through Customize.',
   'notifications.empty': 'No notifications',
   'notifications.clearAll': 'Clear all',
   // Timestamp of a list entry: today shows the time alone, yesterday is named, older gets a date.
@@ -293,7 +311,9 @@ export const en = {
   'gameSettings.modeExecutable': 'Run from the card',
   'gameSettings.modeInstaller': 'Install from the card',
   'gameSettings.modeSteam': 'Steam',
-  'gameSettings.modePc': 'Installed on this PC',
+  'gameSettings.modePc': 'Executable file',
+  'gameSettings.modeNone': 'Not set up yet',
+  'gameSettings.modeNoneHint': 'The game will not start until this is filled in',
   'gameSettings.mixedLaunchModes':
     'This manifest describes more than one launch type. Only the selected one is kept; saving removes the others.',
   'gameSettings.executable': 'Executable',
@@ -344,6 +364,7 @@ export const en = {
   'gameSettings.umuGameIdAuto': 'automatic',
   'gameSettings.umuGameIdHint': 'Applies that game’s protonfix instead of the generic one (Linux).',
   'gameSettings.save': 'Save',
+  'gameSettings.moveToCard': 'Move to card',
   // The Save button in add mode: nothing is being saved back, a game is being created.
   'gameSettings.add': 'Add',
   'gameSettings.reset': 'Discard edits',
@@ -370,6 +391,10 @@ export const en = {
   'gameSettings.confirmDiscard': 'Leave without saving? The changes are lost.',
   'gameSettings.confirmSwitchSource':
     'Add the game somewhere else? The paths and the install settings are cleared — the name and the rest stay.',
+  'gameSettings.confirmCancelMove':
+    'Stop moving this game to a card? Nothing has been written yet — the game stays in the PC library.',
+  'gameSettings.moveToCardTitle': 'Move to card',
+  'gameSettings.moveNoCards': 'Insert a card to move this game onto it.',
   'gameSettings.confirmDelete': 'Delete "{title}" from the manifest?',
   // The second half of the delete question. Its "No" is an ANSWER, not a way out — hence the last line:
   // backing out of the question is what cancels the deletion.
@@ -440,7 +465,8 @@ export const en = {
   'manifest.pcWithExecutable': 'executable is not allowed in pc mode (use pc.executable)',
   'manifest.pcWithSaveOnCard': 'saveOnCard is not allowed for a local game (Playhook keeps the backup)',
   'manifest.pcOnCard': 'the pc block is only allowed for local games, not on a card',
-  'manifest.pcOrSteamRequired': 'a local game requires either the pc block or the steam block',
+  'manifest.executableOnPcLibrary': 'executable is not allowed in the PC library (use pc.executable)',
+  'manifest.installOnPcLibrary': 'install is not allowed in the PC library (use pc.executable)',
   'manifest.pcExecutableAbsolute': 'pc.executable must be an absolute path: {path}',
   // Pure-function messages (expandPcSavePath / resolveInstall / readManifest / validateManifestText):
   // the functions receive the translator and interpolate directly.

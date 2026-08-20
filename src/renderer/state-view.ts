@@ -45,6 +45,10 @@ export function statusOf(state: AppState, t: Translator): string {
     case 'syncing-out':
       return t('launcher.state.syncingOut');
     case 'ready': {
+      // A local (PC) draft with no launch method chosen yet: no status line — the absent Play button
+      // already says everything that needs saying, and "Launch is not set up" read as an error to fix
+      // right now rather than as the deliberate, in-progress state a draft actually is.
+      if (state.game.unconfigured === true) return '';
       // A local (PC) game whose files are gone: the card stays in the library, but there is nothing to
       // launch, so say so instead of leaving an empty status under a dead Play button.
       if (state.game.unavailable === true) return t('launcher.state.gameFilesMissing');

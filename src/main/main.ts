@@ -45,6 +45,10 @@ const gameModeSession = isGamescopeSession();
 let trayRef: Tray | null = null;
 let controllerRef: GameController | null = null;
 let windowRef: GameWindow | null = null;
+// The inbox is built AFTER the settings store (it needs the window presence the store's own callback
+// also reaches for), so the store reports a failed write through this rather than through a constructor
+// argument that does not exist yet — the same late-binding `windowRef` above solves for the window.
+let notificationsRef: NotificationsService | null = null;
 let globalGamepadRef: GlobalGamepad | null = null;
 let keepAwakeRef: KeepAwakeService | null = null;
 let quitting = false;
@@ -142,10 +146,16 @@ async function bootstrap(): Promise<void> {
   // the launcher, so the Settings screen never has to derive state from a setter's own return value —
   // and a setter added later cannot forget to notify. windowRef is used (not `window`, declared below)
   // because this runs before the window exists; the guard covers that gap.
-  const settings = new AppSettingsStore(app.getPath('userData'), (next) => {
-    const bw = windowRef?.browserWindow ?? null;
-    if (bw !== null && !bw.isDestroyed()) bw.webContents.send(IPC.settingsUpdate, next);
-  });
+  const settings = new AppSettingsStore(
+    app.getPath('userData'),
+    (next) => {
+      const bw = windowRef?.browserWindow ?? null;
+      if (bw !== null && !bw.isDestroyed()) bw.webContents.send(IPC.settingsUpdate, next);
+    },
+    // A settings write that fails leaves the user looking at a toggle that flipped back (or a language
+    // that did not change) with no explanation — every setter logs its own cause, this says it on screen.
+    () => notificationsRef?.notifySettingsWriteFailed(),
+  );
   const initialSettings = await settings.read();
   summonHotkeyEnabled = initialSettings.summonHotkeyEnabled;
 
@@ -178,6 +188,7 @@ async function bootstrap(): Promise<void> {
       if (bw !== null && !bw.isDestroyed()) bw.webContents.send(channel, payload);
     },
   });
+  notificationsRef = notifications; // the settings store reports a failed write through it (see above)
   await notifications.init();
 
   // One summary plate for everything that piled up while a game was running. StateManager.subscribe
@@ -314,6 +325,10 @@ async function bootstrap(): Promise<void> {
     toManifestPcSavePath: (absolute) => platform.savePathResolver.toManifestPcSavePath(absolute),
     findGameSource: (id) => controller.findGameSource(id),
     notify: (input) => notifications.notify(input),
+    resolveManifest: (id) => controller.findManifest(id),
+    isBusy: () => controller.isBusy(),
+    pcStore: store,
+    savePathResolver: platform.savePathResolver,
   });
   gameConfig.init();
 

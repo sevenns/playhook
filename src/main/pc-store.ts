@@ -11,6 +11,7 @@ import { type ResolvedManifest, type Stats } from '../shared/types';
 import { readJsonValidated, writeJsonAtomic } from './json-store';
 import { type SyncState } from './save-sync';
 import { log } from './logger';
+import { describe } from './util';
 
 // Exported so stats.ts can build the per-id card-stats map schema (v2) on top of the same single-game
 // shape — one source of truth for what a valid Stats record is.
@@ -200,5 +201,20 @@ export class PcStore {
     const target = this.syncStatePath(id, slot);
     await fse.ensureDir(path.dirname(target));
     await writeJsonAtomic(target, state);
+  }
+
+  /**
+   * Drops a game's sync baseline. Used when a local game moves to a card (Р2.5): its `pc` baseline
+   * partnered the PC-library backup with the local save folder, and that pairing no longer exists once
+   * the game leaves the library — keeping it would read as a stale baseline and could report a false
+   * conflict if the game is ever moved back to the PC. Silent on an already-absent file (the normal case
+   * for a game whose saves were never synced).
+   */
+  async removeSyncState(id: string, slot: SyncSlot = 'card'): Promise<void> {
+    try {
+      await fse.remove(this.syncStatePath(id, slot));
+    } catch (cause) {
+      log.warn(`[sync-state] failed to remove the "${slot}" baseline for "${id}":`, describe(cause));
+    }
   }
 }

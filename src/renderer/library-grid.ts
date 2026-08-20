@@ -100,5 +100,5 @@ export function filterLibrary(
   filter: LibraryFilter,
 ): readonly LibraryEntry[] {
   if (filter === 'all') return games;
-  return games.filter((game) => game.active);
+  return games.filter((game) => game.active && game.unconfigured !== true);
 }
