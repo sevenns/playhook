@@ -588,12 +588,15 @@ body {
   transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1), height 0.35s cubic-bezier(0.4, 0, 0.2, 1),
     opacity 0.4s cubic-bezier(0.2, 0, 0.2, 1) 0.35s;
 }
-/* Coming back from a detail screen, the selected card grows out of the play button over 0.35s. A
-   full-size body under a card that is a third of the way there reads as broken, so it waits the grow out
-   and then fades in — the same delayed opacity #carousel already uses. */
+/* Coming back from a detail screen the body waits for the CARD, and the delay is 0.35s rather than the
+   --morph the container uses — the two are not the same moment, which is what made the hand-back blink.
+   The container switches on at 0.24s while the selected card stays transparent until 0.35s (it swaps in
+   opaque as the play button goes, see .card.is-selected below). Started at 0.24s the body spent those
+   110ms alone on screen, burning up to 0.85 opacity under a button that had not finished growing — a
+   flash of colour where the cover was about to be. Now both arrive in the same frame. */
 #app[data-screen='carousel'] #carousel-jelly {
   opacity: 1;
-  transition: opacity 0.2s ease var(--morph);
+  transition: opacity 0.2s ease 0.35s;
 }
 /* The startup fan (carousel.playIntro) needs longer: there the selected card fades in WITH the row
    rather than swapping in opaque, so it only starts appearing at 0.35s and is not done until 0.75s —
