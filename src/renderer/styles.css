@@ -375,14 +375,40 @@ body {
    absolute` in a positioned container, so it is out of the flow entirely — no part of the strip's flex
    row, no part of the grid's tracks — and carried by whatever moves that container.
 
-   TWO layers, and that is not decoration either: the pulse is a `transform: scale`, the travel is a
-   `transform: translate`, and one element has only one transform. The outer layer moves, the inner one
-   breathes. */
+   TWO layers, and that is not decoration either: the pulse is a `transform: scale`, and the outer layer
+   needs BOTH of the other two channels for itself — `translate` to travel and `scale` to deform, the two
+   halves of the jelly. Three animations at once, on three properties, because one `transform` could only
+   ever hold one of them. The outer layer moves and stretches, the inner one breathes. */
 .focus-ring {
   position: absolute;
   pointer-events: none;
   /* Over its neighbours AND over the card it wraps — in the grid that card is lifted to 1 itself. */
   z-index: 2;
+  /* How far the jelly pulls along its travel and squashes across it. One pair of numbers for both rings;
+     the axis they land on is decided per move (see .is-gliding). */
+  --ring-jelly-long: 1.07;
+  --ring-jelly-flat: 0.95;
+  /* The SETTLE: how the stretch comes back to nothing once the ring has arrived — and the half of this
+     that reads as JELLY rather than as a box quietly shrinking. A cubic-bezier can only overshoot ONCE,
+     which at this amplitude is a sub-pixel twitch nobody sees; a damped spring keeps ringing. The curve
+     below is that spring sampled into linear() — zeta 0.35, so the first overshoot is 31% (the ~7%
+     stretch rebounds ~2% the other way) and it dies out over two and a bit periods.
+     Generated, not hand-tuned: to re-aim it, re-sample y(t) = 1 - e^-zwt (cos wd t + zw/wd sin wd t). */
+  --ring-settle: 0.42s;
+  --ring-settle-ease: linear(0 0.0%, 0.145 3.8%, 0.472 7.7%, 0.833 11.5%, 1.118 15.4%, 1.276 19.2%, 1.306 23.1%, 1.243 26.9%, 1.136 30.8%, 1.027 34.6%, 0.948 38.5%, 0.909 42.3%, 0.908 46.2%, 0.932 50.0%, 0.966 53.8%, 0.998 57.7%, 1.02 61.5%, 1.029 65.4%, 1.027 69.2%, 1.019 73.1%, 1.008 76.9%, 0.999 80.8%, 0.993 84.6%, 0.991 88.5%, 0.992 92.3%, 0.995 96.2%, 1 100.0%);
+  /* The edge the deformation is anchored to: the one the ring is LEAVING, written per move by JS (the
+     carousel pins the y half to the floor its cards stand on — see #carousel-ring). */
+  transform-origin: var(--ring-ox, 50%) var(--ring-oy, 50%);
+  scale: 1 1;
+}
+
+/* Under way. The stretch goes ON fast and WITHOUT overshoot — it is the ring being pulled, not released —
+   and the same class stays on for a whole held flip, so the ring is evenly drawn out for the length of
+   the glide and springs back once, at the end, rather than wobbling per step. */
+.focus-ring.is-gliding {
+  --ring-settle: 0.12s;
+  --ring-settle-ease: cubic-bezier(0.3, 0, 0.3, 1);
+  scale: var(--ring-sx, var(--ring-jelly-long)) var(--ring-sy, var(--ring-jelly-flat));
 }
 
 .focus-ring-pulse {
@@ -410,8 +436,15 @@ body {
   bottom: calc(-4 * var(--px));
   width: calc(144 * var(--px));
   height: calc(212 * var(--px));
-  transform: translateX(calc(var(--ring-left, -4) * var(--px)));
-  transition: transform calc(var(--morph) * 0.6) var(--morph-ease);
+  /* `translate`, not `transform`: the jelly needs `scale` as a channel of its own, and one transform
+     cannot carry both the travel and the deformation (nor could the pulse share it — that is why the
+     inner layer exists at all). Three properties, three independent animations. */
+  translate: calc(var(--ring-left, -4) * var(--px));
+  transition: translate calc(var(--morph) * 0.6) var(--morph-ease),
+    scale var(--ring-settle) var(--ring-settle-ease);
+  /* The row's cards stand on a floor (align-items: flex-end), so the squash pulls the ring's LID down
+     rather than lifting its foot off the card. Only the x half of the origin travels with the move. */
+  --ring-oy: 100%;
 }
 
 @keyframes card-ring-pulse {
@@ -635,15 +668,16 @@ body {
    grow out and then fades in — the same delayed opacity #carousel already uses. */
 #app[data-screen='carousel'] #carousel-ring {
   opacity: 1;
-  transition: transform calc(var(--morph) * 0.6) var(--morph-ease),
-    opacity 0.2s ease var(--morph);
+  transition: translate calc(var(--morph) * 0.6) var(--morph-ease),
+    scale var(--ring-settle) var(--ring-settle-ease), opacity 0.2s ease var(--morph);
 }
 /* The startup fan (carousel.playIntro) needs longer than that: there the selected card fades in WITH the
    row rather than swapping in opaque, so it only starts appearing at 0.35s and is not done until 0.75s —
    the rule above would have the ring fully drawn around a half-transparent card for a third of a second.
    It comes in behind the wave instead. */
 #app[data-returning='intro'] #carousel-ring {
-  transition: transform calc(var(--morph) * 0.6) var(--morph-ease),
+  transition: translate calc(var(--morph) * 0.6) var(--morph-ease),
+    scale var(--ring-settle) var(--ring-settle-ease),
     opacity 0.2s ease calc(var(--morph) + 0.4s);
 }
 /* A HELD direction: the same glide the strip and the cards run on, and for the same reason — anything
@@ -651,7 +685,8 @@ body {
    here either: the steps are back to back, so there is nothing to lean towards. The opacity half is
    repeated because a transition is one property (the strip's flip rule does the same). */
 #app[data-flipping] #carousel-ring {
-  transition: transform var(--flip-step) linear, opacity 0.2s ease var(--morph);
+  transition: translate var(--flip-step) linear,
+    scale var(--ring-settle) var(--ring-settle-ease), opacity 0.2s ease var(--morph);
 }
 
 #app[data-screen='carousel'][data-card-morph='on'] .play-button {
@@ -3293,8 +3328,9 @@ html:not(.mouse-asleep) .picker-item:hover,
 #library-ring {
   width: var(--ring-w, 0px);
   height: var(--ring-h, 0px);
-  transform: translate(var(--ring-x, 0px), var(--ring-y, 0px));
-  transition: transform var(--morph) var(--morph-ease), opacity 0.2s ease;
+  translate: var(--ring-x, 0px) var(--ring-y, 0px);
+  transition: translate var(--morph) var(--morph-ease),
+    scale var(--ring-settle) var(--ring-settle-ease), opacity 0.2s ease;
 }
 
 /* Nothing to wrap: the focus is in the column, or the section is empty. Faded rather than removed — the
@@ -3306,7 +3342,8 @@ html:not(.mouse-asleep) .picker-item:hover,
 
 /* A held direction, exactly as on the strip — and after the base rule, whose specificity it ties. */
 #app[data-flipping] #library-ring {
-  transition: transform var(--flip-step) linear, opacity 0.2s ease;
+  transition: translate var(--flip-step) linear,
+    scale var(--ring-settle) var(--ring-settle-ease), opacity 0.2s ease;
 }
 
 /* …and the instant frame beats even that: a hand-over to the detail screen and back is a CUT, and the

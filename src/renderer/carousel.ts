@@ -20,6 +20,7 @@ import {
   isNearViewport,
   isWithinWindow,
   ringLeft,
+  ringStretch,
   stripOffset,
 } from './carousel-geometry.js';
 import { SYSTEM_CARDS, type SystemCard } from './system-cards.js';
@@ -129,6 +130,13 @@ export interface Carousel {
   setDetailArt(url: string | null): void;
 }
 
+/**
+ * How long the ring counts as under way after a step — the duration of its own travel, mirroring
+ * `calc(var(--morph) * 0.6)` in styles.css. A HELD direction steps faster than this, so the mark simply
+ * never comes off mid-flip and the jelly stays drawn out for the whole glide (see glideRing).
+ */
+const RING_GLIDE_MS = 144;
+
 /** The row's identity for one item — the key of the DOM node, and what a list update keeps the selection by. */
 function itemKey(item: CarouselItem): string {
   return item.kind === 'game' ? `g:${item.game.id}` : `s:${item.card.id}`;
@@ -180,6 +188,12 @@ export function createCarousel(deps: CarouselDeps): Carousel {
   // the strip on games[0] while the title, the background and the music belonged to another game.
   // Honoured by the next setGames, then forgotten; a real move by the user outranks it (see move()).
   let pendingFocusId: string | null = null;
+  // Where the ring was last sent, so a repaint that did not move the selection (a dot, a busy game, a
+  // language change) does not make it wobble. null until the first layout — the ring is placed, not
+  // moved, then.
+  let ringIndex: number | null = null;
+  // Pending end of the ring's stretch; null when it is at rest. See glideRing.
+  let ringTimer: number | null = null;
 
   const artKey = (game: LibraryEntry): string => `${game.id}@${game.artRev ?? ''}`;
 
@@ -200,12 +214,35 @@ export function createCarousel(deps: CarouselDeps): Carousel {
     return (item.game.active && item.game.unconfigured !== true) || item.game.id === busyId;
   }
 
+  /**
+   * Stretches the ring for the move it is about to make: pulled along the row and squashed across it,
+   * anchored at the edge it is leaving, so the far side runs ahead and the near side trails. The class
+   * comes off once the travel is done and CSS springs it back (see .focus-ring in styles.css).
+   *
+   * Always the x axis here — the row only ever moves sideways — so only the origin is written.
+   */
+  function glideRing(next: number): void {
+    const previous = ringIndex;
+    ringIndex = next;
+    if (previous === null) return; // the first layout PLACES the ring; nothing has moved yet
+    const stretch = ringStretch(ringLeft(next) - ringLeft(previous), 0);
+    if (stretch === null) return;
+    ring.style.setProperty('--ring-ox', `${stretch.originPercent}%`);
+    ring.classList.add('is-gliding');
+    if (ringTimer !== null) window.clearTimeout(ringTimer);
+    ringTimer = window.setTimeout(() => {
+      ringTimer = null;
+      ring.classList.remove('is-gliding');
+    }, RING_GLIDE_MS);
+  }
+
   /** The strip's translation + the per-card selected/active/busy state. Cheap; safe to call often. */
   function applyLayout(): void {
     strip.style.setProperty('--strip-offset', String(stripOffset(index)));
     // Where the ring comes to rest. Written in DESIGN px — styles.css multiplies by --px — and read as a
     // target, not as a position: the CSS transition is what carries the ring there.
     strip.style.setProperty('--ring-left', String(ringLeft(index)));
+    glideRing(index);
     const current = selected();
     const currentKey = current === undefined ? null : itemKey(current);
     items.forEach((item, position) => {

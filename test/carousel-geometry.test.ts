@@ -14,6 +14,7 @@ import {
   isNearViewport,
   isWithinWindow,
   ringLeft,
+  ringStretch,
   stripOffset,
   VISIBLE_CARDS,
 } from '../src/renderer/carousel-geometry';
@@ -76,6 +77,28 @@ describe('ringLeft (the focus ring inside the strip)', () => {
         cardLeft(selected, selected) - stripOffset(selected) - RING_INSET,
       );
     }
+  });
+});
+
+describe('ringStretch (the jelly)', () => {
+  it('pulls along the longer leg of the move', () => {
+    expect(ringStretch(106, 0)?.axis).toBe('x');
+    expect(ringStretch(0, 316)?.axis).toBe('y');
+    // The ragged last row: a step down can land a column over, and the ring must still deform vertically.
+    expect(ringStretch(-432, 316)?.axis).toBe('x');
+    expect(ringStretch(-108, 316)?.axis).toBe('y');
+  });
+
+  it('anchors the edge being LEFT behind, so the far side runs ahead', () => {
+    expect(ringStretch(106, 0)?.originPercent).toBe(0);
+    expect(ringStretch(-106, 0)?.originPercent).toBe(100);
+    expect(ringStretch(0, 316)?.originPercent).toBe(0);
+    expect(ringStretch(0, -316)?.originPercent).toBe(100);
+  });
+
+  it('says no to a repaint that moved nothing — a still ring must not wobble', () => {
+    expect(ringStretch(0, 0)).toBeNull();
+    expect(ringStretch(0.4, -0.6)).toBeNull();
   });
 });
 

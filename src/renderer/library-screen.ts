@@ -13,6 +13,7 @@ import { type AudioController } from './audio.js';
 import { artKey, type CardArtCache } from './card-art.js';
 import { req } from './dom.js';
 import { clampIndex } from './index-math.js';
+import { ringStretch } from './carousel-geometry.js';
 import {
   filterLibrary,
   gridColumns,
@@ -21,6 +22,7 @@ import {
   ringBox,
   type GridDir,
   type LibraryFilter,
+  type RingBox,
 } from './library-grid.js';
 import type { NavSurface } from './nav-surface.js';
 import { createScroller, pxUnit } from './screen-scroller.js';
@@ -41,6 +43,12 @@ const ENTRANCE_MS = 700;
 const ENTRANCE_STEPS = 11;
 /** How long the grid waits before drawing the section the column moved onto (see previewTimer). */
 const PREVIEW_MS = 120;
+/**
+ * How long the focus ring counts as under way after a step — its own travel, which here IS the morph
+ * (nothing slides underneath it, so it needs no undershoot). A held direction steps faster than this, so
+ * the stretch stays on for the whole glide and springs back once, at the end. See placeRing.
+ */
+const RING_GLIDE_MS = SINGLE_STEP_MS;
 
 export interface LibraryScreenDeps {
   readonly audio: AudioController;
@@ -115,6 +123,11 @@ export function createLibraryScreen(deps: LibraryScreenDeps): LibraryScreen {
   const nodes = new Map<string, HTMLElement>();
   // The same nodes by ARTWORK key, so an eviction (which knows only the key) finds what to un-paint.
   const painted = new Map<string, HTMLElement>();
+  // Where the ring stands, so the next placement knows which way — and how far — it is about to travel.
+  // null while it has nowhere to be (the column has the focus, the section is empty).
+  let ringPlace: RingBox | null = null;
+  // Pending end of the ring's stretch; null when it is at rest.
+  let ringTimer: number | null = null;
 
   const sidebar = createSidebar(req('library-nav'), {
     audio: deps.audio,
@@ -218,6 +231,38 @@ export function createLibraryScreen(deps: LibraryScreenDeps): LibraryScreen {
     deps.art.dropPending(keep);
   }
 
+  /** Takes the stretch off at once — for the frames the ring is not travelling through (see placeRing). */
+  function restRing(): void {
+    if (ringTimer !== null) {
+      window.clearTimeout(ringTimer);
+      ringTimer = null;
+    }
+    ring.classList.remove('is-gliding');
+  }
+
+  /**
+   * Stretches the ring for the move it is about to make: pulled along its travel and squashed across it,
+   * anchored at the edge it is leaving. Unlike the carousel's row, this one moves on either axis — a
+   * step up or down deforms the ring the other way round — so which axis it is is read from the move
+   * itself rather than assumed.
+   */
+  function glideRing(from: RingBox | null, to: RingBox): void {
+    if (from === null) return; // it was nowhere: this is a placement, not a move
+    const stretch = ringStretch(to.x - from.x, to.y - from.y);
+    if (stretch === null) return;
+    const along = stretch.axis === 'x';
+    ring.style.setProperty('--ring-sx', `var(--ring-jelly-${along ? 'long' : 'flat'})`);
+    ring.style.setProperty('--ring-sy', `var(--ring-jelly-${along ? 'flat' : 'long'})`);
+    ring.style.setProperty('--ring-ox', along ? `${stretch.originPercent}%` : '50%');
+    ring.style.setProperty('--ring-oy', along ? '50%' : `${stretch.originPercent}%`);
+    ring.classList.add('is-gliding');
+    if (ringTimer !== null) window.clearTimeout(ringTimer);
+    ringTimer = window.setTimeout(() => {
+      ringTimer = null;
+      ring.classList.remove('is-gliding');
+    }, RING_GLIDE_MS);
+  }
+
   /**
    * Puts the focus ring around `node`, or takes it off screen when there is nothing to wrap — the focus
    * is in the column, or the section is empty.
@@ -230,13 +275,21 @@ export function createLibraryScreen(deps: LibraryScreenDeps): LibraryScreen {
   function placeRing(node: HTMLElement | undefined, instant: boolean): void {
     if (node === undefined) {
       ring.classList.add('is-hidden');
+      restRing();
+      ringPlace = null;
       return;
     }
     const box = ringBox(node.offsetLeft, node.offsetTop, pxUnit());
-    if (instant) ring.style.transition = 'none';
+    if (instant) {
+      ring.style.transition = 'none';
+      restRing();
+    } else {
+      glideRing(ringPlace, box);
+    }
+    ringPlace = box;
     ring.classList.remove('is-hidden');
-    // Written WITH the unit: a bare number is no <length>, and translate() would drop the declaration
-    // whole — the ring would then sit at the grid's corner and never move again.
+    // Written WITH the unit: a bare number is no <length-percentage>, and `translate` would drop the
+    // declaration whole — the ring would then sit at the grid's corner and never move again.
     ring.style.setProperty('--ring-x', `${box.x}px`);
     ring.style.setProperty('--ring-y', `${box.y}px`);
     ring.style.setProperty('--ring-w', `${box.w}px`);
