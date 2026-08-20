@@ -3023,8 +3023,12 @@ html:not(.mouse-asleep) .picker-item:hover,
 
 /* The CARDS wait, not the strip as a whole: they are built and laid out behind the boot screen, and
    holding them at zero here is what leaves their staggered entrance (carousel.playIntro) still to play
-   when the wallpaper hands over. Fading the strip instead would show the row already assembled. */
-#app[data-boot] .card {
+   when the wallpaper hands over. Fading the strip instead would show the row already assembled.
+   The focus body needs saying separately — it is not a .card but a canvas beside them, so the rule above
+   left it alone and it sat on the boot wallpaper with no cover to belong to. It comes in with the row:
+   the intro rule up by #carousel-jelly holds it back until the wave has passed. */
+#app[data-boot] .card,
+#app[data-boot] #carousel-jelly {
   opacity: 0;
 }
 
