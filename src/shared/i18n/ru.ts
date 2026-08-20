@@ -198,10 +198,7 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'gameConfig.moveLibraryInvalid':
     'Сначала нужно починить проблему в другой игре PC-библиотеки: {reason}',
   'gameConfig.moveFilesNotOnCard': 'Сначала положите файлы самой игры на карту.',
-  'gameConfig.moveSaveSkipped':
-    'В папке сейвов на карте уже что-то было, поэтому сейвы с ПК не скопированы.',
-  'gameConfig.moveDuplicateWarning':
-    'Игра теперь на карте, но не удалось убрать её из PC-библиотеки - она есть в обоих местах.',
+  'gameConfig.moveAssetMissing': 'Этого файла больше нет на ПК, перенести его нельзя: {path}',
 
   // ── Customize screen: what the SCREEN itself says (game-settings-*.ts) ──────
   'launcher.menu.customize': 'Настройки игры',

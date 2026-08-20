@@ -22,20 +22,10 @@ function errorCode(cause: unknown): string | undefined {
   return undefined;
 }
 
-/**
- * Retry with exponential backoff on "busy" files (EBUSY and related). Exported for unit tests.
- *
- * `attempts` is a parameter because the full run is not always the right wait: the default five take
- * ~6.2s before giving up, which is what a save sync SHOULD spend riding out an antivirus scan, and far
- * more than a caller with a working fallback of its own should spend before reaching for it (see
- * writeFileAtomic, where a refused replace is usually permanent rather than busy).
- */
-export async function withRetry<T>(
-  operation: () => Promise<T>,
-  attempts: number = MAX_ATTEMPTS,
-): Promise<T> {
+/** Retry with exponential backoff on "busy" files (EBUSY and related). Exported for unit tests. */
+export async function withRetry<T>(operation: () => Promise<T>): Promise<T> {
   let lastError: unknown;
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
     try {
       return await operation();
     } catch (cause) {
@@ -220,20 +210,11 @@ export async function syncByChange(
   const nextState: SyncState =
     direction === 'noop'
       ? { card: cardTree, pc: pcTree, syncedAt: Date.now() }
-      : { card: await snapshotTree(cardPath), pc: await snapshotTree(pcPath), syncedAt: Date.now() };
+      : {
+          card: await snapshotTree(cardPath),
+          pc: await snapshotTree(pcPath),
+          syncedAt: Date.now(),
+        };
 
   return { direction, conflict, usedFallback, state: nextState };
-}
-
-/** Atomic (within a volume) write of a single file: temp → rename. Best-effort on the card. */
-export async function writeFileAtomic(targetPath: string, data: string): Promise<void> {
-  const tmp = `${targetPath}.tmp`;
-  const dir = path.dirname(targetPath);
-  // Only create the directory when it's genuinely missing. On Windows, mkdir of a DRIVE ROOT
-  // (e.g. "E:\", the card root for stats.json) throws EPERM even though it already exists — so an
-  // unconditional ensureDir would make every card-root write fail. The parent is always present
-  // for our targets (card root / existing save dir); create it only for nested paths that need it.
-  if (!(await fse.pathExists(dir))) await fse.ensureDir(dir);
-  await fse.writeFile(tmp, data, 'utf8');
-  await withRetry(() => fse.move(tmp, targetPath, { overwrite: true }));
 }

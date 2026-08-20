@@ -63,8 +63,8 @@ const settingsObject = z.object({
 /**
  * `alwaysShowEmptyScreen` was renamed to `keepOpenWithoutCard` when the screen it was named after went
  * away (the launcher cards replaced it); the SETTING is the same one, so a file written by an older
- * build must keep its value. Without this the `.default(false)` above would swallow the missing key
- * without a trace and quietly switch the toggle off for everyone who had turned it on.
+ * build must keep its value. Without this the `.default(true)` above would swallow the missing key
+ * without a trace and force the toggle ON for everyone who had deliberately turned it off.
  *
  * No schemaVersion bump — this is the same in-place style of migration `language`, `steamAppIdU32` and
  * `soundSet` already use.

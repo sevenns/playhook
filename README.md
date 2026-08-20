@@ -210,7 +210,7 @@ accepts. Instead of `pc`, give it a `steam` block:
 **Draft games.** A local game may be saved with no launch method at all — no `pc`, no `steam`. Use this
 to fill in everything else (title, art, music, timings, `watchProcesses`) before you know how the game
 will actually be started. A draft is visible in the carousel and stays fully editable through Customize,
-but it has no dot and no Play button — the status line reads *Launch is not set up*. Save & Apply is
+but it has no dot, no Play button and no status line — the missing Play button says it. Save & Apply is
 still available once you fill in `pc` or `steam`.
 
 **Moving a local game to a card.** **More ⋯ → Move to card…** (a local game only) copies a game's

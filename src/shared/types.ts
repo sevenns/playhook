@@ -473,8 +473,9 @@ export interface GameInfo {
   readonly unavailable?: boolean;
   /**
    * PC mode only: no launch method has been configured yet (a saved draft — see ResolvedManifest). The
-   * card stays in the library, fully editable, but Play is hidden and the status reads "Launch is not
-   * set up" — checked BEFORE `unavailable`, which does not apply (there is no executable to be missing).
+   * card stays in the library, fully editable, but Play is hidden and the status line is left EMPTY (the
+   * absent button already says it — see state-view.ts `statusOf`) — checked BEFORE `unavailable`, which
+   * does not apply (there is no executable to be missing).
    */
   readonly unconfigured?: boolean;
 }
@@ -1085,15 +1086,15 @@ export interface GameMoveRequest {
 
 /**
  * Result of a PC → card move. `moved` false → nothing changed on EITHER side (message tells why).
- * `applied` mirrors ConfigSaveResult's meaning for the TARGET card. `warning` is set when the move
- * succeeded but something non-fatal was skipped — e.g. an existing, non-empty save folder on the card was
- * left untouched rather than overwritten with the game's PC-side saves.
+ * `applied` mirrors ConfigSaveResult's meaning for the TARGET card. There is no `warning` counterpart:
+ * a move that succeeded but skipped something non-fatal (an existing non-empty save folder on the card,
+ * a library write that could not be undone) closes the screen, so the only place left to say it is a
+ * notification — which is where main sends it.
  */
 export type ConfigMoveResult =
   | {
       readonly moved: true;
       readonly applied: 'applied' | 'deferred';
-      readonly warning?: string;
     }
   | { readonly moved: false; readonly message: string };
 

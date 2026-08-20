@@ -322,7 +322,9 @@ export class GameController {
   private steamBusyId: string | null = null;
   // Mirror of AppSettings.keepOpenWithoutCard (seeded at startup, toggled live from the settings
   // window): when true the launcher stays on screen with no card in instead of hiding to the tray.
-  private keepOpenWithoutCard = false;
+  // Initialized to the SCHEMA's default so the sliver between constructing this controller and the seed
+  // behaves like the setting it mirrors — keep the two in step if that default ever changes.
+  private keepOpenWithoutCard = true;
   private launchInFlight = false;
   // A manifest reload from the Customize screen is in flight. Unlike launchInFlight it does NOT
   // gate on state kind (the reload runs from `ready`), so onLaunchRequested/onUninstallRequested check

@@ -117,12 +117,7 @@ export interface GameSettingsScreenApi {
  * the card too. Which one arrives back is the user's answer to the second question — see controls.ts.
  */
 export type GameSettingsConfirm =
-  | 'reset'
-  | 'delete'
-  | 'delete-history'
-  | 'discard'
-  | 'switch-source'
-  | 'cancel-move';
+  'reset' | 'delete' | 'delete-history' | 'discard' | 'switch-source' | 'cancel-move';
 
 /** A surface that opens ON TOP of the screen and hands a value back when it is done. */
 export interface TextEntrySurface extends NavSurface {
@@ -410,9 +405,11 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       move: move !== null,
       sources: mode === 'add' ? sourceOptions() : [],
       sourceLabel:
-        move !== null ? move.target.label : (sources.find((candidate) => candidate.root === at)?.label ?? null),
+        move !== null
+          ? move.target.label
+          : (sources.find((candidate) => candidate.root === at)?.label ?? null),
       // While a move is pending the form is edited AS THE TARGET CARD would read it — the whole point of
-      // "the form расширяется" (see the plan, Р2.2/Р2.3): rows, launch modes and pickers all key off this.
+      // "the form expands" (see the plan, Р2.2/Р2.3): rows, launch modes and pickers all key off this.
       source: move !== null ? 'card' : origin.source,
       windows: origin.windows,
       root: at,
@@ -746,8 +743,9 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     if (origin === null) return;
     // Card-relative during a pending move (see assetPreviewRoot): a hero/grid image the move carried
     // over unedited previews from the PC library, everything else from wherever the form is pointed.
-    const thumbnailAt = (path: string): { readonly root: string; readonly relative: string } | null =>
-      assetPreviewRoot(path);
+    const thumbnailAt = (
+      path: string,
+    ): { readonly root: string; readonly relative: string } | null => assetPreviewRoot(path);
     for (const row of rendered) {
       const source = row.row;
       if (source.kind === 'list' && source.preview !== undefined) {
@@ -1210,11 +1208,14 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
    * the target card yet (that only happens on Save), so it has to be read from the PC library, where the
    * bytes still are. See PendingMove.sourceAssetPaths.
    */
-  function assetPreviewRoot(relative: string): { readonly root: string; readonly relative: string } | null {
+  function assetPreviewRoot(
+    relative: string,
+  ): { readonly root: string; readonly relative: string } | null {
     const move = pendingMove;
     if (move !== null) {
       const source = move.sourceAssetPaths.get(relative);
-      if (source !== undefined) return origin === null ? null : { root: origin.root, relative: source };
+      if (source !== undefined)
+        return origin === null ? null : { root: origin.root, relative: source };
       return { root: move.target.root, relative };
     }
     return origin === null ? null : { root: origin.root, relative };
@@ -1629,7 +1630,13 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
         kind: 'pc-save',
         paths: [originalPcSavePath],
       });
-      if (open && mode === 'edit' && gameId === forGame && token === adoptToken && pendingMove !== null) {
+      if (
+        open &&
+        mode === 'edit' &&
+        gameId === forGame &&
+        token === adoptToken &&
+        pendingMove !== null
+      ) {
         const first = converted.ok ? converted.paths[0] : undefined;
         if (first !== undefined) updateForm({ ...form, pcSavePath: first });
       }

@@ -768,7 +768,12 @@ export function carryFormToCard(form: ManifestFormModel): ManifestFormModel {
     args: form.args,
     runAsAdmin: form.runAsAdmin,
     watchProcesses: form.watchProcesses,
-    heroImage: form.heroImage.map((source, index) => movedHeroAssetPath(form.id, index, source)),
+    // Sliced to the same cap the manifest reader applies (manifest.ts drops everything past
+    // MAX_HERO_IMAGES): main copies the files by the RESOLVED manifest, so a fourth entry carried into the
+    // target text would name a file nothing ever puts there.
+    heroImage: form.heroImage
+      .slice(0, MAX_HERO_IMAGES)
+      .map((source, index) => movedHeroAssetPath(form.id, index, source)),
     gridImage: form.gridImage === '' ? '' : movedGridAssetPath(form.id, form.gridImage),
     backgroundMusic:
       form.backgroundMusic === '' ? '' : movedMusicAssetPath(form.id, form.backgroundMusic),

@@ -72,7 +72,7 @@ import { type PcLibraryStore } from './pc-library';
 import { type PcStore } from './pc-store';
 import { type SavePathResolver } from './platform/types';
 import { resolveInside, validateManifestText } from './manifest';
-import { writeFileAtomic } from './save-sync';
+import { writeFileAtomicEnsuringDir } from './json-store';
 import { describe } from './util';
 import { log } from './logger';
 
@@ -106,11 +106,6 @@ const CANDIDATES_TTL_MS = 2000;
  * moment the UI language changes mid-transaction) and there can be more than one of these in one move.
  */
 type MoveWarning = 'save-skipped' | 'duplicate';
-
-const MOVE_WARNING_MESSAGE: Readonly<Record<MoveWarning, 'gameConfig.moveSaveSkipped' | 'gameConfig.moveDuplicateWarning'>> = {
-  'save-skipped': 'gameConfig.moveSaveSkipped',
-  duplicate: 'gameConfig.moveDuplicateWarning',
-};
 
 const MOVE_WARNING_NOTIFICATION: Readonly<
   Record<MoveWarning, 'game-move-save-skipped' | 'game-move-duplicate'>
@@ -455,7 +450,7 @@ export class GameConfigService {
     // 3. atomic write — reuse the card-hardened writer (temp→move, EBUSY/EPERM retry, drive-root nuance).
     // Write the user's text verbatim so their formatting is preserved (no reserialize).
     try {
-      await writeFileAtomic(path.join(root, MANIFEST_FILENAME), text);
+      await writeFileAtomicEnsuringDir(path.join(root, MANIFEST_FILENAME), text);
     } catch (cause) {
       return {
         saved: false,
@@ -495,7 +490,11 @@ export class GameConfigService {
     const emptied = isEmptyManifestList(text);
     try {
       if (emptied) await this.deps.pcLibrary.removeManifest();
-      else await writeFileAtomic(path.join(this.deps.pcLibrary.root, MANIFEST_FILENAME), text);
+      else
+        await writeFileAtomicEnsuringDir(
+          path.join(this.deps.pcLibrary.root, MANIFEST_FILENAME),
+          text,
+        );
     } catch (cause) {
       return {
         saved: false,
@@ -518,11 +517,18 @@ export class GameConfigService {
   // library → apply/notify → drop the stale sync-state baseline. A failure before the library write rolls
   // back everything copied to the card; `fromText` is applied ONLY after the card write has already
   // succeeded, and never otherwise (see moveToCard's own comments for exactly where).
-  private async moveToCard(request: GameMoveRequest): Promise<ConfigMoveResult> {
+  //
+  // Public, unlike its sibling write paths, purely so test/game-move-transaction.test.ts can drive it: the
+  // rollback branches are the riskiest code in the service and are reachable only through the whole
+  // sequence, so they are exercised here rather than approximated by a carved-out core.
+  async moveToCard(request: GameMoveRequest): Promise<ConfigMoveResult> {
     const t = this.deps.getTranslator();
 
     // 1. Checks — nothing is written until every one of these passes.
-    if (!(await this.isAllowedRoot(request.fromRoot)) || !(await this.isAllowedRoot(request.toRoot))) {
+    if (
+      !(await this.isAllowedRoot(request.fromRoot)) ||
+      !(await this.isAllowedRoot(request.toRoot))
+    ) {
       return { moved: false, message: t('errors.driveUnavailable') };
     }
     if (
@@ -608,6 +614,13 @@ export class GameConfigService {
     };
     try {
       for (const plan of planAssetCopies(manifest, request.id, request.toRoot)) {
+        // Checked BEFORE the copy so a file the user deleted since the game was configured is reported as
+        // what it is. Left to fse.copy it would surface as an ENOENT inside the catch below, and the user
+        // would be told that game.json could not be written — a file nothing has tried to touch yet.
+        if (!(await fse.pathExists(plan.from))) {
+          await undo();
+          return { moved: false, message: t('gameConfig.moveAssetMissing', { path: plan.from }) };
+        }
         const existedBefore = await fse.pathExists(plan.to);
         await fse.ensureDir(path.dirname(plan.to));
         await fse.copy(plan.from, plan.to, { overwrite: true });
@@ -617,14 +630,19 @@ export class GameConfigService {
       await undo();
       return {
         moved: false,
-        message: t('errors.cannotWriteManifest', { file: MANIFEST_FILENAME, cause: describe(cause) }),
+        message: t('errors.cannotWriteManifest', {
+          file: MANIFEST_FILENAME,
+          cause: describe(cause),
+        }),
       };
     }
 
-    // 3. Copy saves — only when the TARGET manifest actually names a saveOnCard folder, and only from the
-    // LIVE save location (never the pc-games/saves/<id> backup): with no card-side baseline yet, the first
-    // sync-in falls back to the deterministic card→pc direction (save-sync.ts), so copying anything but the
-    // freshest state here would make that fallback destructive instead of harmless.
+    // 3. Copy saves — only when the TARGET manifest actually names a saveOnCard folder, and PREFERABLY
+    // from the LIVE save location rather than the pc-games/saves/<id> backup: with no card-side baseline
+    // yet, the first sync-in falls back to the deterministic card→pc direction (save-sync.ts), so what
+    // travels here is what that fallback will write back over the live folder. The backup is used only
+    // when the live location has nothing to offer at all (no folder, or a Wine prefix that does not exist
+    // yet) — there the fallback has nothing to overwrite, so a stale backup beats no saves.
     const targetSaveOnCard =
       typeof targetRaw['saveOnCard'] === 'string' ? targetRaw['saveOnCard'] : undefined;
     if (targetSaveOnCard !== undefined) {
@@ -664,12 +682,18 @@ export class GameConfigService {
     // 4. Write the card. On disk to this exact moment on, `fromText` is the only thing left to apply —
     // everything above only touched the CARD side.
     try {
-      await writeFileAtomic(path.join(request.toRoot, MANIFEST_FILENAME), request.toText);
+      await writeFileAtomicEnsuringDir(
+        path.join(request.toRoot, MANIFEST_FILENAME),
+        request.toText,
+      );
     } catch (cause) {
       await undo();
       return {
         moved: false,
-        message: t('errors.cannotWriteManifest', { file: MANIFEST_FILENAME, cause: describe(cause) }),
+        message: t('errors.cannotWriteManifest', {
+          file: MANIFEST_FILENAME,
+          cause: describe(cause),
+        }),
       };
     }
 
@@ -680,11 +704,18 @@ export class GameConfigService {
     const fromWrite = await this.writePcLibraryText(fromText, t);
     if (!fromWrite.ok) {
       const restored = await this.rollbackCardWrite(request.toRoot, toBefore.text);
-      await undo();
-      if (restored) return { moved: false, message: fromWrite.message };
+      if (restored) {
+        // The card is back to its pre-move bytes, so the copies of steps 2/3 are now referenced by
+        // nothing — and only NOW may they go. Undoing them while the card still names them (the branch
+        // below) would leave the target manifest pointing at art and saves that are no longer there.
+        await undo();
+        return { moved: false, message: fromWrite.message };
+      }
       // The card write is stuck AND the library still has the game too — a defined outcome (a card game
       // shadows its local twin, README.md "Local games"), not corruption, but worth a loud log: two
-      // independent writes failed back to back to get here.
+      // independent writes failed back to back to get here. The copies STAY: the card's game.json still
+      // refers to them, and a duplicate whose art and saves are intact is the whole point of calling this
+      // "a defined outcome" rather than damage.
       log.error(
         `[game-move] id=${request.id}: card write kept but the library write failed and the card` +
           ` rollback ALSO failed — the game now exists in both places (${fromWrite.message})`,
@@ -699,14 +730,17 @@ export class GameConfigService {
       const reload = await this.deps.reloadManifest(request.toRoot);
       applied = 'applied';
       if (!reload.ok) {
-        log.warn(`[game-move] id=${request.id}: moved, but reloading the active card failed: ${reload.message}`);
+        log.warn(
+          `[game-move] id=${request.id}: moved, but reloading the active card failed: ${reload.message}`,
+        );
       }
     } else {
       applied = 'deferred';
       this.deps.notify({ kind: 'game-moved-deferred', gameTitle });
     }
-    // Every warning gets its own notification: the screen closes on a successful move, so `warning` on the
-    // result has nobody left to show it (and the duplicate case must not be the log's secret alone).
+    // Every warning gets its own notification, which is the ONLY channel it has: the screen closes the
+    // moment a move succeeds, so a field on the result would have nobody left to show it (and the
+    // duplicate case must not be the log's secret alone).
     for (const kind of warnings) {
       this.deps.notify({ kind: MOVE_WARNING_NOTIFICATION[kind], gameTitle });
     }
@@ -717,8 +751,7 @@ export class GameConfigService {
     // its baseline is still the truth.
     if (fromWrite.ok) await this.deps.pcStore.removeSyncState(request.fromId, 'pc');
 
-    const warning = warnings.map((kind) => t(MOVE_WARNING_MESSAGE[kind])).join(' ');
-    return { moved: true, applied, ...(warning !== '' ? { warning } : {}) };
+    return { moved: true, applied };
   }
 
   /**
@@ -729,7 +762,8 @@ export class GameConfigService {
   private async readManifestSnapshot(
     root: string,
   ): Promise<
-    { readonly ok: true; readonly text: string | null } | { readonly ok: false; readonly message: string }
+    | { readonly ok: true; readonly text: string | null }
+    | { readonly ok: false; readonly message: string }
   > {
     const file = path.join(root, MANIFEST_FILENAME);
     if (!(await fse.pathExists(file))) return { ok: true, text: null };
@@ -758,7 +792,10 @@ export class GameConfigService {
    * PC-library's own backup (`saves/<id>`) as a fallback. Null when neither has anything to copy. */
   private async liveOrBackupSaveDir(manifest: ResolvedManifest): Promise<string | null> {
     if (manifest.pcSavePath !== undefined) {
-      const live = await this.deps.savePathResolver.resolvePcSavePath(manifest, manifest.pcSavePath);
+      const live = await this.deps.savePathResolver.resolvePcSavePath(
+        manifest,
+        manifest.pcSavePath,
+      );
       if (live !== null && live.containerExists && (await fse.pathExists(live.path))) {
         return live.path;
       }
@@ -793,7 +830,10 @@ export class GameConfigService {
       await fse.remove(saveCopy.dir);
       if (saveCopy.existedBefore) await fse.ensureDir(saveCopy.dir);
     } catch (cause) {
-      log.warn(`[game-move] failed to roll back the copied save folder "${saveCopy.dir}":`, describe(cause));
+      log.warn(
+        `[game-move] failed to roll back the copied save folder "${saveCopy.dir}":`,
+        describe(cause),
+      );
     }
   }
 
@@ -805,7 +845,7 @@ export class GameConfigService {
   private async rollbackCardWrite(toRoot: string, toTextBefore: string | null): Promise<boolean> {
     try {
       if (toTextBefore === null) await fse.remove(path.join(toRoot, MANIFEST_FILENAME));
-      else await writeFileAtomic(path.join(toRoot, MANIFEST_FILENAME), toTextBefore);
+      else await writeFileAtomicEnsuringDir(path.join(toRoot, MANIFEST_FILENAME), toTextBefore);
       return true;
     } catch (cause) {
       log.warn(`[game-move] failed to roll back the card write at "${toRoot}":`, describe(cause));
@@ -822,11 +862,18 @@ export class GameConfigService {
     const emptied = isEmptyManifestList(text);
     try {
       if (emptied) await this.deps.pcLibrary.removeManifest();
-      else await writeFileAtomic(path.join(this.deps.pcLibrary.root, MANIFEST_FILENAME), text);
+      else
+        await writeFileAtomicEnsuringDir(
+          path.join(this.deps.pcLibrary.root, MANIFEST_FILENAME),
+          text,
+        );
     } catch (cause) {
       return {
         ok: false,
-        message: t('errors.cannotWriteManifest', { file: MANIFEST_FILENAME, cause: describe(cause) }),
+        message: t('errors.cannotWriteManifest', {
+          file: MANIFEST_FILENAME,
+          cause: describe(cause),
+        }),
       };
     }
     const reload = await this.deps.reloadPcLibrary();

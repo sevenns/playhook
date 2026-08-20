@@ -239,10 +239,7 @@ export const en = {
   'gameConfig.moveLibraryInvalid':
     'Another game in the PC library has a problem that has to be fixed first: {reason}',
   'gameConfig.moveFilesNotOnCard': "Copy the game's own files onto the card first.",
-  'gameConfig.moveSaveSkipped':
-    'The save folder on the card already had something in it, so the PC saves were left uncopied.',
-  'gameConfig.moveDuplicateWarning':
-    'The game is now on the card, but could not be removed from the PC library — it exists in both places.',
+  'gameConfig.moveAssetMissing': 'This file is gone from the PC and cannot be moved: {path}',
 
   // ── Customize screen: what the SCREEN itself says (game-settings-*.ts) ──────
   'launcher.menu.customize': 'Customize',

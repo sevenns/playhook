@@ -5,10 +5,11 @@
 // but fails to read or validate is a real anomaly (corruption / incompatible shape) that gets a
 // log.warn breadcrumb instead of a silent fallback that could mask damaged user data.
 import fs from 'node:fs/promises';
+import path from 'node:path';
 import fse from 'fs-extra';
 import type { z } from 'zod';
 import { log } from './logger';
-import { withRetry } from './save-sync';
+import { delay } from './util';
 
 function isMissingFile(cause: unknown): boolean {
   return (
@@ -58,20 +59,28 @@ export async function writeJsonAtomic(filePath: string, value: unknown): Promise
   await writeFileAtomic(filePath, `${JSON.stringify(value, null, 2)}\n`);
 }
 
+const BASE_BACKOFF_MS = 200;
+
+/**
+ * How long the replace is retried, per KIND of failure — the two need different patience.
+ *
+ * A busy file (an antivirus or an indexer holding the target mid-scan) clears up on its own, and waiting
+ * it out is the whole point: it gets the full five tries, ~6.2s, and nothing else can save the write if
+ * it does not. A PERMISSION refusal does not clear up on its own — a read-only attribute or an ACL
+ * without delete rights stays exactly as it is — so waiting buys nothing there and only makes the user
+ * watch a toggle hang on its way to working; three tries (~1.4s) is enough to rule out a passing lock
+ * that merely reported itself as EPERM, and then `replaceInPlace` takes over.
+ */
+const BUSY_ATTEMPTS = 5;
+const PERMISSION_ATTEMPTS = 3;
+
+const RETRYABLE_CODES = new Set(['EBUSY', 'EPERM', 'EACCES', 'ENOTEMPTY']);
+
 /**
  * The same temp-file → rename guarantee for arbitrary content (added for the binary `shortcuts.vdf`
- * write, where a torn file costs the user every non-Steam shortcut they have). `writeJsonAtomic` is now a
+ * write, where a torn file costs the user every non-Steam shortcut they have). `writeJsonAtomic` is a
  * thin wrapper over this — see its doc comment for why the final step is a bare `fs.rename`.
  */
-/**
- * How many times the replace is retried before the fallback below takes over. Deliberately short of the
- * default five (~6.2s): the codes that reach the fallback — a read-only attribute, an ACL without delete
- * — do not clear up on their own, so the extra waiting buys nothing and the user watches a toggle hang
- * for six seconds on its way to working. A genuinely busy file (an antivirus mid-scan) still gets three
- * tries and ~1.4s, and anything not covered by the fallback keeps failing exactly as it did.
- */
-const REPLACE_ATTEMPTS = 3;
-
 export async function writeFileAtomic(filePath: string, data: string | Buffer): Promise<void> {
   const tmp = tmpNameFor(filePath);
   try {
@@ -79,12 +88,14 @@ export async function writeFileAtomic(filePath: string, data: string | Buffer): 
   } catch (cause) {
     // The temp could not even be STAGED — the directory itself refuses new files. Writing through the
     // existing target is still worth a try: that needs permission on the file, not on its directory.
+    // A partially-written temp may still be lying there, so clear it either way.
+    await fs.rm(tmp, { force: true }).catch(() => undefined);
     if (!isPermissionError(cause)) throw cause;
     await writeThrough(filePath, data, cause);
     return;
   }
   try {
-    await withRetry(() => fs.rename(tmp, filePath), REPLACE_ATTEMPTS);
+    await renameWithBackoff(tmp, filePath);
     return;
   } catch (cause) {
     if (!isPermissionError(cause)) {
@@ -92,6 +103,44 @@ export async function writeFileAtomic(filePath: string, data: string | Buffer): 
       throw cause;
     }
     await replaceInPlace(filePath, tmp, data, cause);
+  }
+}
+
+/**
+ * `writeFileAtomic` plus the ONE thing it deliberately refuses to do: create the parent directory. Used by
+ * the writers whose target may be a path that does not exist yet (a card's save folder, a nested store) —
+ * card manifests and `stats.json` among them, which is what a second, weaker implementation of
+ * `writeFileAtomic` in save-sync.ts used to serve before this replaced it.
+ *
+ * The existence check is not redundant: on Windows, mkdir of a DRIVE ROOT (`E:\`, the card root that
+ * carries `stats.json`) throws EPERM even though it is plainly there, so an unconditional ensureDir would
+ * fail every card-root write.
+ */
+export async function writeFileAtomicEnsuringDir(
+  filePath: string,
+  data: string | Buffer,
+): Promise<void> {
+  const dir = path.dirname(filePath);
+  if (!(await fse.pathExists(dir))) await fse.ensureDir(dir);
+  await writeFileAtomic(filePath, data);
+}
+
+/**
+ * The atomic replace, retried with exponential backoff on the codes a transient holder produces. Local
+ * rather than save-sync's `withRetry` because the budget depends on WHICH code came back — see
+ * BUSY_ATTEMPTS / PERMISSION_ATTEMPTS. Anything not retryable is rethrown on the first try, unchanged.
+ */
+async function renameWithBackoff(tmp: string, filePath: string): Promise<void> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      await fs.rename(tmp, filePath);
+      return;
+    } catch (cause) {
+      const code = errorCode(cause);
+      const attempts = isPermissionError(cause) ? PERMISSION_ATTEMPTS : BUSY_ATTEMPTS;
+      if (code === undefined || !RETRYABLE_CODES.has(code) || attempt + 1 >= attempts) throw cause;
+      await delay(BASE_BACKOFF_MS * 2 ** attempt);
+    }
   }
 }
 
@@ -109,9 +158,14 @@ function tmpNameFor(filePath: string): string {
   return `${filePath}.${process.pid}.${tmpCounter}.tmp`;
 }
 
-function isPermissionError(cause: unknown): boolean {
-  if (!(cause instanceof Error) || !('code' in cause)) return false;
+function errorCode(cause: unknown): string | undefined {
+  if (!(cause instanceof Error) || !('code' in cause)) return undefined;
   const code = (cause as { readonly code?: unknown }).code;
+  return typeof code === 'string' ? code : undefined;
+}
+
+function isPermissionError(cause: unknown): boolean {
+  const code = errorCode(cause);
   return code === 'EPERM' || code === 'EACCES';
 }
 

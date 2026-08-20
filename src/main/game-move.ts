@@ -55,12 +55,23 @@ export function findGameInText(id: string, text: string): Record<string, unknown
 /**
  * The card-relative path that must already exist on the target BEFORE a move commits (Р2.6 — "the files
  * of the game itself"), or null when there is nothing to check: Steam mode has no card file at all.
- * `carryFormToCard` (game-settings-model.ts) only ever carries a moved game into `steam` or `executable`
- * mode — never `install` (the whole install/copyToPc block is dropped) — so `executable` is the only other
- * case reachable here.
+ *
+ * `carryFormToCard` only ever LANDS a moved game in `steam` or `executable` mode, but the form stays open
+ * afterwards and offers every mode a card allows — Installer among them — so all three are reachable by
+ * the time Save runs. Which field names the on-card file differs per mode:
+ *  • installer (`install.type` other than `copy`) — `install.installer`. `executable` there is a path
+ *    INSIDE the installed game (manifest.ts resolveInstall resolves it against the install dir, not the
+ *    card), so checking it would reject a perfectly good move forever;
+ *  • `copy` — `executable`, which in that mode is card-root-relative and includes the source directory
+ *    prefix, so it names a real file on the card;
+ *  • no install block — `executable`, card-relative as usual.
  */
 export function expectedGameFilePath(raw: Record<string, unknown>): string | null {
   if (raw['steam'] !== undefined) return null;
+  const install = raw['install'];
+  if (isRecord(install) && install['type'] !== 'copy') {
+    return typeof install['installer'] === 'string' ? install['installer'] : null;
+  }
   return typeof raw['executable'] === 'string' ? raw['executable'] : null;
 }
 
