@@ -984,15 +984,19 @@ html:not(.mouse-asleep) .rect-button:hover,
   transition: none;
 }
 
-/* Carousel level: the text block moves NEXT TO the selected card, not under it — x=202 (the card's right
-   edge plus the 16 gap) with the title's centre 226 from the screen bottom, as in the mockup.
+/* Carousel level: the text block moves NEXT TO the selected card, not under it — x=210 with the title's
+   centre 226 from the screen bottom, as in the mockup.
+   That 210 is not a free number: it is the anchor (50) plus the selected card's width (136) plus the
+   row's own GAP, so the text sits one gap off the cover exactly as the covers sit off each other. The
+   shift below is what is left after .bar-content's 50 and .title's 124, i.e. 210 - 174. Widening the gap
+   moves this with it — it went 16 -> 24, so the shift went 28 -> 36 (see GAP in carousel-geometry.ts).
    `--text-lift` is the single vertical knob (both lines share it) and `--title-x`/`--status-x` the
    horizontal one — never a second `left`, which would collide with the rules that already own it (base,
    idle/error, no-play). The busy shift stacks on top, reproducing the mockup's "Home - Installing". */
 #app[data-screen='carousel'] {
   --text-lift: calc(130 * var(--px));
-  --title-x: calc(28 * var(--px));
-  --status-x: calc(28 * var(--px));
+  --title-x: calc(36 * var(--px));
+  --status-x: calc(36 * var(--px));
 }
 #app[data-screen='carousel'] .title {
   font-size: calc(24 * var(--px));
