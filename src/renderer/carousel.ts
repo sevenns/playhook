@@ -19,6 +19,7 @@ import {
   fanIndex,
   isNearViewport,
   isWithinWindow,
+  ringLeft,
   stripOffset,
 } from './carousel-geometry.js';
 import { SYSTEM_CARDS, type SystemCard } from './system-cards.js';
@@ -136,6 +137,10 @@ function itemKey(item: CarouselItem): string {
 export function createCarousel(deps: CarouselDeps): Carousel {
   const app = req('app');
   const strip = req('carousel-strip');
+  // The row's focus ring: ONE element for the whole strip, so the selection glides from card to card
+  // instead of blinking out on one and in on the next. Absolute, so it is no part of the flex row — and
+  // a child of the strip, so it inherits its slide, its fades and its hiding for free.
+  const ring = req('carousel-ring');
   const playButton = req('play-button');
 
   const systemItems: readonly CarouselItem[] = SYSTEM_CARDS.map((card) => ({
@@ -198,6 +203,9 @@ export function createCarousel(deps: CarouselDeps): Carousel {
   /** The strip's translation + the per-card selected/active/busy state. Cheap; safe to call often. */
   function applyLayout(): void {
     strip.style.setProperty('--strip-offset', String(stripOffset(index)));
+    // Where the ring comes to rest. Written in DESIGN px — styles.css multiplies by --px — and read as a
+    // target, not as a position: the CSS transition is what carries the ring there.
+    strip.style.setProperty('--ring-left', String(ringLeft(index)));
     const current = selected();
     const currentKey = current === undefined ? null : itemKey(current);
     items.forEach((item, position) => {
@@ -305,7 +313,8 @@ export function createCarousel(deps: CarouselDeps): Carousel {
       cards.set(itemKey(item), card);
       return card;
     });
-    strip.replaceChildren(...nodes);
+    // The ring goes back in FIRST: a rebuild replaces every child, and it is a child of the strip too.
+    strip.replaceChildren(ring, ...nodes);
   }
 
   /**

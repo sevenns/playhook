@@ -7,6 +7,7 @@
  * the highlight walks them, so every step is a pure index move plus a verdict for the caller (sound, or a
  * hand-over to the sidebar).
  */
+import { RING_INSET } from './carousel-geometry.js';
 import { clampIndex } from './index-math.js';
 import type { LibraryEntry } from '../shared/types.js';
 
@@ -14,6 +15,39 @@ import type { LibraryEntry } from '../shared/types.js';
 export const LIB_CARD_W = 200;
 export const LIB_CARD_H = 300;
 export const LIB_GAP = 16;
+
+/** How much the selected card grows in place. MIRRORS `--card-scale` on `.card.is-selected` in styles.css. */
+export const LIB_CARD_SCALE = 1.06;
+
+/** Where the focus ring stands, in REAL px — the units its container's coordinates already come in. */
+export interface RingBox {
+  readonly x: number;
+  readonly y: number;
+  readonly w: number;
+  readonly h: number;
+}
+
+/**
+ * The box the focus ring takes around the selected grid card, from that card's MEASURED offset.
+ *
+ * Measured rather than derived, unlike the carousel's ringLeft: the grid is `justify-content: center`,
+ * so the track's own left edge depends on how much slack the pane has — a formula over columns and gaps
+ * would not know that shift. `offsetLeft/offsetTop` are unaffected by the card's `scale`, so the reading
+ * stays true while it is growing.
+ *
+ * The ring wraps the card AT ITS GROWN SIZE and stays concentric with it: the scale spreads over both
+ * sides, so half of the growth comes off the offset, and the stand-off comes off on top of that.
+ */
+export function ringBox(offsetLeft: number, offsetTop: number, pxUnit: number): RingBox {
+  const growX = (LIB_CARD_W * (LIB_CARD_SCALE - 1)) / 2;
+  const growY = (LIB_CARD_H * (LIB_CARD_SCALE - 1)) / 2;
+  return {
+    x: offsetLeft - (growX + RING_INSET) * pxUnit,
+    y: offsetTop - (growY + RING_INSET) * pxUnit,
+    w: (LIB_CARD_W * LIB_CARD_SCALE + 2 * RING_INSET) * pxUnit,
+    h: (LIB_CARD_H * LIB_CARD_SCALE + 2 * RING_INSET) * pxUnit,
+  };
+}
 
 /** How many rows around the selected one keep their artwork loaded (see isNearInGrid). */
 export const LIB_ART_ROWS = 4;

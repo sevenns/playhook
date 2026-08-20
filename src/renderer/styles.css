@@ -364,21 +364,54 @@ body {
   height: calc(204 * var(--px));
 }
 
-/* The selected card wears the SAME pulsing ring as a focused Play button: on the carousel the card IS
-   the focus, so it must read as focused. Reuses the play-button's @keyframes and proportions (a 3px d2
-   border 7px out, radius 17), and rides the size transition because it's anchored to the card's box. */
-.card.is-selected::after {
-  content: '';
+/* The focus ring. It wears the SAME pulse as a focused Play button — on these screens the card IS the
+   focus, so it must read as focused — with the play-button's proportions halved (a 3px d2 border 7px out,
+   radius 17): on a 204-tall card the full-size one stands so far off the edge that its pulse reaches the
+   active dot below.
+
+   It belongs to the CONTAINER, not to the selected card. A ring drawn as the card's own ::after has to
+   blink out on the card the selection leaves and in on the one it arrives at; one ring per container
+   GLIDES between them instead, which is the whole point of this element existing. It is `position:
+   absolute` in a positioned container, so it is out of the flow entirely — no part of the strip's flex
+   row, no part of the grid's tracks — and carried by whatever moves that container.
+
+   TWO layers, and that is not decoration either: the pulse is a `transform: scale`, the travel is a
+   `transform: translate`, and one element has only one transform. The outer layer moves, the inner one
+   breathes. */
+.focus-ring {
   position: absolute;
-  /* Half the Play button's ring (inset 7 / border 3 / radius 17): on a 204-tall card the full-size one
-     stands so far off the edge that its pulse reaches the active dot below. */
-  inset: calc(-4 * var(--px));
+  pointer-events: none;
+  /* Over its neighbours AND over the card it wraps — in the grid that card is lifted to 1 itself. */
+  z-index: 2;
+}
+
+.focus-ring-pulse {
+  position: absolute;
+  inset: 0;
   border: calc(2 * var(--px)) solid var(--d2);
   border-radius: calc(14 * var(--px));
-  /* Its own, gentler pulse for the same reason — pulse-ring's 1.09 scale is 9 px of travel on a card
-     this tall, which would swallow the dot's 16 px of clearance. */
+  /* Its own, gentler pulse than pulse-ring's — that one's 1.09 scale is 9 px of travel on a card this
+     tall, which would swallow the dot's 16 px of clearance. */
   animation: card-ring-pulse 1.1s ease-in-out infinite;
-  pointer-events: none;
+}
+
+/* The strip's ring. Constant size — the selected card's box plus the stand-off on every side — because
+   it only ever wraps the selected card, and constant is what lets the travel be one translate.
+   `bottom` rather than `top`: the cards are bottom-aligned in the strip (align-items: flex-end), so the
+   row's floor is the one edge that does not move when a card grows.
+   `left: 0` is spelled out rather than left to the static position an absolute child of a flex container
+   would fall back to — the anchor of --ring-left has to be the strip's own origin, provably.
+   The travel is SHORTER than the morph on purpose: the strip slides under the ring in the same instant,
+   and at equal durations the two cancel out on screen — the ring would stand still while the new card
+   drove into it. Undershooting lets the ring lean towards the card it is going to and settle back onto
+   the anchor with it. */
+#carousel-ring {
+  left: 0;
+  bottom: calc(-4 * var(--px));
+  width: calc(144 * var(--px));
+  height: calc(212 * var(--px));
+  transform: translateX(calc(var(--ring-left, -4) * var(--px)));
+  transition: transform calc(var(--morph) * 0.6) var(--morph-ease);
 }
 
 @keyframes card-ring-pulse {
@@ -390,10 +423,14 @@ body {
     transform: scale(1.035);
   }
 }
-/* On the detail screen the strip is fading out — a pulsing ring underneath it would be noise. */
-#app[data-screen='detail'] .card.is-selected::after {
-  animation: none;
+/* On the detail screen the strip is fading out — a pulsing ring underneath it would be noise. Scoped to
+   the STRIP's ring: the grid's keeps breathing for the 0.35s the Library screen takes to fade, and a snap
+   there is the last thing seen of a card the user just pressed. */
+#app[data-screen='detail'] #carousel-ring {
   opacity: 0;
+}
+#app[data-screen='detail'] #carousel-ring .focus-ring-pulse {
+  animation: none;
 }
 
 /* The launcher's own cards (Notifications / Settings / System): no artwork, a solid d2 plate with the
@@ -589,6 +626,34 @@ body {
   transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1), height 0.35s cubic-bezier(0.4, 0, 0.2, 1),
     opacity 0.4s cubic-bezier(0.2, 0, 0.2, 1) 0.35s;
 }
+/* The ring's own hand-back, and why these three sit HERE, in this order: they all weigh 2 ids + 1
+   attribute, so the cascade is decided by the file, and the flipping one has to be the last of them or a
+   HELD direction would run on the return's timing instead of the glide's.
+
+   Coming back from a detail screen, the selected card grows out of the play button over 0.35s. A
+   full-size ring around a card that is a third of the way there reads as broken, so the ring waits the
+   grow out and then fades in — the same delayed opacity #carousel already uses. */
+#app[data-screen='carousel'] #carousel-ring {
+  opacity: 1;
+  transition: transform calc(var(--morph) * 0.6) var(--morph-ease),
+    opacity 0.2s ease var(--morph);
+}
+/* The startup fan (carousel.playIntro) needs longer than that: there the selected card fades in WITH the
+   row rather than swapping in opaque, so it only starts appearing at 0.35s and is not done until 0.75s —
+   the rule above would have the ring fully drawn around a half-transparent card for a third of a second.
+   It comes in behind the wave instead. */
+#app[data-returning='intro'] #carousel-ring {
+  transition: transform calc(var(--morph) * 0.6) var(--morph-ease),
+    opacity 0.2s ease calc(var(--morph) + 0.4s);
+}
+/* A HELD direction: the same glide the strip and the cards run on, and for the same reason — anything
+   eased, restarted every --flip-step, falls behind the row it is supposed to be wrapping. No undershoot
+   here either: the steps are back to back, so there is nothing to lean towards. The opacity half is
+   repeated because a transition is one property (the strip's flip rule does the same). */
+#app[data-flipping] #carousel-ring {
+  transition: transform var(--flip-step) linear, opacity 0.2s ease var(--morph);
+}
+
 #app[data-screen='carousel'][data-card-morph='on'] .play-button {
   /* Stays visible (and keeps its cover) for exactly that grow, then is swapped out in one frame. */
   transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1), height 0.35s cubic-bezier(0.4, 0, 0.2, 1),
@@ -2486,6 +2551,13 @@ html:not(.mouse-asleep) .settings-option:hover,
 #app[data-overlay='library'] #carousel-strip {
   transition: none;
 }
+/* The ring rides the strip, so it is cut in the same frame and for the same reason. Invisible either
+   way (the strip is at opacity 0), but a ring still gliding when the screen closes again would be a tail
+   of movement on a row that is supposed to be standing still. Last of the #carousel-ring rules by file
+   order, which is what lets it beat the flip glide — exactly as its twin above does. */
+#app[data-overlay='library'] #carousel-ring {
+  transition: none;
+}
 
 #app[data-overlay] #carousel {
   pointer-events: none;
@@ -3060,11 +3132,13 @@ html:not(.mouse-asleep) .picker-item:hover,
   display: flex;
 }
 
-/* The padding is not decoration: the selected card scales to 1.06 and its ring pulses to 1.035 ON TOP
-   of that (the ring is a child, so the two multiply), which puts its corner ~19 design px outside its
-   own box. The scroller clips on both axes, so anything less would slice the ring. 44 leaves room for a
-   decoration that reaches further, and costs nothing: even on a 16:10 screen the column count is the
-   same as it would be at 22. */
+/* The padding is not decoration: the selected card scales to 1.06 and the focus ring stands 4 design px
+   off it and pulses to 1.035 on top, which puts its corner ~14 design px outside the card's own box. The
+   scroller clips on both axes, so anything less would slice the ring. (It used to be ~19: the ring was
+   the card's own child then, so the card's scale and the pulse multiplied. #library-ring is a child of
+   the GRID and carries only the pulse — the clearance shrank, the padding did not need to.) 44 leaves
+   room for a decoration that reaches further, and costs nothing: even on a 16:10 screen the column count
+   is the same as it would be at 22. */
 .library-scroll {
   flex: 1 1 auto;
   min-height: 0;
@@ -3210,12 +3284,36 @@ html:not(.mouse-asleep) .picker-item:hover,
   transition: transform var(--flip-step) linear;
 }
 
-/* Opening a game switches data-screen at once, which stops the STRIP's ring mid-pulse (see the rule by
-   card-ring-pulse) — on the grid that snap is the last thing seen of a card the user just pressed. Here
-   the highlight keeps breathing for the 0.35s the screen takes to fade, and leaves with it. */
-#app[data-screen='detail'] #library .library-grid .card.is-selected::after {
-  animation: card-ring-pulse 1.1s ease-in-out infinite;
-  opacity: 1;
+/* The grid's ring. Sized from JS, unlike the strip's: the track is centred in the pane, so where a card
+   stands is a measurement (see ringBox in library-grid.ts) rather than a formula over columns and gaps.
+   The values arrive in REAL px, with the unit spelled out — a bare number is no <length> and translate()
+   would drop the declaration whole.
+   No undershoot here: nothing slides underneath, the cards stand still and only the ring travels, so it
+   runs on the morph itself — the same clock the card's own growth does. */
+#library-ring {
+  width: var(--ring-w, 0px);
+  height: var(--ring-h, 0px);
+  transform: translate(var(--ring-x, 0px), var(--ring-y, 0px));
+  transition: transform var(--morph) var(--morph-ease), opacity 0.2s ease;
+}
+
+/* Nothing to wrap: the focus is in the column, or the section is empty. Faded rather than removed — the
+   ring keeps its place, so the way back in is a fade, not a jump from wherever it last stood. The pulse
+   is left running; an invisible element costs nothing to animate. */
+#library-ring.is-hidden {
+  opacity: 0;
+}
+
+/* A held direction, exactly as on the strip — and after the base rule, whose specificity it ties. */
+#app[data-flipping] #library-ring {
+  transition: transform var(--flip-step) linear, opacity 0.2s ease;
+}
+
+/* …and the instant frame beats even that: a hand-over to the detail screen and back is a CUT, and the
+   ring may not glide across a grid that changed under it in one frame. In one row with the rule at the
+   head of this section, and after the flip rule for the same reason — both weigh (2, 1, 0). */
+#library.is-instant #library-ring {
+  transition: none;
 }
 
 /* The playable dot moves INSIDE the card, to its top-right corner: the grid is dense and there is no

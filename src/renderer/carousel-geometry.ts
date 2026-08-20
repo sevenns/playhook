@@ -18,6 +18,25 @@ export const GAP = 16;
 export const STEP = CARD_W + GAP;
 
 /**
+ * How far the focus ring stands off the card it wraps (design px, every side). Half the Play button's
+ * ring, exactly as the old `.card.is-selected::after` had it — MIRRORED by `#carousel-ring` /
+ * `#library-ring` in styles.css, which cannot read this.
+ */
+export const RING_INSET = 4;
+
+/**
+ * Where the focus ring's left edge sits inside the strip when card `index` is the selected one — the
+ * card's own left edge (`index * STEP`, by the invariant above) minus the ring's stand-off.
+ *
+ * The RESTING position, not the mid-flight one: the ring is carried there by a CSS transition, so the
+ * layout it crosses on the way is never read (a card to the right of the selection stands elsewhere
+ * while the row is moving, and it does not matter).
+ */
+export function ringLeft(index: number): number {
+  return index * STEP - RING_INSET;
+}
+
+/**
  * How far the strip is translated (design px, negative = leftwards) so that card `index` lands on the
  * anchor. Linear by the invariant above; index 0 means "no shift".
  */

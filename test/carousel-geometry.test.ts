@@ -6,12 +6,14 @@ import {
   FAN_MAX,
   GAP,
   MAX_STRIP_GAMES,
+  RING_INSET,
   STEP,
   cardLeft,
   clampIndex,
   fanIndex,
   isNearViewport,
   isWithinWindow,
+  ringLeft,
   stripOffset,
   VISIBLE_CARDS,
 } from '../src/renderer/carousel-geometry';
@@ -51,6 +53,29 @@ describe('cardLeft (the anchor invariant)', () => {
 
   it('sends the cards left of the selection off to negative x (they leave the screen edge)', () => {
     expect(cardLeft(0, 10)).toBe(-10 * STEP);
+  });
+});
+
+describe('ringLeft (the focus ring inside the strip)', () => {
+  it('stands one inset left of the card it wraps', () => {
+    expect(ringLeft(0)).toBe(-RING_INSET);
+    expect(ringLeft(3)).toBe(3 * STEP - RING_INSET);
+  });
+
+  it('walks one STEP per card, exactly like the row it rides in', () => {
+    for (let index = 0; index < 12; index += 1) {
+      expect(ringLeft(index + 1) - ringLeft(index)).toBe(STEP);
+    }
+  });
+
+  it('wraps the selected card: its left edge is cardLeft plus the strip offset', () => {
+    // What the ring is drawn against — the card's edge in the strip's own coordinates, which for the
+    // SELECTED card is the anchor moved back by the strip's own translation.
+    for (const selected of [0, 1, 5, 9]) {
+      expect(ringLeft(selected)).toBe(
+        cardLeft(selected, selected) - stripOffset(selected) - RING_INSET,
+      );
+    }
   });
 });
 

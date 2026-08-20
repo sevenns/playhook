@@ -18,6 +18,7 @@ import {
   gridColumns,
   gridStep,
   isNearInGrid,
+  ringBox,
   type GridDir,
   type LibraryFilter,
 } from './library-grid.js';
@@ -79,6 +80,9 @@ export function createLibraryScreen(deps: LibraryScreenDeps): LibraryScreen {
   const app = req('app');
   const screen = req('library');
   const gridEl = req('library-grid');
+  // The grid's focus ring: ONE element that glides from card to card, the strip's twin (see
+  // carousel.ts). A child of the grid, so it scrolls with the cards and shares their coordinates.
+  const ring = req('library-ring');
   const scrollEl = req('library-scroll');
   const emptyEl = req('library-empty');
   const scroller = createScroller(scrollEl);
@@ -214,6 +218,34 @@ export function createLibraryScreen(deps: LibraryScreenDeps): LibraryScreen {
     deps.art.dropPending(keep);
   }
 
+  /**
+   * Puts the focus ring around `node`, or takes it off screen when there is nothing to wrap — the focus
+   * is in the column, or the section is empty.
+   *
+   * The card is MEASURED rather than derived (see ringBox): `justify-content: center` decides where the
+   * track starts. `instant` is for the frames where the ring has no business travelling — a fresh open,
+   * a section switch, a restore — since the card it was last on is not on screen any more and gliding
+   * from it would send the ring across the whole grid.
+   */
+  function placeRing(node: HTMLElement | undefined, instant: boolean): void {
+    if (node === undefined) {
+      ring.classList.add('is-hidden');
+      return;
+    }
+    const box = ringBox(node.offsetLeft, node.offsetTop, pxUnit());
+    if (instant) ring.style.transition = 'none';
+    ring.classList.remove('is-hidden');
+    // Written WITH the unit: a bare number is no <length>, and translate() would drop the declaration
+    // whole — the ring would then sit at the grid's corner and never move again.
+    ring.style.setProperty('--ring-x', `${box.x}px`);
+    ring.style.setProperty('--ring-y', `${box.y}px`);
+    ring.style.setProperty('--ring-w', `${box.w}px`);
+    ring.style.setProperty('--ring-h', `${box.h}px`);
+    if (!instant) return;
+    void ring.offsetWidth; // land the new place in this frame, before the transition comes back
+    ring.style.removeProperty('transition');
+  }
+
   /** The selection's ring, the dots, and the scroll that keeps the selected card in view. */
   function applyLayout(instant = false): void {
     const active = !sidebar.hasFocus();
@@ -226,6 +258,7 @@ export function createLibraryScreen(deps: LibraryScreenDeps): LibraryScreen {
       node.classList.toggle('is-busy', game.id === busyId);
     });
     const selectedNode = active && current !== undefined ? nodeOf(current) : undefined;
+    placeRing(selectedNode, instant);
     // Only while the screen is actually up: scrolling a grid that is fading out under the screen above
     // it moves cards nobody asked to move, right in the user's eye line.
     if (open && selectedNode !== undefined) {
@@ -531,9 +564,11 @@ export function createLibraryScreen(deps: LibraryScreenDeps): LibraryScreen {
   // that can tell us it changed (--px is tied to the height, so a resize moves both).
   new ResizeObserver(() => {
     if (!open) return;
-    const previous = cols;
     measureColumns();
-    if (cols !== previous) applyLayout(true);
+    // Unconditionally, not only when the column count changed: --px is tied to the HEIGHT, so a resize
+    // that keeps the columns still moves every card in real px — and the ring's coordinates are real px,
+    // so left alone they would go stale and the ring would sit beside the card instead of around it.
+    applyLayout(true);
   }).observe(scrollEl);
 
   // The wheel drives the SELECTION, not the scrollbar. Left native, the grid would slide out from under
