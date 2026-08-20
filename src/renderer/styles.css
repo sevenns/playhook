@@ -364,106 +364,33 @@ body {
   height: calc(204 * var(--px));
 }
 
-/* The focus ring. It wears the SAME pulse as a focused Play button — on these screens the card IS the
-   focus, so it must read as focused — with the play-button's proportions halved (a 3px d2 border 7px out,
-   radius 17): on a 204-tall card the full-size one stands so far off the edge that its pulse reaches the
-   active dot below.
+/* The focus indicator: a soft body lying UNDER the selected cover rather than a ring drawn around it.
+   A ring has to blink out on the card the selection leaves and in on the one it arrives at; one body per
+   surface travels between them, breathing where it stands. It is drawn on a canvas (focus-jelly.ts) —
+   the contour genuinely deforms, which no amount of border-radius can fake.
 
-   It belongs to the CONTAINER, not to the selected card. A ring drawn as the card's own ::after has to
-   blink out on the card the selection leaves and in on the one it arrives at; one ring per container
-   GLIDES between them instead, which is the whole point of this element existing. It is `position:
-   absolute` in a positioned container, so it is out of the flow entirely — no part of the strip's flex
-   row, no part of the grid's tracks — and carried by whatever moves that container.
-
-   TWO layers, and that is not decoration either: the pulse is a `transform: scale`, and the outer layer
-   needs BOTH of the other two channels for itself — `translate` to travel and `scale` to deform, the two
-   halves of the jelly. Three animations at once, on three properties, because one `transform` could only
-   ever hold one of them. The outer layer moves and stretches, the inner one breathes. */
-.focus-ring {
+   The canvas rides INSIDE the strip, so the row's slide, its fades and its hiding all carry it for free,
+   exactly as the ring's element used to be carried. It is the strip's first child and `position:
+   absolute`, so it is no part of the flex row. */
+#carousel-jelly {
   position: absolute;
+  left: calc(-26 * var(--px));
+  /* Pinned to the row's TOP, not its floor: the strip's height follows the tallest card, so it shrinks
+     and grows all through a move — anchored at the bottom, the canvas would slide against the very
+     offsetTop values drawn onto it. The top edge does not move, and the canvas is tall enough for the
+     grown card either way (see stripCanvas). */
+  top: calc(-26 * var(--px));
   pointer-events: none;
-  /* Over its neighbours AND over the card it wraps — in the grid that card is lifted to 1 itself. */
-  z-index: 2;
-  /* How far the jelly pulls along its travel and squashes across it. One pair of numbers for both rings;
-     the axis they land on is decided per move (see .is-gliding). */
-  --ring-jelly-long: 1.07;
-  --ring-jelly-flat: 0.95;
-  /* The SETTLE: how the stretch comes back to nothing once the ring has arrived — and the half of this
-     that reads as JELLY rather than as a box quietly shrinking. A cubic-bezier can only overshoot ONCE,
-     which at this amplitude is a sub-pixel twitch nobody sees; a damped spring keeps ringing. The curve
-     below is that spring sampled into linear() — zeta 0.35, so the first overshoot is 31% (the ~7%
-     stretch rebounds ~2% the other way) and it dies out over two and a bit periods.
-     Generated, not hand-tuned: to re-aim it, re-sample y(t) = 1 - e^-zwt (cos wd t + zw/wd sin wd t). */
-  --ring-settle: 0.42s;
-  --ring-settle-ease: linear(0 0.0%, 0.145 3.8%, 0.472 7.7%, 0.833 11.5%, 1.118 15.4%, 1.276 19.2%, 1.306 23.1%, 1.243 26.9%, 1.136 30.8%, 1.027 34.6%, 0.948 38.5%, 0.909 42.3%, 0.908 46.2%, 0.932 50.0%, 0.966 53.8%, 0.998 57.7%, 1.02 61.5%, 1.029 65.4%, 1.027 69.2%, 1.019 73.1%, 1.008 76.9%, 0.999 80.8%, 0.993 84.6%, 0.991 88.5%, 0.992 92.3%, 0.995 96.2%, 1 100.0%);
-  /* The edge the deformation is anchored to: the one the ring is LEAVING, written per move by JS (the
-     carousel pins the y half to the floor its cards stand on — see #carousel-ring). */
-  transform-origin: var(--ring-ox, 50%) var(--ring-oy, 50%);
-  scale: 1 1;
+  /* Under the covers, over the wallpaper. The cards carry no z-index of their own, so a plain 0 here
+     puts the body behind every one of them. */
+  z-index: 0;
 }
 
-/* Under way. The stretch goes ON fast and WITHOUT overshoot — it is the ring being pulled, not released —
-   and the same class stays on for a whole held flip, so the ring is evenly drawn out for the length of
-   the glide and springs back once, at the end, rather than wobbling per step. */
-.focus-ring.is-gliding {
-  --ring-settle: 0.12s;
-  --ring-settle-ease: cubic-bezier(0.3, 0, 0.3, 1);
-  scale: var(--ring-sx, var(--ring-jelly-long)) var(--ring-sy, var(--ring-jelly-flat));
-}
-
-.focus-ring-pulse {
-  position: absolute;
-  inset: 0;
-  border: calc(2 * var(--px)) solid var(--d2);
-  border-radius: calc(14 * var(--px));
-  /* Its own, gentler pulse than pulse-ring's — that one's 1.09 scale is 9 px of travel on a card this
-     tall, which would swallow the dot's 16 px of clearance. */
-  animation: card-ring-pulse 1.1s ease-in-out infinite;
-}
-
-/* The strip's ring. Constant size — the selected card's box plus the stand-off on every side — because
-   it only ever wraps the selected card, and constant is what lets the travel be one translate.
-   `bottom` rather than `top`: the cards are bottom-aligned in the strip (align-items: flex-end), so the
-   row's floor is the one edge that does not move when a card grows.
-   `left: 0` is spelled out rather than left to the static position an absolute child of a flex container
-   would fall back to — the anchor of --ring-left has to be the strip's own origin, provably.
-   The travel is SHORTER than the morph on purpose: the strip slides under the ring in the same instant,
-   and at equal durations the two cancel out on screen — the ring would stand still while the new card
-   drove into it. Undershooting lets the ring lean towards the card it is going to and settle back onto
-   the anchor with it. */
-#carousel-ring {
-  left: 0;
-  bottom: calc(-4 * var(--px));
-  width: calc(144 * var(--px));
-  height: calc(212 * var(--px));
-  /* `translate`, not `transform`: the jelly needs `scale` as a channel of its own, and one transform
-     cannot carry both the travel and the deformation (nor could the pulse share it — that is why the
-     inner layer exists at all). Three properties, three independent animations. */
-  translate: calc(var(--ring-left, -4) * var(--px));
-  transition: translate calc(var(--morph) * 0.6) var(--morph-ease),
-    scale var(--ring-settle) var(--ring-settle-ease);
-  /* The row's cards stand on a floor (align-items: flex-end), so the squash pulls the ring's LID down
-     rather than lifting its foot off the card. Only the x half of the origin travels with the move. */
-  --ring-oy: 100%;
-}
-
-@keyframes card-ring-pulse {
-  0%,
-  100% {
-    transform: scale(1);
-  }
-  50% {
-    transform: scale(1.035);
-  }
-}
-/* On the detail screen the strip is fading out — a pulsing ring underneath it would be noise. Scoped to
-   the STRIP's ring: the grid's keeps breathing for the 0.35s the Library screen takes to fade, and a snap
-   there is the last thing seen of a card the user just pressed. */
-#app[data-screen='detail'] #carousel-ring {
+/* On the detail screen the strip is fading out — a breathing body underneath it would be noise. Scoped
+   to the STRIP's body: the grid's keeps breathing for the 0.35s the Library screen takes to fade, and a
+   snap there is the last thing seen of a card the user just pressed. */
+#app[data-screen='detail'] #carousel-jelly {
   opacity: 0;
-}
-#app[data-screen='detail'] #carousel-ring .focus-ring-pulse {
-  animation: none;
 }
 
 /* The launcher's own cards (Notifications / Settings / System): no artwork, a solid d2 plate with the
@@ -659,34 +586,18 @@ body {
   transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1), height 0.35s cubic-bezier(0.4, 0, 0.2, 1),
     opacity 0.4s cubic-bezier(0.2, 0, 0.2, 1) 0.35s;
 }
-/* The ring's own hand-back, and why these three sit HERE, in this order: they all weigh 2 ids + 1
-   attribute, so the cascade is decided by the file, and the flipping one has to be the last of them or a
-   HELD direction would run on the return's timing instead of the glide's.
-
-   Coming back from a detail screen, the selected card grows out of the play button over 0.35s. A
-   full-size ring around a card that is a third of the way there reads as broken, so the ring waits the
-   grow out and then fades in — the same delayed opacity #carousel already uses. */
-#app[data-screen='carousel'] #carousel-ring {
+/* Coming back from a detail screen, the selected card grows out of the play button over 0.35s. A
+   full-size body under a card that is a third of the way there reads as broken, so it waits the grow out
+   and then fades in — the same delayed opacity #carousel already uses. */
+#app[data-screen='carousel'] #carousel-jelly {
   opacity: 1;
-  transition: translate calc(var(--morph) * 0.6) var(--morph-ease),
-    scale var(--ring-settle) var(--ring-settle-ease), opacity 0.2s ease var(--morph);
+  transition: opacity 0.2s ease var(--morph);
 }
-/* The startup fan (carousel.playIntro) needs longer than that: there the selected card fades in WITH the
-   row rather than swapping in opaque, so it only starts appearing at 0.35s and is not done until 0.75s —
-   the rule above would have the ring fully drawn around a half-transparent card for a third of a second.
-   It comes in behind the wave instead. */
-#app[data-returning='intro'] #carousel-ring {
-  transition: translate calc(var(--morph) * 0.6) var(--morph-ease),
-    scale var(--ring-settle) var(--ring-settle-ease),
-    opacity 0.2s ease calc(var(--morph) + 0.4s);
-}
-/* A HELD direction: the same glide the strip and the cards run on, and for the same reason — anything
-   eased, restarted every --flip-step, falls behind the row it is supposed to be wrapping. No undershoot
-   here either: the steps are back to back, so there is nothing to lean towards. The opacity half is
-   repeated because a transition is one property (the strip's flip rule does the same). */
-#app[data-flipping] #carousel-ring {
-  transition: translate var(--flip-step) linear,
-    scale var(--ring-settle) var(--ring-settle-ease), opacity 0.2s ease var(--morph);
+/* The startup fan (carousel.playIntro) needs longer: there the selected card fades in WITH the row
+   rather than swapping in opaque, so it only starts appearing at 0.35s and is not done until 0.75s —
+   the rule above would leave the body fully drawn under a half-transparent card for a third of a second. */
+#app[data-returning='intro'] #carousel-jelly {
+  transition: opacity 0.2s ease calc(var(--morph) + 0.4s);
 }
 
 #app[data-screen='carousel'][data-card-morph='on'] .play-button {
@@ -2586,13 +2497,6 @@ html:not(.mouse-asleep) .settings-option:hover,
 #app[data-overlay='library'] #carousel-strip {
   transition: none;
 }
-/* The ring rides the strip, so it is cut in the same frame and for the same reason. Invisible either
-   way (the strip is at opacity 0), but a ring still gliding when the screen closes again would be a tail
-   of movement on a row that is supposed to be standing still. Last of the #carousel-ring rules by file
-   order, which is what lets it beat the flip glide — exactly as its twin above does. */
-#app[data-overlay='library'] #carousel-ring {
-  transition: none;
-}
 
 #app[data-overlay] #carousel {
   pointer-events: none;
@@ -3167,13 +3071,12 @@ html:not(.mouse-asleep) .picker-item:hover,
   display: flex;
 }
 
-/* The padding is not decoration: the selected card scales to 1.06 and the focus ring stands 4 design px
-   off it and pulses to 1.035 on top, which puts its corner ~14 design px outside the card's own box. The
-   scroller clips on both axes, so anything less would slice the ring. (It used to be ~19: the ring was
-   the card's own child then, so the card's scale and the pulse multiplied. #library-ring is a child of
-   the GRID and carries only the pulse — the clearance shrank, the padding did not need to.) 44 leaves
-   room for a decoration that reaches further, and costs nothing: even on a 16:10 screen the column count
-   is the same as it would be at 22. */
+/* The padding is not decoration: the selected card scales to 1.06 and the focus body stands 8 design px
+   off it and breathes a few more, which puts its corner ~22 design px outside the card's own box. The
+   scroller clips on both axes — but the body is drawn on a canvas OUTSIDE it (see #library-jelly), so
+   what this padding now protects is the card's own scale, and it keeps the body's ends off the pane's
+   edges. 44 leaves room for a decoration that reaches further, and costs nothing: even on a 16:10 screen
+   the column count is the same as it would be at 22. */
 .library-scroll {
   flex: 1 1 auto;
   min-height: 0;
@@ -3183,7 +3086,7 @@ html:not(.mouse-asleep) .picker-item:hover,
   /* Top is its own value, smaller than the other three sides: .settings-nav has NO top padding of its
      own (its first item's centered content sits close to the very top of the column), so the full 44
      up here read as the grid starting visibly lower than the sidebar. ~20 is the least this can be
-     without slicing a selected first-row card's ring — see the note below. */
+     without the first row's selected card reaching the pane's edge — see the note below. */
   padding: calc(20 * var(--px)) calc(44 * var(--px)) calc(44 * var(--px));
   /* Same edge treatment as .settings-list: fades driven from JS, none where there is nothing beyond. */
   --fade-top: 0px;
@@ -3319,38 +3222,38 @@ html:not(.mouse-asleep) .picker-item:hover,
   transition: transform var(--flip-step) linear;
 }
 
-/* The grid's ring. Sized from JS, unlike the strip's: the track is centred in the pane, so where a card
-   stands is a measurement (see ringBox in library-grid.ts) rather than a formula over columns and gaps.
-   The values arrive in REAL px, with the unit spelled out — a bare number is no <length> and translate()
-   would drop the declaration whole.
-   No undershoot here: nothing slides underneath, the cards stand still and only the ring travels, so it
-   runs on the morph itself — the same clock the card's own growth does. */
-#library-ring {
-  width: var(--ring-w, 0px);
-  height: var(--ring-h, 0px);
-  translate: var(--ring-x, 0px) var(--ring-y, 0px);
-  transition: translate var(--morph) var(--morph-ease),
-    scale var(--ring-settle) var(--ring-settle-ease), opacity 0.2s ease;
+/* The grid's focus body. Unlike the strip's, its canvas is NOT inside the scrolling content: a library
+   of hundreds would make a canvas thousands of pixels tall, and its backing store is width x height x 4
+   x dpr² bytes — tens of megabytes on a handheld. This one is the size of the pane, and library-screen.ts
+   folds the scroll offset into the coordinates it draws at.
+   Positioned over the pane but under the cards: .library-scroll takes a z-index of its own for this. */
+#library-jelly {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 1;
+  transition: opacity 0.2s ease;
 }
 
-/* Nothing to wrap: the focus is in the column, or the section is empty. Faded rather than removed — the
-   ring keeps its place, so the way back in is a fade, not a jump from wherever it last stood. The pulse
-   is left running; an invisible element costs nothing to animate. */
-#library-ring.is-hidden {
+/* Nothing to wrap: the focus is in the column, or the section is empty. Faded rather than moved — the
+   body keeps its place, so the way back in is a fade rather than a jump from wherever it last stood. */
+#library-jelly.is-hidden {
   opacity: 0;
 }
 
-/* A held direction, exactly as on the strip — and after the base rule, whose specificity it ties. */
-#app[data-flipping] #library-ring {
-  transition: translate var(--flip-step) linear,
-    scale var(--ring-settle) var(--ring-settle-ease), opacity 0.2s ease;
+/* …and the instant frame kills even that: a hand-over to the detail screen and back is a CUT. In one
+   row with the rule at the head of this section. */
+#library.is-instant #library-jelly {
+  transition: none;
 }
 
-/* …and the instant frame beats even that: a hand-over to the detail screen and back is a CUT, and the
-   ring may not glide across a grid that changed under it in one frame. In one row with the rule at the
-   head of this section, and after the flip rule for the same reason — both weigh (2, 1, 0). */
-#library.is-instant #library-ring {
-  transition: none;
+/* The cards must sit ABOVE the body, and z-index only bites on a positioned element — the scroller had
+   none, so it gets one here. Harmless to the layout: it already clips on both axes. */
+#library .library-scroll {
+  position: relative;
+  z-index: 1;
 }
 
 /* The playable dot moves INSIDE the card, to its top-right corner: the grid is dense and there is no

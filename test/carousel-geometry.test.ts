@@ -6,15 +6,15 @@ import {
   FAN_MAX,
   GAP,
   MAX_STRIP_GAMES,
-  RING_INSET,
+  SEL_H,
+  SEL_W,
   STEP,
+  stripCanvas,
   cardLeft,
   clampIndex,
   fanIndex,
   isNearViewport,
   isWithinWindow,
-  ringLeft,
-  ringStretch,
   stripOffset,
   VISIBLE_CARDS,
 } from '../src/renderer/carousel-geometry';
@@ -57,48 +57,23 @@ describe('cardLeft (the anchor invariant)', () => {
   });
 });
 
-describe('ringLeft (the focus ring inside the strip)', () => {
-  it('stands one inset left of the card it wraps', () => {
-    expect(ringLeft(0)).toBe(-RING_INSET);
-    expect(ringLeft(3)).toBe(3 * STEP - RING_INSET);
+describe('stripCanvas (the focus body\'s canvas)', () => {
+  it('spans the whole row plus slack on both sides', () => {
+    const margin = 26;
+    expect(stripCanvas(1, margin).width).toBe(SEL_W + 2 * margin);
+    expect(stripCanvas(4, margin).width).toBe(3 * STEP + SEL_W + 2 * margin);
+    expect(stripCanvas(4, margin).height).toBe(SEL_H + 2 * margin);
   });
 
-  it('walks one STEP per card, exactly like the row it rides in', () => {
-    for (let index = 0; index < 12; index += 1) {
-      expect(ringLeft(index + 1) - ringLeft(index)).toBe(STEP);
-    }
+  it('covers the row at its widest — the selected card standing at the last step', () => {
+    // Whatever card is selected, the row's right edge is at most this: everything before it at the
+    // normal width (the layout invariant above), and the selected one grown.
+    const count = 13;
+    expect(stripCanvas(count, 0).width).toBe((count - 1) * STEP + SEL_W);
   });
 
-  it('wraps the selected card: its left edge is cardLeft plus the strip offset', () => {
-    // What the ring is drawn against — the card's edge in the strip's own coordinates, which for the
-    // SELECTED card is the anchor moved back by the strip's own translation.
-    for (const selected of [0, 1, 5, 9]) {
-      expect(ringLeft(selected)).toBe(
-        cardLeft(selected, selected) - stripOffset(selected) - RING_INSET,
-      );
-    }
-  });
-});
-
-describe('ringStretch (the jelly)', () => {
-  it('pulls along the longer leg of the move', () => {
-    expect(ringStretch(106, 0)?.axis).toBe('x');
-    expect(ringStretch(0, 316)?.axis).toBe('y');
-    // The ragged last row: a step down can land a column over, and the ring must still deform vertically.
-    expect(ringStretch(-432, 316)?.axis).toBe('x');
-    expect(ringStretch(-108, 316)?.axis).toBe('y');
-  });
-
-  it('anchors the edge being LEFT behind, so the far side runs ahead', () => {
-    expect(ringStretch(106, 0)?.originPercent).toBe(0);
-    expect(ringStretch(-106, 0)?.originPercent).toBe(100);
-    expect(ringStretch(0, 316)?.originPercent).toBe(0);
-    expect(ringStretch(0, -316)?.originPercent).toBe(100);
-  });
-
-  it('says no to a repaint that moved nothing — a still ring must not wobble', () => {
-    expect(ringStretch(0, 0)).toBeNull();
-    expect(ringStretch(0.4, -0.6)).toBeNull();
+  it('never collapses on an empty row', () => {
+    expect(stripCanvas(0, 26).width).toBe(SEL_W + 52);
   });
 });
 

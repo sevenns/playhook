@@ -19,13 +19,14 @@ import {
   fanIndex,
   isNearViewport,
   isWithinWindow,
-  ringLeft,
-  ringStretch,
+  stripCanvas,
   stripOffset,
 } from './carousel-geometry.js';
 import { SYSTEM_CARDS, type SystemCard } from './system-cards.js';
 import { systemCardIcon } from './system-card-icons.js';
-import { req } from './dom.js';
+import { req, reqCanvas } from './dom.js';
+import { FALLBACK_COLOUR, JELLY, createFocusJelly, jellyBoxOf } from './focus-jelly.js';
+import { pxUnit } from './screen-scroller.js';
 
 /** The two levels of the launcher screen (mirrors `#app[data-screen]`). */
 export type Screen = 'carousel' | 'detail';
@@ -130,13 +131,6 @@ export interface Carousel {
   setDetailArt(url: string | null): void;
 }
 
-/**
- * How long the ring counts as under way after a step — the duration of its own travel, mirroring
- * `calc(var(--morph) * 0.6)` in styles.css. A HELD direction steps faster than this, so the mark simply
- * never comes off mid-flip and the jelly stays drawn out for the whole glide (see glideRing).
- */
-const RING_GLIDE_MS = 144;
-
 /** The row's identity for one item — the key of the DOM node, and what a list update keeps the selection by. */
 function itemKey(item: CarouselItem): string {
   return item.kind === 'game' ? `g:${item.game.id}` : `s:${item.card.id}`;
@@ -145,11 +139,10 @@ function itemKey(item: CarouselItem): string {
 export function createCarousel(deps: CarouselDeps): Carousel {
   const app = req('app');
   const strip = req('carousel-strip');
-  // The row's focus ring: ONE element for the whole strip, so the selection glides from card to card
-  // instead of blinking out on one and in on the next. Absolute, so it is no part of the flex row — and
-  // a child of the strip, so it inherits its slide, its fades and its hiding for free.
-  const ring = req('carousel-ring');
   const playButton = req('play-button');
+  // Live style object: read per frame for the body's colour, so the palette crossfade (--d2 is a
+  // registered property with its own transition) carries it without a single line of interpolation here.
+  const appStyle = getComputedStyle(app);
 
   const systemItems: readonly CarouselItem[] = SYSTEM_CARDS.map((card) => ({
     kind: 'system',
@@ -188,12 +181,10 @@ export function createCarousel(deps: CarouselDeps): Carousel {
   // the strip on games[0] while the title, the background and the music belonged to another game.
   // Honoured by the next setGames, then forgotten; a real move by the user outranks it (see move()).
   let pendingFocusId: string | null = null;
-  // Where the ring was last sent, so a repaint that did not move the selection (a dot, a busy game, a
-  // language change) does not make it wobble. null until the first layout — the ring is placed, not
-  // moved, then.
-  let ringIndex: number | null = null;
-  // Pending end of the ring's stretch; null when it is at rest. See glideRing.
-  let ringTimer: number | null = null;
+  // Where the body was last sent, so a repaint that did not move the selection (a dot, a busy game, a
+  // language change) does not make it squeeze. null until the first layout — the body is placed then,
+  // not moved.
+  let jellyIndex: number | null = null;
 
   const artKey = (game: LibraryEntry): string => `${game.id}@${game.artRev ?? ''}`;
 
@@ -215,34 +206,62 @@ export function createCarousel(deps: CarouselDeps): Carousel {
   }
 
   /**
-   * Stretches the ring for the move it is about to make: pulled along the row and squashed across it,
-   * anchored at the edge it is leaving, so the far side runs ahead and the near side trails. The class
-   * comes off once the travel is done and CSS springs it back (see .focus-ring in styles.css).
+   * The box the focus body hugs: the SELECTED card's own rectangle, in the strip's coordinates.
    *
-   * Always the x axis here — the row only ever moves sideways — so only the origin is written.
+   * Measured off the node rather than derived from the index, and measured EVERY frame (focus-jelly.ts
+   * asks for it), because the card is still growing from 90x135 to 136x204 while the row slides — a
+   * box computed once would have the body wrapping a size the card no longer has.
    */
-  function glideRing(next: number): void {
-    const previous = ringIndex;
-    ringIndex = next;
-    if (previous === null) return; // the first layout PLACES the ring; nothing has moved yet
-    const stretch = ringStretch(ringLeft(next) - ringLeft(previous), 0);
-    if (stretch === null) return;
-    ring.style.setProperty('--ring-ox', `${stretch.originPercent}%`);
-    ring.classList.add('is-gliding');
-    if (ringTimer !== null) window.clearTimeout(ringTimer);
-    ringTimer = window.setTimeout(() => {
-      ringTimer = null;
-      ring.classList.remove('is-gliding');
-    }, RING_GLIDE_MS);
+  function jellyTarget(): ReturnType<typeof jellyBoxOf> | null {
+    const current = selected();
+    const card = current === undefined ? undefined : cards.get(itemKey(current));
+    if (card === undefined) return null;
+    const unit = pxUnit();
+    const parsed = Number.parseFloat(getComputedStyle(card).borderTopLeftRadius);
+    const radius = Number.isFinite(parsed) ? parsed : 0;
+    const pad = JELLY.margin * unit; // the canvas starts up and to the left of the strip's own origin
+    return jellyBoxOf(
+      card.offsetLeft + pad,
+      card.offsetTop + pad,
+      card.offsetWidth,
+      card.offsetHeight,
+      radius,
+      unit,
+    );
+  }
+
+  const jellyCanvas = reqCanvas('carousel-jelly');
+  const jelly = createFocusJelly(jellyCanvas, {
+    target: jellyTarget,
+    colour: () => {
+      const value = appStyle.getPropertyValue('--d2').trim();
+      return value.length > 0 ? value : FALLBACK_COLOUR;
+    },
+    unit: pxUnit,
+  });
+
+  /** Fits the canvas around the whole row — it must cover wherever the body may be, plus its overhang. */
+  function sizeJelly(): void {
+    const unit = pxUnit();
+    const size = stripCanvas(items.length);
+    jelly.resize(size.width * unit, size.height * unit);
+  }
+
+  /** Squeezes the body through its trip to a new card. A repaint that moved nothing leaves it alone. */
+  function nudgeJelly(next: number): void {
+    const previous = jellyIndex;
+    jellyIndex = next;
+    if (previous === null) {
+      jelly.bump(true); // the first layout PLACES the body; nothing has travelled
+      return;
+    }
+    if (previous !== next) jelly.bump();
   }
 
   /** The strip's translation + the per-card selected/active/busy state. Cheap; safe to call often. */
   function applyLayout(): void {
     strip.style.setProperty('--strip-offset', String(stripOffset(index)));
-    // Where the ring comes to rest. Written in DESIGN px — styles.css multiplies by --px — and read as a
-    // target, not as a position: the CSS transition is what carries the ring there.
-    strip.style.setProperty('--ring-left', String(ringLeft(index)));
-    glideRing(index);
+    nudgeJelly(index);
     const current = selected();
     const currentKey = current === undefined ? null : itemKey(current);
     items.forEach((item, position) => {
@@ -350,8 +369,9 @@ export function createCarousel(deps: CarouselDeps): Carousel {
       cards.set(itemKey(item), card);
       return card;
     });
-    // The ring goes back in FIRST: a rebuild replaces every child, and it is a child of the strip too.
-    strip.replaceChildren(ring, ...nodes);
+    // The canvas goes back in FIRST: a rebuild replaces every child, and it is a child of the strip too.
+    strip.replaceChildren(jellyCanvas, ...nodes);
+    sizeJelly();
   }
 
   /**
@@ -457,6 +477,11 @@ export function createCarousel(deps: CarouselDeps): Carousel {
 
   // The launcher starts on the plain bar screen; the first list promotes it to the carousel (applyLibrary).
   app.dataset['screen'] = screen;
+  sizeJelly();
+  jelly.setActive(true);
+  // --px is tied to the window's height, so a resize moves the row in real px and the canvas has to
+  // follow. The body's own coordinates are re-read every frame, so nothing else needs saying.
+  new ResizeObserver(() => sizeJelly()).observe(app);
 
   return {
     focusGame(id: string): void {

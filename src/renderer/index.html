@@ -43,11 +43,9 @@
            Every card is built from JS (carousel.ts); artwork is fetched per game card, on demand. -->
       <div id="carousel" aria-hidden="true">
         <div id="carousel-strip">
-          <!-- The focus ring belongs to the STRIP, not to the selected card: one element that glides
-               from card to card instead of blinking out on one and in on the next. The inner layer
-               carries the pulse, the outer one the travel — a single element cannot do both, they
-               would be the same `transform` (styles.css). -->
-          <div class="focus-ring" id="carousel-ring"><div class="focus-ring-pulse"></div></div>
+          <!-- The focus indicator: a soft body UNDER the covers, drawn on a canvas that rides inside the
+               strip, so it inherits the row's slide and its fades (focus-jelly.ts). -->
+          <canvas id="carousel-jelly" aria-hidden="true"></canvas>
         </div>
       </div>
 
@@ -348,11 +346,12 @@
           <div class="settings-body">
             <div class="settings-nav" id="library-nav"></div>
             <div class="library-pane">
+              <!-- The grid's focus body, the strip's twin. It sits OUTSIDE the scroller on purpose: a
+                   canvas as tall as a library of hundreds would cost tens of megabytes, so this one is
+                   the size of the viewport and the scroll offset is folded into the coordinates. -->
+              <canvas id="library-jelly" class="is-hidden" aria-hidden="true"></canvas>
               <div class="library-scroll" id="library-scroll">
-                <div class="library-grid" id="library-grid">
-                  <!-- The grid's own focus ring — the strip's twin, see #carousel-ring. -->
-                  <div class="focus-ring is-hidden" id="library-ring"><div class="focus-ring-pulse"></div></div>
-                </div>
+                <div class="library-grid" id="library-grid"></div>
               </div>
               <div class="library-empty" id="library-empty" aria-hidden="true"></div>
             </div>

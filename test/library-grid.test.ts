@@ -7,14 +7,10 @@ import {
   gridColumns,
   gridStep,
   isNearInGrid,
-  LIB_CARD_H,
-  LIB_CARD_SCALE,
   LIB_CARD_W,
   LIB_GAP,
-  ringBox,
   rowOf,
 } from '../src/renderer/library-grid';
-import { RING_INSET } from '../src/renderer/carousel-geometry';
 import type { LibraryEntry } from '../src/shared/types';
 
 const game = (id: string, active: boolean): LibraryEntry => ({ id, title: id, active });
@@ -115,33 +111,5 @@ describe('filterLibrary', () => {
 
   it("preserves main's order — the renderer never sorts", () => {
     expect(filterLibrary(games, 'all').map((entry) => entry.id)).toEqual(['a', 'b', 'c']);
-  });
-});
-
-describe('ringBox (the focus ring around a grid card)', () => {
-  it('wraps the GROWN card plus the stand-off, on both sides', () => {
-    const box = ringBox(0, 0, 1);
-    expect(box.w).toBeCloseTo(LIB_CARD_W * LIB_CARD_SCALE + 2 * RING_INSET);
-    expect(box.h).toBeCloseTo(LIB_CARD_H * LIB_CARD_SCALE + 2 * RING_INSET);
-  });
-
-  it('stays concentric with the card it wraps', () => {
-    const left = 340;
-    const top = 120;
-    const unit = 1;
-    const box = ringBox(left, top, unit);
-    expect(box.x + box.w / 2).toBeCloseTo(left + (LIB_CARD_W * unit) / 2);
-    expect(box.y + box.h / 2).toBeCloseTo(top + (LIB_CARD_H * unit) / 2);
-  });
-
-  it('scales everything but the measured offset with --px', () => {
-    // The offset arrives in real px already (it is a DOM reading); only the design-px parts are
-    // multiplied — which is what keeps the ring on the card on a Deck's smaller unit.
-    const unit = 0.7;
-    const box = ringBox(500, 300, unit);
-    expect(box.x).toBeCloseTo(
-      500 - ((LIB_CARD_W * (LIB_CARD_SCALE - 1)) / 2) * unit - RING_INSET * unit,
-    );
-    expect(box.w).toBeCloseTo((LIB_CARD_W * LIB_CARD_SCALE + 2 * RING_INSET) * unit);
   });
 });

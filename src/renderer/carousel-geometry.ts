@@ -18,52 +18,19 @@ export const GAP = 16;
 export const STEP = CARD_W + GAP;
 
 /**
- * How far the focus ring stands off the card it wraps (design px, every side). Half the Play button's
- * ring, exactly as the old `.card.is-selected::after` had it — MIRRORED by `#carousel-ring` /
- * `#library-ring` in styles.css, which cannot read this.
- */
-export const RING_INSET = 4;
-
-/**
- * Where the focus ring's left edge sits inside the strip when card `index` is the selected one — the
- * card's own left edge (`index * STEP`, by the invariant above) minus the ring's stand-off.
+ * The canvas the focus body is drawn on, in design px: the whole row plus slack on every side.
  *
- * The RESTING position, not the mid-flight one: the ring is carried there by a CSS transition, so the
- * layout it crosses on the way is never read (a card to the right of the selection stands elsewhere
- * while the row is moving, and it does not matter).
+ * Sized from the COUNT rather than measured, for the same reason the offsets are: the row's own width
+ * is mid-transition half the time (the selected card is growing), and a canvas resized per frame would
+ * clear itself on every one. The widest the row can be is every card unselected but one, i.e. the
+ * selected card sitting at the last step.
  */
-export function ringLeft(index: number): number {
-  return index * STEP - RING_INSET;
-}
-
-/**
- * Which way a focus ring is being stretched while it travels, and which of its edges stays put.
- *
- * The ring does not move as a solid: it is pulled along its direction of travel and squashed across it
- * (the animator's squash & stretch), anchored at the edge it is LEAVING — so the far side runs ahead and
- * the near side trails, which is what reads as jelly rather than as a box sliding.
- *
- * `originPercent` is that anchored edge as a transform-origin percentage along the axis: 0 when the ring
- * moves right/down (its left/top edge is the one being left behind), 100 when it moves the other way.
- */
-export type RingAxis = 'x' | 'y';
-
-export interface RingStretch {
-  readonly axis: RingAxis;
-  readonly originPercent: 0 | 100;
-}
-
-/**
- * The stretch for a move of `dx`/`dy`, or null when there is no move worth deforming for — a repaint
- * that left the ring where it was must not make it wobble.
- *
- * The longer leg wins: a grid step is one axis at a time, and the ragged last row is the only place both
- * are non-zero at once (down onto the final card). Ties go to x, the axis both surfaces move along most.
- */
-export function ringStretch(dx: number, dy: number): RingStretch | null {
-  if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return null;
-  if (Math.abs(dx) >= Math.abs(dy)) return { axis: 'x', originPercent: dx > 0 ? 0 : 100 };
-  return { axis: 'y', originPercent: dy > 0 ? 0 : 100 };
+export function stripCanvas(count: number, margin = 26): { readonly width: number; readonly height: number } {
+  const cards = Math.max(count, 1);
+  return {
+    width: (cards - 1) * STEP + SEL_W + 2 * margin,
+    height: SEL_H + 2 * margin,
+  };
 }
 
 /**

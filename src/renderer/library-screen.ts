@@ -11,18 +11,17 @@ import type { LibraryEntry } from '../shared/types';
 import type { MessageKey, Translator } from '../shared/i18n/index.js';
 import { type AudioController } from './audio.js';
 import { artKey, type CardArtCache } from './card-art.js';
-import { req } from './dom.js';
+import { req, reqCanvas } from './dom.js';
+import { FALLBACK_COLOUR, createFocusJelly, jellyBoxOf, type JellyBox } from './focus-jelly.js';
 import { clampIndex } from './index-math.js';
-import { ringStretch } from './carousel-geometry.js';
 import {
   filterLibrary,
+  LIB_CARD_SCALE,
   gridColumns,
   gridStep,
   isNearInGrid,
-  ringBox,
   type GridDir,
   type LibraryFilter,
-  type RingBox,
 } from './library-grid.js';
 import type { NavSurface } from './nav-surface.js';
 import { createScroller, pxUnit } from './screen-scroller.js';
@@ -43,12 +42,6 @@ const ENTRANCE_MS = 700;
 const ENTRANCE_STEPS = 11;
 /** How long the grid waits before drawing the section the column moved onto (see previewTimer). */
 const PREVIEW_MS = 120;
-/**
- * How long the focus ring counts as under way after a step — its own travel, which here IS the morph
- * (nothing slides underneath it, so it needs no undershoot). A held direction steps faster than this, so
- * the stretch stays on for the whole glide and springs back once, at the end. See placeRing.
- */
-const RING_GLIDE_MS = SINGLE_STEP_MS;
 
 export interface LibraryScreenDeps {
   readonly audio: AudioController;
@@ -86,11 +79,12 @@ const nodeKey = (id: string): string => `g:${id}`;
 
 export function createLibraryScreen(deps: LibraryScreenDeps): LibraryScreen {
   const app = req('app');
+  const appStyle = getComputedStyle(app);
   const screen = req('library');
   const gridEl = req('library-grid');
-  // The grid's focus ring: ONE element that glides from card to card, the strip's twin (see
-  // carousel.ts). A child of the grid, so it scrolls with the cards and shares their coordinates.
-  const ring = req('library-ring');
+  // The grid's focus body: ONE soft shape that travels from cover to cover, the strip's twin (see
+  // carousel.ts). Its canvas covers the PANE, not the scrolling content — see #library-jelly.
+  const jellyCanvas = reqCanvas('library-jelly');
   const scrollEl = req('library-scroll');
   const emptyEl = req('library-empty');
   const scroller = createScroller(scrollEl);
@@ -123,11 +117,9 @@ export function createLibraryScreen(deps: LibraryScreenDeps): LibraryScreen {
   const nodes = new Map<string, HTMLElement>();
   // The same nodes by ARTWORK key, so an eviction (which knows only the key) finds what to un-paint.
   const painted = new Map<string, HTMLElement>();
-  // Where the ring stands, so the next placement knows which way — and how far — it is about to travel.
-  // null while it has nowhere to be (the column has the focus, the section is empty).
-  let ringPlace: RingBox | null = null;
-  // Pending end of the ring's stretch; null when it is at rest.
-  let ringTimer: number | null = null;
+  // The id the body currently wraps, so a repaint that did not move the selection (a dot, a busy game,
+  // a language change, a scroll) does not make it squeeze. null while it has nowhere to be.
+  let jellyId: string | null = null;
 
   const sidebar = createSidebar(req('library-nav'), {
     audio: deps.audio,
@@ -231,72 +223,73 @@ export function createLibraryScreen(deps: LibraryScreenDeps): LibraryScreen {
     deps.art.dropPending(keep);
   }
 
-  /** Takes the stretch off at once — for the frames the ring is not travelling through (see placeRing). */
-  function restRing(): void {
-    if (ringTimer !== null) {
-      window.clearTimeout(ringTimer);
-      ringTimer = null;
-    }
-    ring.classList.remove('is-gliding');
-  }
-
   /**
-   * Stretches the ring for the move it is about to make: pulled along its travel and squashed across it,
-   * anchored at the edge it is leaving. Unlike the carousel's row, this one moves on either axis — a
-   * step up or down deforms the ring the other way round — so which axis it is is read from the move
-   * itself rather than assumed.
-   */
-  function glideRing(from: RingBox | null, to: RingBox): void {
-    if (from === null) return; // it was nowhere: this is a placement, not a move
-    const stretch = ringStretch(to.x - from.x, to.y - from.y);
-    if (stretch === null) return;
-    const along = stretch.axis === 'x';
-    ring.style.setProperty('--ring-sx', `var(--ring-jelly-${along ? 'long' : 'flat'})`);
-    ring.style.setProperty('--ring-sy', `var(--ring-jelly-${along ? 'flat' : 'long'})`);
-    ring.style.setProperty('--ring-ox', along ? `${stretch.originPercent}%` : '50%');
-    ring.style.setProperty('--ring-oy', along ? '50%' : `${stretch.originPercent}%`);
-    ring.classList.add('is-gliding');
-    if (ringTimer !== null) window.clearTimeout(ringTimer);
-    ringTimer = window.setTimeout(() => {
-      ringTimer = null;
-      ring.classList.remove('is-gliding');
-    }, RING_GLIDE_MS);
-  }
-
-  /**
-   * Puts the focus ring around `node`, or takes it off screen when there is nothing to wrap — the focus
-   * is in the column, or the section is empty.
+   * The box the focus body hugs, in the PANE's coordinates.
    *
-   * The card is MEASURED rather than derived (see ringBox): `justify-content: center` decides where the
-   * track starts. `instant` is for the frames where the ring has no business travelling — a fresh open,
-   * a section switch, a restore — since the card it was last on is not on screen any more and gliding
-   * from it would send the ring across the whole grid.
+   * Three systems meet here: the card's offset inside the grid, the grid's own offset inside the
+   * scroller (its padding), and how far that scroller has scrolled. The last one is why the canvas can
+   * stay viewport-sized instead of growing with the library — see #library-jelly in styles.css.
+   *
+   * Asked once per frame, so the body follows a grid that is still scrolling and a card that is still
+   * growing into its 1.06.
    */
-  function placeRing(node: HTMLElement | undefined, instant: boolean): void {
-    if (node === undefined) {
-      ring.classList.add('is-hidden');
-      restRing();
-      ringPlace = null;
+  function jellyTarget(): JellyBox | null {
+    const current = selectedGame();
+    const node = current === undefined ? undefined : nodeOf(current);
+    if (node === undefined || !node.isConnected) return null;
+    const unit = pxUnit();
+    const parsed = Number.parseFloat(getComputedStyle(node).borderTopLeftRadius);
+    const radius = Number.isFinite(parsed) ? parsed : 0;
+    // The card grows in place by --card-scale, which leaves offsetWidth alone — so the grown size has
+    // to be worked out rather than read, or the body would hug the card's resting box.
+    const grown = node.classList.contains('is-selected');
+    const scale = grown ? LIB_CARD_SCALE : 1;
+    const w = node.offsetWidth * scale;
+    const h = node.offsetHeight * scale;
+    return jellyBoxOf(
+      gridEl.offsetLeft + node.offsetLeft - scrollEl.scrollLeft - (w - node.offsetWidth) / 2,
+      gridEl.offsetTop + node.offsetTop - scrollEl.scrollTop - (h - node.offsetHeight) / 2,
+      w,
+      h,
+      radius * scale,
+      unit,
+    );
+  }
+
+  const jelly = createFocusJelly(jellyCanvas, {
+    target: jellyTarget,
+    colour: () => {
+      const value = appStyle.getPropertyValue('--d2').trim();
+      return value.length > 0 ? value : FALLBACK_COLOUR;
+    },
+    unit: pxUnit,
+  });
+
+  /** Fits the canvas to the pane. The body never leaves it: the scroller keeps the selection in view. */
+  function sizeJelly(): void {
+    jelly.resize(scrollEl.clientWidth, scrollEl.clientHeight);
+  }
+
+  /**
+   * Points the body at the selected cover — or fades it out when there is nothing to wrap (the focus is
+   * in the column, the section is empty). `instant` is for the frames it has no business travelling
+   * through: a fresh open, a section switch, a restore, a resize.
+   */
+  function placeJelly(instant: boolean): void {
+    const current = !sidebar.hasFocus() ? selectedGame() : undefined;
+    const id = current?.id ?? null;
+    jellyCanvas.classList.toggle('is-hidden', id === null);
+    if (id === null) {
+      jellyId = null;
       return;
     }
-    const box = ringBox(node.offsetLeft, node.offsetTop, pxUnit());
-    if (instant) {
-      ring.style.transition = 'none';
-      restRing();
-    } else {
-      glideRing(ringPlace, box);
-    }
-    ringPlace = box;
-    ring.classList.remove('is-hidden');
-    // Written WITH the unit: a bare number is no <length-percentage>, and `translate` would drop the
-    // declaration whole — the ring would then sit at the grid's corner and never move again.
-    ring.style.setProperty('--ring-x', `${box.x}px`);
-    ring.style.setProperty('--ring-y', `${box.y}px`);
-    ring.style.setProperty('--ring-w', `${box.w}px`);
-    ring.style.setProperty('--ring-h', `${box.h}px`);
-    if (!instant) return;
-    void ring.offsetWidth; // land the new place in this frame, before the transition comes back
-    ring.style.removeProperty('transition');
+    const moved = jellyId !== null && jellyId !== id;
+    const first = jellyId === null;
+    jellyId = id;
+    // Only a real move squeezes. applyLayout also runs for a dot, a busy game and every scroll frame,
+    // and a squeeze on those would have the body pulsing at nothing.
+    if (instant || first) jelly.bump(true);
+    else if (moved) jelly.bump();
   }
 
   /** The selection's ring, the dots, and the scroll that keeps the selected card in view. */
@@ -310,8 +303,8 @@ export function createLibraryScreen(deps: LibraryScreenDeps): LibraryScreen {
       node.classList.toggle('shows-dot', (game.active && game.unconfigured !== true) || game.id === busyId);
       node.classList.toggle('is-busy', game.id === busyId);
     });
+    placeJelly(instant);
     const selectedNode = active && current !== undefined ? nodeOf(current) : undefined;
-    placeRing(selectedNode, instant);
     // Only while the screen is actually up: scrolling a grid that is fading out under the screen above
     // it moves cards nobody asked to move, right in the user's eye line.
     if (open && selectedNode !== undefined) {
@@ -589,6 +582,7 @@ export function createLibraryScreen(deps: LibraryScreenDeps): LibraryScreen {
     const hide = (): void => {
       delete app.dataset['overlay'];
       screen.setAttribute('aria-hidden', 'true');
+      jelly.setActive(false);
     };
     // A silent close is a hand-over to another surface (the detail screen, Add game): it sounds and
     // re-focuses for itself, and announcing this one would fight it.
@@ -605,6 +599,8 @@ export function createLibraryScreen(deps: LibraryScreenDeps): LibraryScreen {
     open = true;
     app.dataset['overlay'] = 'library';
     screen.setAttribute('aria-hidden', 'false');
+    sizeJelly();
+    jelly.setActive(true);
   }
 
   deps.art.onEvict((key) => {
@@ -618,9 +614,10 @@ export function createLibraryScreen(deps: LibraryScreenDeps): LibraryScreen {
   new ResizeObserver(() => {
     if (!open) return;
     measureColumns();
+    sizeJelly();
     // Unconditionally, not only when the column count changed: --px is tied to the HEIGHT, so a resize
-    // that keeps the columns still moves every card in real px — and the ring's coordinates are real px,
-    // so left alone they would go stale and the ring would sit beside the card instead of around it.
+    // that keeps the columns still moves every card in real px, and the body would otherwise stay
+    // wrapped around where the card used to be.
     applyLayout(true);
   }).observe(scrollEl);
 
