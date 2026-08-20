@@ -291,9 +291,11 @@ body {
   /* Straight off the mockup ("Home"): the cards' bottom edge sits 50 design px from the screen bottom —
      the same inset the bar content uses — so the selected 204-tall card's top lands at 254. The BOX
      reaches 30 px lower (20) so the active dot hanging under a card stays inside the clip with a little
-     slack; the strip is inset by the same 30 (see #carousel-strip). The top has slack too: the selected
-     card's pulsing ring blooms ~10 px past its edge (inset -7 + a 3 border, scaled 1.09 by the pulse),
-     and this box CLIPS — too tight a height chops the ring's top arc off. */
+     slack; the strip is inset by the same 30 (see #carousel-strip). The top has slack too, and it is
+     load-bearing: this box CLIPS, and the focus body under the selected card reaches ~17 design px past
+     that card's edge at full breath (8 of stand-off plus the harmonics — see JELLY in focus-jelly.ts).
+     That leaves ~9 to spare: widen the body's reach and this height has to grow with it, or the clip
+     takes a flat bite out of the top of it. */
   bottom: calc(20 * var(--px));
   height: calc(260 * var(--px));
   overflow: hidden;

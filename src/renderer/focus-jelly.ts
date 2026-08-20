@@ -31,7 +31,7 @@ export const JELLY = {
   stiffness: 8,
   /** How much of a point's speed survives each frame's damping — higher damps harder. */
   damping: 0.35,
-  /** Amplitude of the idle breathing, design px. */
+  /** Amplitude of the idle breathing, design px (the harmonics below reach about twice this). */
   wobble: 4.5,
   /** How far the body stands out past the cover on every side, design px. */
   inset: 8,
@@ -202,9 +202,17 @@ export function createFocusJelly(canvas: HTMLCanvasElement, deps: FocusJellyDeps
       const p = pts[i];
       if (p === undefined) continue;
       const [bx, by] = outlinePoint(to, i / pts.length);
-      // Idle breathing: two sines out of step, pushed along the outward normal so the body swells and
-      // sags rather than sliding about.
-      const wob = amp * (Math.sin(now * 0.0011 + i * 1.7) + 0.6 * Math.sin(now * 0.0017 + i * 0.9));
+      // Idle breathing, pushed along the outward normal so the body swells and sags rather than sliding
+      // about. Three harmonics AROUND the contour, at 2, 3 and 5 waves per turn: whole numbers, or the
+      // wave would not meet itself where the contour closes. Low ones, and that is the point — per-point
+      // randomness would make a burr rather than a blob, while these stay smooth between neighbours and
+      // still never line up, so no two corners bulge alike and the shape keeps drifting.
+      const turn = (i / pts.length) * Math.PI * 2;
+      const wob =
+        amp *
+        (Math.sin(2 * turn + now * 0.00055) +
+          0.62 * Math.sin(3 * turn - now * 0.00041 + 1.7) +
+          0.44 * Math.sin(5 * turn + now * 0.00068 + 4.1));
       const nx = (bx - cx) / (to.w / 2);
       const ny = (by - cy) / (to.h / 2);
       const nl = Math.hypot(nx, ny);
@@ -227,7 +235,6 @@ export function createFocusJelly(canvas: HTMLCanvasElement, deps: FocusJellyDeps
 
   function draw(now: number, to: JellyBox): void {
     if (ctx === null) return;
-    const unit = deps.unit();
     const dpr = Math.min(window.devicePixelRatio, 2);
     const w = Math.max(1, Math.round(cssW * dpr));
     const h = Math.max(1, Math.round(cssH * dpr));
@@ -273,12 +280,13 @@ export function createFocusJelly(canvas: HTMLCanvasElement, deps: FocusJellyDeps
     }
     ctx.closePath();
 
-    const colour = deps.colour();
-    ctx.fillStyle = colour;
-    ctx.shadowColor = colour;
-    ctx.shadowBlur = 24 * unit;
+    // Flat fill, no shadow. A canvas glow was the first thing tried here and it had to go for two
+    // reasons: its blur is cut off square wherever the canvas ends — visible as a hard edge along the
+    // strip and, in the grid, along the pane, where the scroller leaves only 20 design px of headroom
+    // above the first row — and a wide shadowBlur is among the most expensive things a 2D context can
+    // do every frame, which on a handheld is the last place to spend it.
+    ctx.fillStyle = deps.colour();
     ctx.fill();
-    ctx.shadowBlur = 0;
   }
 
   function tick(now: number): void {
