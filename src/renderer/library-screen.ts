@@ -515,7 +515,9 @@ export function createLibraryScreen(deps: LibraryScreenDeps): LibraryScreen {
 
   function runAction(id: string): void {
     if (id === 'add') {
-      deps.audio.play('button');
+      // Silent on purpose: the Customize screen sounds its OWN opening (openNew plays it at once, open(id)
+      // waits for the read to land, so an unreadable game never becomes a click). Sounding it here too is
+      // what made "Add game" click twice.
       deps.onAddGame();
       return;
     }
