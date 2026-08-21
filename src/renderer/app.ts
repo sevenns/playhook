@@ -813,7 +813,12 @@ function mountLiquidWindows(): void {
   liquid.mount(req('game-settings-options'), 3, req('game-settings-options-list'));
   // The popup's own column, not #popup: the column carries opacity of its own, so it is a stacking
   // context and a window outside it could never sit under its buttons.
-  liquid.mount(reqQuery('#popup .popup-column'), 4);
+  // The popup's window spans the WHOLE popup, not just its column, and is mounted between the veil and
+  // the column: above the veil, so a body flying in from the screen below is drawn at full strength
+  // instead of half-dimmed by it, and below the column, so the buttons still sit on top of the body.
+  // Sized to the column it would have nowhere to draw the part of the trip that happens outside it —
+  // which is why the body looked like it vanished and reappeared.
+  liquid.mount(req('popup'), 4, reqQuery('#popup .popup-column'));
   // Above the popup: both open over a screen that still marks a row of its own, and the body has to
   // follow what the user is actually driving.
   // Into the PANEL of each, not the container: both open with a veil of their own as their first child,
