@@ -60,6 +60,9 @@ export interface LiquidFocus {
   start(): void;
 }
 
+/** How long the body stays put after its target vanishes, ms (see the hold in the frame loop). */
+const HOLD_MS = 600;
+
 interface Point {
   x: number;
   y: number;
@@ -98,6 +101,11 @@ export function createLiquidFocus(deps: LiquidDeps): LiquidFocus {
   let owner: Element | null = null;
   let moveStart = -1;
   let pendingSnap = false;
+  // The last target and when it went away. Coming back from a detail screen the row's cover is held
+  // transparent for 350ms while the play button hands over, so for those frames NOTHING is focused —
+  // and clearing on the spot made the body blink out and back in with the carousel. It waits instead.
+  let held: { readonly to: JellyBox; readonly tuning: JellyTuning } | null = null;
+  let lostAt = -1;
 
   /** The focused element of the topmost surface that has one, or null when nothing is highlighted. */
   function findFocused(): Element | null {
@@ -213,7 +221,13 @@ export function createLiquidFocus(deps: LiquidDeps): LiquidFocus {
     return new DOMRect(minX, minY, maxX - minX, maxY - minY);
   }
 
-  function paint(win: LiquidWindow, squeeze: number, to: JellyBox, colour: string): void {
+  function paint(
+    win: LiquidWindow,
+    squeeze: number,
+    to: JellyBox,
+    colour: string,
+    alpha: number,
+  ): void {
     const { ctx, canvas } = win;
     if (ctx === null) return;
     const rect = canvas.getBoundingClientRect();
@@ -258,8 +272,10 @@ export function createLiquidFocus(deps: LiquidDeps): LiquidFocus {
       );
     }
     ctx.closePath();
+    ctx.globalAlpha = alpha;
     ctx.fillStyle = colour;
     ctx.fill();
+    ctx.globalAlpha = 1;
   }
 
   function clear(win: LiquidWindow): void {
@@ -272,23 +288,43 @@ export function createLiquidFocus(deps: LiquidDeps): LiquidFocus {
     window.requestAnimationFrame(frame);
 
     const focused = findFocused();
+    let tuning: JellyTuning;
+    let to: JellyBox;
     if (focused === null) {
-      for (const win of windows) clear(win);
-      owner = null;
-      seeded = false;
-      return;
+      // Nothing is focused. Hold the last place briefly — a hand-over between screens passes through a
+      // few frames with no target at all — then let go, so a surface that genuinely has no focus does
+      // not keep a body sitting on it.
+      if (held === null) {
+        for (const win of windows) clear(win);
+        owner = null;
+        seeded = false;
+        return;
+      }
+      if (lostAt < 0) lostAt = now;
+      if (now - lostAt > HOLD_MS) {
+        for (const win of windows) clear(win);
+        owner = null;
+        seeded = false;
+        held = null;
+        lostAt = -1;
+        return;
+      }
+      tuning = held.tuning;
+      to = held.to;
+    } else {
+      tuning = tuningFor(focused);
+      to = targetOf(focused, deps.unit(), tuning);
+      held = { to, tuning };
+      lostAt = -1;
     }
-
-    const tuning = tuningFor(focused);
-    const to = targetOf(focused, deps.unit(), tuning);
     if (!seeded || pendingSnap) {
       seed(to);
       pendingSnap = false;
       moveStart = -1;
-    } else if (focused !== owner) {
+    } else if (focused !== null && focused !== owner) {
       moveStart = now; // a new element has it: squeeze through the trip
     }
-    owner = focused;
+    if (focused !== null) owner = focused;
 
     step(1 / 60, now, to, tuning);
 
@@ -313,7 +349,7 @@ export function createLiquidFocus(deps: LiquidDeps): LiquidFocus {
         clear(win);
         continue;
       }
-      paint(win, squeeze, to, colour);
+      paint(win, squeeze, to, colour, tuning.alpha);
     }
   }
 

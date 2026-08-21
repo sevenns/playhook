@@ -47,6 +47,12 @@ export interface JellyTuning {
    * pulled arbitrarily far.
    */
   readonly reach: number;
+  /**
+   * How opaque the body is painted, 0..1. Not a solid fill: sitting UNDER the thing it highlights, a
+   * translucent body lets the artwork and the wallpaper through and reads as something the interface is
+   * floating on rather than a plate stuck behind it.
+   */
+  readonly alpha: number;
 }
 
 export const JELLY: JellyTuning = {
@@ -68,6 +74,7 @@ export const JELLY: JellyTuning = {
   margin: 26,
   /** Generous: a cover is 204 tall and the row is meant to feel heavy. */
   reach: 150,
+  alpha: 0.62,
 };
 
 /**
@@ -82,15 +89,18 @@ export const JELLY: JellyTuning = {
 export const JELLY_UI: JellyTuning = {
   moveMs: 60,
   pinch: 0.86,
-  stiffness: 22,
-  damping: 0.55,
+  stiffness: 30,
+  damping: 0.6,
   wobble: 2.2,
   inset: 6,
   points: JELLY.points,
   margin: JELLY.margin,
   /* Tight. A held direction steps through a list several times a second, and a three-line entry
      followed by a one-line button is exactly the pair that used to fling the body off-screen. */
-  reach: 60,
+  reach: 28,
+  /* Higher than the row's: a button's label is drawn in --d1 ON the body, and too little opacity there
+     leaves the text fighting whatever is behind the surface. */
+  alpha: 0.82,
 };
 
 /** The box for a measured card: its own rectangle, pushed out by the stand-off on every side. */
