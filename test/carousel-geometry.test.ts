@@ -6,7 +6,12 @@ import {
   FAN_MAX,
   GAP,
   MAX_STRIP_GAMES,
+  SEL_GAP,
+  SEL_H,
+  SEL_MARGIN,
+  SEL_W,
   STEP,
+  stripCanvas,
   cardLeft,
   clampIndex,
   fanIndex,
@@ -18,16 +23,18 @@ import {
 import { SYSTEM_CARDS } from '../src/renderer/system-cards';
 
 describe('stripOffset', () => {
-  it('does not shift the strip for the first card', () => {
-    expect(stripOffset(0)).toBe(0);
+  it('shifts the FIRST card by the selected margin — it is off the origin like any other', () => {
+    // Not zero any more: the selected card carries its own margins wherever it stands, so even card 0
+    // starts one margin in and the strip has to pull back by exactly that to land it on the anchor.
+    expect(stripOffset(0)).toBe(-SEL_MARGIN);
   });
 
   it('advances by one card + gap per index', () => {
     expect(STEP).toBe(CARD_W + GAP);
-    // 90 (card) + 16 (gap) — the step measured off the mockup, where consecutive unselected cards sit
-    // at x=202/308/414.
-    expect(stripOffset(1)).toBe(-106);
-    expect(stripOffset(3)).toBe(-318);
+    // Against STEP rather than a literal: the gap is a design decision that has moved twice already,
+    // and a hard-coded step turns that into a failing test rather than a re-spaced row.
+    expect(stripOffset(1)).toBe(-(STEP + SEL_MARGIN));
+    expect(stripOffset(3)).toBe(-(3 * STEP + SEL_MARGIN));
   });
 
   it('is linear — the step between neighbours never depends on where you are', () => {
@@ -44,13 +51,56 @@ describe('cardLeft (the anchor invariant)', () => {
     }
   });
 
-  it('places neighbours symmetrically around the anchor', () => {
-    expect(cardLeft(4, 5)).toBe(-STEP);
-    expect(cardLeft(6, 5)).toBe(STEP);
+  it('places the neighbours ASYMMETRICALLY — the selected card is wider than the rest', () => {
+    // The one to the left ends a normal step plus the selected card's own margin away; the one to the
+    // right starts past the WIDE card and its full gap. Symmetry here would mean the row overlapped.
+    expect(cardLeft(4, 5)).toBe(-STEP - SEL_MARGIN);
+    expect(cardLeft(6, 5)).toBe(SEL_W + SEL_GAP);
   });
 
   it('sends the cards left of the selection off to negative x (they leave the screen edge)', () => {
-    expect(cardLeft(0, 10)).toBe(-10 * STEP);
+    expect(cardLeft(0, 10)).toBe(-10 * STEP - SEL_MARGIN);
+  });
+
+  it('never lets two cards overlap, whichever one is selected', () => {
+    for (const selected of [0, 1, 5, 12]) {
+      for (let i = 0; i < 12; i += 1) {
+        const width = i === selected ? SEL_W : CARD_W;
+        expect(cardLeft(i + 1, selected)).toBeGreaterThanOrEqual(cardLeft(i, selected) + width);
+      }
+    }
+  });
+
+  it('leaves the selected card the wider gap and everyone else the narrow one', () => {
+    const selected = 5;
+    expect(cardLeft(selected, selected) - (cardLeft(selected - 1, selected) + CARD_W)).toBe(SEL_GAP);
+    expect(cardLeft(selected + 1, selected) - SEL_W).toBe(SEL_GAP);
+    expect(cardLeft(selected - 1, selected) - (cardLeft(selected - 2, selected) + CARD_W)).toBe(GAP);
+  });
+});
+
+describe('stripCanvas (the focus body\'s canvas)', () => {
+  it('spans the whole row plus slack on both sides', () => {
+    const margin = 26;
+    const room = SEL_W + 2 * SEL_MARGIN; // the selected card takes its margins with it
+    expect(stripCanvas(1, margin).width).toBe(room + 2 * margin);
+    expect(stripCanvas(4, margin).width).toBe(3 * STEP + room + 2 * margin);
+    expect(stripCanvas(4, margin).height).toBe(SEL_H + 2 * margin);
+  });
+
+  it('covers the row at its widest — the selected card standing at the last step', () => {
+    // Whatever card is selected, the row's right edge is at most this: everything before it at the
+    // normal width (the layout invariant above), and the selected one grown.
+    const count = 13;
+    expect(stripCanvas(count, 0).width).toBe((count - 1) * STEP + SEL_W + 2 * SEL_MARGIN);
+    // …and it really is the row's own extent, measured the other way: cardLeft counts from the SELECTED
+    // card's left edge, so the row is that card's left margin plus everything out to the last card's
+    // right edge. One margin, not two — the right-hand one is already inside cardLeft's SEL_GAP.
+    expect(stripCanvas(count, 0).width).toBe(SEL_MARGIN + cardLeft(count - 1, 0) + CARD_W);
+  });
+
+  it('never collapses on an empty row', () => {
+    expect(stripCanvas(0, 26).width).toBe(SEL_W + 2 * SEL_MARGIN + 52);
   });
 });
 

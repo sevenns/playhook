@@ -291,9 +291,11 @@ body {
   /* Straight off the mockup ("Home"): the cards' bottom edge sits 50 design px from the screen bottom —
      the same inset the bar content uses — so the selected 204-tall card's top lands at 254. The BOX
      reaches 30 px lower (20) so the active dot hanging under a card stays inside the clip with a little
-     slack; the strip is inset by the same 30 (see #carousel-strip). The top has slack too: the selected
-     card's pulsing ring blooms ~10 px past its edge (inset -7 + a 3 border, scaled 1.09 by the pulse),
-     and this box CLIPS — too tight a height chops the ring's top arc off. */
+     slack; the strip is inset by the same 30 (see #carousel-strip). The top has slack too, and it is
+     load-bearing: this box CLIPS, and the focus body under the selected card reaches ~17 design px past
+     that card's edge at full breath (8 of stand-off plus the harmonics — see JELLY in focus-jelly.ts).
+     That leaves ~9 to spare: widen the body's reach and this height has to grow with it, or the clip
+     takes a flat bite out of the top of it. */
   bottom: calc(20 * var(--px));
   height: calc(260 * var(--px));
   overflow: hidden;
@@ -337,7 +339,9 @@ body {
   bottom: calc(30 * var(--px));
   display: flex;
   align-items: flex-end;
-  gap: calc(16 * var(--px));
+  /* MIRRORS GAP in carousel-geometry.ts — the offsets are computed there and cannot read this. The
+     SELECTED card widens its own two gaps with margins of its own (see below). */
+  gap: calc(8 * var(--px));
   transform: translateX(calc(var(--strip-offset, 0) * var(--px)));
   transition: transform var(--morph) var(--morph-ease), opacity 0.25s ease;
 }
@@ -355,7 +359,7 @@ body {
   background-position: center;
   overflow: visible;
   transition: width var(--morph) var(--morph-ease), height var(--morph) var(--morph-ease),
-    opacity 0.2s ease;
+    margin var(--morph) var(--morph-ease), opacity 0.2s ease;
   cursor: pointer;
 }
 
@@ -364,35 +368,42 @@ body {
   height: calc(204 * var(--px));
 }
 
-/* The selected card wears the SAME pulsing ring as a focused Play button: on the carousel the card IS
-   the focus, so it must read as focused. Reuses the play-button's @keyframes and proportions (a 3px d2
-   border 7px out, radius 17), and rides the size transition because it's anchored to the card's box. */
-.card.is-selected::after {
-  content: '';
-  position: absolute;
-  /* Half the Play button's ring (inset 7 / border 3 / radius 17): on a 204-tall card the full-size one
-     stands so far off the edge that its pulse reaches the active dot below. */
-  inset: calc(-4 * var(--px));
-  border: calc(2 * var(--px)) solid var(--d2);
-  border-radius: calc(14 * var(--px));
-  /* Its own, gentler pulse for the same reason — pulse-ring's 1.09 scale is 9 px of travel on a card
-     this tall, which would swallow the dot's 16 px of clearance. */
-  animation: card-ring-pulse 1.1s ease-in-out infinite;
-  pointer-events: none;
+/* The selected card takes more room than the gap gives it: flex lays ONE gap between every pair, so the
+   difference is added here as margins. 8 + 16 = the 24 the row leaves around whatever is being looked at.
+   MIRRORS SEL_MARGIN in carousel-geometry.ts — stripOffset adds exactly this to put the card on the
+   anchor, so the two must move together.
+   Scoped to the strip: the Library's cards share the .card class, and a margin there would push its grid
+   tracks apart. */
+#carousel-strip .card.is-selected {
+  margin: 0 calc(16 * var(--px));
 }
 
-@keyframes card-ring-pulse {
-  0%,
-  100% {
-    transform: scale(1);
-  }
-  50% {
-    transform: scale(1.035);
-  }
+/* The focus indicator: a soft body lying UNDER the selected cover rather than a ring drawn around it.
+   A ring has to blink out on the card the selection leaves and in on the one it arrives at; one body per
+   surface travels between them, breathing where it stands. It is drawn on a canvas (focus-jelly.ts) —
+   the contour genuinely deforms, which no amount of border-radius can fake.
+
+   The canvas rides INSIDE the strip, so the row's slide, its fades and its hiding all carry it for free,
+   exactly as the ring's element used to be carried. It is the strip's first child and `position:
+   absolute`, so it is no part of the flex row. */
+#carousel-jelly {
+  position: absolute;
+  left: calc(-26 * var(--px));
+  /* Pinned to the row's TOP, not its floor: the strip's height follows the tallest card, so it shrinks
+     and grows all through a move — anchored at the bottom, the canvas would slide against the very
+     offsetTop values drawn onto it. The top edge does not move, and the canvas is tall enough for the
+     grown card either way (see stripCanvas). */
+  top: calc(-26 * var(--px));
+  pointer-events: none;
+  /* Under the covers, over the wallpaper. The cards carry no z-index of their own, so a plain 0 here
+     puts the body behind every one of them. */
+  z-index: 0;
 }
-/* On the detail screen the strip is fading out — a pulsing ring underneath it would be noise. */
-#app[data-screen='detail'] .card.is-selected::after {
-  animation: none;
+
+/* On the detail screen the strip is fading out — a breathing body underneath it would be noise. Scoped
+   to the STRIP's body: the grid's keeps breathing for the 0.35s the Library screen takes to fade, and a
+   snap there is the last thing seen of a card the user just pressed. */
+#app[data-screen='detail'] #carousel-jelly {
   opacity: 0;
 }
 
@@ -484,9 +495,11 @@ body {
 #app[data-screen='detail'][data-card-morph='off'] .card.is-selected {
   width: 0;
   height: 0;
+  /* Its margins go with it: a card shrinking to nothing must not leave a 16-wide hole in the row. */
+  margin: 0;
   transform-origin: bottom left;
   transition: width var(--morph) var(--morph-ease), height var(--morph) var(--morph-ease),
-    opacity var(--morph) ease;
+    margin var(--morph) var(--morph-ease), opacity var(--morph) ease;
 }
 #app[data-screen='detail'][data-card-morph='off'] #carousel {
   /* The container has to outlast the shrink it is showing — the default 0.3s fade would take the card
@@ -530,7 +543,8 @@ body {
      (.is-beyond below), and they must do it WITH the slide — no delay, or the row would arrive first and
      the newcomer blink in afterwards. The staggered hand-back fade lives in the [data-returning] rule. */
   transition: width var(--morph) var(--morph-ease), height var(--morph) var(--morph-ease),
-    opacity var(--morph) cubic-bezier(0.2, 0, 0.2, 1), transform var(--morph) var(--morph-ease);
+    margin var(--morph) var(--morph-ease), opacity var(--morph) cubic-bezier(0.2, 0, 0.2, 1),
+    transform var(--morph) var(--morph-ease);
 }
 #app[data-screen='carousel'][data-returning] .card {
   /* Coming back from the detail screen. ONLY the fade-in waits for the grow. Delaying width/height here
@@ -544,6 +558,7 @@ body {
      RETURN_FAN_MS in carousel-geometry.ts — the first locks input out for the morph, the second is how
      long the renderer keeps `data-returning` on: edit them together. */
   transition: width var(--morph) var(--morph-ease), height var(--morph) var(--morph-ease),
+    margin var(--morph) var(--morph-ease),
     opacity 0.4s cubic-bezier(0.2, 0, 0.2, 1) calc(var(--morph) + var(--fan, 0) * 50ms),
     transform var(--morph) var(--morph-ease);
 }
@@ -558,7 +573,8 @@ body {
 }
 #app[data-flipping][data-screen='carousel'] .card {
   transition: width var(--flip-step) linear, height var(--flip-step) linear,
-    opacity var(--morph) cubic-bezier(0.2, 0, 0.2, 1), transform var(--flip-step) linear;
+    margin var(--flip-step) linear, opacity var(--morph) cubic-bezier(0.2, 0, 0.2, 1),
+    transform var(--flip-step) linear;
 }
 
 /* Past the end of the shown window (VISIBLE_CARDS = 9 in carousel-geometry.ts): laid out as usual — the
@@ -574,21 +590,38 @@ body {
      over from, so it must be fully opaque in the very frame the button goes — anything softer shows the
      background through it while the button is already gone. Its neighbours may fade in. */
   transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1), height 0.35s cubic-bezier(0.4, 0, 0.2, 1),
-    opacity 0s linear 0.35s;
+    margin 0.35s cubic-bezier(0.4, 0, 0.2, 1), opacity 0s linear 0.35s;
 }
 #app[data-screen='carousel'][data-card-morph='off'] .card.is-selected {
   /* Here the card IS the button: it is opaque from frame one and grows out of the corner it shrank into,
      which is exactly what the button does on the other branch. */
   transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1), height 0.35s cubic-bezier(0.4, 0, 0.2, 1),
-    opacity 0s linear;
+    margin 0.35s cubic-bezier(0.4, 0, 0.2, 1), opacity 0s linear;
 }
 /* The startup fan (carousel.playIntro): the same wave, except the selected card fades in WITH the row
    instead of swapping in opaque. Both rules above exist to hand over from the play button — at startup
    there is no button to hand over from, and a card snapping in mid-wave is what gives that away. */
 #app[data-screen='carousel'][data-returning='intro'] .card.is-selected {
   transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1), height 0.35s cubic-bezier(0.4, 0, 0.2, 1),
-    opacity 0.4s cubic-bezier(0.2, 0, 0.2, 1) 0.35s;
+    margin 0.35s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.4s cubic-bezier(0.2, 0, 0.2, 1) 0.35s;
 }
+/* Coming back from a detail screen the body waits for the CARD, and the delay is 0.35s rather than the
+   --morph the container uses — the two are not the same moment, which is what made the hand-back blink.
+   The container switches on at 0.24s while the selected card stays transparent until 0.35s (it swaps in
+   opaque as the play button goes, see .card.is-selected below). Started at 0.24s the body spent those
+   110ms alone on screen, burning up to 0.85 opacity under a button that had not finished growing — a
+   flash of colour where the cover was about to be. Now both arrive in the same frame. */
+#app[data-screen='carousel'] #carousel-jelly {
+  opacity: 1;
+  transition: opacity 0.2s ease 0.35s;
+}
+/* The startup fan (carousel.playIntro) needs longer: there the selected card fades in WITH the row
+   rather than swapping in opaque, so it only starts appearing at 0.35s and is not done until 0.75s —
+   the rule above would leave the body fully drawn under a half-transparent card for a third of a second. */
+#app[data-returning='intro'] #carousel-jelly {
+  transition: opacity 0.2s ease calc(var(--morph) + 0.4s);
+}
+
 #app[data-screen='carousel'][data-card-morph='on'] .play-button {
   /* Stays visible (and keeps its cover) for exactly that grow, then is swapped out in one frame. */
   transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1), height 0.35s cubic-bezier(0.4, 0, 0.2, 1),
@@ -727,18 +760,14 @@ body {
   opacity: 0;
   pointer-events: none;
   /* On this screen the button is not a button — it is the card's stand-in, so nothing that makes it read
-     as Play may survive the flip. Coming BACK it is focused (the d2 fill + the icon) and grows from 92 to
-     136x204: without this reset a bright plate flashes over the artwork for the whole grow. The focus fill
-     outranks .play-button's own transparent background, hence the explicit override. */
+     as Play may survive the flip. Coming BACK it is focused and grows from 92 to 136x204: without this
+     reset a bright plate flashes over the artwork for the whole grow. The focus fill outranks
+     .play-button's own transparent background, hence the explicit override. (The pulsing ring that used
+     to need silencing here is gone — the liquid body is the focus visual now.) */
   background: transparent;
 }
 #app[data-screen='carousel'] .play-button > * {
   opacity: 0;
-}
-#app[data-screen='carousel'] .play-button::after {
-  opacity: 0;
-  animation: none;
-  transition: none;
 }
 #app[data-screen='carousel'] .play-button::before {
   opacity: 1;
@@ -758,33 +787,6 @@ html:not(.mouse-asleep) .play-button:hover,
 .rect-button:active,
 .rect-button.is-pressed {
   transform: scale(0.9);
-}
-
-/* Pulse ring — a rounded square echoing the button (kept on hover/focus per design). */
-.play-button::after {
-  content: '';
-  position: absolute;
-  inset: calc(-7 * var(--px));
-  border: calc(3 * var(--px)) solid var(--d2);
-  border-radius: calc(17 * var(--px));
-  opacity: 0;
-  transition: opacity 0.2s ease;
-}
-
-html:not(.mouse-asleep) .play-button:hover::after,
-.play-button.is-focused::after {
-  opacity: 1;
-  animation: pulse-ring 1.1s ease-in-out infinite;
-}
-
-@keyframes pulse-ring {
-  0%,
-  100% {
-    transform: scale(1);
-  }
-  50% {
-    transform: scale(1.09);
-  }
 }
 
 .icon-play {
@@ -967,15 +969,19 @@ html:not(.mouse-asleep) .rect-button:hover,
   transition: none;
 }
 
-/* Carousel level: the text block moves NEXT TO the selected card, not under it — x=202 (the card's right
-   edge plus the 16 gap) with the title's centre 226 from the screen bottom, as in the mockup.
+/* Carousel level: the text block moves NEXT TO the selected card, not under it — x=210 with the title's
+   centre 226 from the screen bottom, as in the mockup.
+   That 210 is not a free number: it is the anchor (50) plus the selected card's width (136) plus the
+   row's own GAP, so the text sits one gap off the cover exactly as the covers sit off each other. The
+   shift below is what is left after .bar-content's 50 and .title's 124, i.e. 210 - 174. Widening the gap
+   moves this with it — it went 16 -> 24, so the shift went 28 -> 36 (see GAP in carousel-geometry.ts).
    `--text-lift` is the single vertical knob (both lines share it) and `--title-x`/`--status-x` the
    horizontal one — never a second `left`, which would collide with the rules that already own it (base,
    idle/error, no-play). The busy shift stacks on top, reproducing the mockup's "Home - Installing". */
 #app[data-screen='carousel'] {
   --text-lift: calc(130 * var(--px));
-  --title-x: calc(28 * var(--px));
-  --status-x: calc(28 * var(--px));
+  --title-x: calc(36 * var(--px));
+  --status-x: calc(36 * var(--px));
 }
 #app[data-screen='carousel'] .title {
   font-size: calc(24 * var(--px));
@@ -3007,8 +3013,12 @@ html:not(.mouse-asleep) .picker-item:hover,
 
 /* The CARDS wait, not the strip as a whole: they are built and laid out behind the boot screen, and
    holding them at zero here is what leaves their staggered entrance (carousel.playIntro) still to play
-   when the wallpaper hands over. Fading the strip instead would show the row already assembled. */
-#app[data-boot] .card {
+   when the wallpaper hands over. Fading the strip instead would show the row already assembled.
+   The focus body needs saying separately — it is not a .card but a canvas beside them, so the rule above
+   left it alone and it sat on the boot wallpaper with no cover to belong to. It comes in with the row:
+   the intro rule up by #carousel-jelly holds it back until the wave has passed. */
+#app[data-boot] .card,
+#app[data-boot] #carousel-jelly {
   opacity: 0;
 }
 
@@ -3060,11 +3070,12 @@ html:not(.mouse-asleep) .picker-item:hover,
   display: flex;
 }
 
-/* The padding is not decoration: the selected card scales to 1.06 and its ring pulses to 1.035 ON TOP
-   of that (the ring is a child, so the two multiply), which puts its corner ~19 design px outside its
-   own box. The scroller clips on both axes, so anything less would slice the ring. 44 leaves room for a
-   decoration that reaches further, and costs nothing: even on a 16:10 screen the column count is the
-   same as it would be at 22. */
+/* The padding is not decoration: the selected card scales to 1.06 and the focus body stands 8 design px
+   off it and breathes a few more, which puts its corner ~22 design px outside the card's own box. The
+   scroller clips on both axes — but the body is drawn on a canvas OUTSIDE it (see #library-jelly), so
+   what this padding now protects is the card's own scale, and it keeps the body's ends off the pane's
+   edges. 44 leaves room for a decoration that reaches further, and costs nothing: even on a 16:10 screen
+   the column count is the same as it would be at 22. */
 .library-scroll {
   flex: 1 1 auto;
   min-height: 0;
@@ -3074,7 +3085,7 @@ html:not(.mouse-asleep) .picker-item:hover,
   /* Top is its own value, smaller than the other three sides: .settings-nav has NO top padding of its
      own (its first item's centered content sits close to the very top of the column), so the full 44
      up here read as the grid starting visibly lower than the sidebar. ~20 is the least this can be
-     without slicing a selected first-row card's ring — see the note below. */
+     without the first row's selected card reaching the pane's edge — see the note below. */
   padding: calc(20 * var(--px)) calc(44 * var(--px)) calc(44 * var(--px));
   /* Same edge treatment as .settings-list: fades driven from JS, none where there is nothing beyond. */
   --fade-top: 0px;
@@ -3110,7 +3121,8 @@ html:not(.mouse-asleep) .picker-item:hover,
   display: grid;
   justify-content: center;
   align-content: start;
-  gap: calc(16 * var(--px));
+  /* MIRRORS LIB_GAP in library-grid.ts — the column count is worked out there from this same number. */
+  gap: calc(24 * var(--px));
   grid-template-columns: repeat(var(--cols, 1), calc(200 * var(--px)));
 }
 
@@ -3210,12 +3222,38 @@ html:not(.mouse-asleep) .picker-item:hover,
   transition: transform var(--flip-step) linear;
 }
 
-/* Opening a game switches data-screen at once, which stops the STRIP's ring mid-pulse (see the rule by
-   card-ring-pulse) — on the grid that snap is the last thing seen of a card the user just pressed. Here
-   the highlight keeps breathing for the 0.35s the screen takes to fade, and leaves with it. */
-#app[data-screen='detail'] #library .library-grid .card.is-selected::after {
-  animation: card-ring-pulse 1.1s ease-in-out infinite;
+/* The grid's focus body. Unlike the strip's, its canvas is NOT inside the scrolling content: a library
+   of hundreds would make a canvas thousands of pixels tall, and its backing store is width x height x 4
+   x dpr² bytes — tens of megabytes on a handheld. This one is the size of the pane, and library-screen.ts
+   folds the scroll offset into the coordinates it draws at.
+   Positioned over the pane but under the cards: .library-scroll takes a z-index of its own for this. */
+#library-jelly {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+  z-index: 0;
   opacity: 1;
+  transition: opacity 0.2s ease;
+}
+
+/* Nothing to wrap: the focus is in the column, or the section is empty. Faded rather than moved — the
+   body keeps its place, so the way back in is a fade rather than a jump from wherever it last stood. */
+#library-jelly.is-hidden {
+  opacity: 0;
+}
+
+/* …and the instant frame kills even that: a hand-over to the detail screen and back is a CUT. In one
+   row with the rule at the head of this section. */
+#library.is-instant #library-jelly {
+  transition: none;
+}
+
+/* The cards must sit ABOVE the body, and z-index only bites on a positioned element — the scroller had
+   none, so it gets one here. Harmless to the layout: it already clips on both axes. */
+#library .library-scroll {
+  position: relative;
+  z-index: 1;
 }
 
 /* The playable dot moves INSIDE the card, to its top-right corner: the grid is dense and there is no

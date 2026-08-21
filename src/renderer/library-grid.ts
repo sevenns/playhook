@@ -13,7 +13,10 @@ import type { LibraryEntry } from '../shared/types.js';
 /** Card size of the grid (Figma "Library"), and the gap between cards. */
 export const LIB_CARD_W = 200;
 export const LIB_CARD_H = 300;
-export const LIB_GAP = 16;
+export const LIB_GAP = 24;
+
+/** How much the selected card grows in place. MIRRORS `--card-scale` on `.card.is-selected` in styles.css. */
+export const LIB_CARD_SCALE = 1.06;
 
 /** How many rows around the selected one keep their artwork loaded (see isNearInGrid). */
 export const LIB_ART_ROWS = 4;
