@@ -72,8 +72,8 @@ export const JELLY: JellyTuning = {
   points: 36,
   /** Slack around the drawn body the canvas must keep, design px (breathing and the glow reach out). */
   margin: 26,
-  /** Generous: a cover is 204 tall and the row is meant to feel heavy. */
-  reach: 150,
+  /** A cover is 204 tall and the row is meant to feel heavy — but not unbounded. */
+  reach: 90,
   alpha: 0.62,
 };
 
@@ -102,6 +102,24 @@ export const JELLY_UI: JellyTuning = {
      leaves the text fighting whatever is behind the surface. */
   alpha: 0.82,
 };
+
+/**
+ * The same tuning, for a direction being HELD.
+ *
+ * Auto-repeat steps the selection several times a second, and the softness that reads as weight on a
+ * single press turns into a smear over that: the body never arrives before the target has moved again,
+ * so it stretches further with every step and trails clean off the screen. Held, it is pulled taut —
+ * stiffer, damped harder, on a much shorter leash — and let go again the moment the direction is
+ * released, which is when the softness is worth seeing.
+ */
+export function heldTuning(tuning: JellyTuning): JellyTuning {
+  return {
+    ...tuning,
+    stiffness: tuning.stiffness * 3,
+    damping: Math.min(0.8, tuning.damping + 0.2),
+    reach: Math.max(20, tuning.reach / 4),
+  };
+}
 
 /** The box for a measured card: its own rectangle, pushed out by the stand-off on every side. */
 export function jellyBoxOf(

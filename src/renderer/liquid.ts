@@ -13,6 +13,7 @@
 import {
   JELLY,
   JELLY_UI,
+  heldTuning,
   jellyBoxOf,
   outlinePoint,
   pinchScale,
@@ -45,6 +46,8 @@ export interface LiquidDeps {
   unit(): number;
   /** The fill, normally the computed `--d2` — read per frame, so the palette crossfade carries it. */
   colour(): string;
+  /** Whether a direction is being HELD right now (the row and the lists auto-repeat). See heldTuning. */
+  held(): boolean;
 }
 
 export interface LiquidFocus {
@@ -313,6 +316,7 @@ export function createLiquidFocus(deps: LiquidDeps): LiquidFocus {
       to = held.to;
     } else {
       tuning = tuningFor(focused);
+      if (deps.held()) tuning = heldTuning(tuning);
       to = targetOf(focused, deps.unit(), tuning);
       held = { to, tuning };
       lostAt = -1;

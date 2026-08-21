@@ -791,6 +791,9 @@ const liquid = createLiquidFocus({
     const value = getComputedStyle(app).getPropertyValue('--d2').trim();
     return value.length > 0 ? value : FALLBACK_COLOUR;
   },
+  // controls.ts sets this while a direction repeats; the strip and the lists already switch their own
+  // timing on it (--flip-step), and the body joins them rather than inventing its own notion of "fast".
+  held: () => app.hasAttribute('data-flipping'),
 });
 
 function mountLiquidWindows(): void {
