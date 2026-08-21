@@ -811,11 +811,17 @@ function mountLiquidWindows(): void {
   liquid.mount(reqQuery('#game-settings .settings-column'), 2);
   // The popup's own column, not #popup: the column carries opacity of its own, so it is a stacking
   // context and a window outside it could never sit under its buttons.
-  liquid.mount(reqQuery('#popup .popup-column'), 3);
+  // The value menus open ON TOP of the row that spawned them, INSIDE the same screen — so that screen
+  // holds two marked elements at once, the row and the chosen value. Without a window of their own the
+  // body took whichever came first in the document, which is the row: the menu looked unfocused while
+  // the highlight sat on the setting behind it.
+  liquid.mount(req('settings-options'), 3);
+  liquid.mount(req('game-settings-options'), 3);
+  liquid.mount(reqQuery('#popup .popup-column'), 4);
   // Above the popup: both open ON TOP of a screen that still marks a row of its own, and the body must
   // follow the thing the user is actually driving.
-  liquid.mount(req('file-picker'), 4);
-  liquid.mount(req('osk'), 5);
+  liquid.mount(req('file-picker'), 5);
+  liquid.mount(req('osk'), 6);
 }
 
 function revealUi(): void {
