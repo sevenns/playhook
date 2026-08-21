@@ -333,7 +333,9 @@ body {
 
 #carousel-strip {
   position: absolute;
-  /* The anchor: the same x=50 the bar content uses, so the selected card lines up with the title. */
+  /* The anchor: the same x=50 the bar content uses, so the selected card lines up with the title.
+     The launcher cards at the row's end are the exception — there the row parks and the selection
+     walks rightwards off the anchor instead, keeping the last cover in view (see pinnedOffset). */
   left: calc(50 * var(--px));
   /* Room for the dot below the cards (see #carousel's bottom/height). */
   bottom: calc(30 * var(--px));

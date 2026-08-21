@@ -5,6 +5,9 @@
 // row slides under it. Cards to its LEFT keep the normal width and the normal gap, which is what keeps
 // the offset a straight multiple of the index — no per-index accumulation, no dependency on WHICH card
 // is selected. The selected card's own breathing room (SEL_MARGIN) is the one constant added on top.
+//
+// The launcher cards at the row's tail are the one exception: there the strip parks and the selection
+// walks along it instead (see pinnedOffset).
 
 /** Unselected card size (Figma "Home": Rectangle 11/12/13 are 90x135, bottom-aligned with the selected). */
 export const CARD_W = 90;
@@ -49,15 +52,39 @@ export function stripCanvas(count: number, margin = 26): { readonly width: numbe
 
 /**
  * How far the strip is translated (design px, negative = leftwards) so that card `index` lands on the
- * anchor.
+ * anchor — for as long as the selection is on a GAME.
  *
  * A straight multiple of the step, plus the selected card's own left margin: everything before it is an
  * ordinary card at the ordinary gap, and the card itself then starts one margin further in. That extra
  * is the SAME for every index — including 0, where the first card is pushed off the strip's origin by
  * its margin like any other — so this stays one line and never accumulates.
+ *
+ * `games` is how many game cards stand before the launcher's own (SYSTEM_CARDS, always the row's tail).
+ * Cross into those and the strip stops — see pinnedOffset.
  */
-export function stripOffset(index: number): number {
+export function stripOffset(index: number, games: number): number {
+  if (index >= games) return pinnedOffset(games);
   return 0 - (index * STEP + SEL_MARGIN); // subtraction first, so index 0 yields a plain -SEL_MARGIN
+}
+
+/**
+ * Where the strip stands still while a LAUNCHER card is selected: the last game on the anchor, whole.
+ *
+ * The launcher cards are the row's end — there is nothing past them to scroll towards, so bringing each
+ * one onto the anchor in turn only pushed the four of them off the left edge and took the games with
+ * them. The row parks here instead and the focus body walks along it: the one place in the carousel
+ * where the cursor moves rather than the strip.
+ *
+ * Whenever this applies the last game is by definition unselected, so it stands at a plain
+ * `(games - 1) * STEP` and lands on the anchor at its full width — not the sliver the old offset cut it
+ * down to.
+ */
+export function pinnedOffset(games: number): number {
+  // A row with no games at all — which is what it is until main's list arrives, and what a fresh install
+  // with nothing in its history stays — has nothing to hold in view, so the FIRST launcher card takes
+  // the anchor and the other three still keep their places.
+  if (games <= 0) return 0 - SEL_MARGIN;
+  return 0 - (games - 1) * STEP;
 }
 
 /**

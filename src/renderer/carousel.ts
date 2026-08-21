@@ -193,6 +193,15 @@ export function createCarousel(deps: CarouselDeps): Carousel {
   }
 
   /**
+   * How many games stand before the launcher's own cards — i.e. where the strip stops scrolling
+   * (see pinnedOffset). The launcher cards are always the row's tail, spliced on in setGames, so
+   * this is a subtraction rather than a search.
+   */
+  function gameCount(): number {
+    return items.length - systemItems.length;
+  }
+
+  /**
    * Whether a card shows its dot. For a game it marks "this one is playable right now" — it is on the
    * inserted card or in the local library — unconditionally: the mark belongs to the game, and holding it
    * back until the row also holds history entries made a card silently change meaning as the history grew.
@@ -260,7 +269,7 @@ export function createCarousel(deps: CarouselDeps): Carousel {
 
   /** The strip's translation + the per-card selected/active/busy state. Cheap; safe to call often. */
   function applyLayout(): void {
-    strip.style.setProperty('--strip-offset', String(stripOffset(index)));
+    strip.style.setProperty('--strip-offset', String(stripOffset(index, gameCount())));
     nudgeJelly(index);
     const current = selected();
     const currentKey = current === undefined ? null : itemKey(current);

@@ -17,30 +17,89 @@ import {
   fanIndex,
   isNearViewport,
   isWithinWindow,
+  pinnedOffset,
   stripOffset,
   VISIBLE_CARDS,
 } from '../src/renderer/carousel-geometry';
 import { SYSTEM_CARDS } from '../src/renderer/system-cards';
 
+// A row long enough that the pin below never gets in the way — these cases are about the games.
+const MANY = 100;
+
 describe('stripOffset', () => {
   it('shifts the FIRST card by the selected margin — it is off the origin like any other', () => {
     // Not zero any more: the selected card carries its own margins wherever it stands, so even card 0
     // starts one margin in and the strip has to pull back by exactly that to land it on the anchor.
-    expect(stripOffset(0)).toBe(-SEL_MARGIN);
+    expect(stripOffset(0, MANY)).toBe(-SEL_MARGIN);
   });
 
   it('advances by one card + gap per index', () => {
     expect(STEP).toBe(CARD_W + GAP);
     // Against STEP rather than a literal: the gap is a design decision that has moved twice already,
     // and a hard-coded step turns that into a failing test rather than a re-spaced row.
-    expect(stripOffset(1)).toBe(-(STEP + SEL_MARGIN));
-    expect(stripOffset(3)).toBe(-(3 * STEP + SEL_MARGIN));
+    expect(stripOffset(1, MANY)).toBe(-(STEP + SEL_MARGIN));
+    expect(stripOffset(3, MANY)).toBe(-(3 * STEP + SEL_MARGIN));
   });
 
   it('is linear — the step between neighbours never depends on where you are', () => {
     for (let i = 0; i < 40; i += 1) {
-      expect(stripOffset(i) - stripOffset(i + 1)).toBe(STEP);
+      expect(stripOffset(i, MANY) - stripOffset(i + 1, MANY)).toBe(STEP);
     }
+  });
+});
+
+describe('pinnedOffset (the strip parks on the launcher cards)', () => {
+  const GAMES = MAX_STRIP_GAMES;
+  const LAST_GAME = GAMES - 1;
+  const LAUNCHER = SYSTEM_CARDS.map((_, i) => GAMES + i);
+
+  /** Where card `index` ends up relative to the ANCHOR, once the strip has settled for `selected`. */
+  function screenLeft(index: number, selected: number, games: number): number {
+    // cardLeft counts from the selected card's own left edge, which sits `selected * STEP + SEL_MARGIN`
+    // into the strip — so this undoes that to get back to the strip's origin, then applies the offset.
+    return stripOffset(selected, games) + selected * STEP + SEL_MARGIN + cardLeft(index, selected);
+  }
+
+  it('stops the strip dead the moment the selection leaves the games', () => {
+    for (const index of LAUNCHER) {
+      expect(stripOffset(index, GAMES)).toBe(pinnedOffset(GAMES));
+    }
+  });
+
+  it('keeps the LAST game whole on the anchor rather than a sliver past the edge', () => {
+    for (const selected of LAUNCHER) {
+      expect(screenLeft(LAST_GAME, selected, GAMES)).toBe(0);
+    }
+    // The old, unpinned offset is what cut it down: most of the card sat left of the anchor.
+    expect(cardLeft(LAST_GAME, GAMES)).toBe(-STEP - SEL_MARGIN);
+  });
+
+  it('never scrolls past where the last game already stood', () => {
+    expect(pinnedOffset(GAMES)).toBeGreaterThan(stripOffset(LAST_GAME, GAMES));
+  });
+
+  it('leaves every launcher card right of the anchor, whichever one is selected', () => {
+    for (const selected of LAUNCHER) {
+      for (const index of LAUNCHER) {
+        expect(screenLeft(index, selected, GAMES)).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it('moves the CURSOR, not the row: the games stay exactly where they are', () => {
+    const first = LAUNCHER[0] ?? 0;
+    const laid = (selected: number): readonly number[] =>
+      Array.from({ length: GAMES }, (_, i) => screenLeft(i, selected, GAMES));
+    for (const selected of LAUNCHER) {
+      expect(laid(selected)).toEqual(laid(first));
+    }
+  });
+
+  it('parks on the FIRST card when the row is launcher cards alone', () => {
+    // Before main's list arrives the row IS the four cards, and there is no game to hold in view — so
+    // the anchor goes to the first of them and the selection still walks rather than the row.
+    expect(stripOffset(0, 0)).toBe(-SEL_MARGIN);
+    expect(stripOffset(2, 0)).toBe(-SEL_MARGIN);
   });
 });
 
