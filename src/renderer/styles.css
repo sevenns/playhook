@@ -339,8 +339,9 @@ body {
   bottom: calc(30 * var(--px));
   display: flex;
   align-items: flex-end;
-  /* MIRRORS GAP in carousel-geometry.ts — the offsets are computed there and cannot read this. */
-  gap: calc(24 * var(--px));
+  /* MIRRORS GAP in carousel-geometry.ts — the offsets are computed there and cannot read this. The
+     SELECTED card widens its own two gaps with margins of its own (see below). */
+  gap: calc(8 * var(--px));
   transform: translateX(calc(var(--strip-offset, 0) * var(--px)));
   transition: transform var(--morph) var(--morph-ease), opacity 0.25s ease;
 }
@@ -358,13 +359,23 @@ body {
   background-position: center;
   overflow: visible;
   transition: width var(--morph) var(--morph-ease), height var(--morph) var(--morph-ease),
-    opacity 0.2s ease;
+    margin var(--morph) var(--morph-ease), opacity 0.2s ease;
   cursor: pointer;
 }
 
 .card.is-selected {
   width: calc(136 * var(--px));
   height: calc(204 * var(--px));
+}
+
+/* The selected card takes more room than the gap gives it: flex lays ONE gap between every pair, so the
+   difference is added here as margins. 8 + 16 = the 24 the row leaves around whatever is being looked at.
+   MIRRORS SEL_MARGIN in carousel-geometry.ts — stripOffset adds exactly this to put the card on the
+   anchor, so the two must move together.
+   Scoped to the strip: the Library's cards share the .card class, and a margin there would push its grid
+   tracks apart. */
+#carousel-strip .card.is-selected {
+  margin: 0 calc(16 * var(--px));
 }
 
 /* The focus indicator: a soft body lying UNDER the selected cover rather than a ring drawn around it.
@@ -484,9 +495,11 @@ body {
 #app[data-screen='detail'][data-card-morph='off'] .card.is-selected {
   width: 0;
   height: 0;
+  /* Its margins go with it: a card shrinking to nothing must not leave a 16-wide hole in the row. */
+  margin: 0;
   transform-origin: bottom left;
   transition: width var(--morph) var(--morph-ease), height var(--morph) var(--morph-ease),
-    opacity var(--morph) ease;
+    margin var(--morph) var(--morph-ease), opacity var(--morph) ease;
 }
 #app[data-screen='detail'][data-card-morph='off'] #carousel {
   /* The container has to outlast the shrink it is showing — the default 0.3s fade would take the card
@@ -530,7 +543,8 @@ body {
      (.is-beyond below), and they must do it WITH the slide — no delay, or the row would arrive first and
      the newcomer blink in afterwards. The staggered hand-back fade lives in the [data-returning] rule. */
   transition: width var(--morph) var(--morph-ease), height var(--morph) var(--morph-ease),
-    opacity var(--morph) cubic-bezier(0.2, 0, 0.2, 1), transform var(--morph) var(--morph-ease);
+    margin var(--morph) var(--morph-ease), opacity var(--morph) cubic-bezier(0.2, 0, 0.2, 1),
+    transform var(--morph) var(--morph-ease);
 }
 #app[data-screen='carousel'][data-returning] .card {
   /* Coming back from the detail screen. ONLY the fade-in waits for the grow. Delaying width/height here
@@ -544,6 +558,7 @@ body {
      RETURN_FAN_MS in carousel-geometry.ts — the first locks input out for the morph, the second is how
      long the renderer keeps `data-returning` on: edit them together. */
   transition: width var(--morph) var(--morph-ease), height var(--morph) var(--morph-ease),
+    margin var(--morph) var(--morph-ease),
     opacity 0.4s cubic-bezier(0.2, 0, 0.2, 1) calc(var(--morph) + var(--fan, 0) * 50ms),
     transform var(--morph) var(--morph-ease);
 }
@@ -558,7 +573,8 @@ body {
 }
 #app[data-flipping][data-screen='carousel'] .card {
   transition: width var(--flip-step) linear, height var(--flip-step) linear,
-    opacity var(--morph) cubic-bezier(0.2, 0, 0.2, 1), transform var(--flip-step) linear;
+    margin var(--flip-step) linear, opacity var(--morph) cubic-bezier(0.2, 0, 0.2, 1),
+    transform var(--flip-step) linear;
 }
 
 /* Past the end of the shown window (VISIBLE_CARDS = 9 in carousel-geometry.ts): laid out as usual — the
@@ -574,20 +590,20 @@ body {
      over from, so it must be fully opaque in the very frame the button goes — anything softer shows the
      background through it while the button is already gone. Its neighbours may fade in. */
   transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1), height 0.35s cubic-bezier(0.4, 0, 0.2, 1),
-    opacity 0s linear 0.35s;
+    margin 0.35s cubic-bezier(0.4, 0, 0.2, 1), opacity 0s linear 0.35s;
 }
 #app[data-screen='carousel'][data-card-morph='off'] .card.is-selected {
   /* Here the card IS the button: it is opaque from frame one and grows out of the corner it shrank into,
      which is exactly what the button does on the other branch. */
   transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1), height 0.35s cubic-bezier(0.4, 0, 0.2, 1),
-    opacity 0s linear;
+    margin 0.35s cubic-bezier(0.4, 0, 0.2, 1), opacity 0s linear;
 }
 /* The startup fan (carousel.playIntro): the same wave, except the selected card fades in WITH the row
    instead of swapping in opaque. Both rules above exist to hand over from the play button — at startup
    there is no button to hand over from, and a card snapping in mid-wave is what gives that away. */
 #app[data-screen='carousel'][data-returning='intro'] .card.is-selected {
   transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1), height 0.35s cubic-bezier(0.4, 0, 0.2, 1),
-    opacity 0.4s cubic-bezier(0.2, 0, 0.2, 1) 0.35s;
+    margin 0.35s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.4s cubic-bezier(0.2, 0, 0.2, 1) 0.35s;
 }
 /* Coming back from a detail screen the body waits for the CARD, and the delay is 0.35s rather than the
    --morph the container uses — the two are not the same moment, which is what made the hand-back blink.

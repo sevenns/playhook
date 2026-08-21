@@ -2,8 +2,9 @@
 // multiplies by `--px`, see styles.css). No DOM, so the maths is unit-testable.
 //
 // The strip does the moving, not the selection: the selected card always sits at the same anchor and the
-// row slides under it. Cards to its LEFT keep the normal width, which is what makes the offset linear in
-// the index — no per-index accumulation, no dependency on WHICH card is selected.
+// row slides under it. Cards to its LEFT keep the normal width and the normal gap, which is what keeps
+// the offset a straight multiple of the index — no per-index accumulation, no dependency on WHICH card
+// is selected. The selected card's own breathing room (SEL_MARGIN) is the one constant added on top.
 
 /** Unselected card size (Figma "Home": Rectangle 11/12/13 are 90x135, bottom-aligned with the selected). */
 export const CARD_W = 90;
@@ -11,8 +12,19 @@ export const CARD_H = 135;
 /** Selected card size (it grows in place, anchored at its bottom-left corner). */
 export const SEL_W = 136;
 export const SEL_H = 204;
-/** Gap between cards. MIRRORED by #carousel-strip's `gap` in styles.css. */
-export const GAP = 24;
+/** Gap between two ordinary cards. MIRRORED by #carousel-strip's `gap` in styles.css. */
+export const GAP = 8;
+
+/**
+ * Gap on either side of the SELECTED card: it is the one thing being looked at, so it gets the room to
+ * be looked at. MIRRORED by the `margin` on `#carousel-strip .card.is-selected` in styles.css, which
+ * spells it as the DIFFERENCE below — flex lays one gap between every pair, and the selected card adds
+ * the rest with margins of its own.
+ */
+export const SEL_GAP = 24;
+
+/** What the selected card adds on each side, over the gap the row already has. */
+export const SEL_MARGIN = SEL_GAP - GAP;
 
 /** The distance one card advances the strip. */
 export const STEP = CARD_W + GAP;
@@ -28,26 +40,39 @@ export const STEP = CARD_W + GAP;
 export function stripCanvas(count: number, margin = 26): { readonly width: number; readonly height: number } {
   const cards = Math.max(count, 1);
   return {
-    width: (cards - 1) * STEP + SEL_W + 2 * margin,
+    // The row's own width does not depend on WHICH card is selected: one card is wide, the rest are not,
+    // and the selected one's margins are there wherever it stands.
+    width: (cards - 1) * STEP + SEL_W + 2 * SEL_MARGIN + 2 * margin,
     height: SEL_H + 2 * margin,
   };
 }
 
 /**
  * How far the strip is translated (design px, negative = leftwards) so that card `index` lands on the
- * anchor. Linear by the invariant above; index 0 means "no shift".
+ * anchor.
+ *
+ * A straight multiple of the step, plus the selected card's own left margin: everything before it is an
+ * ordinary card at the ordinary gap, and the card itself then starts one margin further in. That extra
+ * is the SAME for every index — including 0, where the first card is pushed off the strip's origin by
+ * its margin like any other — so this stays one line and never accumulates.
  */
 export function stripOffset(index: number): number {
-  return 0 - index * STEP; // written as a subtraction so index 0 yields +0, not the -0 of `-index * STEP`
+  return 0 - (index * STEP + SEL_MARGIN); // subtraction first, so index 0 yields a plain -SEL_MARGIN
 }
 
 /**
  * The left edge of card `index` once the strip is at `stripOffset(selected)` — relative to the strip's
  * own origin, i.e. to the anchor. Zero for the selected card (that IS the anchor), which is the invariant
  * the layout rests on: the selected card's left edge never moves, whichever card it is.
+ *
+ * The two sides are NOT mirror images, which is the whole reason this is spelled out rather than left as
+ * `(index - selected) * STEP`: to the left the row is ordinary cards at the ordinary gap, while to the
+ * right everything is pushed out by how much wider the selected card is AND by its two margins.
  */
 export function cardLeft(index: number, selected: number): number {
-  return (index - selected) * STEP;
+  if (index === selected) return 0;
+  if (index < selected) return (index - selected) * STEP - SEL_MARGIN;
+  return SEL_W + SEL_GAP + (index - selected - 1) * STEP;
 }
 
 /**
