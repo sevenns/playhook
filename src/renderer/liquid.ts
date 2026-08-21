@@ -84,13 +84,33 @@ function tuningFor(el: Element): JellyTuning {
   return el.classList.contains('card') ? JELLY : JELLY_UI;
 }
 
+/**
+ * How far the row still has to slide, in real px.
+ *
+ * The carousel is the one surface where the SELECTION does not move — the strip does, under a fixed
+ * anchor. A screen rectangle therefore lies about where the selected cover is going to be: for the 143ms
+ * of a step it is still off to one side, arriving. The springs chase that arriving rectangle, and under
+ * auto-repeat it never stops arriving, so the body is pulled permanently off the anchor — which is what
+ * dragged it across the screen. Taking the strip's remaining travel off the measurement puts the target
+ * back where it will come to rest, i.e. exactly where it used to be when the body lived in strip
+ * coordinates: still, with the row moving underneath it.
+ */
+function stripLag(strip: HTMLElement, unit: number): number {
+  const matrix = new DOMMatrixReadOnly(getComputedStyle(strip).transform);
+  const settled = Number.parseFloat(strip.style.getPropertyValue('--strip-offset'));
+  if (!Number.isFinite(settled)) return 0;
+  return settled * unit - matrix.m41;
+}
+
 /** The focused element's box in SCREEN coordinates, plus the corner radius the body should copy. */
 function targetOf(el: Element, unit: number, tuning: JellyTuning): JellyBox {
   const rect = el.getBoundingClientRect();
   const style = getComputedStyle(el);
   const parsed = Number.parseFloat(style.borderTopLeftRadius);
   const radius = Number.isFinite(parsed) ? parsed : 0;
-  return jellyBoxOf(rect.left, rect.top, rect.width, rect.height, radius, unit, tuning);
+  const strip = el.closest<HTMLElement>('#carousel-strip');
+  const lag = strip === null ? 0 : stripLag(strip, unit);
+  return jellyBoxOf(rect.left + lag, rect.top, rect.width, rect.height, radius, unit, tuning);
 }
 
 export function createLiquidFocus(deps: LiquidDeps): LiquidFocus {

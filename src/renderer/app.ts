@@ -788,10 +788,6 @@ function dissolveBootBackdrop(): void {
 const liquid = createLiquidFocus({
   unit: pxUnit,
   colour: () => {
-    // TEMPORARY, for one diagnostic build: the body is painted red so it can be told apart from the
-    // launcher's own cards. The three system cards are filled with --d2 too, which is exactly the body's
-    // colour, so on a screenshot there is no telling which shape is which. Revert to the line below.
-    return '#ff3b30';
     const value = getComputedStyle(app).getPropertyValue('--d2').trim();
     return value.length > 0 ? value : FALLBACK_COLOUR;
   },
