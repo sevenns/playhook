@@ -801,6 +801,11 @@ function mountLiquidWindows(): void {
   liquid.mount(reqQuery('#settings .settings-column'), 2);
   liquid.mount(reqQuery('#game-settings .settings-column'), 2);
   liquid.mount(reqQuery('#library .settings-column'), 2);
+  // The grid gets a window at the SAME priority as the column beside it: they are one surface to the
+  // user, and equal priority is what lets the body cross the seam between them rather than being handed
+  // over. The pane, not the scroller — a canvas as tall as a library of hundreds would cost tens of
+  // megabytes, and the scroll offset is already in the rectangles this module measures.
+  liquid.mount(reqQuery('#library .library-pane'), 2);
   // The value menus open ON TOP of the row that spawned them, inside the same screen — so that screen
   // holds two marked elements at once and needs the higher priority to pick the right one. Mounted
   // before the LIST, so the menu's own veil and blur stay behind the body rather than over it.

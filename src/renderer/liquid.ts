@@ -24,13 +24,26 @@ import {
  * What the body may sit under: everything the launcher highlights carries `.is-focused`, which is the one
  * focus visual across every surface (see styles.css).
  *
- * The two CARD surfaces are deliberately not here. The row and the grid keep their own bodies
+ * The Library's GRID is here — its covers stand still and only the highlight walks them, so a screen
+ * rectangle is the truth about where a cover is. That is also what lets one body cross from the sidebar
+ * onto the grid instead of two bodies handing over at the seam.
+ *
+ * The CAROUSEL is deliberately not. The row and the grid keep their own bodies
  * (focus-jelly.ts), because the carousel breaks the assumption this module is built on: there the
  * selection stands still and the strip slides under it, so a screen rectangle is mid-flight for the
  * length of every step and the springs chase a target that never settles. Their own canvases live inside
  * the moving strip, where the selected card simply does not move.
  */
-const FOCUS_SELECTOR = '.is-focused';
+const FOCUS_SELECTOR = '.is-focused, #library .library-grid .card.is-selected';
+
+/**
+ * Marks the element the body is actually UNDER right now.
+ *
+ * `.is-focused` cannot answer that question. There is ONE body and several surfaces, so a screen keeps
+ * its row marked while a popup above it holds the body — and an inverted label with nothing behind it is
+ * an invisible label. This class follows the body itself, and the stylesheet hangs the inversion on it.
+ */
+const LIT_CLASS = 'is-lit';
 
 /**
  * A layer that can show the body. `priority` settles who owns the focus when more than one surface has
@@ -262,6 +275,7 @@ export function createLiquidFocus(deps: LiquidDeps): LiquidFocus {
     const focused = findFocused();
     if (focused === null) {
       for (const win of windows) clear(win);
+      owner?.classList.remove(LIT_CLASS);
       owner = null;
       seeded = false;
       return;
@@ -275,6 +289,10 @@ export function createLiquidFocus(deps: LiquidDeps): LiquidFocus {
       moveStart = -1;
     } else if (focused !== owner) {
       moveStart = now; // a new element has it: squeeze through the trip
+    }
+    if (focused !== owner) {
+      owner?.classList.remove(LIT_CLASS);
+      focused.classList.add(LIT_CLASS);
     }
     owner = focused;
 

@@ -382,6 +382,21 @@ body {
    first in its layer, so anything that layer draws afterwards sits on top of it — which is the whole
    point, the body goes UNDER what it highlights. `.text-button` is not positioned, so it gets a z-index
    of its own below; the rest of the focusables already are and win on DOM order alone. */
+/* Everything the body can sit under has to out-stack the window, and none of these were positioned —
+   an absolutely positioned canvas paints over static content whatever the document order, which is why
+   the keys and the browser's entries lost their labels under it. */
+.play-button,
+.rect-button,
+.text-button,
+.settings-nav-item,
+.setting-row,
+.settings-option,
+.osk-key,
+.picker-item {
+  position: relative;
+  z-index: 1;
+}
+
 .liquid-window {
   position: absolute;
   /* BLEEDS past its layer. The body stands ~17 design px outside whatever it wraps (8 of stand-off plus
@@ -1875,10 +1890,14 @@ html:not(.mouse-asleep) .notification-item:hover .notification-dot {
 
 /* Instant, like every other focus fill — see the note on .play-button. This is the control the dropped
    frame was actually caught on. */
-html:not(.mouse-asleep) .settings-nav-item:hover,
-.settings-nav-item.is-focused {
-  /* The liquid body is the fill (liquid.ts) — a rectangle here would put hard edges back around it. */
+.settings-nav-item.is-lit {
   color: var(--d1);
+}
+
+/* Hover has no body behind it — the pointer can rest on the column while the grid holds the focus — so
+   it tints with the accent instead of inverting into nothing. */
+html:not(.mouse-asleep) .settings-nav-item:hover:not(.is-lit) {
+  color: var(--d2);
 }
 
 /* The section the pane is showing, while the focus is over in the pane: underlined rather than filled,
@@ -2011,8 +2030,9 @@ html:not(.mouse-asleep) .settings-nav-item:hover,
 
 /* :hover gated on a live cursor, like every other control here (see .text-button). */
 html:not(.mouse-asleep) .setting-row:hover,
-.setting-row.is-focused {
-  /* The liquid body is the fill (liquid.ts) — a rectangle here would put hard edges back around it. */
+.setting-row.is-lit {
+  /* Inverted only while the body is actually HERE (liquid.ts sets .is-lit) — the focus can be marked on
+     a surface the body has left for a popup, and inverted text with nothing behind it is invisible. */
   color: var(--d1);
 }
 
@@ -2257,14 +2277,14 @@ html:not(.mouse-asleep) .setting-row[data-kind='update-status']:hover {
 
 /* Focused, i.e. with the body under it: inverted like every other focused row, so the label on the left
    reads against the body rather than melting into it. */
-.setting-row[data-kind='action'].is-focused,
-.setting-row[data-kind='update-status'].is-focused {
+.setting-row[data-kind='action'].is-lit,
+.setting-row[data-kind='update-status'].is-lit {
   background: transparent;
   color: var(--d1);
 }
 
-.setting-row[data-kind='action'].is-focused .text-button,
-.setting-row[data-kind='update-status'].is-focused .text-button {
+.setting-row[data-kind='action'].is-lit .text-button,
+.setting-row[data-kind='update-status'].is-lit .text-button {
   /* No fill of its own: the row already carries the body, and a second plate on the button inside would
      draw a hard rectangle on top of a soft one. */
   color: var(--d1);
@@ -2485,8 +2505,9 @@ html:not(.mouse-asleep) .setting-row[data-kind='update-status']:hover {
 }
 
 html:not(.mouse-asleep) .settings-option:hover,
-.settings-option.is-focused {
-  /* The liquid body is the fill (liquid.ts) — a rectangle here would put hard edges back around it. */
+.settings-option.is-lit {
+  /* Inverted only while the body is actually HERE (liquid.ts sets .is-lit) — the focus can be marked on
+     a surface the body has left for a popup, and inverted text with nothing behind it is invisible. */
   color: var(--d1);
 }
 
@@ -2812,8 +2833,9 @@ html:not(.mouse-asleep) .setting-row.is-inert:hover {
 }
 
 html:not(.mouse-asleep) .osk-key:hover,
-.osk-key.is-focused {
-  /* The liquid body is the fill (liquid.ts) — a rectangle here would put hard edges back around it. */
+.osk-key.is-lit {
+  /* Inverted only while the body is actually HERE (liquid.ts sets .is-lit) — the focus can be marked on
+     a surface the body has left for a popup, and inverted text with nothing behind it is invisible. */
   color: var(--d1);
 }
 
@@ -2946,8 +2968,9 @@ html:not(.mouse-asleep) .osk-key:hover,
 }
 
 html:not(.mouse-asleep) .picker-item:hover,
-.picker-item.is-focused {
-  /* The liquid body is the fill (liquid.ts) — a rectangle here would put hard edges back around it. */
+.picker-item.is-lit {
+  /* Inverted only while the body is actually HERE (liquid.ts sets .is-lit) — the focus can be marked on
+     a surface the body has left for a popup, and inverted text with nothing behind it is invisible. */
   color: var(--d1);
 }
 
@@ -3108,8 +3131,8 @@ html:not(.mouse-asleep) .picker-item:hover,
 
 /* The padding is not decoration: the selected card scales to 1.06 and the focus body stands 8 design px
    off it and breathes a few more, which puts its corner ~22 design px outside the card's own box. The
-   scroller clips on both axes — but the body is drawn on a canvas OUTSIDE it (see #library-jelly), so
-   what this padding now protects is the card's own scale, and it keeps the body's ends off the pane's
+   scroller clips on both axes — but the body is drawn on the pane's liquid window, OUTSIDE the scroller,
+   so what this padding now protects is the card's own scale, and it keeps the body's ends off the pane's
    edges. 44 leaves room for a decoration that reaches further, and costs nothing: even on a 16:10 screen
    the column count is the same as it would be at 22. */
 .library-scroll {
@@ -3256,33 +3279,6 @@ html:not(.mouse-asleep) .picker-item:hover,
    linear, which glues the steps into one continuous glide instead of 143 ms of ease each. */
 #app[data-flipping] #library .library-grid .card {
   transition: transform var(--flip-step) linear;
-}
-
-/* The grid's focus body. Unlike the strip's, its canvas is NOT inside the scrolling content: a library
-   of hundreds would make a canvas thousands of pixels tall, and its backing store is width x height x 4
-   x dpr² bytes — tens of megabytes on a handheld. This one is the size of the pane, and library-screen.ts
-   folds the scroll offset into the coordinates it draws at.
-   Positioned over the pane but under the cards: .library-scroll takes a z-index of its own for this. */
-#library-jelly {
-  position: absolute;
-  left: 0;
-  top: 0;
-  pointer-events: none;
-  z-index: 0;
-  opacity: 1;
-  transition: opacity 0.2s ease;
-}
-
-/* Nothing to wrap: the focus is in the column, or the section is empty. Faded rather than moved — the
-   body keeps its place, so the way back in is a fade rather than a jump from wherever it last stood. */
-#library-jelly.is-hidden {
-  opacity: 0;
-}
-
-/* …and the instant frame kills even that: a hand-over to the detail screen and back is a CUT. In one
-   row with the rule at the head of this section. */
-#library.is-instant #library-jelly {
-  transition: none;
 }
 
 /* The cards must sit ABOVE the body, and z-index only bites on a positioned element — the scroller had
