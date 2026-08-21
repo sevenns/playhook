@@ -20,12 +20,15 @@ import {
 import { createOsk } from './osk.js';
 import { createFilePicker } from './file-picker.js';
 import { createCarousel } from './carousel.js';
+import { createLiquidFocus } from './liquid.js';
+import { FALLBACK_COLOUR } from './focus-jelly.js';
+import { pxUnit } from './screen-scroller.js';
 import { createCardArtCache } from './card-art.js';
 import { createLibraryScreen } from './library-screen.js';
 import { createToast } from './toast.js';
 import { formatDate, formatNotification, formatPlaytime } from './format.js';
 import { busyKindOf, gameOf, phaseOf, statusOf, steamBusy } from './state-view.js';
-import { req } from './dom.js';
+import { req, reqQuery } from './dom.js';
 
 const app = req('app');
 const titleEl = req('title');
@@ -777,6 +780,26 @@ function dissolveBootBackdrop(): void {
   }, BOOT_FADE_MS);
 }
 
+/**
+ * Liquid UI: ONE body under whatever holds the focus, flowing between surfaces (liquid.ts). Each layer
+ * registers a window onto it; the priorities are what decide who owns the focus when a popup sits over a
+ * screen that still has a row marked. Started at the reveal, so nothing is drawn behind the boot image.
+ */
+const liquid = createLiquidFocus({
+  unit: pxUnit,
+  colour: () => {
+    const value = getComputedStyle(app).getPropertyValue('--d2').trim();
+    return value.length > 0 ? value : FALLBACK_COLOUR;
+  },
+});
+
+function mountLiquidWindows(): void {
+  liquid.mount(reqQuery('#bottom-bar .bar-content'), 1);
+  // The popup's own column, not #popup: the column carries opacity of its own, so it is a stacking
+  // context and a window outside it could never sit under its buttons.
+  liquid.mount(reqQuery('#popup .popup-column'), 3);
+}
+
 function revealUi(): void {
   if (bootRevealed) return;
   bootRevealed = true;
@@ -785,6 +808,8 @@ function revealUi(): void {
   // The strip's cards were held at zero behind the boot screen — let them fan in now, so the carousel's
   // own entrance is actually seen instead of having happened under the wallpaper.
   carousel.playIntro();
+  mountLiquidWindows();
+  liquid.start();
 }
 
 /**

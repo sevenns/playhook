@@ -378,6 +378,27 @@ body {
   margin: 0 calc(16 * var(--px));
 }
 
+/* Liquid UI's window: one canvas per layer, each a hole onto the SAME body (liquid.ts). Absolute and
+   first in its layer, so anything that layer draws afterwards sits on top of it — which is the whole
+   point, the body goes UNDER what it highlights. `.text-button` is not positioned, so it gets a z-index
+   of its own below; the rest of the focusables already are and win on DOM order alone. */
+.liquid-window {
+  position: absolute;
+  inset: 0;
+  /* Explicit, because a canvas is a replaced element: with auto sizes it would take its bitmap's
+     dimensions rather than the box inset gives it. */
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Not positioned by default, so it would paint UNDER the window and the body would cover its label. */
+.text-button {
+  position: relative;
+  z-index: 1;
+}
+
 /* The focus indicator: a soft body lying UNDER the selected cover rather than a ring drawn around it.
    A ring has to blink out on the card the selection leaves and in on the one it arrives at; one body per
    surface travels between them, breathing where it stands. It is drawn on a canvas (focus-jelly.ts) —
@@ -780,6 +801,10 @@ body {
 /* :hover gated on a live cursor — see the note on .text-button:hover (avoids a stale hover highlight
    sticking under the pointer once the gamepad takes over). */
 html:not(.mouse-asleep) .play-button:hover,
+/* The fill STAYS for now. Liquid UI's body is mounted under this button (liquid.ts) but the fill is what
+   guarantees the label is readable, and the body has not been seen running on a device yet — dropping the
+   fill before that would mean a focus nobody can see if the body fails to paint. Remove both together,
+   once the body is confirmed. */
 .play-button.is-focused {
   background: var(--d2);
   color: var(--d1);
