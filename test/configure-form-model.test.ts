@@ -723,6 +723,46 @@ describe('slotsWithNewGame (the Add-game screen\'s starting point)', () => {
   });
 });
 
+describe('description (written by "Find online", carried by `rest`)', () => {
+  it('survives a round trip through the form untouched', () => {
+    const description = { en: 'A rogue-like.', ru: 'Рогалик.' };
+    const text = JSON.stringify({
+      schemaVersion: 1,
+      id: 'hades',
+      title: 'Hades',
+      executable: 'g/g.exe',
+      heroImage: 'a/hero.jpg',
+      description,
+    });
+    const parsed = textToFormModel(text);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) throw new Error('unreachable');
+    // It lands in `rest` rather than in a field: no row edits it, and the form must not drop it.
+    expect(parsed.rest['description']).toEqual(description);
+    const written = JSON.parse(formModelToText(parsed.model, parsed.rest, parsed.corrupt)) as {
+      description?: unknown;
+    };
+    expect(written.description).toEqual(description);
+  });
+
+  it('carries a description the flow has just written into the saved text', () => {
+    const text = JSON.stringify({
+      schemaVersion: 1,
+      id: 'hades',
+      title: 'Hades',
+      executable: 'g/g.exe',
+      heroImage: 'a/hero.jpg',
+    });
+    const parsed = textToFormModel(text);
+    if (!parsed.ok) throw new Error('unreachable');
+    const withDescription = { ...parsed.rest, description: { en: 'Fetched online.' } };
+    const written = JSON.parse(formModelToText(parsed.model, withDescription, parsed.corrupt)) as {
+      description?: unknown;
+    };
+    expect(written.description).toEqual({ en: 'Fetched online.' });
+  });
+});
+
 describe('drift guard: form keys vs the zod schema', () => {
   it('KNOWN_MANIFEST_KEYS equals the manifest JSON Schema properties', () => {
     // The schema is a oneOf [ objectSchema, arrayOf(objectSchema) ]; the game object's properties are the
@@ -732,6 +772,11 @@ describe('drift guard: form keys vs the zod schema', () => {
     };
     const objectSchema = schema.oneOf?.[0];
     const schemaKeys = new Set(Object.keys(objectSchema?.properties ?? {}));
+    // `description` is the one schema key the form deliberately does NOT own: it is written by the
+    // "Find online" flow straight into `rest` (which round-trips it verbatim) and no row edits it, so
+    // giving it a form field would mean a control for a value the UI has nothing to say about. Every
+    // OTHER schema key must still be listed — that is what this guard exists for.
+    schemaKeys.delete('description');
     expect(schemaKeys).toEqual(new Set(KNOWN_MANIFEST_KEYS));
   });
 });

@@ -223,6 +223,12 @@ export interface GameManifest {
   /** Optional looping background music (card-relative path), played while the window is visible. */
   readonly backgroundMusic?: string;
   /**
+   * Optional localized description of the game (en/ru), filled by the "Find online" flow. Nothing in the
+   * UI reads it yet — it is stored now so the data exists when a screen for it does. Parsed leniently: a
+   * malformed value is dropped, never a reason to reject the manifest (see manifest.ts).
+   */
+  readonly description?: LocalizedText;
+  /**
    * Linux-only (Р7b): extra winetricks verbs provisioned into the game's Wine prefix before the game
    * launches, on top of the app's baseline set (e.g. `d3dx9` for an old DX9 title). Ignored on Windows.
    * Empty by default (schema `.default([])`).
@@ -607,6 +613,13 @@ export interface AppSettings {
    * main, so the renderer just sees no game music). When false (default), a card's music wins. Default false.
    */
   readonly onlyGlobalAmbient: boolean;
+  /**
+   * The user's own SteamGridDB API key, or `''` when they have not entered one. Empty by default and
+   * never shipped: an open-source build cannot carry a secret, so the alternative-artwork source is
+   * simply absent until the user pastes a key of their own (Settings → the SteamGridDB row). Stored in
+   * plain text alongside every other setting — the same trade every launcher with this feature makes.
+   */
+  readonly steamGridDbApiKey: string;
 }
 
 /** The bundled UI sound sets + ambience tracks available to pick in the settings window. */
@@ -840,6 +853,8 @@ export const IPC = {
   settingsSetOnlyGlobalAmbient: 'settings:set-only-global-ambient',
   /** game-renderer → main (invoke): the bundled sound sets + ambience tracks to populate the dropdowns. */
   audioOptionsRequest: 'app:audio-options',
+  /** game-renderer → main: store the user's SteamGridDB API key (payload string; '' clears it). */
+  settingsSetSteamGridDbKey: 'settings:set-steamgriddb-key',
 
   // ── Customize screen: per-game game.json editing INSIDE the launcher (own namespace) ──
   // A namespace of its own rather than a move of `config:*`: the ipc-channels test requires a channel to
@@ -889,6 +904,36 @@ export const IPC = {
   notificationsToast: 'notifications:toast',
   /** game-renderer → main (invoke): the current inbox (seed on window startup / after a reload). */
   notificationsRequest: 'notifications:request',
+  // ── Online metadata ("Find online" on the Add/Customize screen; see main/metadata/) ──
+  // Every channel answers with a MetadataResult: a source being offline or rate-limiting is an ordinary
+  // outcome here, not an error the window should show as a crash.
+  /** game-renderer → main (invoke): search every source for a game by title. Payload the query string. */
+  metadataSearch: 'metadata:search',
+  /** game-renderer → main (invoke): the candidate for a Steam appid the user has ALREADY named (the
+   * manifest's steam.appid) — the search exists to find that number, so knowing it skips the search.
+   * Payload the appid. */
+  metadataSteamCandidate: 'metadata:steam-candidate',
+  /** game-renderer → main (invoke): the artwork gallery for one candidate — thumbnails already encoded
+   * as data: URLs (the renderer's CSP admits nothing else). Payload {candidateKey, kind}. */
+  metadataArtwork: 'metadata:artwork',
+  /** game-renderer → main (invoke): one variant at FULL size as a data: URL, for the lightbox. Payload
+   * the variant key. Downloaded on demand — the gallery only ever holds thumbnails. */
+  metadataArtworkPreview: 'metadata:artwork-preview',
+  /** game-renderer → main (invoke): soundtrack albums matching a title. Payload the query string. */
+  metadataMusicAlbums: 'metadata:music-albums',
+  /** game-renderer → main (invoke): one album's tracks. Payload the album key. */
+  metadataMusicTracks: 'metadata:music-tracks',
+  /** game-renderer → main (invoke): one track as an audio data: URL, to listen before applying it.
+   * Payload the track key. This is a full download — the renderer shows a status line for it. */
+  metadataTrackPreview: 'metadata:track-preview',
+  /** game-renderer → main (invoke): the candidate's en/ru descriptions. Payload the candidate key. */
+  metadataDescriptions: 'metadata:descriptions',
+  /** game-renderer → main (invoke): download the chosen variant into the game's root and answer with the
+   * manifest-relative path the form field takes. Payload MetadataApplyRequest. */
+  metadataApply: 'metadata:apply',
+  /** game-renderer → main: the user left the surface — abort whatever is still being fetched. */
+  metadataCancel: 'metadata:cancel',
+
   /** game-renderer → main: the user pressed a notification — drop it from the inbox. Payload id. */
   notificationsDismiss: 'notifications:dismiss',
   /** game-renderer → main: "Clear all" in the notifications popup. */
@@ -1159,6 +1204,99 @@ export type ListDirResult =
     }
   | { readonly ok: false; readonly message: string; readonly roots: readonly DirRoot[] };
 
+// ── Online metadata (Steam / SteamGridDB / Khinsider; see the metadata:* channels) ──────────────
+
+/**
+ * Which external source an answer came from. The renderer only ever shows it as a label beside a
+ * candidate; every request is addressed by an opaque `key` instead, so a provider can change how it
+ * identifies a game without the renderer knowing.
+ */
+export type MetadataProviderId = 'steam' | 'steamgriddb' | 'khinsider';
+
+/** Which artwork slot a variant is offered for: the portrait cover, or a hero background. */
+export type ArtworkKind = 'grid' | 'hero';
+
+/**
+ * The Result-union every metadata call answers with — the same never-throw-across-IPC stance the
+ * manifest reader takes for untrusted disk data (see CLAUDE.md). A source being offline, rate-limiting
+ * or answering with something the schema rejects is a NORMAL outcome here, not an exception.
+ */
+export type MetadataResult<T> =
+  | { readonly ok: true; readonly value: T }
+  | { readonly ok: false; readonly message: string };
+
+/** A game as one source knows it. `key` is opaque to the renderer and round-trips back in every request. */
+export interface GameCandidate {
+  readonly key: string;
+  readonly title: string;
+  readonly provider: MetadataProviderId;
+  /** Set when the candidate is a Steam app — what the CDN art and the descriptions are addressed by. */
+  readonly steamAppId?: number;
+}
+
+/**
+ * One offered picture. `thumbDataUrl` is a data: URL because the renderer's CSP allows no other image
+ * source (`img-src data:`) — main downloads the bytes and encodes them, exactly as it does for the hero
+ * and the carousel art.
+ */
+export interface ArtworkVariant {
+  readonly key: string;
+  readonly kind: ArtworkKind;
+  readonly provider: MetadataProviderId;
+  readonly width?: number;
+  readonly height?: number;
+  readonly thumbDataUrl: string;
+}
+
+/** One soundtrack album as the music provider knows it. */
+export interface MusicAlbum {
+  readonly key: string;
+  readonly title: string;
+  readonly trackCount?: number;
+}
+
+/** One track inside an album. `sizeBytes` is what the source claims, shown before a long download. */
+export interface MusicTrack {
+  readonly key: string;
+  readonly title: string;
+  readonly sizeBytes?: number;
+}
+
+/**
+ * Text a source carries per language. Both fields are optional: Steam answers in whatever languages the
+ * publisher supplied, and a missing translation is normal. Consumers fall back `[locale] ?? en`.
+ */
+export interface LocalizedText {
+  readonly en?: string;
+  readonly ru?: string;
+}
+
+/** Which manifest field an applied download lands in. `hero` carries the 0-based rotation index. */
+export type MetadataApplySlot = 'grid' | 'music' | { readonly hero: number };
+
+/**
+ * Payload for metadata:apply — "download this variant and put it into that game's root". Like
+ * GameConfigAcceptRequest this comes FROM the renderer, so main re-checks every part of it (the root is
+ * a live candidate, the id matches the manifest id syntax, the hero index is in range) BEFORE any
+ * network or disk work happens.
+ */
+export interface MetadataApplyRequest {
+  readonly root: string;
+  /** The game id the target file is named after (see shared/asset-move-names.ts). */
+  readonly gameId: string;
+  readonly variantKey: string;
+  readonly slot: MetadataApplySlot;
+}
+
+/**
+ * Result of metadata:apply. On success `path` is the MANIFEST-relative path the renderer writes into the
+ * form field — the same shape gameConfig:accept-path answers with, so both pickers feed the form
+ * identically.
+ */
+export type MetadataApplyResult =
+  | { readonly ok: true; readonly path: string }
+  | { readonly ok: false; readonly message: string };
+
 /** API that preload exposes on `window.api`. */
 export interface RendererApi {
   onStateUpdate(callback: (state: AppState) => void): void;
@@ -1264,6 +1402,8 @@ export interface RendererApi {
   setAmbientTrack(track: string | null): void;
   /** Toggle using only the global ambience (a card's own music ignored when on). */
   setOnlyGlobalAmbient(on: boolean): void;
+  /** Store the user's SteamGridDB API key ('' clears it and turns that source off). */
+  setSteamGridDbKey(key: string): void;
   setMusicVolume(volume: number): void;
   setSfxVolume(volume: number): void;
   /** Change the UI language (the effective locale comes back via onLanguageUpdate). */
@@ -1297,6 +1437,31 @@ export interface RendererApi {
   moveGameConfigToCard(request: GameMoveRequest): Promise<ConfigMoveResult>;
   /** The clipboard as text, for the on-screen keyboard's Paste key. Empty when there is nothing to paste. */
   readClipboard(): Promise<string>;
+
+  // ── Online metadata ("Find online"; see the metadata:* channels) ──
+  /** Search every source for a game by title. */
+  searchMetadata(query: string): Promise<MetadataResult<readonly GameCandidate[]>>;
+  /** The candidate behind a Steam appid the manifest already names — no search needed. */
+  requestMetadataSteamCandidate(appId: number): Promise<MetadataResult<GameCandidate>>;
+  /** The artwork gallery for one candidate — thumbnails arrive as data: URLs. */
+  requestMetadataArtwork(
+    candidateKey: string,
+    kind: ArtworkKind,
+  ): Promise<MetadataResult<readonly ArtworkVariant[]>>;
+  /** One variant at full size as a data: URL, for the lightbox. */
+  requestMetadataArtworkPreview(variantKey: string): Promise<MetadataResult<string>>;
+  /** Soundtrack albums matching a title. */
+  searchMetadataMusic(query: string): Promise<MetadataResult<readonly MusicAlbum[]>>;
+  /** One album's tracks. */
+  requestMetadataTracks(albumKey: string): Promise<MetadataResult<readonly MusicTrack[]>>;
+  /** One track as an audio data: URL (a full download — show a status line while it runs). */
+  requestMetadataTrackPreview(trackKey: string): Promise<MetadataResult<string>>;
+  /** The candidate's en/ru descriptions, for the manifest's `description` field. */
+  requestMetadataDescriptions(candidateKey: string): Promise<MetadataResult<LocalizedText>>;
+  /** Download the chosen variant into the game's root; answers with the manifest-relative path. */
+  applyMetadata(request: MetadataApplyRequest): Promise<MetadataApplyResult>;
+  /** Abort whatever is still being fetched (the user left the surface). */
+  cancelMetadata(): void;
 
   // ── Notifications (the toast + the "Notifications" popup; see the notifications:* channels) ──
   /** Live inbox pushes — the popup list is drawn from the latest snapshot, never from local edits. */

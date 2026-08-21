@@ -22,6 +22,11 @@ import { UpdaterService } from './updater';
 import { NotificationsService } from './notifications';
 import { NotificationsStore } from './notifications-store';
 import { GameConfigService } from './game-config';
+import { HttpClient } from './metadata/http';
+import { MetadataService } from './metadata/service';
+import { SteamProvider } from './metadata/steam';
+import { SteamGridDbProvider } from './metadata/steamgriddb';
+import { KhinsiderProvider } from './metadata/khinsider';
 import { LocaleService } from './locale';
 import { createPowerService } from './power';
 import { createKeepAwakeService, type KeepAwakeService } from './keep-awake';
@@ -149,6 +154,7 @@ async function bootstrap(): Promise<void> {
   const settings = new AppSettingsStore(
     app.getPath('userData'),
     (next) => {
+      steamGridDbKey = next.steamGridDbApiKey;
       const bw = windowRef?.browserWindow ?? null;
       if (bw !== null && !bw.isDestroyed()) bw.webContents.send(IPC.settingsUpdate, next);
     },
@@ -158,6 +164,9 @@ async function bootstrap(): Promise<void> {
   );
   const initialSettings = await settings.read();
   summonHotkeyEnabled = initialSettings.summonHotkeyEnabled;
+  // The SteamGridDB key, kept current by the same onChange every other pushed setting rides on — the
+  // metadata provider reads it per request, so a key pasted mid-session applies to the very next search.
+  let steamGridDbKey = initialSettings.steamGridDbApiKey;
 
   // Resolve the effective UI locale ONCE at startup from the persisted mode (the system locale is not
   // watched live — a Windows display-language change requires a sign-out and app restart anyway).
@@ -331,6 +340,35 @@ async function bootstrap(): Promise<void> {
     savePathResolver: platform.savePathResolver,
   });
   gameConfig.init();
+
+  // Online metadata ("Find online" on the Add/Customize screen). Bootstrapped HERE and nowhere else: the
+  // whole subtree talks HTTP and must stay off the Game Mode daemon's import graph (see CLAUDE.md).
+  const metadataHttp = new HttpClient({
+    fetch: (url, init) => globalThis.fetch(url, init),
+    userAgent: `Playhook/${app.getVersion()}`,
+  });
+  const metadata = new MetadataService({
+    http: metadataHttp,
+    providers: [
+      new SteamProvider({ http: metadataHttp, locale: () => localeService.current() }),
+      new SteamGridDbProvider({
+        http: metadataHttp,
+        // Read live from the store rather than captured: the user can paste a key in Settings at any
+        // point, and the next search must already use it.
+        apiKey: () => steamGridDbKey,
+      }),
+      // Music only, and only ever on an explicit press — see the note at the top of khinsider.ts.
+      new KhinsiderProvider({ http: metadataHttp }),
+    ],
+    cacheDir: path.join(app.getPath('userData'), 'metadata-cache'),
+    pcLibrary,
+    isAllowedRoot: (root) => gameConfig.isWritableRoot(root),
+    getTranslator,
+  });
+  metadata.init();
+  // A download interrupted by a crash or a quit has no owner any more, and nothing else reads these
+  // files — so the scratch directory starts every session empty.
+  void metadata.clearCache();
 
   window.create(
     (shown) => {

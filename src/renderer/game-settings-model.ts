@@ -62,6 +62,7 @@ export type GameRowId =
   | 'killTimeoutSec'
   | 'winetricks'
   | 'umuGameId'
+  | 'find-online'
   | 'note.mixed'
   | 'note.idChanged'
   | 'note.otherIssues'
@@ -304,6 +305,13 @@ export function buildGameSettingsModel(
     value: form.title,
     placeholder: { key: 'gameSettings.notSet' },
     ...error('title'),
+  });
+  // Right under the title, because the title is both what the search starts from and the first thing it
+  // can fill in. An action row rather than a field: it opens a flow, it does not hold a value.
+  basics.push({
+    kind: 'action',
+    id: 'find-online',
+    label: { key: 'metadata.findOnline' },
   });
   // Absent while a move is pending: the id is what BOTH halves of the move are addressed by (which slot
   // leaves the PC library, which stats/saves follow the game), so a move that also renames would orphan

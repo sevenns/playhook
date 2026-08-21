@@ -234,6 +234,13 @@ export class UpdaterService {
         .then(() => this.deps.onAudioScopeChanged())
         .catch((cause: unknown) => log.error('[updater] failed to persist only-global-ambient:', cause));
     });
+    // No side-effect on change: MetadataService reads the key from settings at request time, so the next
+    // search already uses whatever was typed here.
+    ipcMain.on(IPC.settingsSetSteamGridDbKey, (_event, key: string) => {
+      void this.deps.settings
+        .patch({ steamGridDbApiKey: key })
+        .catch((cause: unknown) => log.error('[updater] failed to persist the SteamGridDB key:', cause));
+    });
     // Language mirrors the summon-hotkey path: persist, then hand the mode to the deps callback (main
     // re-resolves the locale, rebuilds tray/titles and pushes the effective locale to every live window).
     ipcMain.on(IPC.settingsSetLanguage, (_event, mode: LanguageMode) => {

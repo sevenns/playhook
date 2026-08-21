@@ -80,6 +80,9 @@ const installSchema = z
     path: ['runAsAdmin'],
   });
 
+/** How long a stored description may be, per language. Longer is dropped rather than rejected. */
+const MAX_DESCRIPTION_CHARS = 4000;
+
 const manifestSchema = z
   .object({
     schemaVersion: z.literal(1),
@@ -124,6 +127,17 @@ const manifestSchema = z
     // wait ends early once they're gone). `.default(60)` so an older/partial file stays valid.
     killTimeoutSec: z.number().int().positive().default(60),
     backgroundMusic: z.string().min(1).optional(),
+    // Localized description (en/ru), written by the "Find online" flow and kept for a future UI that
+    // shows it. LENIENT on purpose: `.catch(undefined)` drops a malformed or oversized value instead of
+    // failing the whole manifest — a hand-written card with a wrong `description` must still be a
+    // playable game, exactly as an unknown key is tolerated today. Nothing reads it yet.
+    description: z
+      .object({
+        en: z.string().max(MAX_DESCRIPTION_CHARS).optional(),
+        ru: z.string().max(MAX_DESCRIPTION_CHARS).optional(),
+      })
+      .optional()
+      .catch(undefined),
     // Linux-only (Р7b): extra winetricks verbs/settings provisioned into the game's Wine prefix BEFORE the
     // game launches, on top of the app's baseline set — a runtime a game needs on a bare Proton prefix
     // (e.g. `d3dx9`) OR a winetricks SETTING like `vd=1920x1080` (virtual desktop — fixes old games that

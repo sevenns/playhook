@@ -2948,6 +2948,74 @@ html:not(.mouse-asleep) .picker-item:hover,
   color: color-mix(in srgb, var(--d2) 55%, transparent);
 }
 
+/* ── Online artwork gallery ─────────────────────────────────────────────────
+   The "Find online" picker: the same panel as the file browser, with a grid of pictures where that one
+   has a list of names. `auto-fill` decides the column count, and the navigation reads it back off the
+   layout rather than computing a second answer (see metadata-picker.ts). */
+
+.metadata-grid {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: none;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(calc(200 * var(--px)), 1fr));
+  gap: calc(24 * var(--px));
+  align-content: start;
+  padding: calc(4 * var(--px));
+}
+
+.metadata-grid::-webkit-scrollbar {
+  display: none;
+}
+
+.metadata-tile {
+  display: flex;
+  flex-direction: column;
+  gap: calc(8 * var(--px));
+  padding: calc(8 * var(--px));
+  border: none;
+  border-radius: calc(12 * var(--px));
+  background: transparent;
+  color: var(--d2);
+  font-family: inherit;
+  cursor: pointer;
+}
+
+html:not(.mouse-asleep) .metadata-tile:hover,
+.metadata-tile.is-focused {
+  background: var(--d2);
+  color: var(--d1);
+}
+
+/* A cover is a portrait 2:3, a background a wide 16:9 — the tile takes the shape of what it holds, so a
+   gallery of covers does not letterbox them into a landscape box. */
+.metadata-tile-image {
+  width: 100%;
+  aspect-ratio: 2 / 3;
+  object-fit: cover;
+  border-radius: calc(8 * var(--px));
+  background: color-mix(in srgb, var(--d2) 12%, transparent);
+}
+
+.metadata-tile[data-kind='hero'] .metadata-tile-image {
+  aspect-ratio: 16 / 9;
+}
+
+.metadata-tile-caption {
+  font-weight: 300;
+  font-size: calc(20 * var(--px));
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+/* Ticked (multi-select backgrounds) — the same underline the file browser marks a ticked file with. */
+.metadata-tile.is-picked .metadata-tile-caption {
+  text-decoration: underline;
+  text-underline-offset: calc(6 * var(--px));
+  font-weight: 500;
+}
+
 /* ── Artwork lightbox ───────────────────────────────────────────────────────
    Inside the Customize screen, above the keyboard and the picker: the artwork at full size, which is the
    only way to answer "is this the right picture?" from a 96px thumbnail. */

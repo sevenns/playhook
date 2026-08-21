@@ -31,9 +31,11 @@ import {
   type SettingsModel,
   type SettingsOption,
   type SettingsRow,
+  type TextId,
   type ToggleId,
 } from './settings-form-model.js';
 import { rowLabelText } from './row-view-core.js';
+import type { TextEntrySurface } from './game-settings-screen.js';
 import {
   optionLabel,
   optionLabelNode,
@@ -71,6 +73,8 @@ export interface SettingsScreenApi {
   setMusicVolume(volume: number): void;
   setSfxVolume(volume: number): void;
   setLanguage(mode: LanguageMode): void;
+  /** Store the user's SteamGridDB key ('' clears it). */
+  setSteamGridDbKey(key: string): void;
   /** Fire-and-forget: the screen re-renders from the settings:update push, not from the invoke result. */
   resetSettings(): void;
   checkForUpdates(): void;
@@ -82,6 +86,11 @@ export interface SettingsScreenDeps {
   readonly audio: AudioController;
   getTranslator(): Translator;
   readonly api: SettingsScreenApi;
+  /**
+   * The on-screen keyboard — this screen has one text field (the SteamGridDB key), and on a gamepad it
+   * is the only way to fill it. Shared with the Customize screen: at most one surface is open at a time.
+   */
+  readonly keyboard: TextEntrySurface;
   /** The screen closed itself (B / Esc / veil click) — controls.ts restores the bar focus. */
   onClosed(): void;
   /** "Reset settings" was activated — controls.ts asks the shared confirm popup. */
@@ -108,6 +117,11 @@ export interface SettingsScreen {
   navRight(): void;
   navActivate(): void;
   navBack(): void;
+  /** X / Y / LB-RB / RT — claimed only while the keyboard is open on top of this screen. */
+  navSecondary(repeat?: boolean): void;
+  navTertiary(): void;
+  navShoulder(direction: -1 | 1): void;
+  navCommit(): void;
   /** A new AppSettings snapshot (the single source of truth for every value on screen). */
   applySettings(settings: AppSettings): void;
   applyUpdateStatus(status: UpdateStatus): void;
@@ -499,6 +513,38 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
     void index;
   }
 
+  /**
+   * Opens the keyboard on the REAL key rather than on the masked value the row shows — editing a field
+   * whose content is dots would mean retyping the whole key to change one character.
+   */
+  function openKeyboardFor(row: Extract<SettingsRow, { kind: 'text' }>): void {
+    if (settings === null) return;
+    deps.keyboard.open({
+      value: currentText(settings, row.id),
+      mode: 'text',
+      title: rowLabelText(row.label, t()),
+      onDone: (value) => persistText(row.id, value),
+    });
+  }
+
+  function currentText(snapshot: AppSettings, id: TextId): string {
+    switch (id) {
+      case 'steamGridDbKey':
+        return snapshot.steamGridDbApiKey;
+    }
+  }
+
+  function persistText(id: TextId, value: string): void {
+    if (settings === null) return;
+    const trimmed = value.trim();
+    switch (id) {
+      case 'steamGridDbKey':
+        deps.api.setSteamGridDbKey(trimmed);
+        applyLocal({ ...settings, steamGridDbApiKey: trimmed });
+        break;
+    }
+  }
+
   function persistSelect(id: SelectId, value: string): void {
     switch (id) {
       case 'autoUpdate':
@@ -730,7 +776,17 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
     applyOptionFocus();
   }
 
+  /**
+   * The keyboard opens ON TOP of this screen, so while it is up every primitive belongs to it — the same
+   * stack rule the Customize screen follows for its own sub-surfaces.
+   */
+  function keyboardSurface(): TextEntrySurface | null {
+    return deps.keyboard.isOpen() ? deps.keyboard : null;
+  }
+
   function navUp(): void {
+    const keyboard = keyboardSurface();
+    if (keyboard !== null) return keyboard.navUp();
     armHover(); // last input wins — see the mousemove handler
     if (openSelect !== null) moveOptionFocus(-1);
     else if (sidebar.hasFocus()) sidebar.move(-1);
@@ -738,6 +794,8 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
   }
 
   function navDown(): void {
+    const keyboard = keyboardSurface();
+    if (keyboard !== null) return keyboard.navDown();
     armHover();
     if (openSelect !== null) moveOptionFocus(1);
     else if (sidebar.hasFocus()) sidebar.move(1);
@@ -774,6 +832,8 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
   }
 
   function navLeft(repeat = false): void {
+    const keyboard = keyboardSurface();
+    if (keyboard !== null) return keyboard.navLeft(repeat);
     armHover();
     // Left leaves the expanded list, the same way it leaves a popup (controls.ts): its column sits on the
     // right edge, so moving left off it means "out". A HELD left is ignored, or the same press would
@@ -786,6 +846,8 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
   }
 
   function navRight(): void {
+    const keyboard = keyboardSurface();
+    if (keyboard !== null) return keyboard.navRight();
     navHorizontal(1);
   }
 
@@ -805,6 +867,11 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
         break;
       case 'slider':
         deps.audio.playLimit(); // a slider is moved with left/right, and A has nothing to press on it
+        break;
+      case 'text':
+        deps.audio.play('button');
+        pressFlash(target.el);
+        openKeyboardFor(row);
         break;
       case 'action':
         if (row.id === 'close') {
@@ -829,6 +896,8 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
   }
 
   function navActivate(): void {
+    const keyboard = keyboardSurface();
+    if (keyboard !== null) return keyboard.navActivate();
     armHover();
     if (openSelect === null && sidebar.hasFocus()) {
       sidebar.activate();
@@ -863,6 +932,8 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
   }
 
   function navBack(): void {
+    const keyboard = keyboardSurface();
+    if (keyboard !== null) return keyboard.navBack();
     armHover();
     if (openSelect !== null) {
       closeOptions();
@@ -1080,6 +1151,41 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
           updateOptionMarquee();
         }
       }
+    },
+    // X / Y / the shoulders / RT belong to whatever surface is on top — here that is only ever the
+    // keyboard (Backspace, Shift, its layout switch and "commit"). With nothing above the form they mean
+    // nothing, and say so with the dead-end sound, exactly as the Customize screen does one level down.
+    navSecondary: (repeat = false) => {
+      const keyboard = keyboardSurface();
+      if (keyboard?.navSecondary === undefined) {
+        if (!repeat) deps.audio.playLimit();
+        return;
+      }
+      keyboard.navSecondary(repeat);
+    },
+    navTertiary: () => {
+      const keyboard = keyboardSurface();
+      if (keyboard?.navTertiary === undefined) {
+        deps.audio.playLimit();
+        return;
+      }
+      keyboard.navTertiary();
+    },
+    navShoulder: (direction) => {
+      const keyboard = keyboardSurface();
+      if (keyboard?.navShoulder === undefined) {
+        deps.audio.playLimit();
+        return;
+      }
+      keyboard.navShoulder(direction);
+    },
+    navCommit: () => {
+      const keyboard = keyboardSurface();
+      if (keyboard?.navCommit === undefined) {
+        deps.audio.playLimit();
+        return;
+      }
+      keyboard.navCommit();
     },
     resetSettings: () => deps.api.resetSettings(),
   };

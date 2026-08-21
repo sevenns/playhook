@@ -32,7 +32,15 @@ import type {
   GameConfigReadResult,
   GameConfigSaveRequest,
   GameMoveRequest,
+  GameCandidate,
+  LocalizedText,
   ManifestSource,
+  MetadataApplyRequest,
+  MetadataApplyResult,
+  MetadataApplySlot,
+  MetadataResult,
+  MusicAlbum,
+  MusicTrack,
 } from '../shared/types';
 import type { MessageKey, Translator } from '../shared/i18n/index.js';
 import { type AudioController } from './audio.js';
@@ -43,6 +51,7 @@ import { clampIndex, wrapIndex } from './index-math.js';
 import { createScroller, pxUnit } from './screen-scroller.js';
 import { createSidebar, type SidebarEntry } from './screen-sidebar.js';
 import type { NavSurface } from './nav-surface.js';
+import type { MetadataPickerSurface } from './metadata-picker.js';
 import {
   emptyFormModel,
   gamesToText,
@@ -109,6 +118,25 @@ export interface GameSettingsScreenApi {
    * outside a Browse to carry an absolute PC-side pcSavePath over as a %PREFIX% string when moving a
    * game onto a card, without making the user re-pick the same folder. */
   acceptPath(request: GameConfigAcceptRequest): Promise<ConfigPickResult>;
+
+  // ── "Find online" (see main/metadata/) ──
+  /** Search every online source for a game by title. */
+  searchMetadata(query: string): Promise<MetadataResult<readonly GameCandidate[]>>;
+  /** The candidate behind a Steam appid the manifest already names — no search needed. */
+  requestSteamCandidate(appId: number): Promise<MetadataResult<GameCandidate>>;
+  /** One variant at full size as a data: URL, for the lightbox. */
+  metadataArtworkPreview(variantKey: string): Promise<MetadataResult<string>>;
+  /** Soundtrack albums for a title, and one album's tracks. */
+  metadataMusicAlbums(query: string): Promise<MetadataResult<readonly MusicAlbum[]>>;
+  metadataTracks(albumKey: string): Promise<MetadataResult<readonly MusicTrack[]>>;
+  /** One track as an audio data: URL — a full download, hence the status line beside it. */
+  metadataTrackPreview(trackKey: string): Promise<MetadataResult<string>>;
+  /** The candidate's en/ru descriptions, carried into the manifest through the form's `rest`. */
+  metadataDescriptions(candidateKey: string): Promise<MetadataResult<LocalizedText>>;
+  /** Downloads the chosen variant into the game's root; answers with the manifest-relative path. */
+  applyMetadata(request: MetadataApplyRequest): Promise<MetadataApplyResult>;
+  /** Aborts whatever main is still fetching (the user left the flow). */
+  cancelMetadata(): void;
 }
 
 /**
@@ -149,6 +177,8 @@ export interface GameSettingsScreenDeps {
   readonly keyboard: TextEntrySurface;
   /** The in-launcher file browser — the native dialog cannot be driven in Game Mode (Р5). */
   readonly picker: FilePickerSurface;
+  /** The online artwork gallery — the surface "Find online" picks a cover or a background in. */
+  readonly metadataPicker: MetadataPickerSurface;
   /** The screen closed itself (B / Esc / veil) — controls.ts restores the bar focus. */
   onClosed(): void;
   /** Asks the shared confirm popup; the answer arrives back through confirmAccepted. */
@@ -173,6 +203,11 @@ export interface GameSettingsScreen extends NavSurface {
   isDirty(): boolean;
   /** Whether the loaded game is a LOCAL one — its save backups outlive a deletion, and the confirm says so. */
   deletesLocalGame(): boolean;
+  /**
+   * Shows one online artwork variant at full size. Called by the gallery, which has no lightbox of its
+   * own: the screen owns that surface, and it must sit ABOVE the gallery rather than inside it.
+   */
+  previewMetadataArtwork(variantKey: string): void;
 }
 
 /**
@@ -186,6 +221,11 @@ interface MenuLevel {
   readonly title: string;
   readonly entries: readonly MenuEntry[];
   focus: number;
+  /**
+   * What X does on this level, if anything. Only the track list claims it (auditioning the focused
+   * track): everywhere else X still means nothing inside a menu and says so with the dead-end sound.
+   */
+  readonly secondary?: (index: number) => void;
 }
 
 interface MenuEntry {
@@ -916,12 +956,19 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   function asMenu(level: {
     readonly title: string;
     readonly entries: readonly MenuEntry[];
+    readonly secondary?: (index: number) => void;
   }): MenuLevel {
     const entries: MenuEntry[] = [
       ...level.entries,
       { label: t()('launcher.menu.close'), sound: 'none', run: () => popMenu() },
     ];
-    return { kind: 'menu', title: level.title, entries, focus: entries.length - 1 };
+    return {
+      kind: 'menu',
+      title: level.title,
+      entries,
+      focus: entries.length - 1,
+      ...(level.secondary === undefined ? {} : { secondary: level.secondary }),
+    };
   }
 
   function pushMenu(level: MenuLevel): void {
@@ -940,6 +987,9 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   function popMenu(): void {
     if (menuStack.length > 0) deps.audio.play(menuStack.length > 1 ? 'back' : 'popup-close');
     menuStack.pop();
+    // Leaving a level ends whatever it had running: an audition belongs to the track list it was
+    // started from, and a download the user has walked away from has nobody left to arrive for.
+    stopMetadataWork();
     paintMenu();
   }
 
@@ -947,6 +997,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     // `silent` for a cascade — the screen closing, or a surface that already played its own close (Р5).
     if (menuStack.length > 0 && options?.silent !== true) deps.audio.play('popup-close');
     menuStack.length = 0;
+    stopMetadataWork();
     paintMenu();
   }
 
@@ -1228,9 +1279,14 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     if (at === null) return;
     const url = await deps.api.imagePreview(at.root, at.relative);
     if (url === null) return; // a preview that could not be read never became a surface — and never sounds
+    openLightbox(url, relative);
+  }
+
+  /** The lightbox itself, shared by a file already on the card and a variant still only online. */
+  function openLightbox(url: string, caption: string): void {
     deps.audio.play('popup-open');
     lightboxImage.src = url;
-    lightboxCaption.textContent = relative;
+    lightboxCaption.textContent = caption;
     lightboxOpen = true;
     lightboxEl.classList.add('is-open');
     lightboxEl.setAttribute('aria-hidden', 'false');
@@ -1893,6 +1949,343 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     void runValidate();
   }
 
+  // ── "Find online" (the metadata:* flow — see main/metadata/) ───────────────
+  //
+  // Four steps, each one a level of the menu stack the screen already has: a query, a candidate, a
+  // category, and whatever that category opens (the gallery for pictures, two more levels for music).
+  // Nothing lands in the manifest until the user saves: an applied file only fills a FORM FIELD, exactly
+  // as a path chosen in the file browser does.
+
+  /** The last query, so "Search again" opens the keyboard on it rather than on an empty line. */
+  let metadataQuery = '';
+  /** The game the user said this is. Every later request is addressed by its key. */
+  let metadataCandidate: GameCandidate | null = null;
+  /** Retires answers belonging to a flow the user has already left (a new search, a closed screen). */
+  let metadataToken = 0;
+  /** Whether a track is currently being auditioned through the browse channel (see previewTrack). */
+  let trackPreviewing = false;
+
+  /** Whether an answer from main still belongs to the flow that asked for it. */
+  function metadataCurrent(token: number): boolean {
+    return open && token === metadataToken;
+  }
+
+  /**
+   * Where an applied file goes, and under which id it is named. Mirrors browseInto's choice of root: a
+   * pending move is already about the TARGET card, so the assets belong there too.
+   */
+  function metadataTarget(): { readonly root: string; readonly gameId: string } | null {
+    const move = pendingMove;
+    const root = move !== null ? move.target.root : (origin?.root ?? null);
+    if (root === null) return null;
+    const id = form.id.trim();
+    return id === '' ? null : { root, gameId: id };
+  }
+
+  /**
+   * The entry point. A Steam game whose appid is already filled in skips the search entirely — that
+   * number is the very thing a search exists to find.
+   */
+  function startFindOnline(): void {
+    metadataToken += 1;
+    const appId = Number(form.steam.appid.trim());
+    if (form.launchMode === 'steam' && Number.isSafeInteger(appId) && appId > 0) {
+      void openSteamCandidate(appId);
+      return;
+    }
+    const query = form.title.trim();
+    if (query === '') {
+      askMetadataQuery('');
+      return;
+    }
+    void runMetadataSearch(query);
+  }
+
+  /** The keyboard: for a game with no title yet, and for "Search again" on a query that found nothing. */
+  function askMetadataQuery(initial: string): void {
+    deps.keyboard.open({
+      value: initial,
+      mode: 'text',
+      title: t()('metadata.searchTitle'),
+      onDone: (value) => {
+        const query = value.trim();
+        if (query === '') return;
+        metadataToken += 1;
+        void runMetadataSearch(query);
+      },
+    });
+  }
+
+  async function openSteamCandidate(appId: number): Promise<void> {
+    const token = metadataToken;
+    setStatus(t()('metadata.searching'));
+    const result = await deps.api.requestSteamCandidate(appId);
+    if (!metadataCurrent(token)) return;
+    if (!result.ok) {
+      setStatus(result.message);
+      return;
+    }
+    setStatus(null);
+    // Straight to the categories: asking "which game is it?" about the game the user already identified
+    // by appid would be a question with exactly one answer.
+    chooseMetadataCandidate(result.value, { replace: false });
+  }
+
+  async function runMetadataSearch(query: string): Promise<void> {
+    const token = metadataToken;
+    metadataQuery = query;
+    setStatus(t()('metadata.searching'));
+    const result = await deps.api.searchMetadata(query);
+    if (!metadataCurrent(token)) return;
+    if (!result.ok) {
+      setStatus(result.message);
+      return;
+    }
+    setStatus(null);
+    if (result.value.length === 0) {
+      setStatus(t()('metadata.nothingFound'));
+      askMetadataQuery(metadataQuery);
+      return;
+    }
+    openCandidateMenu(result.value);
+  }
+
+  function openCandidateMenu(candidates: readonly GameCandidate[]): void {
+    const entries: MenuEntry[] = candidates.map((candidate) => ({
+      // The source is named only where it matters: an entry only SteamGridDB knows has no appid, so it
+      // can offer art but neither a description nor Steam's own cover.
+      label:
+        candidate.provider === 'steamgriddb' ? `${candidate.title} (SteamGridDB)` : candidate.title,
+      run: () => chooseMetadataCandidate(candidate, { replace: true }),
+    }));
+    entries.push({ label: t()('metadata.searchAgain'), run: () => askMetadataQuery(metadataQuery) });
+    pushMenu(asMenu({ title: t()('metadata.candidates'), entries }));
+  }
+
+  /**
+   * The user named the game. The descriptions are fetched HERE rather than when Title is applied: the
+   * title may well already be right (so Title is never pressed), and this is the moment the game's
+   * identity becomes known.
+   */
+  function chooseMetadataCandidate(
+    candidate: GameCandidate,
+    options: { readonly replace: boolean },
+  ): void {
+    metadataCandidate = candidate;
+    if (candidate.steamAppId !== undefined) void fetchMetadataDescriptions(candidate);
+    const level = asMenu({ title: t()('metadata.categories'), entries: categoryEntries(candidate) });
+    if (options.replace) replaceMenu(level);
+    else pushMenu(level);
+  }
+
+  /** The menu stays open after a category is applied — several of them are usually wanted at once. */
+  function categoryEntries(candidate: GameCandidate): readonly MenuEntry[] {
+    return [
+      {
+        label: t()('metadata.applyTitle'),
+        run: () => {
+          setField('title', candidate.title);
+          setStatus(t()('metadata.applied'));
+        },
+      },
+      { label: t()('metadata.cover'), sound: 'none', run: () => openArtworkGallery('grid') },
+      { label: t()('metadata.backgrounds'), sound: 'none', run: () => openArtworkGallery('hero') },
+      { label: t()('metadata.music'), run: () => void openMusicAlbums(candidate) },
+    ];
+  }
+
+  /**
+   * The gallery, over the menu that opened it — the same rule browseInto follows: backing out of the
+   * pictures lands on the category list, not on the form two levels below.
+   */
+  function openArtworkGallery(kind: 'grid' | 'hero'): void {
+    const candidate = metadataCandidate;
+    if (candidate === null) return;
+    deps.metadataPicker.open({
+      candidateKey: candidate.key,
+      kind,
+      title: candidate.title,
+      onDone: (variantKeys) => {
+        if (variantKeys.length === 0) return; // backed out — the form keeps what it had
+        void applyArtwork(kind, variantKeys);
+      },
+    });
+  }
+
+  /**
+   * Downloads the chosen variants and writes the resulting manifest paths into the form. A hero pick
+   * REPLACES the list rather than appending to it: the gallery answers "which backgrounds", and adding
+   * to what is already there is what the ordinary list editor is for.
+   */
+  async function applyArtwork(kind: 'grid' | 'hero', variantKeys: readonly string[]): Promise<void> {
+    const target = metadataTarget();
+    if (target === null) {
+      setStatus(t()('metadata.needsId'));
+      return;
+    }
+    const token = metadataToken;
+    setStatus(t()('metadata.applying'));
+    const paths: string[] = [];
+    for (const [index, variantKey] of variantKeys.entries()) {
+      const slot: MetadataApplySlot = kind === 'grid' ? 'grid' : { hero: index };
+      const result = await deps.api.applyMetadata({ ...target, variantKey, slot });
+      if (!metadataCurrent(token)) return;
+      if (!result.ok) {
+        setStatus(result.message);
+        return;
+      }
+      paths.push(result.path);
+    }
+    if (kind === 'grid') setField('gridImage', paths[0] ?? '');
+    else setList('heroImage', paths);
+    setStatus(t()('metadata.applied'));
+  }
+
+  /** One variant at full size, in the screen's own lightbox (which sits above the gallery). */
+  async function previewArtwork(variantKey: string): Promise<void> {
+    const token = metadataToken;
+    const result = await deps.api.metadataArtworkPreview(variantKey);
+    if (!metadataCurrent(token)) return;
+    if (!result.ok) {
+      setStatus(result.message);
+      return;
+    }
+    openLightbox(result.value, metadataCandidate?.title ?? '');
+  }
+
+  /**
+   * Fills `rest.description` in the background. main deliberately never writes this field itself: the
+   * manifest TEXT belongs to this form while the screen is open, so a write from the other side would be
+   * overwritten by the next Save (see configure-form-model.ts and 4.5 of the plan).
+   */
+  async function fetchMetadataDescriptions(candidate: GameCandidate): Promise<void> {
+    const token = metadataToken;
+    const result = await deps.api.metadataDescriptions(candidate.key);
+    if (!metadataCurrent(token) || !result.ok) return;
+    if (result.value.en === undefined && result.value.ru === undefined) return;
+    // `rest` is the screen's own slot for keys the form model has no field for; currentText() folds it
+    // back into the manifest text, so this alone makes the screen dirty and Save carries it through.
+    rest = { ...rest, description: result.value };
+    updateForm(form);
+  }
+
+  // ── Music ─────────────────────────────────────────────────────────────────
+  // Two more menu levels (albums, then tracks) rather than a surface of their own: a track is a NAME,
+  // and a list of names is exactly what a menu is for. What the gallery has and this has not is a
+  // picture; what this has and the gallery has not is the ability to listen before choosing.
+
+  async function openMusicAlbums(candidate: GameCandidate): Promise<void> {
+    const token = metadataToken;
+    setStatus(t()('metadata.searching'));
+    const result = await deps.api.metadataMusicAlbums(candidate.title);
+    if (!metadataCurrent(token)) return;
+    if (!result.ok) {
+      setStatus(result.message);
+      return;
+    }
+    setStatus(null);
+    if (result.value.length === 0) {
+      setStatus(t()('metadata.noAlbums'));
+      return;
+    }
+    pushMenu(
+      asMenu({
+        title: t()('metadata.albums'),
+        entries: result.value.map((album) => ({
+          label:
+            album.trackCount === undefined ? album.title : `${album.title} (${album.trackCount})`,
+          run: () => void openMusicTracks(album),
+        })),
+      }),
+    );
+  }
+
+  async function openMusicTracks(album: MusicAlbum): Promise<void> {
+    const token = metadataToken;
+    setStatus(t()('metadata.searching'));
+    const result = await deps.api.metadataTracks(album.key);
+    if (!metadataCurrent(token)) return;
+    if (!result.ok) {
+      setStatus(result.message);
+      return;
+    }
+    setStatus(null);
+    if (result.value.length === 0) {
+      setStatus(t()('metadata.noTracks'));
+      return;
+    }
+    const tracks = result.value;
+    pushMenu(
+      asMenu({
+        title: album.title,
+        entries: tracks.map((track) => ({
+          label: track.title,
+          run: () => void applyTrack(track),
+        })),
+        // X auditions the focused track instead of taking it — the one gesture the picture gallery has
+        // no equivalent of, and the only way to tell two similarly named tracks apart.
+        secondary: (index) => {
+          const track = tracks[index];
+          if (track === undefined) {
+            deps.audio.playLimit();
+            return;
+          }
+          void previewTrack(track);
+        },
+      }),
+    );
+  }
+
+  /**
+   * Listening means DOWNLOADING the whole track (there is no stream to be had), which on a Deck's Wi-Fi
+   * is tens of seconds — hence the status line, and hence Back aborting it (see stopMetadataWork).
+   */
+  async function previewTrack(track: MusicTrack): Promise<void> {
+    const token = metadataToken;
+    setStatus(t()('metadata.downloading'));
+    const result = await deps.api.metadataTrackPreview(track.key);
+    if (!metadataCurrent(token)) return;
+    if (!result.ok) {
+      setStatus(result.message);
+      return;
+    }
+    setStatus(null);
+    trackPreviewing = true;
+    deps.audio.setBrowseMusic(result.value, false);
+  }
+
+  /** Stops an audition and hands the browse channel back to whatever was playing before it. */
+  function stopTrackPreview(): void {
+    if (!trackPreviewing) return;
+    trackPreviewing = false;
+    deps.audio.setBrowseMusic(null, false);
+  }
+
+  async function applyTrack(track: MusicTrack): Promise<void> {
+    const target = metadataTarget();
+    if (target === null) {
+      setStatus(t()('metadata.needsId'));
+      return;
+    }
+    const token = metadataToken;
+    setStatus(t()('metadata.applying'));
+    const result = await deps.api.applyMetadata({ ...target, variantKey: track.key, slot: 'music' });
+    if (!metadataCurrent(token)) return;
+    if (!result.ok) {
+      setStatus(result.message);
+      return;
+    }
+    setField('backgroundMusic', result.path);
+    setStatus(t()('metadata.applied'));
+  }
+
+  /** Everything the flow leaves running, ended in one place: an audition, and whatever main is fetching. */
+  function stopMetadataWork(): void {
+    metadataToken += 1;
+    stopTrackPreview();
+    deps.api.cancelMetadata();
+  }
+
   // ── The six primitives ─────────────────────────────────────────────────────
 
   /** Which surface the primitives drive right now: the deepest open one wins. */
@@ -1900,6 +2293,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     if (lightboxOpen) return 'lightbox';
     if (deps.keyboard.isOpen()) return deps.keyboard;
     if (deps.picker.isOpen()) return deps.picker;
+    if (deps.metadataPicker.isOpen()) return deps.metadataPicker;
     if (menuStack.length > 0) return 'menu';
     return 'form';
   }
@@ -2027,7 +2421,14 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
         openListMenu(row);
         return;
       case 'action':
-        // Actions live in the column now; a row of this kind should never reach the pane.
+        // The column owns the screen's own actions (Save, Reset, Delete) — but "Find online" belongs to
+        // the field it fills, not to the screen, so it is the one action row the pane carries.
+        if (row.id === 'find-online') {
+          deps.audio.play('button');
+          pressFlash(target.el);
+          startFindOnline();
+          return;
+        }
         return;
       default:
         return;
@@ -2308,6 +2709,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     navBack,
     isDirty: dirty,
     deletesLocalGame: () => origin?.source === 'pc',
+    previewMetadataArtwork: (variantKey) => void previewArtwork(variantKey),
     // The secondary buttons belong to whatever surface is on top, exactly as the six primitives do.
     // controls.ts routes them to the open OVERLAY — that is this screen — so they die here unless they
     // are handed down the stack.
@@ -2315,6 +2717,15 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     // left the method out — one place to say so, the same way controls.ts does it one level up.
     navSecondary: (repeat = false) => {
       const surface = activeSurface();
+      if (surface === 'menu') {
+        const level = menuTop();
+        if (level?.secondary === undefined) {
+          if (!repeat) deps.audio.playLimit();
+          return;
+        }
+        if (!repeat) level.secondary(level.focus);
+        return;
+      }
       if (typeof surface === 'string' || surface.navSecondary === undefined) {
         if (!repeat) deps.audio.playLimit();
         return;
@@ -2391,6 +2802,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       }
       deps.keyboard.relocalize();
       deps.picker.relocalize();
+      deps.metadataPicker.relocalize();
       // A menu's labels are built from the model, so it is rebuilt rather than patched.
       if (menuStack.length > 0) paintMenu();
     },

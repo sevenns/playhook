@@ -322,6 +322,19 @@
           </div>
         </div>
 
+        <!-- The artwork gallery of "Find online": what the online sources offer for this game, as a
+             grid of thumbnails. Every picture arrives as a data: URL main downloaded and encoded — the
+             renderer has no network of its own (see the CSP above). -->
+        <div class="picker metadata-picker" id="metadata-picker" aria-hidden="true">
+          <div class="picker-veil"></div>
+          <div class="picker-panel">
+            <div class="picker-title" id="metadata-picker-title"></div>
+            <div class="picker-path" id="metadata-picker-status"></div>
+            <div class="metadata-grid" id="metadata-picker-grid"></div>
+            <div class="picker-legend" id="metadata-picker-legend"></div>
+          </div>
+        </div>
+
         <!-- Artwork at full size. A row's thumbnail is 96px wide — enough to see that a background is
              set, nowhere near enough to see WHICH one, which is the question the user actually has. -->
         <div class="lightbox" id="lightbox" aria-hidden="true">

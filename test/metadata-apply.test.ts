@@ -1,0 +1,189 @@
+// The checks that stand between a downloaded file and the user's card: request validation, the target
+// path it lands on, the stale files it supersedes, and what the bytes are allowed to claim to be.
+import { describe, expect, it } from 'vitest';
+import {
+  applyRelativePath,
+  stalePathsFor,
+  validateApply,
+  type ApplyTarget,
+} from '../src/main/metadata/apply-target';
+import { sniffMedia } from '../src/main/metadata/media-type';
+import { capArtworkPerProvider, dedupeCandidates } from '../src/main/metadata/service';
+import type { ArtworkOffer } from '../src/main/metadata/provider';
+import type { GameCandidate } from '../src/shared/types';
+
+const target = (slot: ApplyTarget['slot'], gameId = 'hades'): ApplyTarget => ({
+  gameId,
+  slot,
+  expectedKind: slot === 'music' ? 'audio' : 'image',
+});
+
+describe('metadata apply — request validation', () => {
+  it('accepts the three slots the manifest has fields for', () => {
+    expect(validateApply('hades', 'grid').ok).toBe(true);
+    expect(validateApply('hades', 'music').ok).toBe(true);
+    expect(validateApply('hades', { hero: 0 }).ok).toBe(true);
+  });
+
+  it('refuses an id that could escape the root', () => {
+    for (const id of ['../evil', 'a/b', '..', '.', '', 'has space']) {
+      expect(validateApply(id, 'grid'), id).toEqual({ ok: false, reason: 'bad-id' });
+    }
+  });
+
+  it('refuses a hero index outside the manifest cap', () => {
+    expect(validateApply('hades', { hero: 3 })).toEqual({ ok: false, reason: 'bad-slot' });
+    expect(validateApply('hades', { hero: -1 })).toEqual({ ok: false, reason: 'bad-slot' });
+    expect(validateApply('hades', { hero: 1.5 })).toEqual({ ok: false, reason: 'bad-slot' });
+  });
+
+  it('refuses a slot that is not one of the known shapes', () => {
+    expect(validateApply('hades', 'executable')).toEqual({ ok: false, reason: 'bad-slot' });
+    expect(validateApply('hades', null)).toEqual({ ok: false, reason: 'bad-slot' });
+    expect(validateApply('hades', { hero: '0' })).toEqual({ ok: false, reason: 'bad-slot' });
+  });
+
+  it('expects audio for the music slot and images for the rest', () => {
+    const music = validateApply('hades', 'music');
+    const hero = validateApply('hades', { hero: 2 });
+    expect(music.ok === true && music.target.expectedKind).toBe('audio');
+    expect(hero.ok === true && hero.target.expectedKind).toBe('image');
+  });
+});
+
+describe('metadata apply — target paths', () => {
+  it('reuses the move-to-card asset names, so both routes produce the same file names', () => {
+    expect(applyRelativePath(target('grid'), 'jpg')).toBe('assets/hades-grid.jpg');
+    expect(applyRelativePath(target('music'), 'mp3')).toBe('assets/hades-music.mp3');
+    expect(applyRelativePath(target({ hero: 0 }), 'png')).toBe('assets/hades-hero-1.png');
+    expect(applyRelativePath(target({ hero: 2 }), 'png')).toBe('assets/hades-hero-3.png');
+  });
+
+  it('lists the same slot under every other extension as superseded', () => {
+    const stale = stalePathsFor(target('grid'), 'png', ['jpg', 'png', 'webp']);
+    expect(stale).toEqual(['assets/hades-grid.jpg', 'assets/hades-grid.webp']);
+  });
+
+  it('never lists the file it is about to write', () => {
+    const stale = stalePathsFor(target({ hero: 1 }), 'jpg', ['jpg', 'png']);
+    expect(stale).not.toContain('assets/hades-hero-2.jpg');
+  });
+});
+
+describe('metadata apply — sniffing the downloaded bytes', () => {
+  const bytesOf = (...values: number[]): Uint8Array => new Uint8Array(values);
+  const ascii = (text: string, pad = 0): Uint8Array =>
+    new Uint8Array([...new Array<number>(pad).fill(0), ...[...text].map((c) => c.charCodeAt(0))]);
+
+  it('recognizes the image formats the reader can decode', () => {
+    expect(sniffMedia(bytesOf(0xff, 0xd8, 0xff, 0xe0))).toEqual({
+      kind: 'image',
+      extension: 'jpg',
+    });
+    expect(sniffMedia(bytesOf(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a))).toEqual({
+      kind: 'image',
+      extension: 'png',
+    });
+    expect(sniffMedia(ascii('GIF89a'))).toEqual({ kind: 'image', extension: 'gif' });
+    expect(sniffMedia(ascii('RIFF____WEBPVP8 '))).toEqual({ kind: 'image', extension: 'webp' });
+  });
+
+  it('tells a WAV from a WebP, which share the RIFF container', () => {
+    expect(sniffMedia(ascii('RIFF____WAVEfmt '))).toEqual({ kind: 'audio', extension: 'wav' });
+  });
+
+  it('recognizes both a tagged and an untagged mp3', () => {
+    expect(sniffMedia(ascii('ID3'))).toEqual({ kind: 'audio', extension: 'mp3' });
+    expect(sniffMedia(bytesOf(0xff, 0xfb, 0x90, 0x00))).toEqual({
+      kind: 'audio',
+      extension: 'mp3',
+    });
+  });
+
+  it('recognizes ogg, flac and m4a', () => {
+    expect(sniffMedia(ascii('OggS'))).toEqual({ kind: 'audio', extension: 'ogg' });
+    expect(sniffMedia(ascii('fLaC'))).toEqual({ kind: 'audio', extension: 'flac' });
+    expect(sniffMedia(ascii('ftyp', 4))).toEqual({ kind: 'audio', extension: 'm4a' });
+  });
+
+  it('refuses anything it does not recognize — an HTML error page above all', () => {
+    expect(sniffMedia(ascii('<!DOCTYPE html>'))).toBeNull();
+    expect(sniffMedia(bytesOf(0x00, 0x01, 0x02, 0x03))).toBeNull();
+    expect(sniffMedia(new Uint8Array())).toBeNull();
+  });
+
+  it('does not mistake a reserved MPEG header for an mp3', () => {
+    expect(sniffMedia(bytesOf(0xff, 0xe9, 0x00, 0x00))).toBeNull();
+  });
+});
+
+describe('metadata artwork — how much one gallery may hold', () => {
+  const offer = (provider: ArtworkOffer['provider'], index: number): ArtworkOffer => ({
+    key: `${provider}:${index}`,
+    kind: 'grid',
+    provider,
+    thumbUrl: `https://cdn.test/${provider}-${index}-thumb.jpg`,
+    fullUrl: `https://cdn.test/${provider}-${index}.jpg`,
+  });
+
+  it('keeps every offer when the sources are modest', () => {
+    const offers = [offer('steam', 1), offer('steamgriddb', 1), offer('steamgriddb', 2)];
+    expect(capArtworkPerProvider(offers, 24)).toHaveLength(3);
+  });
+
+  it('caps a talkative source at the limit', () => {
+    const offers = Array.from({ length: 60 }, (_, index) => offer('steamgriddb', index));
+    expect(capArtworkPerProvider(offers, 24)).toHaveLength(24);
+  });
+
+  it('counts per source, so a long list cannot crowd out the other source', () => {
+    const offers = [
+      ...Array.from({ length: 60 }, (_, index) => offer('steamgriddb', index)),
+      offer('steam', 1),
+    ];
+    const capped = capArtworkPerProvider(offers, 24);
+    expect(capped.filter((o) => o.provider === 'steam')).toHaveLength(1);
+    expect(capped).toHaveLength(25);
+  });
+
+  it('keeps the order the sources answered in', () => {
+    const offers = [offer('steamgriddb', 1), offer('steamgriddb', 2), offer('steamgriddb', 3)];
+    expect(capArtworkPerProvider(offers, 2).map((o) => o.key)).toEqual([
+      'steamgriddb:1',
+      'steamgriddb:2',
+    ]);
+  });
+});
+
+describe('metadata search — merging the sources', () => {
+  const steam = (id: number, title: string): GameCandidate => ({
+    key: `steam:${id}`,
+    title,
+    provider: 'steam',
+    steamAppId: id,
+  });
+  const sgdb = (id: number, title: string): GameCandidate => ({
+    key: `sgdb:${id}`,
+    title,
+    provider: 'steamgriddb',
+  });
+
+  it('keeps one entry per Steam appid', () => {
+    const merged = dedupeCandidates([steam(220, 'Half-Life 2'), steam(220, 'Half-Life 2 (dup)')]);
+    expect(merged).toEqual([steam(220, 'Half-Life 2')]);
+  });
+
+  it('puts the entries that carry an appid first — only they can reach the CDN art', () => {
+    const merged = dedupeCandidates([sgdb(7, 'Hollow Knight'), steam(367520, 'Hollow Knight')]);
+    expect(merged.map((c) => c.key)).toEqual(['steam:367520', 'sgdb:7']);
+  });
+
+  it('keeps distinct games from the same source', () => {
+    const merged = dedupeCandidates([steam(220, 'HL2'), steam(380, 'HL2: Episode One')]);
+    expect(merged).toHaveLength(2);
+  });
+
+  it('drops a repeated key even without an appid', () => {
+    expect(dedupeCandidates([sgdb(7, 'HK'), sgdb(7, 'HK')])).toHaveLength(1);
+  });
+});

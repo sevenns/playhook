@@ -11,6 +11,7 @@ import type {
   CoreOption,
   CoreSelectRow,
   CoreSliderRow,
+  CoreTextRow,
   CoreToggleRow,
 } from './row-view-core';
 
@@ -26,6 +27,9 @@ export type ToggleId =
 
 /** Every dropdown row. */
 export type SelectId = 'autoUpdate' | 'language' | 'soundSet' | 'ambientTrack';
+
+/** Every free-text row. The SteamGridDB key is the only one this screen has. */
+export type TextId = 'steamGridDbKey';
 
 /** Every slider row (both are volumes, 0..100 %). */
 export type SliderId = 'sfxVolume' | 'musicVolume';
@@ -46,6 +50,7 @@ export type SettingsRow =
   | CoreSelectRow<SelectId>
   | CoreSliderRow<SliderId>
   | CoreActionRow<ActionId>
+  | CoreTextRow<TextId>
   | { readonly kind: 'update-status'; readonly status: UpdateStatus };
 
 export interface SettingsSection {
@@ -113,6 +118,17 @@ function ambientOptions(tracks: readonly string[]): readonly SettingsOption[] {
 
 function soundSetOptions(sets: readonly string[]): readonly SettingsOption[] {
   return sets.map((name) => ({ value: name, label: prettifyName(name) }));
+}
+
+/**
+ * How a stored API key is DISPLAYED: dots plus its last four characters. The key is a credential, and
+ * the screen is often on a TV or in a stream — but a fully hidden value gives the user no way to tell a
+ * key that is there from one that was pasted wrong, which the tail solves.
+ */
+export function maskApiKey(key: string): string {
+  if (key.length === 0) return '';
+  const visible = key.length > 8 ? key.slice(-4) : '';
+  return `••••••••${visible}`;
 }
 
 /**
@@ -195,6 +211,19 @@ export function buildSettingsModel(settings: AppSettings, env: SettingsEnv): Set
         ],
       },
       { titleKey: 'settings.sectionGeneral', rows: general },
+      {
+        titleKey: 'settings.sectionMetadata',
+        rows: [
+          {
+            kind: 'text',
+            id: 'steamGridDbKey',
+            label: { key: 'settings.steamGridDbKey' },
+            value: maskApiKey(settings.steamGridDbApiKey),
+            placeholder: { key: 'settings.steamGridDbKeyEmpty' },
+            hint: { key: 'settings.steamGridDbKeyHint' },
+          },
+        ],
+      },
       {
         titleKey: 'settings.sectionAudio',
         rows: [

@@ -156,6 +156,35 @@ describe('validateManifestText', () => {
     }
   });
 
+  // The description is fetched online and written by the form; nothing reads it back yet. What matters
+  // now is that a bad one can never cost the user a playable game — see the `.catch(undefined)` in the
+  // schema, and the same tolerance the manifest already shows towards unknown keys.
+  it('accepts a manifest carrying a localized description', () => {
+    const text = JSON.stringify({
+      schemaVersion: 1,
+      id: 'x',
+      title: 'X',
+      executable: 'g/g.exe',
+      heroImage: 'a/hero.jpg',
+      description: { en: 'A game.', ru: 'Игра.' },
+    });
+    expect(validateManifestText(text, t).ok).toBe(true);
+  });
+
+  it('does not reject a manifest whose description is malformed — it is dropped instead', () => {
+    for (const description of ['just a string', 42, { en: 'a'.repeat(5000) }, { en: 7 }]) {
+      const text = JSON.stringify({
+        schemaVersion: 1,
+        id: 'x',
+        title: 'X',
+        executable: 'g/g.exe',
+        heroImage: 'a/hero.jpg',
+        description,
+      });
+      expect(validateManifestText(text, t).ok, JSON.stringify(description)).toBe(true);
+    }
+  });
+
   it('rejects steam mode without watchProcesses (schema)', () => {
     const text = JSON.stringify({ schemaVersion: 1, id: 'x', title: 'X', steam: { appid: 480 } });
     expect(validateManifestText(text, t).ok).toBe(false);

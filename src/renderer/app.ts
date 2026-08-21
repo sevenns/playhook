@@ -19,6 +19,7 @@ import {
 } from './game-settings-screen.js';
 import { createOsk } from './osk.js';
 import { createFilePicker } from './file-picker.js';
+import { createMetadataPicker } from './metadata-picker.js';
 import { createCarousel } from './carousel.js';
 import { createCardArtCache } from './card-art.js';
 import { createLibraryScreen } from './library-screen.js';
@@ -103,6 +104,7 @@ const settingsApi: SettingsScreenApi = {
   setMusicVolume: (volume) => window.api.setMusicVolume(volume),
   setSfxVolume: (volume) => window.api.setSfxVolume(volume),
   setLanguage: (mode) => window.api.setLanguage(mode),
+  setSteamGridDbKey: (key) => window.api.setSteamGridDbKey(key),
   resetSettings: () => {
     void window.api.resetSettings();
   },
@@ -116,23 +118,28 @@ const settingsApi: SettingsScreenApi = {
 // actions they trigger, plus their wiring (clicks, hover, gamepad, Esc). render() drives it via
 // applyGameButtons/clearGameButtons/refresh; main's error goes to showError; the gamepad loop starts
 // with start(). The carousel seam below routes A/B/left/right when the strip is the active surface.
+// The on-screen keyboard is built before the screens that use it: both Settings (the SteamGridDB key)
+// and Customize (every text field) take it as a dependency, and only one of them is ever open.
+const osk = createOsk({
+  audio,
+  getTranslator,
+  readClipboard: () => window.api.readClipboard(),
+});
+
 const settingsScreen = createSettingsScreen({
   audio,
   getTranslator,
   api: settingsApi,
+  keyboard: osk,
   // Read lazily for the same reason the carousel seam is: `controls` is created just below.
   onClosed: () => controls.settingsClosed(),
   onResetRequested: () => controls.confirmResetSettings(),
 });
 
 // ── Customize screen (the fifth surface, see game-settings-screen.ts) ────────
-// Its two sub-surfaces are built first because the screen takes them as dependencies: the keyboard is the
-// only way to type anything here, and the file browser the only way to name a path with a gamepad.
-const osk = createOsk({
-  audio,
-  getTranslator,
-  readClipboard: () => window.api.readClipboard(),
-});
+// Its two sub-surfaces are built first because the screen takes them as dependencies: the keyboard
+// (above) is the only way to type anything here, and the file browser the only way to name a path with a
+// gamepad.
 const gameSettingsApi: GameSettingsScreenApi = {
   read: (id) => window.api.readGameConfig(id),
   validate: (root, text) => window.api.validateGameConfig(root, text),
@@ -143,6 +150,15 @@ const gameSettingsApi: GameSettingsScreenApi = {
   forgetHistory: (id) => window.api.forgetGame(id),
   moveToCard: (request) => window.api.moveGameConfigToCard(request),
   acceptPath: (request) => window.api.acceptGameConfigPaths(request),
+  searchMetadata: (query) => window.api.searchMetadata(query),
+  requestSteamCandidate: (appId) => window.api.requestMetadataSteamCandidate(appId),
+  metadataArtworkPreview: (variantKey) => window.api.requestMetadataArtworkPreview(variantKey),
+  metadataMusicAlbums: (query) => window.api.searchMetadataMusic(query),
+  metadataTracks: (albumKey) => window.api.requestMetadataTracks(albumKey),
+  metadataTrackPreview: (trackKey) => window.api.requestMetadataTrackPreview(trackKey),
+  metadataDescriptions: (candidateKey) => window.api.requestMetadataDescriptions(candidateKey),
+  applyMetadata: (request) => window.api.applyMetadata(request),
+  cancelMetadata: () => window.api.cancelMetadata(),
 };
 const filePicker = createFilePicker({
   audio,
@@ -152,12 +168,26 @@ const filePicker = createFilePicker({
     acceptPaths: (request) => window.api.acceptGameConfigPaths(request),
   },
 });
+// The online artwork gallery — the third surface that opens on top of Customize, beside the keyboard
+// and the file browser. Its own picker seam keeps app.ts the only place window.api is touched.
+const metadataPicker = createMetadataPicker({
+  audio,
+  getTranslator,
+  api: {
+    artwork: (candidateKey, kind) => window.api.requestMetadataArtwork(candidateKey, kind),
+    cancel: () => window.api.cancelMetadata(),
+  },
+  // Read lazily: the screen is created just below, and it owns the lightbox the preview opens in.
+  onPreview: (variantKey) => gameSettingsScreen.previewMetadataArtwork(variantKey),
+});
+
 const gameSettingsScreen = createGameSettingsScreen({
   audio,
   getTranslator,
   api: gameSettingsApi,
   keyboard: osk,
   picker: filePicker,
+  metadataPicker,
   // Read lazily for the same reason the carousel seam is: `controls` is created just below.
   onClosed: () => {
     controls.settingsClosed();
