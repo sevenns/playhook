@@ -116,8 +116,12 @@ export function createLiquidFocus(deps: LiquidDeps): LiquidFocus {
   let moveStart = -1;
   let pendingSnap = false;
 
-  /** The focused element of the topmost surface that has one, or null when nothing is highlighted. */
-  function findFocused(): Element | null {
+  /**
+   * The focused element of the topmost surface that has one, and the priority of that surface — or null
+   * when nothing is highlighted. The priority is what decides which windows may PAINT (see the frame
+   * loop): a body drawn on more than one depth reads as two different bodies.
+   */
+  function findFocused(): { readonly el: Element; readonly priority: number } | null {
     let best: Element | null = null;
     let bestPriority = -Infinity;
     for (const win of windows) {
@@ -130,7 +134,7 @@ export function createLiquidFocus(deps: LiquidDeps): LiquidFocus {
         break;
       }
     }
-    return best;
+    return best === null ? null : { el: best, priority: bestPriority };
   }
 
   function seed(to: JellyBox): void {
@@ -272,7 +276,8 @@ export function createLiquidFocus(deps: LiquidDeps): LiquidFocus {
   function frame(now: number): void {
     window.requestAnimationFrame(frame);
 
-    const focused = findFocused();
+    const found = findFocused();
+    const focused = found === null ? null : found.el;
     if (focused === null) {
       for (const win of windows) clear(win);
       owner?.classList.remove(LIT_CLASS);
@@ -305,6 +310,14 @@ export function createLiquidFocus(deps: LiquidDeps): LiquidFocus {
     const reach = bounds(squeeze, to);
     const colour = deps.colour();
     for (const win of windows) {
+      // Only the layer that OWNS the focus paints, plus any layer at the same depth (the Library's
+      // sidebar and its grid are one surface to the user, and share a priority for exactly this).
+      // Otherwise a body mid-flight between a screen and a popup is drawn by both, and the half on the
+      // screen sits under the popup's veil — one body rendered at two depths, which reads as two.
+      if (found !== null && win.priority !== found.priority) {
+        clear(win);
+        continue;
+      }
       const rect = win.canvas.getBoundingClientRect();
       const hidden =
         rect.width === 0 ||
