@@ -407,15 +407,25 @@ body {
   opacity: 0;
 }
 
-/* The launcher's own cards (Notifications / Settings / System): no artwork, a solid d2 plate with the
-   glyph punched out of it in d1 — the same inversion the focused rect-button uses. Selected, it grows to
-   136x204 from the base rule like any other card; its name appears in the bar's title line, not on it. */
+/* The launcher's own cards (Library / Notifications / Settings / System): no artwork and no plate under
+   the glyph either — just the icon in d2, standing on the wallpaper. Unselected they read as a row of
+   marks at the end of the covers rather than four solid blocks competing with them.
+
+   The plate is what SELECTION means here: reaching one fills it in d2 and punches the glyph back out in
+   d1 — the same inversion the focused rect-button uses, and the same d2 the focus body underneath is
+   painted with, so plate and body read as one shape. Selected, the card still grows to 136x204 from the
+   base rule like any other; its name appears in the bar's title line, not on it. */
 .card.is-system {
   display: flex;
   align-items: center;
   justify-content: center;
-  background-color: var(--d2);
+  background-color: transparent;
   background-image: none;
+  color: var(--d2);
+}
+
+.card.is-system.is-selected {
+  background-color: var(--d2);
   color: var(--d1);
 }
 
