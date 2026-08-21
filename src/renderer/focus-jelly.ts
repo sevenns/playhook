@@ -22,26 +22,7 @@ export interface JellyBox {
  * the ones that read as "jelly" rather than as a box being tweened, and they are collected in one place
  * because tuning them means tuning them TOGETHER.
  */
-export interface JellyTuning {
-  /** How long a move takes, ms. The springs lag behind it on purpose; this is the target's pace. */
-  readonly moveMs: number;
-  /** How far the body squeezes at the half-way point, as a fraction of its box. 1 = no squeeze. */
-  readonly pinch: number;
-  /** Spring constant pulling each point to its place on the target. */
-  readonly stiffness: number;
-  /** How much of a point's speed is taken out each frame — higher damps harder. */
-  readonly damping: number;
-  /** Amplitude of the idle breathing, design px. */
-  readonly wobble: number;
-  /** How far the body stands out past what it wraps, on every side, design px. */
-  readonly inset: number;
-  /** Points around the contour. */
-  readonly points: number;
-  /** Slack a canvas must keep around the body, design px. */
-  readonly margin: number;
-}
-
-export const JELLY: JellyTuning = {
+export const JELLY = {
   /** How long a move takes, ms. The springs below lag behind it on purpose; this is the target's pace. */
   moveMs: 60,
   /** How far the body squeezes at the half-way point, as a fraction of its box. 1 = no squeeze. */
@@ -58,27 +39,7 @@ export const JELLY: JellyTuning = {
   points: 36,
   /** Slack around the drawn body the canvas must keep, design px (breathing and the glow reach out). */
   margin: 26,
-};
-
-/**
- * The same body, tuned for the INTERFACE rather than for covers.
- *
- * A cover is large, far from its neighbours and travels a long way, so a soft, trailing body reads as
- * weight. A button is small and sits a few pixels from the next one: the same softness there turns every
- * step into a long smear across the bar. So the springs are stiffer and damped harder — the body arrives
- * rather than catches up — the breathing is smaller (a few px of wobble on a 92px button is a wobble, on
- * a 204px cover it is a breath), and it stands less far out.
- */
-export const JELLY_UI: JellyTuning = {
-  moveMs: 60,
-  pinch: 0.86,
-  stiffness: 22,
-  damping: 0.55,
-  wobble: 2.2,
-  inset: 6,
-  points: JELLY.points,
-  margin: JELLY.margin,
-};
+} as const;
 
 /** The box for a measured card: its own rectangle, pushed out by the stand-off on every side. */
 export function jellyBoxOf(
@@ -88,9 +49,8 @@ export function jellyBoxOf(
   height: number,
   radius: number,
   unit: number,
-  tuning: JellyTuning = JELLY,
 ): JellyBox {
-  const pad = tuning.inset * unit;
+  const pad = JELLY.inset * unit;
   return {
     x: left - pad,
     y: top - pad,
@@ -154,7 +114,7 @@ export function outlinePoint(box: JellyBox, t: number): readonly [number, number
  * half-way point. A bell rather than a shrink-then-grow pair of ramps — split into phases the movement
  * reads as three glued steps instead of one gesture.
  */
-export function pinchScale(progress: number, floor: number = JELLY.pinch): number {
+export function pinchScale(progress: number, floor = JELLY.pinch): number {
   const p = Math.min(1, Math.max(0, progress));
   return 1 - (1 - floor) * Math.sin(Math.PI * p);
 }

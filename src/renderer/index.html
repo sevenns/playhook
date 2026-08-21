@@ -346,6 +346,10 @@
           <div class="settings-body">
             <div class="settings-nav" id="library-nav"></div>
             <div class="library-pane">
+              <!-- The grid's focus body, the strip's twin. It sits OUTSIDE the scroller on purpose: a
+                   canvas as tall as a library of hundreds would cost tens of megabytes, so this one is
+                   the size of the viewport and the scroll offset is folded into the coordinates. -->
+              <canvas id="library-jelly" class="is-hidden" aria-hidden="true"></canvas>
               <div class="library-scroll" id="library-scroll">
                 <div class="library-grid" id="library-grid"></div>
               </div>

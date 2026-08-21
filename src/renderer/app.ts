@@ -20,15 +20,12 @@ import {
 import { createOsk } from './osk.js';
 import { createFilePicker } from './file-picker.js';
 import { createCarousel } from './carousel.js';
-import { createLiquidFocus } from './liquid.js';
-import { FALLBACK_COLOUR } from './focus-jelly.js';
-import { pxUnit } from './screen-scroller.js';
 import { createCardArtCache } from './card-art.js';
 import { createLibraryScreen } from './library-screen.js';
 import { createToast } from './toast.js';
 import { formatDate, formatNotification, formatPlaytime } from './format.js';
 import { busyKindOf, gameOf, phaseOf, statusOf, steamBusy } from './state-view.js';
-import { req, reqQuery } from './dom.js';
+import { req } from './dom.js';
 
 const app = req('app');
 const titleEl = req('title');
@@ -780,54 +777,6 @@ function dissolveBootBackdrop(): void {
   }, BOOT_FADE_MS);
 }
 
-/**
- * Liquid UI: ONE body under whatever holds the focus, flowing between surfaces (liquid.ts). Each layer
- * registers a window onto it; the priorities are what decide who owns the focus when a popup sits over a
- * screen that still has a row marked. Started at the reveal, so nothing is drawn behind the boot image.
- */
-const liquid = createLiquidFocus({
-  unit: pxUnit,
-  colour: () => {
-    const value = getComputedStyle(app).getPropertyValue('--d2').trim();
-    return value.length > 0 ? value : FALLBACK_COLOUR;
-  },
-});
-
-function mountLiquidWindows(): void {
-  liquid.mount(reqQuery('#bottom-bar .bar-content'), 1);
-  // The full-screen surfaces. The window goes INSIDE each column: the column carries opacity and a
-  // transform, so it is a stacking context of its own and nothing outside it can be layered under its
-  // contents. The Library's GRID is not here — its covers keep their own body (focus-jelly.ts).
-  liquid.mount(reqQuery('#settings .settings-column'), 2);
-  liquid.mount(reqQuery('#game-settings .settings-column'), 2);
-  liquid.mount(reqQuery('#library .settings-column'), 2);
-  // The grid gets a window at the SAME priority as the column beside it: they are one surface to the
-  // user, and equal priority is what lets the body cross the seam between them rather than being handed
-  // over. The pane, not the scroller — a canvas as tall as a library of hundreds would cost tens of
-  // megabytes, and the scroll offset is already in the rectangles this module measures.
-  liquid.mount(reqQuery('#library .library-pane'), 2);
-  // The value menus open ON TOP of the row that spawned them, inside the same screen — so that screen
-  // holds two marked elements at once and needs the higher priority to pick the right one. Mounted
-  // before the LIST, so the menu's own veil and blur stay behind the body rather than over it.
-  liquid.mount(req('settings-options'), 3, req('settings-options-list'));
-  liquid.mount(req('game-settings-options'), 3, req('game-settings-options-list'));
-  // The popup's own column, not #popup: the column carries opacity of its own, so it is a stacking
-  // context and a window outside it could never sit under its buttons.
-  // The popup's window spans the WHOLE popup, not just its column, and is mounted between the veil and
-  // the column: above the veil, so a body flying in from the screen below is drawn at full strength
-  // instead of half-dimmed by it, and below the column, so the buttons still sit on top of the body.
-  // Sized to the column it would have nowhere to draw the part of the trip that happens outside it —
-  // which is why the body looked like it vanished and reappeared.
-  liquid.mount(req('popup'), 4, reqQuery('#popup .popup-column'));
-  // Above the popup: both open over a screen that still marks a row of its own, and the body has to
-  // follow what the user is actually driving.
-  // Into the PANEL of each, not the container: both open with a veil of their own as their first child,
-  // and a window ahead of it is painted underneath — which is why the key you were on looked unlit while
-  // the body was in fact flying to it.
-  liquid.mount(reqQuery('#file-picker .picker-panel'), 5);
-  liquid.mount(reqQuery('#osk .osk-panel'), 6);
-}
-
 function revealUi(): void {
   if (bootRevealed) return;
   bootRevealed = true;
@@ -836,8 +785,6 @@ function revealUi(): void {
   // The strip's cards were held at zero behind the boot screen — let them fan in now, so the carousel's
   // own entrance is actually seen instead of having happened under the wallpaper.
   carousel.playIntro();
-  mountLiquidWindows();
-  liquid.start();
 }
 
 /**
