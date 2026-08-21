@@ -1161,7 +1161,14 @@ export function createControls(deps: ControlsDeps): Controls {
     // scrollIntoView there: with no scrollable ancestor Chromium walks up to the app itself and moves the
     // whole screen, which is what an overflowing menu used to do.
     if (focused.classList.contains('notification-item')) notificationScroller.reveal(focused);
-    else if (popupView === 'details') menuStackScroller.reveal(focused);
+    else if (popupView === 'notifications') {
+      // Clear all / Close live BELOW the scrolling list, not inside it, so they need no revealing of
+      // their own — but the list does. Left where it was, it keeps showing the top entries while the
+      // focus has moved past their end, and the highlight travels across a stretch of list that has
+      // nothing to do with where it is going. Sending the list to its last entry keeps the two together.
+      const last = notificationButtons[notificationButtons.length - 1];
+      if (last !== undefined) notificationScroller.reveal(last);
+    } else if (popupView === 'details') menuStackScroller.reveal(focused);
     else focused.scrollIntoView({ block: 'nearest' });
   }
 
