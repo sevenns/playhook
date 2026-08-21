@@ -785,18 +785,14 @@ body {
   opacity: 0;
   pointer-events: none;
   /* On this screen the button is not a button — it is the card's stand-in, so nothing that makes it read
-     as Play may survive the flip. Coming BACK it is focused (the d2 fill + the icon) and grows from 92 to
-     136x204: without this reset a bright plate flashes over the artwork for the whole grow. The focus fill
-     outranks .play-button's own transparent background, hence the explicit override. */
+     as Play may survive the flip. Coming BACK it is focused and grows from 92 to 136x204: without this
+     reset a bright plate flashes over the artwork for the whole grow. The focus fill outranks
+     .play-button's own transparent background, hence the explicit override. (The pulsing ring that used
+     to need silencing here is gone — the liquid body is the focus visual now.) */
   background: transparent;
 }
 #app[data-screen='carousel'] .play-button > * {
   opacity: 0;
-}
-#app[data-screen='carousel'] .play-button::after {
-  opacity: 0;
-  animation: none;
-  transition: none;
 }
 #app[data-screen='carousel'] .play-button::before {
   opacity: 1;
@@ -818,33 +814,6 @@ html:not(.mouse-asleep) .play-button:hover,
 .rect-button:active,
 .rect-button.is-pressed {
   transform: scale(0.9);
-}
-
-/* Pulse ring — a rounded square echoing the button (kept on hover/focus per design). */
-.play-button::after {
-  content: '';
-  position: absolute;
-  inset: calc(-7 * var(--px));
-  border: calc(3 * var(--px)) solid var(--d2);
-  border-radius: calc(17 * var(--px));
-  opacity: 0;
-  transition: opacity 0.2s ease;
-}
-
-html:not(.mouse-asleep) .play-button:hover::after,
-.play-button.is-focused::after {
-  opacity: 1;
-  animation: pulse-ring 1.1s ease-in-out infinite;
-}
-
-@keyframes pulse-ring {
-  0%,
-  100% {
-    transform: scale(1);
-  }
-  50% {
-    transform: scale(1.09);
-  }
 }
 
 .icon-play {
