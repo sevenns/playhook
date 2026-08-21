@@ -794,7 +794,12 @@ const liquid = createLiquidFocus({
 });
 
 function mountLiquidWindows(): void {
+  // #app itself, and deliberately: the row's own container CLIPS (#carousel has overflow: hidden), so a
+  // window inside it would cut the body off along the top edge the moment it set out for the bar. This
+  // one spans the screen and sits under everything positioned after it — the covers included.
+  liquid.mount(app, 0);
   liquid.mount(reqQuery('#bottom-bar .bar-content'), 1);
+  liquid.mount(reqQuery('#library .library-pane'), 2);
   // The popup's own column, not #popup: the column carries opacity of its own, so it is a stacking
   // context and a window outside it could never sit under its buttons.
   liquid.mount(reqQuery('#popup .popup-column'), 3);

@@ -42,11 +42,7 @@
            before, and last the launcher's own cards — Notifications / Settings / System (system-cards.ts).
            Every card is built from JS (carousel.ts); artwork is fetched per game card, on demand. -->
       <div id="carousel" aria-hidden="true">
-        <div id="carousel-strip">
-          <!-- The focus indicator: a soft body UNDER the covers, drawn on a canvas that rides inside the
-               strip, so it inherits the row's slide and its fades (focus-jelly.ts). -->
-          <canvas id="carousel-jelly" aria-hidden="true"></canvas>
-        </div>
+        <div id="carousel-strip"></div>
       </div>
 
       <!-- Bottom bar (same layout for every screen): play / title / status + the More button on the
@@ -346,10 +342,6 @@
           <div class="settings-body">
             <div class="settings-nav" id="library-nav"></div>
             <div class="library-pane">
-              <!-- The grid's focus body, the strip's twin. It sits OUTSIDE the scroller on purpose: a
-                   canvas as tall as a library of hundreds would cost tens of megabytes, so this one is
-                   the size of the viewport and the scroll offset is folded into the coordinates. -->
-              <canvas id="library-jelly" class="is-hidden" aria-hidden="true"></canvas>
               <div class="library-scroll" id="library-scroll">
                 <div class="library-grid" id="library-grid"></div>
               </div>

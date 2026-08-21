@@ -403,35 +403,6 @@ body {
   z-index: 1;
 }
 
-/* The focus indicator: a soft body lying UNDER the selected cover rather than a ring drawn around it.
-   A ring has to blink out on the card the selection leaves and in on the one it arrives at; one body per
-   surface travels between them, breathing where it stands. It is drawn on a canvas (focus-jelly.ts) —
-   the contour genuinely deforms, which no amount of border-radius can fake.
-
-   The canvas rides INSIDE the strip, so the row's slide, its fades and its hiding all carry it for free,
-   exactly as the ring's element used to be carried. It is the strip's first child and `position:
-   absolute`, so it is no part of the flex row. */
-#carousel-jelly {
-  position: absolute;
-  left: calc(-26 * var(--px));
-  /* Pinned to the row's TOP, not its floor: the strip's height follows the tallest card, so it shrinks
-     and grows all through a move — anchored at the bottom, the canvas would slide against the very
-     offsetTop values drawn onto it. The top edge does not move, and the canvas is tall enough for the
-     grown card either way (see stripCanvas). */
-  top: calc(-26 * var(--px));
-  pointer-events: none;
-  /* Under the covers, over the wallpaper. The cards carry no z-index of their own, so a plain 0 here
-     puts the body behind every one of them. */
-  z-index: 0;
-}
-
-/* On the detail screen the strip is fading out — a breathing body underneath it would be noise. Scoped
-   to the STRIP's body: the grid's keeps breathing for the 0.35s the Library screen takes to fade, and a
-   snap there is the last thing seen of a card the user just pressed. */
-#app[data-screen='detail'] #carousel-jelly {
-  opacity: 0;
-}
-
 /* The launcher's own cards (Notifications / Settings / System): no artwork, a solid d2 plate with the
    glyph punched out of it in d1 — the same inversion the focused rect-button uses. Selected, it grows to
    136x204 from the base rule like any other card; its name appears in the bar's title line, not on it. */
@@ -630,23 +601,6 @@ body {
   transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1), height 0.35s cubic-bezier(0.4, 0, 0.2, 1),
     margin 0.35s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.4s cubic-bezier(0.2, 0, 0.2, 1) 0.35s;
 }
-/* Coming back from a detail screen the body waits for the CARD, and the delay is 0.35s rather than the
-   --morph the container uses — the two are not the same moment, which is what made the hand-back blink.
-   The container switches on at 0.24s while the selected card stays transparent until 0.35s (it swaps in
-   opaque as the play button goes, see .card.is-selected below). Started at 0.24s the body spent those
-   110ms alone on screen, burning up to 0.85 opacity under a button that had not finished growing — a
-   flash of colour where the cover was about to be. Now both arrive in the same frame. */
-#app[data-screen='carousel'] #carousel-jelly {
-  opacity: 1;
-  transition: opacity 0.2s ease 0.35s;
-}
-/* The startup fan (carousel.playIntro) needs longer: there the selected card fades in WITH the row
-   rather than swapping in opaque, so it only starts appearing at 0.35s and is not done until 0.75s —
-   the rule above would leave the body fully drawn under a half-transparent card for a third of a second. */
-#app[data-returning='intro'] #carousel-jelly {
-  transition: opacity 0.2s ease calc(var(--morph) + 0.4s);
-}
-
 #app[data-screen='carousel'][data-card-morph='on'] .play-button {
   /* Stays visible (and keeps its cover) for exactly that grow, then is swapped out in one frame. */
   transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1), height 0.35s cubic-bezier(0.4, 0, 0.2, 1),
@@ -3039,11 +2993,9 @@ html:not(.mouse-asleep) .picker-item:hover,
 /* The CARDS wait, not the strip as a whole: they are built and laid out behind the boot screen, and
    holding them at zero here is what leaves their staggered entrance (carousel.playIntro) still to play
    when the wallpaper hands over. Fading the strip instead would show the row already assembled.
-   The focus body needs saying separately — it is not a .card but a canvas beside them, so the rule above
-   left it alone and it sat on the boot wallpaper with no cover to belong to. It comes in with the row:
-   the intro rule up by #carousel-jelly holds it back until the wave has passed. */
-#app[data-boot] .card,
-#app[data-boot] #carousel-jelly {
+   The focus body needs no rule of its own here: liquid.ts only follows targets that pass
+   checkVisibility, and a cover held at zero is not one — so it stays away until the row arrives. */
+#app[data-boot] .card {
   opacity: 0;
 }
 
@@ -3097,9 +3049,9 @@ html:not(.mouse-asleep) .picker-item:hover,
 
 /* The padding is not decoration: the selected card scales to 1.06 and the focus body stands 8 design px
    off it and breathes a few more, which puts its corner ~22 design px outside the card's own box. The
-   scroller clips on both axes — but the body is drawn on a canvas OUTSIDE it (see #library-jelly), so
-   what this padding now protects is the card's own scale, and it keeps the body's ends off the pane's
-   edges. 44 leaves room for a decoration that reaches further, and costs nothing: even on a 16:10 screen
+   scroller clips on both axes — but the body is drawn on a window fitted to the PANE rather than to the
+   scrolling content (liquid.ts), so what this padding now protects is the card's own scale, and it keeps
+   the body's ends off the pane's edges. 44 leaves room for a decoration that reaches further, and costs nothing: even on a 16:10 screen
    the column count is the same as it would be at 22. */
 .library-scroll {
   flex: 1 1 auto;
@@ -3245,33 +3197,6 @@ html:not(.mouse-asleep) .picker-item:hover,
    linear, which glues the steps into one continuous glide instead of 143 ms of ease each. */
 #app[data-flipping] #library .library-grid .card {
   transition: transform var(--flip-step) linear;
-}
-
-/* The grid's focus body. Unlike the strip's, its canvas is NOT inside the scrolling content: a library
-   of hundreds would make a canvas thousands of pixels tall, and its backing store is width x height x 4
-   x dpr² bytes — tens of megabytes on a handheld. This one is the size of the pane, and library-screen.ts
-   folds the scroll offset into the coordinates it draws at.
-   Positioned over the pane but under the cards: .library-scroll takes a z-index of its own for this. */
-#library-jelly {
-  position: absolute;
-  left: 0;
-  top: 0;
-  pointer-events: none;
-  z-index: 0;
-  opacity: 1;
-  transition: opacity 0.2s ease;
-}
-
-/* Nothing to wrap: the focus is in the column, or the section is empty. Faded rather than moved — the
-   body keeps its place, so the way back in is a fade rather than a jump from wherever it last stood. */
-#library-jelly.is-hidden {
-  opacity: 0;
-}
-
-/* …and the instant frame kills even that: a hand-over to the detail screen and back is a CUT. In one
-   row with the rule at the head of this section. */
-#library.is-instant #library-jelly {
-  transition: none;
 }
 
 /* The cards must sit ABOVE the body, and z-index only bites on a positioned element — the scroller had

@@ -19,14 +19,11 @@ import {
   fanIndex,
   isNearViewport,
   isWithinWindow,
-  stripCanvas,
   stripOffset,
 } from './carousel-geometry.js';
 import { SYSTEM_CARDS, type SystemCard } from './system-cards.js';
 import { systemCardIcon } from './system-card-icons.js';
-import { req, reqCanvas } from './dom.js';
-import { FALLBACK_COLOUR, JELLY, createFocusJelly, jellyBoxOf } from './focus-jelly.js';
-import { pxUnit } from './screen-scroller.js';
+import { req } from './dom.js';
 
 /** The two levels of the launcher screen (mirrors `#app[data-screen]`). */
 export type Screen = 'carousel' | 'detail';
@@ -142,7 +139,6 @@ export function createCarousel(deps: CarouselDeps): Carousel {
   const playButton = req('play-button');
   // Live style object: read per frame for the body's colour, so the palette crossfade (--d2 is a
   // registered property with its own transition) carries it without a single line of interpolation here.
-  const appStyle = getComputedStyle(app);
 
   const systemItems: readonly CarouselItem[] = SYSTEM_CARDS.map((card) => ({
     kind: 'system',
@@ -181,10 +177,6 @@ export function createCarousel(deps: CarouselDeps): Carousel {
   // the strip on games[0] while the title, the background and the music belonged to another game.
   // Honoured by the next setGames, then forgotten; a real move by the user outranks it (see move()).
   let pendingFocusId: string | null = null;
-  // Where the body was last sent, so a repaint that did not move the selection (a dot, a busy game, a
-  // language change) does not make it squeeze. null until the first layout — the body is placed then,
-  // not moved.
-  let jellyIndex: number | null = null;
 
   const artKey = (game: LibraryEntry): string => `${game.id}@${game.artRev ?? ''}`;
 
@@ -205,63 +197,9 @@ export function createCarousel(deps: CarouselDeps): Carousel {
     return (item.game.active && item.game.unconfigured !== true) || item.game.id === busyId;
   }
 
-  /**
-   * The box the focus body hugs: the SELECTED card's own rectangle, in the strip's coordinates.
-   *
-   * Measured off the node rather than derived from the index, and measured EVERY frame (focus-jelly.ts
-   * asks for it), because the card is still growing from 90x135 to 136x204 while the row slides — a
-   * box computed once would have the body wrapping a size the card no longer has.
-   */
-  function jellyTarget(): ReturnType<typeof jellyBoxOf> | null {
-    const current = selected();
-    const card = current === undefined ? undefined : cards.get(itemKey(current));
-    if (card === undefined) return null;
-    const unit = pxUnit();
-    const parsed = Number.parseFloat(getComputedStyle(card).borderTopLeftRadius);
-    const radius = Number.isFinite(parsed) ? parsed : 0;
-    const pad = JELLY.margin * unit; // the canvas starts up and to the left of the strip's own origin
-    return jellyBoxOf(
-      card.offsetLeft + pad,
-      card.offsetTop + pad,
-      card.offsetWidth,
-      card.offsetHeight,
-      radius,
-      unit,
-    );
-  }
-
-  const jellyCanvas = reqCanvas('carousel-jelly');
-  const jelly = createFocusJelly(jellyCanvas, {
-    target: jellyTarget,
-    colour: () => {
-      const value = appStyle.getPropertyValue('--d2').trim();
-      return value.length > 0 ? value : FALLBACK_COLOUR;
-    },
-    unit: pxUnit,
-  });
-
-  /** Fits the canvas around the whole row — it must cover wherever the body may be, plus its overhang. */
-  function sizeJelly(): void {
-    const unit = pxUnit();
-    const size = stripCanvas(items.length);
-    jelly.resize(size.width * unit, size.height * unit);
-  }
-
-  /** Squeezes the body through its trip to a new card. A repaint that moved nothing leaves it alone. */
-  function nudgeJelly(next: number): void {
-    const previous = jellyIndex;
-    jellyIndex = next;
-    if (previous === null) {
-      jelly.bump(true); // the first layout PLACES the body; nothing has travelled
-      return;
-    }
-    if (previous !== next) jelly.bump();
-  }
-
   /** The strip's translation + the per-card selected/active/busy state. Cheap; safe to call often. */
   function applyLayout(): void {
     strip.style.setProperty('--strip-offset', String(stripOffset(index)));
-    nudgeJelly(index);
     const current = selected();
     const currentKey = current === undefined ? null : itemKey(current);
     items.forEach((item, position) => {
@@ -369,9 +307,7 @@ export function createCarousel(deps: CarouselDeps): Carousel {
       cards.set(itemKey(item), card);
       return card;
     });
-    // The canvas goes back in FIRST: a rebuild replaces every child, and it is a child of the strip too.
-    strip.replaceChildren(jellyCanvas, ...nodes);
-    sizeJelly();
+    strip.replaceChildren(...nodes);
   }
 
   /**
@@ -477,11 +413,6 @@ export function createCarousel(deps: CarouselDeps): Carousel {
 
   // The launcher starts on the plain bar screen; the first list promotes it to the carousel (applyLibrary).
   app.dataset['screen'] = screen;
-  sizeJelly();
-  jelly.setActive(true);
-  // --px is tied to the window's height, so a resize moves the row in real px and the canvas has to
-  // follow. The body's own coordinates are re-read every frame, so nothing else needs saying.
-  new ResizeObserver(() => sizeJelly()).observe(app);
 
   return {
     focusGame(id: string): void {
