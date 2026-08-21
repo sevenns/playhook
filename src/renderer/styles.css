@@ -384,11 +384,15 @@ body {
    of its own below; the rest of the focusables already are and win on DOM order alone. */
 .liquid-window {
   position: absolute;
-  inset: 0;
-  /* Explicit, because a canvas is a replaced element: with auto sizes it would take its bitmap's
-     dimensions rather than the box inset gives it. */
-  width: 100%;
-  height: 100%;
+  /* BLEEDS past its layer. The body stands ~17 design px outside whatever it wraps (8 of stand-off plus
+     the breathing), and a window sized to the layer would slice that off along every edge — worst of all
+     around a button sitting near the layer's own border. 32 leaves room to spare.
+     Sizes are spelled out rather than left to `inset`: a canvas is a replaced element, so with auto
+     dimensions it takes its bitmap's size instead of the box the offsets describe. */
+  left: calc(-32 * var(--px));
+  top: calc(-32 * var(--px));
+  width: calc(100% + 64 * var(--px));
+  height: calc(100% + 64 * var(--px));
   pointer-events: none;
   z-index: 0;
 }
@@ -801,12 +805,10 @@ body {
 /* :hover gated on a live cursor — see the note on .text-button:hover (avoids a stale hover highlight
    sticking under the pointer once the gamepad takes over). */
 html:not(.mouse-asleep) .play-button:hover,
-/* The fill STAYS for now. Liquid UI's body is mounted under this button (liquid.ts) but the fill is what
-   guarantees the label is readable, and the body has not been seen running on a device yet — dropping the
-   fill before that would mean a focus nobody can see if the body fails to paint. Remove both together,
-   once the body is confirmed. */
+/* No fill: the liquid body IS the fill now (liquid.ts), and it flows in from wherever the focus was
+   rather than appearing here. Only the inverted label stays — it is what the body is painted behind.
+   A rectangle drawn here as well would put the button's own hard edges back around a soft shape. */
 .play-button.is-focused {
-  background: var(--d2);
   color: var(--d1);
 }
 
@@ -902,7 +904,6 @@ html:not(.mouse-asleep) .play-button:hover::after,
 /* :hover gated on a live cursor — see the note on .text-button:hover. */
 html:not(.mouse-asleep) .rect-button:hover,
 .rect-button.is-focused {
-  background: var(--d2);
   color: var(--d1);
 }
 
@@ -1478,7 +1479,6 @@ html:not(.mouse-asleep) .rect-button:hover,
    Gating :hover on :not(.mouse-asleep) drops the stale hover the moment the gamepad is used. */
 html:not(.mouse-asleep) .text-button:hover,
 .text-button.is-focused {
-  background: var(--d2);
   color: var(--d1);
 }
 
