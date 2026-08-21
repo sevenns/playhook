@@ -39,20 +39,6 @@ export interface JellyTuning {
   readonly points: number;
   /** Slack a canvas must keep around the body, design px. */
   readonly margin: number;
-  /**
-   * How far a point may trail behind its place on the target, design px. The springs are what make the
-   * body stretch, and left unbounded that stretch is proportional to how far the focus jumped and how
-   * fast it is being repeated — holding a direction down a list of tall entries dragged the body clean
-   * off the screen. This is the leash: the shape still lags and still deforms, it simply cannot be
-   * pulled arbitrarily far.
-   */
-  readonly reach: number;
-  /**
-   * How opaque the body is painted, 0..1. Not a solid fill: sitting UNDER the thing it highlights, a
-   * translucent body lets the artwork and the wallpaper through and reads as something the interface is
-   * floating on rather than a plate stuck behind it.
-   */
-  readonly alpha: number;
 }
 
 export const JELLY: JellyTuning = {
@@ -72,9 +58,6 @@ export const JELLY: JellyTuning = {
   points: 36,
   /** Slack around the drawn body the canvas must keep, design px (breathing and the glow reach out). */
   margin: 26,
-  /** A cover is 204 tall and the row is meant to feel heavy — but not unbounded. */
-  reach: 90,
-  alpha: 0.62,
 };
 
 /**
@@ -89,37 +72,13 @@ export const JELLY: JellyTuning = {
 export const JELLY_UI: JellyTuning = {
   moveMs: 60,
   pinch: 0.86,
-  stiffness: 30,
-  damping: 0.6,
+  stiffness: 22,
+  damping: 0.55,
   wobble: 2.2,
   inset: 6,
   points: JELLY.points,
   margin: JELLY.margin,
-  /* Tight. A held direction steps through a list several times a second, and a three-line entry
-     followed by a one-line button is exactly the pair that used to fling the body off-screen. */
-  reach: 28,
-  /* Higher than the row's: a button's label is drawn in --d1 ON the body, and too little opacity there
-     leaves the text fighting whatever is behind the surface. */
-  alpha: 0.82,
 };
-
-/**
- * The same tuning, for a direction being HELD.
- *
- * Auto-repeat steps the selection several times a second, and the softness that reads as weight on a
- * single press turns into a smear over that: the body never arrives before the target has moved again,
- * so it stretches further with every step and trails clean off the screen. Held, it is pulled taut —
- * stiffer, damped harder, on a much shorter leash — and let go again the moment the direction is
- * released, which is when the softness is worth seeing.
- */
-export function heldTuning(tuning: JellyTuning): JellyTuning {
-  return {
-    ...tuning,
-    stiffness: tuning.stiffness * 3,
-    damping: Math.min(0.8, tuning.damping + 0.2),
-    reach: Math.max(20, tuning.reach / 4),
-  };
-}
 
 /** The box for a measured card: its own rectangle, pushed out by the stand-off on every side. */
 export function jellyBoxOf(

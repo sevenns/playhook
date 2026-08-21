@@ -13,7 +13,6 @@
 import {
   JELLY,
   JELLY_UI,
-  heldTuning,
   jellyBoxOf,
   outlinePoint,
   pinchScale,
@@ -22,12 +21,16 @@ import {
 } from './focus-jelly.js';
 
 /**
- * What the body may sit under. Everything the launcher highlights carries `.is-focused` — that is the
- * one focus visual across all eight surfaces (see styles.css) — while the two card surfaces mark their
- * pick as `.is-selected` instead, because there the selection is the focus.
+ * What the body may sit under: everything the launcher highlights carries `.is-focused`, which is the one
+ * focus visual across every surface (see styles.css).
+ *
+ * The two CARD surfaces are deliberately not here. The row and the grid keep their own bodies
+ * (focus-jelly.ts), because the carousel breaks the assumption this module is built on: there the
+ * selection stands still and the strip slides under it, so a screen rectangle is mid-flight for the
+ * length of every step and the springs chase a target that never settles. Their own canvases live inside
+ * the moving strip, where the selected card simply does not move.
  */
-const FOCUS_SELECTOR =
-  '.is-focused, #carousel-strip .card.is-selected, #library .library-grid .card.is-selected';
+const FOCUS_SELECTOR = '.is-focused';
 
 /**
  * A layer that can show the body. `priority` settles who owns the focus when more than one surface has
@@ -46,8 +49,6 @@ export interface LiquidDeps {
   unit(): number;
   /** The fill, normally the computed `--d2` — read per frame, so the palette crossfade carries it. */
   colour(): string;
-  /** Whether a direction is being HELD right now (the row and the lists auto-repeat). See heldTuning. */
-  held(): boolean;
 }
 
 export interface LiquidFocus {
@@ -62,9 +63,6 @@ export interface LiquidFocus {
   snap(): void;
   start(): void;
 }
-
-/** How long the body stays put after its target vanishes, ms (see the hold in the frame loop). */
-const HOLD_MS = 600;
 
 interface Point {
   x: number;
@@ -84,38 +82,13 @@ function tuningFor(el: Element): JellyTuning {
   return el.classList.contains('card') ? JELLY : JELLY_UI;
 }
 
-/**
- * Where the selected cover's left edge sits on screen — the row's ANCHOR, in real px.
- *
- * The carousel is the one surface where the selection does not move: the strip slides under a fixed
- * anchor, and the selected cover is always at that anchor once things settle. Its screen rectangle,
- * though, is mid-slide for the 143ms of every step, so measuring it says the cover is off to one side
- * and arriving. The springs chase that, and under auto-repeat it never stops arriving — which is what
- * dragged the body across the screen.
- *
- * So the anchor is taken from the layout instead of from the animation: it is #carousel-strip's own
- * `left`, a constant in styles.css (50 design px), and it cannot be mid-anything. Only the x is fixed
- * this way — height and width still come from the element, because the cover really does grow, and the
- * body should grow with it.
- */
-const STRIP_ANCHOR = 50;
-
-function stripAnchorX(strip: HTMLElement, unit: number): number | null {
-  const parent = strip.parentElement;
-  if (parent === null) return null;
-  return parent.getBoundingClientRect().left + STRIP_ANCHOR * unit;
-}
-
 /** The focused element's box in SCREEN coordinates, plus the corner radius the body should copy. */
 function targetOf(el: Element, unit: number, tuning: JellyTuning): JellyBox {
   const rect = el.getBoundingClientRect();
   const style = getComputedStyle(el);
   const parsed = Number.parseFloat(style.borderTopLeftRadius);
   const radius = Number.isFinite(parsed) ? parsed : 0;
-  const strip = el.closest<HTMLElement>('#carousel-strip');
-  const anchored = strip === null ? null : stripAnchorX(strip, unit);
-  const left = anchored ?? rect.left;
-  return jellyBoxOf(left, rect.top, rect.width, rect.height, radius, unit, tuning);
+  return jellyBoxOf(rect.left, rect.top, rect.width, rect.height, radius, unit, tuning);
 }
 
 export function createLiquidFocus(deps: LiquidDeps): LiquidFocus {
@@ -129,11 +102,6 @@ export function createLiquidFocus(deps: LiquidDeps): LiquidFocus {
   let owner: Element | null = null;
   let moveStart = -1;
   let pendingSnap = false;
-  // The last target and when it went away. Coming back from a detail screen the row's cover is held
-  // transparent for 350ms while the play button hands over, so for those frames NOTHING is focused —
-  // and clearing on the spot made the body blink out and back in with the carousel. It waits instead.
-  let held: { readonly to: JellyBox; readonly tuning: JellyTuning } | null = null;
-  let lostAt = -1;
 
   /** The focused element of the topmost surface that has one, or null when nothing is highlighted. */
   function findFocused(): Element | null {
@@ -211,22 +179,6 @@ export function createLiquidFocus(deps: LiquidDeps): LiquidFocus {
       p.vy = (p.vy + (ty - p.y) * k * dt) * Math.pow(keep, dt * 60);
       p.x += p.vx * dt * 60;
       p.y += p.vy * dt * 60;
-
-      // The leash (see `reach`): a point may lag, but only so far. Without it the stretch scales with
-      // how far the focus jumped and how fast it repeats, and a held direction through tall entries
-      // pulls the body off the screen entirely.
-      const slackX = p.x - tx;
-      const slackY = p.y - ty;
-      const slack = Math.hypot(slackX, slackY);
-      const limit = tuning.reach * unit;
-      if (slack > limit) {
-        const scale = limit / slack;
-        p.x = tx + slackX * scale;
-        p.y = ty + slackY * scale;
-        // The speed that carried it out there goes too, or it fights the leash every frame.
-        p.vx *= scale;
-        p.vy *= scale;
-      }
     }
   }
 
@@ -249,13 +201,7 @@ export function createLiquidFocus(deps: LiquidDeps): LiquidFocus {
     return new DOMRect(minX, minY, maxX - minX, maxY - minY);
   }
 
-  function paint(
-    win: LiquidWindow,
-    squeeze: number,
-    to: JellyBox,
-    colour: string,
-    alpha: number,
-  ): void {
+  function paint(win: LiquidWindow, squeeze: number, to: JellyBox, colour: string): void {
     const { ctx, canvas } = win;
     if (ctx === null) return;
     const rect = canvas.getBoundingClientRect();
@@ -300,10 +246,8 @@ export function createLiquidFocus(deps: LiquidDeps): LiquidFocus {
       );
     }
     ctx.closePath();
-    ctx.globalAlpha = alpha;
     ctx.fillStyle = colour;
     ctx.fill();
-    ctx.globalAlpha = 1;
   }
 
   function clear(win: LiquidWindow): void {
@@ -316,44 +260,23 @@ export function createLiquidFocus(deps: LiquidDeps): LiquidFocus {
     window.requestAnimationFrame(frame);
 
     const focused = findFocused();
-    let tuning: JellyTuning;
-    let to: JellyBox;
     if (focused === null) {
-      // Nothing is focused. Hold the last place briefly — a hand-over between screens passes through a
-      // few frames with no target at all — then let go, so a surface that genuinely has no focus does
-      // not keep a body sitting on it.
-      if (held === null) {
-        for (const win of windows) clear(win);
-        owner = null;
-        seeded = false;
-        return;
-      }
-      if (lostAt < 0) lostAt = now;
-      if (now - lostAt > HOLD_MS) {
-        for (const win of windows) clear(win);
-        owner = null;
-        seeded = false;
-        held = null;
-        lostAt = -1;
-        return;
-      }
-      tuning = held.tuning;
-      to = held.to;
-    } else {
-      tuning = tuningFor(focused);
-      if (deps.held()) tuning = heldTuning(tuning);
-      to = targetOf(focused, deps.unit(), tuning);
-      held = { to, tuning };
-      lostAt = -1;
+      for (const win of windows) clear(win);
+      owner = null;
+      seeded = false;
+      return;
     }
+
+    const tuning = tuningFor(focused);
+    const to = targetOf(focused, deps.unit(), tuning);
     if (!seeded || pendingSnap) {
       seed(to);
       pendingSnap = false;
       moveStart = -1;
-    } else if (focused !== null && focused !== owner) {
+    } else if (focused !== owner) {
       moveStart = now; // a new element has it: squeeze through the trip
     }
-    if (focused !== null) owner = focused;
+    owner = focused;
 
     step(1 / 60, now, to, tuning);
 
@@ -378,7 +301,7 @@ export function createLiquidFocus(deps: LiquidDeps): LiquidFocus {
         clear(win);
         continue;
       }
-      paint(win, squeeze, to, colour, tuning.alpha);
+      paint(win, squeeze, to, colour);
     }
   }
 
@@ -387,9 +310,9 @@ export function createLiquidFocus(deps: LiquidDeps): LiquidFocus {
       const canvas = document.createElement('canvas');
       canvas.className = 'liquid-window';
       canvas.setAttribute('aria-hidden', 'true');
-      // First child by default, but some layers open with a veil and a blur of their own — put the
-      // window AFTER those and before the content, or the body is painted underneath them and comes out
-      // dimmed by the very gradient meant to sit behind it.
+      // First child by default — but a layer that opens with a veil and a blur of its own needs the
+      // window AFTER those, or the body is painted underneath and comes out dimmed by the very gradient
+      // that is supposed to sit behind it.
       if (before === undefined || before === null) root.prepend(canvas);
       else root.insertBefore(canvas, before);
       windows.push({ canvas, ctx: canvas.getContext('2d'), root, priority });

@@ -918,9 +918,6 @@ export function createControls(deps: ControlsDeps): Controls {
 
   const ALL_MAIN_BUTTONS: readonly HTMLButtonElement[] = [playButton, moreButton];
   let focusIndex = 0;
-  // Which screen the bar was last computed for, so entering a detail screen can start its focus from the
-  // top rather than from wherever the previous game left it.
-  let lastScreen: 'carousel' | 'detail' | null = null;
   // Whether the bar's focus highlight is "awake". It goes dormant when an active state (install / launch
   // / uninstall / steam) appears, so the highlight doesn't auto-jump onto a button the user didn't pick;
   // it wakes again only on an explicit gamepad move or a mouse hover. `wasActive` tracks the edge.
@@ -1943,23 +1940,6 @@ export function createControls(deps: ControlsDeps): Controls {
     }
     // When an active state (install / launch / uninstall / steam) APPEARS, drop the bar highlight so it
     // doesn't sit on a button the user didn't choose. It wakes again on a gamepad move or a mouse hover.
-    // Arriving on a detail screen the focus belongs on Play, every time. It used to be inherited: a game
-    // with no Play leaves the index on More, and the next game — one that HAS a Play — opened with More
-    // highlighted instead. The row is where you came from, so the first thing under the focus should be
-    // the thing you came to do. (Where Play is not focusable at all — a force-close in flight — index 0
-    // is More by construction, see mainFocusables.)
-    const screen = deps.carousel.screen();
-    if (screen !== lastScreen) {
-      if (screen === 'detail') {
-        focusIndex = 0;
-        // And WOKEN. The bar's highlight goes dormant after IDLE_MS, and standing on the row long enough
-        // for that to happen is normal — you are reading titles, not pressing anything. Carrying that
-        // dormancy onto a screen you just opened means arriving with no focus at all, and having to
-        // nudge the stick before Play answers. Entering a screen is itself the act of choosing it.
-        focusRevealed = true;
-      }
-      lastScreen = screen;
-    }
     const active = phaseOf(state()) === 'busy' || steamBusy(state());
     if (active && !wasActive) focusRevealed = false;
     wasActive = active;

@@ -791,35 +791,26 @@ const liquid = createLiquidFocus({
     const value = getComputedStyle(app).getPropertyValue('--d2').trim();
     return value.length > 0 ? value : FALLBACK_COLOUR;
   },
-  // controls.ts sets this while a direction repeats; the strip and the lists already switch their own
-  // timing on it (--flip-step), and the body joins them rather than inventing its own notion of "fast".
-  held: () => app.hasAttribute('data-flipping'),
 });
 
 function mountLiquidWindows(): void {
-  // #app itself, and deliberately: the row's own container CLIPS (#carousel has overflow: hidden), so a
-  // window inside it would cut the body off along the top edge the moment it set out for the bar. This
-  // one spans the screen and sits under everything positioned after it — the covers included.
-  liquid.mount(app, 0);
   liquid.mount(reqQuery('#bottom-bar .bar-content'), 1);
-  liquid.mount(reqQuery('#library .library-pane'), 2);
-  // The full-screen surfaces. Each gets its window INSIDE its own column: the column carries opacity and
-  // a transform, so it is a stacking context, and the screen-wide window at the bottom cannot reach into
-  // it — that is what left the body clipped and half-swallowed by the veil behind the Library's sidebar.
-  liquid.mount(reqQuery('#library .settings-column'), 2);
+  // The full-screen surfaces. The window goes INSIDE each column: the column carries opacity and a
+  // transform, so it is a stacking context of its own and nothing outside it can be layered under its
+  // contents. The Library's GRID is not here — its covers keep their own body (focus-jelly.ts).
   liquid.mount(reqQuery('#settings .settings-column'), 2);
   liquid.mount(reqQuery('#game-settings .settings-column'), 2);
-  // The popup's own column, not #popup: the column carries opacity of its own, so it is a stacking
-  // context and a window outside it could never sit under its buttons.
-  // The value menus open ON TOP of the row that spawned them, INSIDE the same screen — so that screen
-  // holds two marked elements at once, the row and the chosen value. Without a window of their own the
-  // body took whichever came first in the document, which is the row: the menu looked unfocused while
-  // the highlight sat on the setting behind it.
+  liquid.mount(reqQuery('#library .settings-column'), 2);
+  // The value menus open ON TOP of the row that spawned them, inside the same screen — so that screen
+  // holds two marked elements at once and needs the higher priority to pick the right one. Mounted
+  // before the LIST, so the menu's own veil and blur stay behind the body rather than over it.
   liquid.mount(req('settings-options'), 3, req('settings-options-list'));
   liquid.mount(req('game-settings-options'), 3, req('game-settings-options-list'));
+  // The popup's own column, not #popup: the column carries opacity of its own, so it is a stacking
+  // context and a window outside it could never sit under its buttons.
   liquid.mount(reqQuery('#popup .popup-column'), 4);
-  // Above the popup: both open ON TOP of a screen that still marks a row of its own, and the body must
-  // follow the thing the user is actually driving.
+  // Above the popup: both open over a screen that still marks a row of its own, and the body has to
+  // follow what the user is actually driving.
   liquid.mount(req('file-picker'), 5);
   liquid.mount(req('osk'), 6);
 }
