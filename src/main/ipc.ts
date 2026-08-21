@@ -945,10 +945,35 @@ export class GameController {
         this.enterReady(await this.buildGameInfo(selected, stats));
         await this.browseToUnlessPinned(selected.raw.id);
       }
+      await this.refreshBrowsedLocalGame();
       return { ok: true };
     } finally {
       this.reloadInFlight = false;
     }
+  }
+
+  /**
+   * Re-sends the game ON SCREEN once the PC library has been re-read, when that game is a local one.
+   *
+   * Everything else in the reload speaks for the SELECTED game and only with no card in — both branches
+   * here and in loadPcLibrary are gated on `!cardPresent` — while the Customize screen edits the game the
+   * cursor is BROWSING. With a card inserted nothing above said a word about it, and even without one the
+   * two cursors are free to point at different games. A game's hero and its music are read once per
+   * browse, so a track added from that screen stayed unheard until the user flipped to another card and
+   * back, which is what re-read the manifest.
+   *
+   * Nothing to do while the cursor is parked on a launcher card (`currentBrowse` is null there): the
+   * launcher's own background and its ambience are not the library's to refresh. Immediate rather than
+   * debounced — a press of Save is a commitment, not a flip through the row.
+   */
+  private async refreshBrowsedLocalGame(): Promise<void> {
+    const id = this.currentBrowse?.id;
+    if (id === undefined) return;
+    // The EFFECTIVE manifest, not the library's own: a local game whose id is also on the card is served
+    // by the card (see `games`), and the card's reload speaks for that one.
+    const manifest = this.games.find((game) => game.raw.id === id);
+    if (manifest === undefined || manifest.source !== 'pc') return;
+    await this.browseTo(id, true);
   }
 
   /**

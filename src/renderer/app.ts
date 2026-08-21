@@ -1042,8 +1042,17 @@ function applyLibrary(games: readonly LibraryEntry[]): void {
   // card and this window is a fresh one (a reload re-seeds the list, but which of the three cards it was
   // is remembered nowhere), so the strip lands on games[0] with an idle background over it. Put it back on
   // the launcher cards, without telling main anything — its cursor did not move.
+  //
+  // ONLY while we have not asked for a game ourselves. `currentBrowse` is null for the beat between the
+  // question and the answer too, and a list update landing inside it reads that beat as "parked on a
+  // launcher card" — which is exactly what a freshly added game does: main copies its assets in the
+  // background and refreshes the row when it is done, right while the browse answer for that game is
+  // still in flight. The strip was dragged off the very card the answer was about, and the game's
+  // background and colours then arrived under a launcher card.
   const selected = carousel.selected();
-  if (currentBrowse === null && selected?.kind !== 'system') carousel.focusSystem();
+  if (currentBrowse === null && requestedBrowseId === null && selected?.kind !== 'system') {
+    carousel.focusSystem();
+  }
   // The carousel is the default level — but never yank the user out of a detail screen they opened
   // themselves (they may be watching an install run).
   if (!userChoseDetail) carousel.setScreen('carousel');
