@@ -659,6 +659,9 @@ export function createOsk(deps: OskDeps): TextEntrySurface {
     navBack: () => {
       cancel();
     },
+    close: () => {
+      hide();
+    },
     // X is Backspace and Y is Shift — the two things a typist reaches for constantly, off the grid.
     // A HELD X keeps deleting, one character at a time, the way a held Backspace does everywhere else.
     navSecondary: (repeat = false) => {

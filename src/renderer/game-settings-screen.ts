@@ -155,6 +155,12 @@ export interface TextEntrySurface extends NavSurface {
     readonly title: string;
     readonly onDone: (value: string) => void;
   }): void;
+  /**
+   * Dismisses the keyboard without committing. Called when a SCREEN closes under it: the keyboard is not
+   * inside any screen (see #osk in index.html), so nothing else would take it off the display — it would
+   * stay up over the carousel, still holding the focus of a screen that is gone.
+   */
+  close(): void;
 }
 
 export interface FilePickerSurface extends NavSurface {
@@ -2421,14 +2427,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
         openListMenu(row);
         return;
       case 'action':
-        // The column owns the screen's own actions (Save, Reset, Delete) — but "Find online" belongs to
-        // the field it fills, not to the screen, so it is the one action row the pane carries.
-        if (row.id === 'find-online') {
-          deps.audio.play('button');
-          pressFlash(target.el);
-          startFindOnline();
-          return;
-        }
+        // Actions live in the column now; a row of this kind should never reach the pane.
         return;
       default:
         return;
@@ -2438,6 +2437,10 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   /** The screen's actions, now that they live in the column rather than at the end of the form. */
   function runAction(id: GameRowId): void {
     switch (id) {
+      case 'find-online':
+        deps.audio.play('button');
+        startFindOnline();
+        return;
       case 'save':
         deps.audio.play('button');
         if (mode === 'add') void runAdd();
@@ -2552,9 +2555,10 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     adoptToken += 1;
     pendingMove = null;
     deps.audio.play('back');
-    // The lightbox and the menu go WITH the screen — one close, one sound (Р5).
+    // The lightbox, the menu and the keyboard go WITH the screen — one close, one sound (Р5).
     closeImage({ silent: true });
     closeMenus({ silent: true });
+    deps.keyboard.close();
     entrance.cancel();
     if (previewTimer !== 0) {
       window.clearTimeout(previewTimer);

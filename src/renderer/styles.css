@@ -2629,13 +2629,16 @@ html:not(.mouse-asleep) .setting-row.is-inert:hover {
    only needs its own fade. It is the only way to type on a gamepad: the launcher has no <input> anywhere,
    and the Deck's system keyboard is out of reach outside Steam-launched games. */
 
+/* The keyboard is a surface of its own, not part of a screen: both Customize and Settings open it (see
+   the note on #osk in index.html). Hence z-index 2 — level with `.settings`, and above it by DOM order —
+   while the popup's 3 still paints over everything. */
 .osk {
   position: absolute;
   inset: 0;
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.25s ease;
-  z-index: 1;
+  z-index: 2;
 }
 
 .osk.is-open {

@@ -921,6 +921,7 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
     open = false;
     deps.audio.play('back');
     closeOptions({ silent: true }); // leaving the screen takes the dropdown with it — one sound, not two
+    deps.keyboard.close(); // …and the keyboard, which lives outside every screen (see #osk in index.html)
     entrance.cancel();
     if (previewTimer !== 0) {
       window.clearTimeout(previewTimer);

@@ -306,13 +306,6 @@ export function buildGameSettingsModel(
     placeholder: { key: 'gameSettings.notSet' },
     ...error('title'),
   });
-  // Right under the title, because the title is both what the search starts from and the first thing it
-  // can fill in. An action row rather than a field: it opens a flow, it does not hold a value.
-  basics.push({
-    kind: 'action',
-    id: 'find-online',
-    label: { key: 'metadata.findOnline' },
-  });
   // Absent while a move is pending: the id is what BOTH halves of the move are addressed by (which slot
   // leaves the PC library, which stats/saves follow the game), so a move that also renames would orphan
   // all of it — see the plan's assumption 4, and the matching refusal in GameConfigService.moveToCard.
@@ -623,6 +616,14 @@ export function buildGameSettingsModel(
       tone: 'error',
     });
   }
+  // Above Save, in the column rather than in Basics: the flow fills the title, the cover, the backgrounds
+  // and the music — four fields across three sections — so it belongs to the GAME, not to the section
+  // whose first field it happens to touch.
+  actions.push({
+    kind: 'action',
+    id: 'find-online',
+    label: { key: 'metadata.findOnline' },
+  });
   actions.push({
     kind: 'action',
     id: 'save',
