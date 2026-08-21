@@ -397,6 +397,14 @@ body {
   z-index: 0;
 }
 
+/* The screen-wide window (the one the row uses) has to clear the bottom bar. #bottom-bar takes no
+   z-index of its own but comes LATER in the document, so at 0 it painted its 400px gradient straight
+   over the body — which is why the body looked like two different bodies with a seam across it. At 1 it
+   ties with #carousel and loses to it on document order, so covers still sit on top, as they must. */
+#app > .liquid-window {
+  z-index: 1;
+}
+
 /* Not positioned by default, so it would paint UNDER the window and the body would cover its label. */
 .text-button {
   position: relative;
