@@ -8,7 +8,12 @@ import {
   type ApplyTarget,
 } from '../src/main/metadata/apply-target';
 import { sniffMedia } from '../src/main/metadata/media-type';
-import { capArtworkPerProvider, dedupeCandidates } from '../src/main/metadata/service';
+import {
+  capArtworkPerProvider,
+  mergeCandidates,
+  normalizeTitle,
+  orderByProvider,
+} from '../src/main/metadata/service';
 import type { ArtworkOffer } from '../src/main/metadata/provider';
 import type { GameCandidate } from '../src/shared/types';
 
@@ -167,23 +172,99 @@ describe('metadata search — merging the sources', () => {
     title,
     provider: 'steamgriddb',
   });
+  const gog = (id: string, title: string): GameCandidate => ({
+    key: `gog:${id}`,
+    title,
+    provider: 'gog',
+    gogId: id,
+  });
+  const rawg = (id: number, title: string): GameCandidate => ({
+    key: `rawg:${id}`,
+    title,
+    provider: 'rawg',
+    rawgId: id,
+  });
 
   it('keeps one entry per Steam appid', () => {
-    const merged = dedupeCandidates([steam(220, 'Half-Life 2'), steam(220, 'Half-Life 2 (dup)')]);
+    const merged = mergeCandidates([steam(220, 'Half-Life 2'), steam(220, 'Half-Life 2 (dup)')]);
     expect(merged).toEqual([steam(220, 'Half-Life 2')]);
   });
 
-  it('puts the entries that carry an appid first — only they can reach the CDN art', () => {
-    const merged = dedupeCandidates([sgdb(7, 'Hollow Knight'), steam(367520, 'Hollow Knight')]);
-    expect(merged.map((c) => c.key)).toEqual(['steam:367520', 'sgdb:7']);
+  it('leads with the source that can also reach the descriptions and the CDN cover', () => {
+    const merged = mergeCandidates([rawg(7, 'Hollow Knight'), steam(367520, 'Hollow Knight')]);
+    expect(merged.map((c) => c.key)).toEqual(['steam:367520']);
+  });
+
+  it('collapses the same game from three sources into one candidate carrying every reference', () => {
+    const merged = mergeCandidates([
+      gog('1207658691', 'The Witcher 3: Wild Hunt'),
+      rawg(41494, 'The Witcher 3: Wild Hunt'),
+      steam(292030, 'The Witcher 3: Wild Hunt'),
+    ]);
+    expect(merged).toHaveLength(1);
+    expect(merged[0]).toMatchObject({
+      provider: 'steam',
+      steamAppId: 292030,
+      gogId: '1207658691',
+      rawgId: 41494,
+    });
+  });
+
+  it('merges across the punctuation and trademark marks publishers spell differently', () => {
+    const merged = mergeCandidates([
+      steam(292030, 'The Witcher® 3: Wild Hunt'),
+      gog('1207658691', 'The Witcher 3 - Wild Hunt'),
+    ]);
+    expect(merged).toHaveLength(1);
+    expect(merged[0]?.gogId).toBe('1207658691');
+  });
+
+  it('keeps two different games apart rather than guessing', () => {
+    const merged = mergeCandidates([
+      steam(220, 'Half-Life 2'),
+      gog('x', 'Half-Life 2: Episode One'),
+    ]);
+    expect(merged).toHaveLength(2);
   });
 
   it('keeps distinct games from the same source', () => {
-    const merged = dedupeCandidates([steam(220, 'HL2'), steam(380, 'HL2: Episode One')]);
+    const merged = mergeCandidates([steam(220, 'HL2'), steam(380, 'HL2: Episode One')]);
+    expect(merged).toHaveLength(2);
+  });
+
+  it('does not fold two entries of ONE source into each other, however alike their titles', () => {
+    const merged = mergeCandidates([sgdb(7, 'Hollow Knight'), sgdb(8, 'Hollow Knight™')]);
     expect(merged).toHaveLength(2);
   });
 
   it('drops a repeated key even without an appid', () => {
-    expect(dedupeCandidates([sgdb(7, 'HK'), sgdb(7, 'HK')])).toHaveLength(1);
+    expect(mergeCandidates([sgdb(7, 'HK'), sgdb(7, 'HK')])).toHaveLength(1);
+  });
+
+  it('normalizes a title only as far as two sources can be expected to agree', () => {
+    expect(normalizeTitle('The Witcher® 3: Wild Hunt')).toBe('the witcher 3 wild hunt');
+    expect(normalizeTitle('  S.T.A.L.K.E.R.  ')).toBe('s t a l k e r');
+    expect(normalizeTitle('Мор')).toBe('мор');
+  });
+});
+
+describe('metadata artwork — the order sources appear in', () => {
+  const offerOf = (provider: ArtworkOffer['provider']): ArtworkOffer => ({
+    key: `${provider}:1`,
+    kind: 'hero',
+    provider,
+    thumbUrl: 'https://cdn.test/t.jpg',
+    fullUrl: 'https://cdn.test/f.jpg',
+  });
+
+  it('lists Steam first, then GOG, then RAWG — a stable order between visits', () => {
+    const ordered = orderByProvider([offerOf('rawg'), offerOf('gog'), offerOf('steam')]);
+    expect(ordered.map((offer) => offer.provider)).toEqual(['steam', 'gog', 'rawg']);
+  });
+
+  it('keeps the relative order inside one source', () => {
+    const first = { ...offerOf('gog'), key: 'gog:1' };
+    const second = { ...offerOf('gog'), key: 'gog:2' };
+    expect(orderByProvider([first, second]).map((o) => o.key)).toEqual(['gog:1', 'gog:2']);
   });
 });

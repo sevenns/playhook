@@ -27,6 +27,8 @@ import { MetadataService } from './metadata/service';
 import { SteamProvider } from './metadata/steam';
 import { SteamGridDbProvider } from './metadata/steamgriddb';
 import { KhinsiderProvider } from './metadata/khinsider';
+import { GogProvider } from './metadata/gog';
+import { RawgProvider } from './metadata/rawg';
 import { LocaleService } from './locale';
 import { createPowerService } from './power';
 import { createKeepAwakeService, type KeepAwakeService } from './keep-awake';
@@ -155,6 +157,7 @@ async function bootstrap(): Promise<void> {
     app.getPath('userData'),
     (next) => {
       steamGridDbKey = next.steamGridDbApiKey;
+      rawgKey = next.rawgApiKey;
       const bw = windowRef?.browserWindow ?? null;
       if (bw !== null && !bw.isDestroyed()) bw.webContents.send(IPC.settingsUpdate, next);
     },
@@ -167,6 +170,7 @@ async function bootstrap(): Promise<void> {
   // The SteamGridDB key, kept current by the same onChange every other pushed setting rides on — the
   // metadata provider reads it per request, so a key pasted mid-session applies to the very next search.
   let steamGridDbKey = initialSettings.steamGridDbApiKey;
+  let rawgKey = initialSettings.rawgApiKey;
 
   // Resolve the effective UI locale ONCE at startup from the persisted mode (the system locale is not
   // watched live — a Windows display-language change requires a sign-out and app restart anyway).
@@ -357,6 +361,9 @@ async function bootstrap(): Promise<void> {
         // point, and the next search must already use it.
         apiKey: () => steamGridDbKey,
       }),
+      // Backgrounds for games Steam does not sell. GOG needs no key; RAWG needs the user's own.
+      new GogProvider({ http: metadataHttp }),
+      new RawgProvider({ http: metadataHttp, apiKey: () => rawgKey }),
       // Music only, and only ever on an explicit press — see the note at the top of khinsider.ts.
       new KhinsiderProvider({ http: metadataHttp }),
     ],

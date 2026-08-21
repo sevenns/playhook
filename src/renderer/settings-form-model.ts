@@ -29,7 +29,7 @@ export type ToggleId =
 export type SelectId = 'autoUpdate' | 'language' | 'soundSet' | 'ambientTrack';
 
 /** Every free-text row. The SteamGridDB key is the only one this screen has. */
-export type TextId = 'steamGridDbKey';
+export type TextId = 'steamGridDbKey' | 'rawgKey';
 
 /** Every slider row (both are volumes, 0..100 %). */
 export type SliderId = 'sfxVolume' | 'musicVolume';
@@ -221,6 +221,14 @@ export function buildSettingsModel(settings: AppSettings, env: SettingsEnv): Set
             value: maskApiKey(settings.steamGridDbApiKey),
             placeholder: { key: 'settings.steamGridDbKeyEmpty' },
             hint: { key: 'settings.steamGridDbKeyHint' },
+          },
+          {
+            kind: 'text',
+            id: 'rawgKey',
+            label: { key: 'settings.rawgKey' },
+            value: maskApiKey(settings.rawgApiKey),
+            placeholder: { key: 'settings.rawgKeyEmpty' },
+            hint: { key: 'settings.rawgKeyHint' },
           },
         ],
       },

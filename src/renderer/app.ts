@@ -105,6 +105,7 @@ const settingsApi: SettingsScreenApi = {
   setSfxVolume: (volume) => window.api.setSfxVolume(volume),
   setLanguage: (mode) => window.api.setLanguage(mode),
   setSteamGridDbKey: (key) => window.api.setSteamGridDbKey(key),
+  setRawgKey: (key) => window.api.setRawgKey(key),
   resetSettings: () => {
     void window.api.resetSettings();
   },

@@ -1,14 +1,13 @@
 // Steam provider: URL building, answer parsing and description sanitizing. Fixtures only — the HTTP
 // client is faked, so the unofficial endpoints are never actually called from a test.
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { HttpClient, type FetchInit, type FetchResponse } from '../src/main/metadata/http';
 import {
   SteamProvider,
   appDetailsUrl,
-  headerUrl,
   libraryGridUrl,
-  libraryHeroUrl,
   sanitizeDescription,
+  toAppArt,
   steamAppIdFromKey,
   steamCandidateKey,
   storeSearchUrl,
@@ -22,6 +21,28 @@ const SEARCH_FIXTURE = JSON.stringify({
     { type: 'app', name: 'Half-Life 2: Episode One', id: 380 },
     { type: 'bundle', name: 'Half-Life Collection', id: 999 },
   ],
+});
+
+const ART_DETAILS = JSON.stringify({
+  '220': {
+    success: true,
+    data: {
+      name: 'Half-Life 2',
+      background_raw: 'https://cdn.test/220/page-bg.jpg',
+      screenshots: [
+        {
+          id: 1,
+          path_thumbnail: 'https://cdn.test/220/shot1-thumb.jpg',
+          path_full: 'https://cdn.test/220/shot1.1920x1080.jpg',
+        },
+        {
+          id: 2,
+          path_thumbnail: 'https://cdn.test/220/shot2-thumb.jpg',
+          path_full: 'https://cdn.test/220/shot2.1920x1080.jpg',
+        },
+      ],
+    },
+  },
 });
 
 const DETAILS_EN = JSON.stringify({
@@ -86,18 +107,12 @@ describe('steam metadata provider', () => {
       );
     });
 
-    it('builds the CDN art urls from the appid', () => {
+    it('builds the CDN cover urls from the appid', () => {
       expect(libraryGridUrl(220)).toBe(
         'https://cdn.cloudflare.steamstatic.com/steam/apps/220/library_600x900.jpg',
       );
       expect(libraryGridUrl(220, true)).toBe(
         'https://cdn.cloudflare.steamstatic.com/steam/apps/220/library_600x900_2x.jpg',
-      );
-      expect(libraryHeroUrl(220)).toBe(
-        'https://cdn.cloudflare.steamstatic.com/steam/apps/220/library_hero.jpg',
-      );
-      expect(headerUrl(220)).toBe(
-        'https://cdn.cloudflare.steamstatic.com/steam/apps/220/header.jpg',
       );
     });
   });
@@ -152,60 +167,55 @@ describe('steam metadata provider', () => {
       expect(result.ok === true && result.value.map((v) => v.key)).toEqual(['steam:220:grid']);
     });
 
-    it('offers the header as the hero thumbnail and library_hero as the download', async () => {
-      const provider = providerOf(() => textResponse('', 200));
+    it('offers the store backdrop first, then the screenshots in the order Steam lists them', async () => {
+      const provider = providerOf(() => textResponse(ART_DETAILS));
       const result = await provider.artwork(
         { key: 'steam:220', title: 'HL2', steamAppId: 220 },
         'hero',
       );
-      expect(result.ok === true && result.value[0]).toMatchObject({
-        thumbUrl: headerUrl(220),
-        fullUrl: libraryHeroUrl(220),
-      });
+      expect(result.ok === true && result.value.map((v) => v.key)).toEqual([
+        'steam:220:backdrop',
+        'steam:220:shot-1',
+        'steam:220:shot-2',
+      ]);
     });
 
-    it('prefers the picture appdetails names over the CDN template for the hero thumbnail', async () => {
-      const details = JSON.stringify({
-        '220': {
-          success: true,
-          data: { header_image: 'https://shared.test/store_item_assets/220.jpg' },
-        },
-      });
-      const provider = providerOf((url, init) => {
-        if (init?.method === 'HEAD') return textResponse('', 200);
-        return textResponse(details);
-      });
+    it("takes a screenshot's thumbnail for the grid and its full size for the download", async () => {
+      const provider = providerOf(() => textResponse(ART_DETAILS));
       const result = await provider.artwork(
         { key: 'steam:220', title: 'HL2', steamAppId: 220 },
         'hero',
       );
-      expect(result.ok === true && result.value[0]?.thumbUrl).toBe(
-        'https://shared.test/store_item_assets/220.jpg',
-      );
+      expect(result.ok === true && result.value[1]).toMatchObject({
+        thumbUrl: 'https://cdn.test/220/shot1-thumb.jpg',
+        fullUrl: 'https://cdn.test/220/shot1.1920x1080.jpg',
+      });
     });
 
-    it('still offers a hero from the named picture when the template 404s', async () => {
-      const details = JSON.stringify({
-        '220': { success: true, data: { header_image: 'https://shared.test/220.jpg' } },
-      });
-      const provider = providerOf((url, init) => {
-        if (init?.method === 'HEAD') return textResponse('', 404);
-        return textResponse(details);
-      });
+    it('states no dimensions for a screenshot — the path says nothing about the real size', async () => {
+      const provider = providerOf(() => textResponse(ART_DETAILS));
       const result = await provider.artwork(
         { key: 'steam:220', title: 'HL2', steamAppId: 220 },
         'hero',
       );
-      expect(result.ok === true && result.value[0]).toMatchObject({
-        thumbUrl: 'https://shared.test/220.jpg',
-        fullUrl: 'https://shared.test/220.jpg',
-      });
+      const shot = result.ok === true ? result.value[1] : undefined;
+      expect(shot).not.toHaveProperty('width');
+      expect(shot).not.toHaveProperty('height');
     });
 
-    it('drops the hero when neither the template nor appdetails has a picture', async () => {
-      const provider = providerOf((url, init) =>
-        init?.method === 'HEAD' ? textResponse('', 404) : textResponse('{"220":{"success":false}}'),
-      );
+    it('never checks a background for existence — the URL came from the answer itself', async () => {
+      const fetch = vi.fn(async (_url: string, init?: FetchInit) => {
+        expect(init?.method).not.toBe('HEAD');
+        return textResponse(ART_DETAILS);
+      });
+      const http = new HttpClient({ fetch, userAgent: 'Playhook/test' });
+      const provider = new SteamProvider({ http, locale: () => 'en' });
+      await provider.artwork({ key: 'steam:220', title: 'HL2', steamAppId: 220 }, 'hero');
+      expect(fetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('has no backgrounds for a delisted app, whose appdetails answers success:false', async () => {
+      const provider = providerOf(() => textResponse('{"220":{"success":false}}'));
       const result = await provider.artwork(
         { key: 'steam:220', title: 'HL2', steamAppId: 220 },
         'hero',
@@ -214,14 +224,10 @@ describe('steam metadata provider', () => {
     });
 
     it('asks appdetails once per app, however often the gallery is opened', async () => {
-      const details = JSON.stringify({
-        '220': { success: true, data: { header_image: 'https://shared.test/220.jpg' } },
-      });
       let detailCalls = 0;
-      const provider = providerOf((url, init) => {
-        if (init?.method === 'HEAD') return textResponse('', 200);
+      const provider = providerOf(() => {
         detailCalls += 1;
-        return textResponse(details);
+        return textResponse(ART_DETAILS);
       });
       const ref = { key: 'steam:220', title: 'HL2', steamAppId: 220 };
       await provider.artwork(ref, 'hero');
@@ -233,6 +239,38 @@ describe('steam metadata provider', () => {
       const provider = providerOf(() => textResponse('', 200));
       const result = await provider.artwork({ key: 'sgdb:7', title: 'Some game' }, 'grid');
       expect(result).toEqual({ ok: true, value: [] });
+    });
+  });
+
+  describe('reading the art fields of an appdetails answer', () => {
+    const answer = JSON.parse(ART_DETAILS) as Parameters<typeof toAppArt>[0];
+
+    it('takes the backdrop and every screenshot that has a full size', () => {
+      const art = toAppArt(answer, 220);
+      expect(art.backdrop).toBe('https://cdn.test/220/page-bg.jpg');
+      expect(art.screenshots.map((shot) => shot.id)).toEqual([1, 2]);
+    });
+
+    it('falls back to the full size when a screenshot states no thumbnail', () => {
+      const noThumb = {
+        '220': { success: true, data: { screenshots: [{ id: 5, path_full: 'f.jpg' }] } },
+      };
+      expect(toAppArt(noThumb, 220).screenshots[0]).toEqual({
+        id: 5,
+        thumb: 'f.jpg',
+        full: 'f.jpg',
+      });
+    });
+
+    it('drops a screenshot with no full size — that is the picture apply would download', () => {
+      const noFull = {
+        '220': { success: true, data: { screenshots: [{ id: 5, path_thumbnail: 't.jpg' }] } },
+      };
+      expect(toAppArt(noFull, 220).screenshots).toEqual([]);
+    });
+
+    it('reads nothing at all out of an unsuccessful answer', () => {
+      expect(toAppArt({ '220': { success: false } }, 220)).toEqual({ screenshots: [] });
     });
   });
 

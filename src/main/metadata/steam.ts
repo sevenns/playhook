@@ -5,10 +5,15 @@
 // is why every answer is validated with zod and every failure comes back as a Result: when Steam changes
 // something, this feature degrades to "nothing found" and the launcher carries on.
 //
-// The CDN URLs are built from the appid rather than discovered, because that is the only way to reach
-// `library_600x900` (appdetails does not name it). Where appdetails DOES name a picture — `header_image`
-// — that URL wins over the template: it is the one that keeps working if Steam moves its assets to
-// another host.
+// The COVER comes from the CDN, built from the appid: that is the only way to reach `library_600x900`,
+// which appdetails does not name.
+//
+// The BACKGROUNDS do not come from the CDN at all. `library_hero.jpg` is a 3840x1240 banner made for the
+// strip above a Steam library page (~3:1), and this launcher paints a full-screen background on a ~16:10
+// display — the banner loses about half its width to the crop and its centred composition falls apart.
+// So backgrounds are taken from what appdetails names instead: `background_raw` (the store page's own
+// art backdrop, ~16:9) first, then the screenshots. Screenshots are gameplay rather than art, which is a
+// different KIND of picture — the gallery lets the user judge that, it is not ours to decide.
 import { z } from 'zod';
 import { type Locale } from '../../shared/i18n/index';
 import {
@@ -25,7 +30,7 @@ const CDN_ORIGIN = 'https://cdn.cloudflare.steamstatic.com';
 /** Descriptions are stored in a manifest the user may open in a text editor — keep them readable. */
 const MAX_DESCRIPTION_CHARS = 2000;
 /** How many appdetails answers the provider remembers. One session looks at a handful of games. */
-const MAX_CACHED_HEADERS = 50;
+const MAX_CACHED_APPS = 50;
 
 /** The `l`/`cc` pair a locale searches with. Searching a Russian title with `l=english` finds nothing. */
 export function storeLocaleParams(locale: Locale): {
@@ -54,16 +59,6 @@ export function libraryGridUrl(appId: number, doubled = false): string {
   return `${CDN_ORIGIN}/steam/apps/${appId}/library_600x900${doubled ? '_2x' : ''}.jpg`;
 }
 
-/** The wide library background — the hero. Missing for plenty of older apps, hence the existence check. */
-export function libraryHeroUrl(appId: number): string {
-  return `${CDN_ORIGIN}/steam/apps/${appId}/library_hero.jpg`;
-}
-
-/** The small store capsule. Always present, so it stands in as the hero's thumbnail. */
-export function headerUrl(appId: number): string {
-  return `${CDN_ORIGIN}/steam/apps/${appId}/header.jpg`;
-}
-
 /** `steam:<appid>` — the candidate key the renderer round-trips back to us. */
 export function steamCandidateKey(appId: number): string {
   return `steam:${appId}`;
@@ -89,7 +84,22 @@ const appDetailsSchema = z.record(
       .object({
         name: z.string().optional(),
         short_description: z.string().optional(),
-        header_image: z.string().optional(),
+        /** The store page's art backdrop. Optional — plenty of apps have none. */
+        background_raw: z.string().optional(),
+        /**
+         * Gameplay screenshots. No dimensions are stated anywhere in the answer, and the `.1920x1080.`
+         * in a path is a BOUNDING BOX rather than a promise: an old game's shot comes back 1024x768.
+         * That is why the variants built from these carry no width/height at all.
+         */
+        screenshots: z
+          .array(
+            z.object({
+              id: z.number().int().nonnegative(),
+              path_thumbnail: z.string().optional(),
+              path_full: z.string().optional(),
+            }),
+          )
+          .optional(),
       })
       .optional(),
   }),
@@ -115,6 +125,41 @@ export function sanitizeDescription(raw: string): string {
   const cut = collapsed.slice(0, MAX_DESCRIPTION_CHARS);
   const lastSpace = cut.lastIndexOf(' ');
   return (lastSpace > MAX_DESCRIPTION_CHARS / 2 ? cut.slice(0, lastSpace) : cut).trim();
+}
+
+type AppDetailsAnswer = z.infer<typeof appDetailsSchema>;
+
+/** One screenshot as the gallery needs it: a thumbnail to show and a full size to apply. */
+export interface SteamScreenshot {
+  readonly id: number;
+  readonly thumb: string;
+  readonly full: string;
+}
+
+/** The picture fields of one appdetails answer, reduced to what the gallery builds its variants from. */
+export interface SteamAppArt {
+  /** The store page's art backdrop, when the app has one. */
+  readonly backdrop?: string;
+  readonly screenshots: readonly SteamScreenshot[];
+}
+
+/**
+ * The art of one app, out of an appdetails answer. A screenshot with no full-size path is dropped: it is
+ * the picture the user would end up applying, and half an entry is worse than none. A missing thumbnail
+ * falls back to the full size — the gallery then downloads more than it needs, which beats a blank tile.
+ */
+export function toAppArt(answer: AppDetailsAnswer, appId: number): SteamAppArt {
+  const entry = answer[String(appId)];
+  const data = entry?.success === true ? entry.data : undefined;
+  const backdrop = data?.background_raw;
+  const screenshots = (data?.screenshots ?? []).flatMap((shot) => {
+    const full = shot.path_full;
+    if (full === undefined || full.length === 0) return [];
+    return [{ id: shot.id, thumb: shot.path_thumbnail ?? full, full }];
+  });
+  return backdrop !== undefined && backdrop.length > 0
+    ? { backdrop, screenshots }
+    : { screenshots };
 }
 
 /** Turns a validated storesearch answer into candidates, keeping only entries that are actual games. */
@@ -148,11 +193,11 @@ export interface SteamProviderDeps {
 export class SteamProvider implements MetadataProvider {
   readonly id = 'steam' as const;
   /**
-   * What appdetails said about each app's own picture, so the gallery never asks twice. `url: undefined`
-   * is a real answer ("this app names no picture") and is cached as one — re-asking would spend a rate
-   * limit to learn the same nothing.
+   * What appdetails said about each app's pictures, so the gallery never asks twice. "This app names no
+   * background at all" is a real answer and is cached as one — re-asking would spend a rate limit to
+   * learn the same nothing.
    */
-  private readonly headerImages = new Map<number, { readonly url: string | undefined }>();
+  private readonly appArtwork = new Map<number, SteamAppArt>();
 
   constructor(private readonly deps: SteamProviderDeps) {}
 
@@ -211,80 +256,104 @@ export class SteamProvider implements MetadataProvider {
   ): Promise<MetadataResult<readonly ArtworkOffer[]>> {
     const appId = ref.steamAppId ?? steamAppIdFromKey(ref.key);
     if (appId === undefined) return { ok: true, value: [] };
-    const options = signal === undefined ? undefined : { signal };
-    const candidates: readonly ArtworkOffer[] =
-      kind === 'grid'
-        ? [
-            {
-              key: `steam:${appId}:grid-2x`,
-              kind,
-              provider: this.id,
-              width: 1200,
-              height: 1800,
-              thumbUrl: libraryGridUrl(appId),
-              fullUrl: libraryGridUrl(appId, true),
-            },
-            {
-              key: `steam:${appId}:grid`,
-              kind,
-              provider: this.id,
-              width: 600,
-              height: 900,
-              thumbUrl: libraryGridUrl(appId),
-              fullUrl: libraryGridUrl(appId),
-            },
-          ]
-        : [
-            {
-              key: `steam:${appId}:hero`,
-              kind,
-              provider: this.id,
-              thumbUrl: (await this.headerImage(appId, signal)) ?? headerUrl(appId),
-              fullUrl: libraryHeroUrl(appId),
-            },
-          ];
-    const present: ArtworkOffer[] = [];
-    for (const offer of candidates) {
-      if (await this.deps.http.exists(offer.fullUrl, options)) {
-        present.push(offer);
-        continue;
-      }
-      // The template 404s. That is normal for an old app — but it is ALSO what a move of Steam's assets
-      // to another host would look like, and appdetails names its pictures rather than templating them.
-      // So a hero whose `library_hero` is missing is still offered when appdetails gave a picture: the
-      // capsule is smaller than a proper background, and smaller beats absent.
-      const named = kind === 'hero' ? await this.headerImage(appId, signal) : undefined;
-      if (named !== undefined) present.push({ ...offer, thumbUrl: named, fullUrl: named });
-    }
-    return { ok: true, value: present };
+    if (kind === 'hero') return { ok: true, value: await this.backgrounds(appId, signal) };
+    return { ok: true, value: await this.covers(appId, signal) };
   }
 
   /**
-   * `header_image` as appdetails states it, or undefined when it does not (or the call failed). Cached
-   * for the session: the gallery, a re-open of it and the descriptions all want the same answer, and
-   * appdetails is the one endpoint here with a rate limit worth respecting (~200 calls / 5 minutes).
+   * The two CDN covers, each offered only once its full-size file is known to exist: `library_600x900`
+   * is simply absent for many older apps, and a tile whose apply would 404 is worse than one tile fewer.
    */
-  private async headerImage(appId: number, signal?: AbortSignal): Promise<string | undefined> {
-    const cached = this.headerImages.get(appId);
-    if (cached !== undefined) return cached.url;
+  private async covers(appId: number, signal?: AbortSignal): Promise<readonly ArtworkOffer[]> {
+    const options = signal === undefined ? undefined : { signal };
+    const candidates: readonly ArtworkOffer[] = [
+      {
+        key: `steam:${appId}:grid-2x`,
+        kind: 'grid',
+        provider: this.id,
+        width: 1200,
+        height: 1800,
+        thumbUrl: libraryGridUrl(appId),
+        fullUrl: libraryGridUrl(appId, true),
+      },
+      {
+        key: `steam:${appId}:grid`,
+        kind: 'grid',
+        provider: this.id,
+        width: 600,
+        height: 900,
+        thumbUrl: libraryGridUrl(appId),
+        fullUrl: libraryGridUrl(appId),
+      },
+    ];
+    const present: ArtworkOffer[] = [];
+    for (const offer of candidates) {
+      if (await this.deps.http.exists(offer.fullUrl, options)) present.push(offer);
+    }
+    return present;
+  }
+
+  /**
+   * The backgrounds appdetails names: the art backdrop first, then the screenshots in the order Steam
+   * lists them. No existence check is needed here — unlike the CDN templates, these URLs came FROM the
+   * answer, and a screenshot's thumbnail and full size are the same asset in two sizes, so the "the
+   * thumbnail is there but the full size 404s" mismatch the covers guard against cannot occur.
+   *
+   * An app with no screenshots and no backdrop — and a delisted one, where appdetails answers
+   * `success: false` — simply yields nothing, which the gallery states as "nothing found".
+   */
+  private async backgrounds(appId: number, signal?: AbortSignal): Promise<readonly ArtworkOffer[]> {
+    const art = await this.appArt(appId, signal);
+    if (art === undefined) return [];
+    const offers: ArtworkOffer[] = [];
+    if (art.backdrop !== undefined) {
+      offers.push({
+        key: `steam:${appId}:backdrop`,
+        kind: 'hero',
+        provider: this.id,
+        thumbUrl: art.backdrop,
+        fullUrl: art.backdrop,
+      });
+    }
+    for (const shot of art.screenshots) {
+      offers.push({
+        key: `steam:${appId}:shot-${shot.id}`,
+        kind: 'hero',
+        provider: this.id,
+        thumbUrl: shot.thumb,
+        fullUrl: shot.full,
+      });
+    }
+    return offers;
+  }
+
+  /**
+   * The art fields of one appdetails answer, cached for the session. The cache is what keeps this
+   * endpoint's rate limit (~200 calls / 5 minutes) comfortable: the gallery, a re-open of it and the
+   * descriptions all ask about the same game, and the descriptions fill this cache on their way through.
+   */
+  private async appArt(appId: number, signal?: AbortSignal): Promise<SteamAppArt | undefined> {
+    const cached = this.appArtwork.get(appId);
+    if (cached !== undefined) return cached;
     const details = await this.deps.http.json(
       appDetailsUrl(appId, this.deps.locale()),
       appDetailsSchema,
       signal === undefined ? undefined : { signal },
     );
     if (!details.ok) return undefined; // not cached: a failed call says nothing about the app
-    const url = details.value[String(appId)]?.data?.header_image;
-    this.rememberHeaderImage(appId, url !== undefined && url.length > 0 ? url : undefined);
-    return this.headerImages.get(appId)?.url;
+    return this.rememberArt(appId, details.value);
   }
 
-  /** Remembers one appdetails answer, dropping the oldest once the cache is full. */
-  private rememberHeaderImage(appId: number, url: string | undefined): void {
-    this.headerImages.delete(appId);
-    this.headerImages.set(appId, { url });
-    if (this.headerImages.size <= MAX_CACHED_HEADERS) return;
-    const oldest = this.headerImages.keys().next();
-    if (oldest.done !== true) this.headerImages.delete(oldest.value);
+  /** Extracts the art fields from an answer already in hand and caches them, dropping the oldest. */
+  private rememberArt(appId: number, answer: AppDetailsAnswer): SteamAppArt {
+    const art = toAppArt(answer, appId);
+    this.appArtwork.delete(appId);
+    this.appArtwork.set(appId, art);
+    if (this.appArtwork.size > MAX_CACHED_APPS) {
+      const oldest = this.appArtwork.keys().next();
+      if (oldest.done !== true) this.appArtwork.delete(oldest.value);
+    }
+    return art;
   }
 
   /**
@@ -304,12 +373,9 @@ export class SteamProvider implements MetadataProvider {
       this.deps.http.json(appDetailsUrl(appId, 'ru'), appDetailsSchema, options),
     ]);
     if (!en.ok && !ru.ok) return en;
-    // The same answer carries `header_image`; keeping it here spares the gallery a second call for a
-    // game the user has just picked (descriptions are fetched on exactly that press).
-    if (en.ok) {
-      const named = en.value[String(appId)]?.data?.header_image;
-      this.rememberHeaderImage(appId, named !== undefined && named.length > 0 ? named : undefined);
-    }
+    // The same answer carries the backdrop and the screenshots; keeping them here spares the gallery a
+    // second call for a game the user has just picked (descriptions are fetched on exactly that press).
+    if (en.ok) this.rememberArt(appId, en.value);
     const text: LocalizedText = {
       ...(en.ok ? pickDescription(en.value, appId, 'en') : {}),
       ...(ru.ok ? pickDescription(ru.value, appId, 'ru') : {}),
@@ -317,8 +383,6 @@ export class SteamProvider implements MetadataProvider {
     return { ok: true, value: text };
   }
 }
-
-type AppDetailsAnswer = z.infer<typeof appDetailsSchema>;
 
 /** The one entry appdetails answers with, reduced to `{ en: … }` / `{ ru: … }` (or nothing at all). */
 function pickDescription(answer: AppDetailsAnswer, appId: number, locale: Locale): LocalizedText {

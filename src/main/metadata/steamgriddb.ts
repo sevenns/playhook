@@ -1,5 +1,11 @@
-// SteamGridDB — the community art database, and the only source of ALTERNATIVE covers and backgrounds
-// (Steam offers exactly one of each, and nothing at all for a non-Steam game).
+// SteamGridDB — the community art database, and the only source of ALTERNATIVE COVERS (Steam offers
+// exactly one, and none at all for a non-Steam game).
+//
+// Covers only, deliberately. This database's "heroes" are 1920x620 / 3840x1240 banners built for the
+// strip above a Steam library page (~2.5:1 to 3:1); Playhook paints a full-screen background on a ~16:10
+// display, where such a banner loses half its width to the crop and its centred composition falls apart.
+// Backgrounds come from sources whose pictures are made to be looked at whole — see steam.ts, gog.ts and
+// rawg.ts.
 //
 // Unlike the Steam endpoints this one has a documented API v2 and REQUIRES a key. Playhook ships none:
 // an open-source repository cannot carry a secret, so the key is the user's own, typed into Settings.
@@ -32,15 +38,13 @@ export function autocompleteUrl(term: string): string {
 }
 
 /**
- * The art endpoints accept EITHER the database's own game id or a Steam appid, addressed by platform.
+ * The covers endpoint accepts EITHER the database's own game id or a Steam appid, addressed by platform.
  * Going straight at `steam/<appid>` for a Steam candidate saves the `/games/steam/<appid>` hop that
  * would otherwise only translate one id into the other.
  */
-export function artworkUrl(kind: ArtworkKind, ref: SgdbArtRef): string {
-  const endpoint = kind === 'grid' ? 'grids' : 'heroes';
+export function coversUrl(ref: SgdbArtRef): string {
   const target = ref.kind === 'steam' ? `steam/${ref.id}` : `game/${ref.id}`;
-  const query = kind === 'grid' ? `?dimensions=${GRID_DIMENSIONS}` : '';
-  return `${API_ORIGIN}/${endpoint}/${target}${query}`;
+  return `${API_ORIGIN}/grids/${target}?dimensions=${GRID_DIMENSIONS}`;
 }
 
 /** Which id an art request is addressed by — the database's own, or a Steam appid. */
@@ -75,14 +79,11 @@ const artworkSchema = z.object({
 
 type SgdbArtItem = z.infer<typeof artworkSchema>['data'][number];
 
-/** The database's art rows as offers. The `id` is the art's, not the game's — one game has many. */
-export function toArtworkOffers(
-  items: readonly SgdbArtItem[],
-  kind: ArtworkKind,
-): readonly ArtworkOffer[] {
+/** The database's cover rows as offers. The `id` is the art's, not the game's — one game has many. */
+export function toArtworkOffers(items: readonly SgdbArtItem[]): readonly ArtworkOffer[] {
   return items.map((item) => ({
     key: `sgdb:art:${item.id}`,
-    kind,
+    kind: 'grid' as const,
     provider: 'steamgriddb' as const,
     ...(item.width === undefined ? {} : { width: item.width }),
     ...(item.height === undefined ? {} : { height: item.height }),
@@ -125,18 +126,20 @@ export class SteamGridDbProvider implements MetadataProvider {
     };
   }
 
+  /** Covers only: this source's backgrounds are banners, which is not what a full-screen hero needs. */
   async artwork(
     ref: GameCandidateRef,
     kind: ArtworkKind,
     signal?: AbortSignal,
   ): Promise<MetadataResult<readonly ArtworkOffer[]>> {
+    if (kind !== 'grid') return { ok: true, value: [] };
     const options = this.options(signal);
     if (options === undefined) return { ok: true, value: [] };
     const target = this.artRef(ref);
     if (target === undefined) return { ok: true, value: [] };
-    const answer = await this.deps.http.json(artworkUrl(kind, target), artworkSchema, options);
+    const answer = await this.deps.http.json(coversUrl(target), artworkSchema, options);
     if (!answer.ok) return answer;
-    return { ok: true, value: toArtworkOffers(answer.value.data, kind) };
+    return { ok: true, value: toArtworkOffers(answer.value.data) };
   }
 
   /** A Steam candidate is addressed by its appid; anything else must carry an `sgdb:` key of its own. */

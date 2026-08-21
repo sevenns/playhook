@@ -620,6 +620,15 @@ export interface AppSettings {
    * plain text alongside every other setting — the same trade every launcher with this feature makes.
    */
   readonly steamGridDbApiKey: string;
+  /**
+   * The user's own RAWG.io API key, or `''` when they have not entered one. Same bargain as the
+   * SteamGridDB key: free but personal, so it is never shipped, and without it that source is simply
+   * absent — which for a non-Steam game means no backgrounds beyond what GOG happens to carry.
+   *
+   * RAWG's terms require attribution with a live link; that obligation is met in the README and in the
+   * hint on this setting's row.
+   */
+  readonly rawgApiKey: string;
 }
 
 /** The bundled UI sound sets + ambience tracks available to pick in the settings window. */
@@ -855,6 +864,8 @@ export const IPC = {
   audioOptionsRequest: 'app:audio-options',
   /** game-renderer → main: store the user's SteamGridDB API key (payload string; '' clears it). */
   settingsSetSteamGridDbKey: 'settings:set-steamgriddb-key',
+  /** game-renderer → main: store the user's RAWG.io API key (payload string; '' clears it). */
+  settingsSetRawgKey: 'settings:set-rawg-key',
 
   // ── Customize screen: per-game game.json editing INSIDE the launcher (own namespace) ──
   // A namespace of its own rather than a move of `config:*`: the ipc-channels test requires a channel to
@@ -1211,7 +1222,7 @@ export type ListDirResult =
  * candidate; every request is addressed by an opaque `key` instead, so a provider can change how it
  * identifies a game without the renderer knowing.
  */
-export type MetadataProviderId = 'steam' | 'steamgriddb' | 'khinsider';
+export type MetadataProviderId = 'steam' | 'steamgriddb' | 'rawg' | 'gog' | 'khinsider';
 
 /** Which artwork slot a variant is offered for: the portrait cover, or a hero background. */
 export type ArtworkKind = 'grid' | 'hero';
@@ -1225,13 +1236,24 @@ export type MetadataResult<T> =
   | { readonly ok: true; readonly value: T }
   | { readonly ok: false; readonly message: string };
 
-/** A game as one source knows it. `key` is opaque to the renderer and round-trips back in every request. */
+/**
+ * A game as the sources know it. `key` is opaque to the renderer and round-trips back in every request.
+ *
+ * One candidate can carry SEVERAL references at once: the sources are searched in parallel and their
+ * answers are merged by title, so a game that Steam, GOG and RAWG all know appears once and every source
+ * can be asked about it. `provider` names the source the key belongs to, which is also the one whose
+ * spelling of the title is shown.
+ */
 export interface GameCandidate {
   readonly key: string;
   readonly title: string;
   readonly provider: MetadataProviderId;
   /** Set when the candidate is a Steam app — what the CDN art and the descriptions are addressed by. */
   readonly steamAppId?: number;
+  /** Set when RAWG knows this game — what its screenshots are addressed by. */
+  readonly rawgId?: number;
+  /** Set when GOG sells this game. A STRING: GOG's product ids are not numbers. */
+  readonly gogId?: string;
 }
 
 /**
@@ -1404,6 +1426,8 @@ export interface RendererApi {
   setOnlyGlobalAmbient(on: boolean): void;
   /** Store the user's SteamGridDB API key ('' clears it and turns that source off). */
   setSteamGridDbKey(key: string): void;
+  /** Store the user's RAWG.io API key ('' clears it and turns that source off). */
+  setRawgKey(key: string): void;
   setMusicVolume(volume: number): void;
   setSfxVolume(volume: number): void;
   /** Change the UI language (the effective locale comes back via onLanguageUpdate). */

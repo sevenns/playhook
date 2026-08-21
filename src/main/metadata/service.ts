@@ -23,6 +23,7 @@ import {
   type LocalizedText,
   type MetadataApplyRequest,
   type MetadataApplyResult,
+  type MetadataProviderId,
   type MetadataResult,
   type MusicAlbum,
   type MusicTrack,
@@ -38,6 +39,7 @@ import { sniffMedia, type MediaKind } from './media-type';
 import { type HttpClient } from './http';
 import {
   type ArtworkOffer,
+  type GameCandidateRef,
   type MetadataProvider,
   type MusicTrackOffer,
   toMusicTrack,
@@ -61,6 +63,19 @@ const CACHE_LIMIT = 300;
  * not an archive, and what gets dropped is logged rather than silently swallowed.
  */
 const MAX_ARTWORK_PER_PROVIDER = 24;
+
+/**
+ * The order sources appear in the gallery, best-suited first. Fixed rather than "whoever answered
+ * first": the answers arrive in parallel, and a gallery that reshuffles itself between two visits to the
+ * same game is a gallery the user cannot navigate from memory.
+ */
+const PROVIDER_ORDER: readonly MetadataProviderId[] = [
+  'steam',
+  'steamgriddb',
+  'gog',
+  'rawg',
+  'khinsider',
+];
 /** Where a full-size download lands before it is checked and moved into place. */
 const DOWNLOADS_DIRNAME = 'downloads';
 
@@ -199,7 +214,7 @@ export class MetadataService {
     const failures = answers.filter((answer) => !answer.ok);
     const found = answers.flatMap((answer) => (answer.ok ? [...answer.value] : []));
     if (found.length === 0 && failures.length > 0) return failures[0] ?? { ok: true, value: [] };
-    const merged = dedupeCandidates(found);
+    const merged = mergeCandidates(found);
     for (const candidate of merged) this.candidates.set(candidate.key, candidate);
     return { ok: true, value: merged };
   }
@@ -235,23 +250,20 @@ export class MetadataService {
     const ref = this.candidates.get(candidateKey);
     if (ref === undefined) return { ok: false, message: this.t('metadata.staleSelection') };
     const answers = await this.fromProviders((provider, signal) =>
-      provider.artwork?.(
-        {
-          key: ref.key,
-          title: ref.title,
-          ...(ref.steamAppId === undefined ? {} : { steamAppId: ref.steamAppId }),
-        },
-        kind,
-        signal,
-      ),
+      provider.artwork?.(toCandidateRef(ref), kind, signal),
     );
     const offers = answers.flatMap((answer) => (answer.ok ? [...answer.value] : []));
     if (offers.length === 0) {
       const failure = answers.find((answer) => !answer.ok);
       if (failure !== undefined && !failure.ok) return failure;
+      // Nothing at all, and one source that could have answered is switched off for want of a key. Say
+      // so: "nothing found" would send the user looking for a different game, not for the setting.
+      if (kind === 'hero' && this.isDisabledForKey('rawg')) {
+        return { ok: false, message: this.t('metadata.noArtworkNeedsRawgKey') };
+      }
       return { ok: true, value: [] };
     }
-    const shown = capArtworkPerProvider(offers, MAX_ARTWORK_PER_PROVIDER);
+    const shown = capArtworkPerProvider(orderByProvider(offers), MAX_ARTWORK_PER_PROVIDER);
     if (shown.length < offers.length) {
       log.info(
         `[metadata] showing ${shown.length} of ${offers.length} ${kind} variants (${MAX_ARTWORK_PER_PROVIDER} per source)`,
@@ -331,14 +343,7 @@ export class MetadataService {
     const ref = this.candidates.get(candidateKey);
     if (ref === undefined) return { ok: false, message: this.t('metadata.staleSelection') };
     const answers = await this.fromProviders((provider, signal) =>
-      provider.descriptions?.(
-        {
-          key: ref.key,
-          title: ref.title,
-          ...(ref.steamAppId === undefined ? {} : { steamAppId: ref.steamAppId }),
-        },
-        signal,
-      ),
+      provider.descriptions?.(toCandidateRef(ref), signal),
     );
     const texts = answers.flatMap((answer) => (answer.ok ? [answer.value] : []));
     if (texts.length === 0) {
@@ -559,6 +564,12 @@ export class MetadataService {
     });
   }
 
+  /** Whether a source exists in this build but is turned off because its key has not been entered. */
+  private isDisabledForKey(id: MetadataProviderId): boolean {
+    const provider = this.deps.providers.find((candidate) => candidate.id === id);
+    return provider?.available !== undefined && !provider.available();
+  }
+
   /** Runs one piece of work under a fresh AbortController that `metadata:cancel` can reach. */
   private async run<T>(work: (signal: AbortSignal) => Promise<T>): Promise<T> {
     const controller = new AbortController();
@@ -623,22 +634,99 @@ export function capArtworkPerProvider(
 }
 
 /**
- * One entry per game. A Steam appid is the strongest identity available, so entries that share one
- * collapse onto the first — and a source that knows the appid sorts ahead of one that does not, because
- * only that entry can reach the CDN art and the descriptions.
+ * The order the gallery lists sources in — see PROVIDER_ORDER. Offers from a source the list does not
+ * name (there is none today) sort last rather than disappearing.
  */
-export function dedupeCandidates(candidates: readonly GameCandidate[]): readonly GameCandidate[] {
-  const byAppId = new Map<number, GameCandidate>();
-  const rest: GameCandidate[] = [];
+export function orderByProvider(offers: readonly ArtworkOffer[]): readonly ArtworkOffer[] {
+  const rank = (id: MetadataProviderId): number => {
+    const at = PROVIDER_ORDER.indexOf(id);
+    return at === -1 ? PROVIDER_ORDER.length : at;
+  };
+  return [...offers].sort((a, b) => rank(a.provider) - rank(b.provider));
+}
+
+/** Everything a provider may need to recognize a merged candidate as one of its own. */
+export function toCandidateRef(candidate: GameCandidate): GameCandidateRef {
+  return {
+    key: candidate.key,
+    title: candidate.title,
+    ...(candidate.steamAppId === undefined ? {} : { steamAppId: candidate.steamAppId }),
+    ...(candidate.rawgId === undefined ? {} : { rawgId: candidate.rawgId }),
+    ...(candidate.gogId === undefined ? {} : { gogId: candidate.gogId }),
+  };
+}
+
+/**
+ * A title reduced to what two sources can be expected to agree on: case, the trademark marks publishers
+ * sprinkle differently, and punctuation. Deliberately shallow — no subtitle stripping, no edition
+ * guessing, nothing that could make two DIFFERENT games look identical.
+ */
+export function normalizeTitle(title: string): string {
+  return title
+    .toLowerCase()
+    .replaceAll(/[™®©]/g, '')
+    .replaceAll(/[^\p{Letter}\p{Number}]+/gu, ' ')
+    .trim();
+}
+
+/**
+ * One entry per game, across every source.
+ *
+ * Two things happen here. Within a source, repeats collapse — the same Steam appid, the same key.
+ * Across sources, entries whose normalized titles match become ONE candidate carrying every reference
+ * seen (`steamAppId` + `rawgId` + `gogId`), which is what lets a game's gallery combine Steam's
+ * screenshots with GOG's and RAWG's. A candidate that matches nothing simply stays on its own: a
+ * duplicate line in the menu costs the user one glance, whereas a wrong merge shows them another game's
+ * pictures under the name of theirs.
+ *
+ * The surviving title and key are the first source's in PROVIDER_ORDER — Steam's when it answered,
+ * because that entry is the one that can also reach the descriptions and the CDN cover.
+ */
+export function mergeCandidates(candidates: readonly GameCandidate[]): readonly GameCandidate[] {
+  const merged: GameCandidate[] = [];
+  const byTitle = new Map<string, number>();
   const seenKeys = new Set<string>();
-  for (const candidate of candidates) {
+  const seenAppIds = new Set<number>();
+  const ranked = [...candidates].sort((a, b) => providerRank(a) - providerRank(b));
+  for (const candidate of ranked) {
     if (seenKeys.has(candidate.key)) continue;
     seenKeys.add(candidate.key);
-    if (candidate.steamAppId === undefined) {
-      rest.push(candidate);
+    if (candidate.steamAppId !== undefined) {
+      if (seenAppIds.has(candidate.steamAppId)) continue;
+      seenAppIds.add(candidate.steamAppId);
+    }
+    const title = normalizeTitle(candidate.title);
+    const at = title === '' ? undefined : byTitle.get(title);
+    const existing = at === undefined ? undefined : merged[at];
+    if (at === undefined || existing === undefined) {
+      if (title !== '') byTitle.set(title, merged.length);
+      merged.push(candidate);
       continue;
     }
-    if (!byAppId.has(candidate.steamAppId)) byAppId.set(candidate.steamAppId, candidate);
+    // Only ACROSS sources. Two entries of one source that normalize alike are two entries: this
+    // database says they are different games, and it is the one that knows.
+    if (existing.provider === candidate.provider) {
+      merged.push(candidate);
+      continue;
+    }
+    merged[at] = {
+      ...existing,
+      ...(existing.steamAppId === undefined && candidate.steamAppId !== undefined
+        ? { steamAppId: candidate.steamAppId }
+        : {}),
+      ...(existing.rawgId === undefined && candidate.rawgId !== undefined
+        ? { rawgId: candidate.rawgId }
+        : {}),
+      ...(existing.gogId === undefined && candidate.gogId !== undefined
+        ? { gogId: candidate.gogId }
+        : {}),
+    };
   }
-  return [...byAppId.values(), ...rest];
+  return merged;
+}
+
+/** Where a candidate's source sits in PROVIDER_ORDER — which entry leads a merge, and the menu. */
+function providerRank(candidate: GameCandidate): number {
+  const at = PROVIDER_ORDER.indexOf(candidate.provider);
+  return at === -1 ? PROVIDER_ORDER.length : at;
 }

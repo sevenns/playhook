@@ -75,6 +75,8 @@ export interface SettingsScreenApi {
   setLanguage(mode: LanguageMode): void;
   /** Store the user's SteamGridDB key ('' clears it). */
   setSteamGridDbKey(key: string): void;
+  /** Store the user's RAWG.io key ('' clears it). */
+  setRawgKey(key: string): void;
   /** Fire-and-forget: the screen re-renders from the settings:update push, not from the invoke result. */
   resetSettings(): void;
   checkForUpdates(): void;
@@ -531,6 +533,8 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
     switch (id) {
       case 'steamGridDbKey':
         return snapshot.steamGridDbApiKey;
+      case 'rawgKey':
+        return snapshot.rawgApiKey;
     }
   }
 
@@ -541,6 +545,10 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
       case 'steamGridDbKey':
         deps.api.setSteamGridDbKey(trimmed);
         applyLocal({ ...settings, steamGridDbApiKey: trimmed });
+        break;
+      case 'rawgKey':
+        deps.api.setRawgKey(trimmed);
+        applyLocal({ ...settings, rawgApiKey: trimmed });
         break;
     }
   }

@@ -2991,8 +2991,11 @@ html:not(.mouse-asleep) .metadata-tile:hover,
   color: var(--d1);
 }
 
-/* A cover is a portrait 2:3, a background a wide 16:9 — the tile takes the shape of what it holds, so a
-   gallery of covers does not letterbox them into a landscape box. */
+/* A cover is a portrait 2:3, so its tile is one and CROPS to it: every source serves that exact shape.
+   A background is whatever the source had — a store backdrop, a 1920x1080 screenshot, or a 4:3 shot from
+   an old game — and the tile must not pretend otherwise, so the box keeps a steady 16:9 for the grid's
+   sake while the picture is FITTED inside it. Cropping there would hide exactly the edges the user is
+   choosing between. */
 .metadata-tile-image {
   width: 100%;
   aspect-ratio: 2 / 3;
@@ -3003,6 +3006,7 @@ html:not(.mouse-asleep) .metadata-tile:hover,
 
 .metadata-tile[data-kind='hero'] .metadata-tile-image {
   aspect-ratio: 16 / 9;
+  object-fit: contain;
 }
 
 .metadata-tile-caption {

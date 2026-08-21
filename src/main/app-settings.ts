@@ -61,6 +61,8 @@ const settingsObject = z.object({
   // The user's SteamGridDB key. `.default('')` migrates an older settings.json without the field (no
   // schemaVersion bump); an empty string is the normal state — the metadata feature just runs Steam-only.
   steamGridDbApiKey: z.string().default(''),
+  // The user's RAWG.io key — same shape and same reasoning as the SteamGridDB one above.
+  rawgApiKey: z.string().default(''),
 });
 
 /**
@@ -104,6 +106,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   ambientTrack: 'playhook-abyss.mp3',
   onlyGlobalAmbient: false,
   steamGridDbApiKey: '',
+  rawgApiKey: '',
 };
 
 export class AppSettingsStore {

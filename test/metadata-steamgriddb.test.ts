@@ -3,8 +3,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { HttpClient, type FetchInit, type FetchResponse } from '../src/main/metadata/http';
 import {
   SteamGridDbProvider,
-  artworkUrl,
   autocompleteUrl,
+  coversUrl,
   sgdbCandidateKey,
   sgdbGameIdFromKey,
   toArtworkOffers,
@@ -71,14 +71,14 @@ describe('steamgriddb metadata provider', () => {
     });
 
     it("asks for covers in the launcher's own geometry", () => {
-      expect(artworkUrl('grid', { kind: 'game', id: 5250 })).toBe(
+      expect(coversUrl({ kind: 'game', id: 5250 })).toBe(
         'https://www.steamgriddb.com/api/v2/grids/game/5250?dimensions=600x900',
       );
     });
 
     it('addresses a Steam candidate by its appid, with no extra lookup', () => {
-      expect(artworkUrl('hero', { kind: 'steam', id: 220 })).toBe(
-        'https://www.steamgriddb.com/api/v2/heroes/steam/220',
+      expect(coversUrl({ kind: 'steam', id: 220 })).toBe(
+        'https://www.steamgriddb.com/api/v2/grids/steam/220?dimensions=600x900',
       );
     });
 
@@ -128,19 +128,16 @@ describe('steamgriddb metadata provider', () => {
     });
 
     it('turns art rows into offers, keeping the dimensions the source states', () => {
-      const offers = toArtworkOffers(
-        [
-          {
-            id: 81,
-            url: 'https://cdn.test/a.png',
-            thumb: 'https://cdn.test/t.jpg',
-            width: 600,
-            height: 900,
-          },
-          { id: 82, url: 'https://cdn.test/b.png', thumb: 'https://cdn.test/u.jpg' },
-        ],
-        'grid',
-      );
+      const offers = toArtworkOffers([
+        {
+          id: 81,
+          url: 'https://cdn.test/a.png',
+          thumb: 'https://cdn.test/t.jpg',
+          width: 600,
+          height: 900,
+        },
+        { id: 82, url: 'https://cdn.test/b.png', thumb: 'https://cdn.test/u.jpg' },
+      ]);
       expect(offers[0]).toEqual({
         key: 'sgdb:art:81',
         kind: 'grid',
@@ -151,6 +148,16 @@ describe('steamgriddb metadata provider', () => {
         fullUrl: 'https://cdn.test/a.png',
       });
       expect(offers[1]).not.toHaveProperty('width');
+    });
+
+    it('offers no backgrounds at all — its heroes are banners, not full-screen art', async () => {
+      const { provider, fetch } = providerOf('secret', () => textResponse(GRIDS_FIXTURE));
+      const result = await provider.artwork(
+        { key: 'steam:220', title: 'HL2', steamAppId: 220 },
+        'hero',
+      );
+      expect(result).toEqual({ ok: true, value: [] });
+      expect(fetch).not.toHaveBeenCalled();
     });
 
     it('fetches art for a Steam candidate through the steam endpoint', async () => {

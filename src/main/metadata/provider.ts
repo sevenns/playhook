@@ -19,11 +19,17 @@ import {
   type MusicTrack,
 } from '../../shared/types';
 
-/** What the service knows about a candidate when it asks a provider for more. */
+/**
+ * What the service knows about a candidate when it asks a provider for more. Every reference the merge
+ * collected travels together: the gallery of one game is built from whichever sources recognized it, and
+ * a provider simply ignores a request that carries no reference of its own.
+ */
 export interface GameCandidateRef {
   readonly key: string;
   readonly title: string;
   readonly steamAppId?: number;
+  readonly rawgId?: number;
+  readonly gogId?: string;
 }
 
 /** One offered picture, with the URLs the renderer must never see. */
@@ -50,6 +56,12 @@ export interface MusicTrackOffer {
 
 export interface MetadataProvider {
   readonly id: MetadataProviderId;
+  /**
+   * Whether this source can be used at all right now. Only the keyed ones implement it (SteamGridDB,
+   * RAWG): a missing key is not a failure to report, it is a source that quietly does not take part —
+   * but the gallery does want to know, so that "nothing found" can say what would change that.
+   */
+  available?(): boolean;
   search?(query: string, signal?: AbortSignal): Promise<MetadataResult<readonly GameCandidate[]>>;
   /** The candidate for an appid the caller already knows — the manifest's own `steam.appid`. */
   candidateByAppId?(appId: number, signal?: AbortSignal): Promise<MetadataResult<GameCandidate>>;
