@@ -815,8 +815,8 @@ function mountLiquidWindows(): void {
   // holds two marked elements at once, the row and the chosen value. Without a window of their own the
   // body took whichever came first in the document, which is the row: the menu looked unfocused while
   // the highlight sat on the setting behind it.
-  liquid.mount(req('settings-options'), 3);
-  liquid.mount(req('game-settings-options'), 3);
+  liquid.mount(req('settings-options'), 3, req('settings-options-list'));
+  liquid.mount(req('game-settings-options'), 3, req('game-settings-options-list'));
   liquid.mount(reqQuery('#popup .popup-column'), 4);
   // Above the popup: both open ON TOP of a screen that still marks a row of its own, and the body must
   // follow the thing the user is actually driving.

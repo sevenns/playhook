@@ -57,7 +57,7 @@ export interface LiquidFocus {
    * implementation detail of this module, and eight hand-written canvases would be eight chances to
    * forget one. `priority` breaks ties when several surfaces hold a marked element at once.
    */
-  mount(root: HTMLElement, priority: number): void;
+  mount(root: HTMLElement, priority: number, before?: Element | null): void;
   /** Puts the body where the focus is with no travel — for a screen change, which is a cut, not a move. */
   snap(): void;
   start(): void;
@@ -85,21 +85,25 @@ function tuningFor(el: Element): JellyTuning {
 }
 
 /**
- * How far the row still has to slide, in real px.
+ * Where the selected cover's left edge sits on screen — the row's ANCHOR, in real px.
  *
- * The carousel is the one surface where the SELECTION does not move — the strip does, under a fixed
- * anchor. A screen rectangle therefore lies about where the selected cover is going to be: for the 143ms
- * of a step it is still off to one side, arriving. The springs chase that arriving rectangle, and under
- * auto-repeat it never stops arriving, so the body is pulled permanently off the anchor — which is what
- * dragged it across the screen. Taking the strip's remaining travel off the measurement puts the target
- * back where it will come to rest, i.e. exactly where it used to be when the body lived in strip
- * coordinates: still, with the row moving underneath it.
+ * The carousel is the one surface where the selection does not move: the strip slides under a fixed
+ * anchor, and the selected cover is always at that anchor once things settle. Its screen rectangle,
+ * though, is mid-slide for the 143ms of every step, so measuring it says the cover is off to one side
+ * and arriving. The springs chase that, and under auto-repeat it never stops arriving — which is what
+ * dragged the body across the screen.
+ *
+ * So the anchor is taken from the layout instead of from the animation: it is #carousel-strip's own
+ * `left`, a constant in styles.css (50 design px), and it cannot be mid-anything. Only the x is fixed
+ * this way — height and width still come from the element, because the cover really does grow, and the
+ * body should grow with it.
  */
-function stripLag(strip: HTMLElement, unit: number): number {
-  const matrix = new DOMMatrixReadOnly(getComputedStyle(strip).transform);
-  const settled = Number.parseFloat(strip.style.getPropertyValue('--strip-offset'));
-  if (!Number.isFinite(settled)) return 0;
-  return settled * unit - matrix.m41;
+const STRIP_ANCHOR = 50;
+
+function stripAnchorX(strip: HTMLElement, unit: number): number | null {
+  const parent = strip.parentElement;
+  if (parent === null) return null;
+  return parent.getBoundingClientRect().left + STRIP_ANCHOR * unit;
 }
 
 /** The focused element's box in SCREEN coordinates, plus the corner radius the body should copy. */
@@ -109,8 +113,9 @@ function targetOf(el: Element, unit: number, tuning: JellyTuning): JellyBox {
   const parsed = Number.parseFloat(style.borderTopLeftRadius);
   const radius = Number.isFinite(parsed) ? parsed : 0;
   const strip = el.closest<HTMLElement>('#carousel-strip');
-  const lag = strip === null ? 0 : stripLag(strip, unit);
-  return jellyBoxOf(rect.left + lag, rect.top, rect.width, rect.height, radius, unit, tuning);
+  const anchored = strip === null ? null : stripAnchorX(strip, unit);
+  const left = anchored ?? rect.left;
+  return jellyBoxOf(left, rect.top, rect.width, rect.height, radius, unit, tuning);
 }
 
 export function createLiquidFocus(deps: LiquidDeps): LiquidFocus {
@@ -378,11 +383,15 @@ export function createLiquidFocus(deps: LiquidDeps): LiquidFocus {
   }
 
   return {
-    mount(root: HTMLElement, priority: number): void {
+    mount(root: HTMLElement, priority: number, before?: Element | null): void {
       const canvas = document.createElement('canvas');
       canvas.className = 'liquid-window';
       canvas.setAttribute('aria-hidden', 'true');
-      root.prepend(canvas);
+      // First child by default, but some layers open with a veil and a blur of their own — put the
+      // window AFTER those and before the content, or the body is painted underneath them and comes out
+      // dimmed by the very gradient meant to sit behind it.
+      if (before === undefined || before === null) root.prepend(canvas);
+      else root.insertBefore(canvas, before);
       windows.push({ canvas, ctx: canvas.getContext('2d'), root, priority });
     },
     snap(): void {
