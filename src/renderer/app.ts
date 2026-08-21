@@ -800,9 +800,19 @@ function mountLiquidWindows(): void {
   liquid.mount(app, 0);
   liquid.mount(reqQuery('#bottom-bar .bar-content'), 1);
   liquid.mount(reqQuery('#library .library-pane'), 2);
+  // The full-screen surfaces. Each gets its window INSIDE its own column: the column carries opacity and
+  // a transform, so it is a stacking context, and the screen-wide window at the bottom cannot reach into
+  // it — that is what left the body clipped and half-swallowed by the veil behind the Library's sidebar.
+  liquid.mount(reqQuery('#library .settings-column'), 2);
+  liquid.mount(reqQuery('#settings .settings-column'), 2);
+  liquid.mount(reqQuery('#game-settings .settings-column'), 2);
   // The popup's own column, not #popup: the column carries opacity of its own, so it is a stacking
   // context and a window outside it could never sit under its buttons.
   liquid.mount(reqQuery('#popup .popup-column'), 3);
+  // Above the popup: both open ON TOP of a screen that still marks a row of its own, and the body must
+  // follow the thing the user is actually driving.
+  liquid.mount(req('file-picker'), 4);
+  liquid.mount(req('osk'), 5);
 }
 
 function revealUi(): void {
