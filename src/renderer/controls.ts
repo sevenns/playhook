@@ -1950,7 +1950,14 @@ export function createControls(deps: ControlsDeps): Controls {
     // is More by construction, see mainFocusables.)
     const screen = deps.carousel.screen();
     if (screen !== lastScreen) {
-      if (screen === 'detail') focusIndex = 0;
+      if (screen === 'detail') {
+        focusIndex = 0;
+        // And WOKEN. The bar's highlight goes dormant after IDLE_MS, and standing on the row long enough
+        // for that to happen is normal — you are reading titles, not pressing anything. Carrying that
+        // dormancy onto a screen you just opened means arriving with no focus at all, and having to
+        // nudge the stick before Play answers. Entering a screen is itself the act of choosing it.
+        focusRevealed = true;
+      }
       lastScreen = screen;
     }
     const active = phaseOf(state()) === 'busy' || steamBusy(state());
