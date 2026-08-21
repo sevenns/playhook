@@ -21,6 +21,12 @@ const STEAM_INSTALL_WATCH_INTERVAL_MS = 5000;
 // Safe either way — the poller keeps running and will flip to "Install" if removal completes later.
 const STEAM_UNINSTALL_TIMEOUT_MS = 60_000;
 
+/** The game one of the completion callbacks is about — everything a notification needs to name it. */
+export interface SteamWatchGame {
+  readonly id: string;
+  readonly title: string;
+}
+
 /** The narrow view of the controller the poller needs — accessors plus the single mutation it makes. */
 export interface SteamWatchDeps {
   /** The current resolved manifest (null when no card / rejected). */
@@ -29,19 +35,23 @@ export interface SteamWatchDeps {
   isLaunchInFlight(): boolean;
   /** The current AppState snapshot. */
   getState(): AppState;
-  /** Whether a card is currently present. */
-  isCardPresent(): boolean;
+  /** Whether the current game's source is available: its card is in, or it is a local game (always). */
+  isSourceAvailable(): boolean;
   /** Transition to `ready` with the given info (also re-arms/stops the poller, exactly as before). */
   enterReady(info: GameInfo): void;
-  /** Fired once when a Steam download completes (requiresInstall flips true→false) — plays the "install
-   *  finished" cue. Not fired for an already-installed card (that never enters this poller). */
-  onInstallCompleted(): void;
+  /** Fired once when a Steam download completes (requiresInstall flips true→false) — the launcher
+   *  notifies about the game. Not fired for an already-installed card (that never enters this poller). */
+  onInstallCompleted(game: SteamWatchGame): void;
+  /** Fired once when a steam://uninstall WE requested has actually removed the game (its .acf is gone).
+   *  A cancel (the timeout branch) never reaches here — nothing was removed. */
+  onUninstallCompleted(game: SteamWatchGame): void;
   /** Platform Steam locator (win32 registry / linux known paths), used for the .acf state read. */
   steamLocator(): SteamLocator;
 }
 
 export class SteamInstallWatch {
-  // Recursive setTimeout (no overlap). Non-null only while a Steam game is on the ready screen with a card.
+  // Recursive setTimeout (no overlap). Non-null only while a Steam game whose source is available is on
+  // the ready screen.
   private timer: ReturnType<typeof setTimeout> | null = null;
   // True while a tick is mid-flight (between nulling the timer and finishing). Prevents a concurrent
   // start() (e.g. an Install/Uninstall action landing during the tick's await) from spinning up a SECOND
@@ -118,6 +128,10 @@ export class SteamInstallWatch {
       const steamPausedProgress =
         status.state === 'downloading' ? (status.progress ?? undefined) : undefined;
       let steamUninstalling = false;
+      // Whether THIS tick is the one that saw our uninstall request actually take effect — the moment
+      // the notification belongs to. The flag is needed because the completion is decided here but the
+      // announcement waits for the `changed` block below, which is what makes it fire exactly once.
+      let uninstalled = false;
 
       // A requested steam://uninstall is in flight for this game.
       const req = this.uninstallRequest;
@@ -136,6 +150,7 @@ export class SteamInstallWatch {
           // .acf gone (absent/downloading) → Steam removed the game; finish the uninstall.
           log.info(`[steam-uninstall] appid=${appid} removed — flipping to Install`);
           this.uninstallRequest = null;
+          uninstalled = true;
         }
       }
 
@@ -161,15 +176,19 @@ export class SteamInstallWatch {
           steamPausedProgress,
           steamUninstalling,
         });
-        // Download just finished (Install→Play): play the "install finished" cue, like the installer/copy
-        // path. Guarded by the prev→now transition so it fires once, not on every post-install poll.
-        if (prev.requiresInstall && !requiresInstall) this.deps.onInstallCompleted();
+        // Download just finished (Install→Play): notify, like the installer/copy path. Guarded by the
+        // prev→now transition so it fires once, not on every post-install poll.
+        const game = { id: prev.id, title: prev.title };
+        if (prev.requiresInstall && !requiresInstall) this.deps.onInstallCompleted(game);
+        // …and its mirror: the game we asked Steam to remove is gone. Announced from here rather than
+        // from the flag flip above so it shares the once-per-transition guarantee.
+        if (uninstalled) this.deps.onUninstallCompleted(game);
       }
     } finally {
       this.tickInFlight = false;
-      // Re-arm iff we should still be watching this steam card (mirrors enterReady's start condition).
+      // Re-arm iff we should still be watching this steam game (mirrors enterReady's start condition).
       const s = this.deps.getState();
-      if (s.kind === 'ready' && s.game.installVia === 'steam' && this.deps.isCardPresent()) {
+      if (s.kind === 'ready' && s.game.installVia === 'steam' && this.deps.isSourceAvailable()) {
         this.start();
       }
     }

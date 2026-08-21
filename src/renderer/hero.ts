@@ -1,10 +1,9 @@
 // Hero background subsystem (split out of app.ts). Owns everything about "what image is on
 // screen and its colors": the two cross-fading hero layers, the shown-url gate, the renderer-local hero
-// rotation, the empty/idle wallpaper screen, and the two-color palette (compute + cache + apply). These
+// rotation, the idle wallpaper background, and the two-color palette (compute + cache + apply). These
 // share `shownUrl`/`wallpaperUrl` so they live together — keeping the palette race gate internal rather
 // than threaded through app.ts. The controller reaches back only through the narrow `deps` seam.
 import type { HeroAssets } from '../shared/types';
-import type { Translator } from '../shared/i18n/index.js';
 import { computePalette, type Palette } from './dominant-color.js';
 import { req } from './dom.js';
 
@@ -16,8 +15,6 @@ export interface HeroDeps {
   hasGameOnScreen(): boolean;
   /** The current game's id (for the per-hero palette cache key); '' when none. */
   getGameId(): string;
-  /** The current translator (read live so the empty-screen title follows the language). */
-  getTranslator(): Translator;
 }
 
 export interface HeroController {
@@ -31,18 +28,41 @@ export interface HeroController {
   /** New hero payload for the BROWSED game. Same thing, except an empty payload REPLACES the background
    *  (with the wallpaper) instead of leaving the previous game's image up. */
   applyBrowseAssets(assets: HeroAssets | null): void;
-  /** The empty / idle screen: fallback wallpaper background, its palette, "Insert a game card" title. */
-  applyEmptyScreen(): void;
+  /**
+   * The idle background: the fallback wallpaper and its palette, for a screen with no game on it — the
+   * carousel standing on one of the launcher's own cards. The TITLE is not touched here: what is written
+   * there belongs to render() (a launcher card names itself in the same line a game does).
+   */
+  applyIdleBackground(): void;
+  /**
+   * Paints the fallback wallpaper as the FIRST background of the session — without claiming the screen
+   * is empty (no title change): a launcher opening onto a card has nothing to show until its hero data
+   * URL arrives, and a blank window in the meantime is worse than the wallpaper the game's own hero then
+   * cross-fades over. No-op once anything is on screen.
+   */
+  showWallpaperBackdrop(): void;
   /** Stores the fallback wallpaper data URL (delivered by main); does not repaint on its own. */
   setWallpaper(url: string | null): void;
   /** Parallax offset in DESIGN px: the background drifts with the carousel (see #hero in styles.css). */
   setParallax(designPx: number): void;
+  /**
+   * Whether a direction is being HELD, i.e. the strip is flipping on its own. While it is, the image on
+   * screen stays exactly where it is — whatever heroes arrive meanwhile are remembered, not painted —
+   * and the last one lands as soon as the key/stick is let go. Interruptible: the request that arrives
+   * during the hold is the one that gets shown.
+   */
+  setFlipping(flipping: boolean): void;
+  /**
+   * The COMPUTED transform (a matrix) of the layer currently on screen — its bg-pan caught mid-drift.
+   * The boot backdrop converges on it as it dissolves, so the handover has no offset to give away; see
+   * the boot reveal in app.ts.
+   */
+  currentLayerTransform(): string;
 }
 
 export function createHeroController(deps: HeroDeps): HeroController {
   const app = req('app');
   const heroPanEl = req('hero-pan');
-  const titleEl = req('title');
 
   // Fallback wallpaper (data URL from main) for the empty / idle screen, and its cached palette.
   let wallpaperUrl: string | null = null;
@@ -109,10 +129,90 @@ export function createHeroController(deps: HeroDeps): HeroController {
   // don't trigger a needless cross-fade / pan re-randomize when the image hasn't actually changed.
   let shownUrl: string | null = null;
 
-  // Cross-fades to a new image on the idle layer, then swaps roles. No-op when the url is unchanged
-  // (keeps the running pan going). null → no image (blank background).
-  function showImage(url: string | null): void {
-    if (url === shownUrl) return;
+  /** Matches the .hero-layer opacity transition in styles.css — how long a cross-fade owns both layers. */
+  const CROSSFADE_MS = 700;
+  /**
+   * How long the requested image must stand before it is painted. Deliberately longer than the nav
+   * repeat (NAV_REPEAT_MS in gamepad.ts), so a HELD left/right never paints a background at all: the
+   * strip flips, and the hero lands once, on wherever the user stopped.
+   */
+  const SETTLE_MS = 120;
+
+  // What the launcher WANTS on screen, versus what is on it (shownUrl). They differ while a swap waits —
+  // see requestImage. The palette travels with the image rather than being applied at request time: the
+  // colors and the picture must never disagree, which is what a straight apply would do while flipping.
+  let desiredUrl: string | null = null;
+  let desiredPaint: (() => void) | null = null;
+  let swapTimer: number | null = null;
+  let lastSwapAt = Number.NEGATIVE_INFINITY;
+  // A direction is being held (controls.ts tells us). SETTLE_MS alone almost covers this — the repeat is
+  // faster than it — but "almost" depends on the OS keyboard repeat rate, which is the user's setting,
+  // not ours. The held state says it outright: no swap at all until the flip stops.
+  let flipping = false;
+
+  /**
+   * Asks for an image (and the palette that goes with it). The swap is deferred twice over: until the
+   * request has stood still for SETTLE_MS, and until the previous cross-fade has finished. Painting into
+   * a layer that is still fading is what made a fast card change snap — the incoming layer is visible by
+   * then, so swapping its background-image replaces the picture instantly, with no fade at all.
+   */
+  function requestImage(url: string | null, paintPalette: () => void): void {
+    if (url === desiredUrl) {
+      // The same image asked for again (a re-render, a language change). No cross-fade — but the palette
+      // may still need re-applying, unless the swap to it hasn't happened yet, where it is the swap's job.
+      if (shownUrl === desiredUrl) paintPalette();
+      else desiredPaint = paintPalette;
+      return;
+    }
+    desiredUrl = url;
+    desiredPaint = paintPalette;
+    // The session's FIRST image has nothing to cross-fade with and nobody waiting to see it settle.
+    if (shownUrl === null && swapTimer === null && !flipping) runSwap();
+    else armSwap();
+  }
+
+  function armSwap(): void {
+    if (swapTimer !== null) {
+      window.clearTimeout(swapTimer);
+      swapTimer = null;
+    }
+    // Held: the swap is re-armed by setFlipping when the direction is released, with whatever the last
+    // request turned out to be.
+    if (flipping) return;
+    const waitForFade = lastSwapAt + CROSSFADE_MS - performance.now();
+    swapTimer = window.setTimeout(runSwap, Math.max(SETTLE_MS, waitForFade));
+  }
+
+  function setFlipping(next: boolean): void {
+    if (flipping === next) return;
+    flipping = next;
+    if (flipping) {
+      if (swapTimer !== null) {
+        window.clearTimeout(swapTimer);
+        swapTimer = null;
+      }
+      return;
+    }
+    if (desiredUrl !== shownUrl) armSwap();
+  }
+
+  function runSwap(): void {
+    if (swapTimer !== null) {
+      window.clearTimeout(swapTimer);
+      swapTimer = null;
+    }
+    const paint = desiredPaint;
+    desiredPaint = null;
+    if (desiredUrl !== shownUrl) {
+      lastSwapAt = performance.now();
+      swapLayers(desiredUrl);
+    }
+    paint?.();
+  }
+
+  // Cross-fades to a new image on the idle layer, then swaps roles. Only ever called from runSwap, which
+  // owns the timing; null → no image (blank background).
+  function swapLayers(url: string | null): void {
     shownUrl = url;
     // The incoming (idle) layer gets the new image + a fresh random pan direction (drift left vs right).
     idleLayer.style.backgroundImage = url !== null ? `url("${url}")` : 'none';
@@ -131,17 +231,22 @@ export function createHeroController(deps: HeroDeps): HeroController {
     idleLayer = previousActive;
   }
 
-  // The empty / idle screen (no game): the fallback wallpaper as background, its dominant colors as
-  // the palette, and "Insert a game card" as the title. Reuses the main screen's bottom bar layout.
-  function applyEmptyScreen(): void {
-    titleEl.textContent = deps.getTranslator()('launcher.emptyTitle');
+  // The idle background (no game on screen): the fallback wallpaper, with its dominant colors as the
+  // palette. Reuses the main screen's bottom bar layout; the title line is render()'s business.
+  function applyIdleBackground(): void {
     if (wallpaperUrl === null) {
-      showImage(null);
-      applyPalette(null);
+      requestImage(null, () => applyPalette(null));
       return;
     }
-    showImage(wallpaperUrl);
-    applyWallpaperPalette();
+    requestImage(wallpaperUrl, applyWallpaperPalette);
+  }
+
+  // The wallpaper as the opening backdrop: the same paint as the idle background, under a gate — it only
+  // ever paints into a screen that has nothing on it yet, so it can never override a hero that arrived
+  // first. One source of behaviour, two entry conditions.
+  function showWallpaperBackdrop(): void {
+    if (shownUrl !== null || desiredUrl !== null) return;
+    applyIdleBackground();
   }
 
   // ── Hero rotation (renderer-local, GTA-5 cadence) ──────────────────────────
@@ -156,13 +261,11 @@ export function createHeroController(deps: HeroDeps): HeroController {
   function showHeroAt(index: number): void {
     const url = heroImages[index];
     if (url === undefined) return;
-    showImage(url);
-    if (url === wallpaperUrl) {
-      applyWallpaperPalette();
-      return;
-    }
     const id = deps.getGameId();
-    updatePaletteFor(url, `${id}#${index}`);
+    requestImage(url, () => {
+      if (url === wallpaperUrl) applyWallpaperPalette();
+      else updatePaletteFor(url, `${id}#${index}`);
+    });
   }
 
   // Rotation runs only with >1 image, the window visible, and a game on screen (symmetric to the music
@@ -203,7 +306,7 @@ export function createHeroController(deps: HeroDeps): HeroController {
     heroImages = assets?.images ?? [];
     heroIndex = 0;
     // A fresh payload can carry the same per-game key `${id}#${index}` mapped to a DIFFERENT image — e.g.
-    // after the user reorders hero images in the Configure window and saves. The palette cache is keyed by
+    // after the user reorders hero images on the Customize screen and saves. The palette cache is keyed by
     // position, not content, so drop it here: the new first image must recompute --d1/--d2 rather than
     // reuse the previous image's colors. (Intra-card rotation still fills and reuses the cache.)
     paletteCache.clear();
@@ -217,10 +320,8 @@ export function createHeroController(deps: HeroDeps): HeroController {
       // means something else entirely ("no card any more"), and there the old image may stay until the
       // browse cursor lands somewhere — hence the flag rather than one rule for both.
       else if (replaceWhenEmpty) {
-        if (wallpaperUrl !== null) {
-          showImage(wallpaperUrl);
-          applyWallpaperPalette();
-        } else showImage(null);
+        if (wallpaperUrl !== null) requestImage(wallpaperUrl, applyWallpaperPalette);
+        else requestImage(null, () => applyPalette(null));
       }
     }
     startRotation();
@@ -242,13 +343,20 @@ export function createHeroController(deps: HeroDeps): HeroController {
     heroPanEl.style.setProperty('--hero-parallax', `calc(${designPx} * var(--px))`);
   }
 
+  function currentLayerTransform(): string {
+    return getComputedStyle(activeLayer).transform;
+  }
+
   return {
     repaint,
     startRotation,
     applyAssets,
     applyBrowseAssets: (assets) => applyAssets(assets, true),
-    applyEmptyScreen,
+    applyIdleBackground,
+    showWallpaperBackdrop,
     setWallpaper,
     setParallax,
+    setFlipping,
+    currentLayerTransform,
   };
 }

@@ -12,8 +12,13 @@
 //                the original error, Save stays blocked, and nothing is lost. Granularity is the top-level
 //                key (a bad `install.type` marks the whole `install` block corrupt).
 
-/** The three mutually-exclusive launch methods (mirrors the manifest superRefine). */
-export type LaunchMode = 'executable' | 'installer' | 'steam';
+/**
+ * The launch methods (mirrors the manifest superRefine). `pc` - a game already installed on this
+ * machine, addressed by absolute path - is only valid in the PC library. `none` is the PC-library draft
+ * state (no launch method chosen yet) - also only valid there; the form gets both constraints from the
+ * selected root, not from the text (see `launchModesFor`/`draftModeFor` in game-settings-model.ts).
+ */
+export type LaunchMode = 'executable' | 'installer' | 'steam' | 'pc' | 'none';
 
 /**
  * Derives a manifest `id` from a game's display name for the Configure form: accents stripped, lowercased,
@@ -55,6 +60,12 @@ export interface InstallModel {
 /** The `steam` block as form state (appid kept as numeric TEXT — the control's value is a string). */
 export interface SteamModel {
   readonly appid: string;
+  readonly rest: Readonly<Record<string, unknown>>;
+}
+
+/** The `pc` block as form state: the absolute path to a game on this machine (PC library only). */
+export interface PcModel {
+  readonly executable: string;
   readonly rest: Readonly<Record<string, unknown>>;
 }
 
@@ -100,6 +111,8 @@ export interface ManifestFormModel {
    */
   readonly copyInstall: InstallModel;
   readonly steam: SteamModel;
+  /** The `pc` block — the absolute executable of a local game (PC-library mode only). */
+  readonly pc: PcModel;
 }
 
 export type ParseFormResult =
@@ -138,6 +151,7 @@ export const KNOWN_MANIFEST_KEYS: readonly string[] = [
   'umuGameId',
   'install',
   'steam',
+  'pc',
 ];
 
 const KNOWN_KEY_SET = new Set(KNOWN_MANIFEST_KEYS);
@@ -163,11 +177,19 @@ function emptySteam(): SteamModel {
   return { appid: '', rest: {} };
 }
 
-/** A pristine, all-empty form model (executable mode) — used for a blank drive and the empty baseline of
- * the template-replace confirm (plan R8). */
-export function emptyFormModel(): ManifestFormModel {
+function emptyPc(): PcModel {
+  return { executable: '', rest: {} };
+}
+
+/**
+ * A pristine, all-empty form model — used for a blank drive and the empty baseline of the template-replace
+ * confirm (plan R8). The mode is a PARAMETER because a blank PC library must start in `pc` mode: it is the
+ * only mode valid there, so defaulting to `executable` would hand the user a form whose every save is
+ * rejected.
+ */
+export function emptyFormModel(launchMode: LaunchMode = 'executable'): ManifestFormModel {
   return {
-    launchMode: 'executable',
+    launchMode,
     id: '',
     title: '',
     executable: '',
@@ -187,6 +209,7 @@ export function emptyFormModel(): ManifestFormModel {
     copyToPc: false,
     copyInstall: emptyCopyInstall(),
     steam: emptySteam(),
+    pc: emptyPc(),
   };
 }
 
@@ -225,6 +248,21 @@ function parseInstall(source: Record<string, unknown>): InstallModel | null {
     }
   }
   return { installer, type, runAsAdmin, args, winetricks, rest };
+}
+
+/** Parses a `pc` object; null = executable had the wrong type (→ the block is corrupt). */
+function parsePc(source: Record<string, unknown>): PcModel | null {
+  let executable = '';
+  const rest: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(source)) {
+    if (key === 'executable') {
+      if (typeof value !== 'string') return null;
+      executable = value;
+    } else {
+      rest[key] = value;
+    }
+  }
+  return { executable, rest };
 }
 
 /** Parses a `steam` object; null = appid had the wrong type (→ the block is corrupt). */
@@ -366,16 +404,28 @@ function valueToFormResult(parsed: unknown): ParseFormResult {
     else corrupt['steam'] = value;
   }
 
-  // Launch mode: steam > install > executable (plan R5). Presence (not validity) decides — a corrupt
+  let pc = emptyPc();
+  if (has('pc')) {
+    const value = source['pc'];
+    const parsedPc = isRecord(value) ? parsePc(value) : null;
+    if (parsedPc !== null) pc = parsedPc;
+    else corrupt['pc'] = value;
+  }
+
+  // Launch mode: pc > steam > install > executable (plan R5). Presence (not validity) decides — a corrupt
   // block still selects its mode, and its raw value is re-emitted from `corrupt` so the error shows.
   // `install` with `type: 'copy'` is the exception: it is Executable mode with the checkbox on, so it
   // must NOT be shown as an Installer (the user never chose that mode).
-  const launchMode: LaunchMode = has('steam')
-    ? 'steam'
-    : has('install') && !copyToPc
-      ? 'installer'
-      : 'executable';
-  const mixed = has('steam') && (has('install') || has('executable'));
+  const launchMode: LaunchMode = has('pc')
+    ? 'pc'
+    : has('steam')
+      ? 'steam'
+      : has('install') && !copyToPc
+        ? 'installer'
+        : 'executable';
+  const mixed =
+    (has('steam') && (has('install') || has('executable'))) ||
+    (has('pc') && (has('steam') || has('install') || has('executable')));
 
   const model: ManifestFormModel = {
     launchMode,
@@ -398,6 +448,7 @@ function valueToFormResult(parsed: unknown): ParseFormResult {
     copyToPc,
     copyInstall,
     steam,
+    pc,
   };
   return { ok: true, model, rest, corrupt, mixed };
 }
@@ -444,6 +495,13 @@ function buildInstall(install: InstallModel): Record<string, unknown> {
   return out;
 }
 
+function buildPc(pc: PcModel): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  if (pc.executable !== '') out.executable = pc.executable;
+  for (const [key, value] of Object.entries(pc.rest)) out[key] = value;
+  return out;
+}
+
 function buildSteam(steam: SteamModel): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   const appid = numericValue(steam.appid);
@@ -482,8 +540,29 @@ function buildManifestObject(
   if (model.id !== '') out.id = model.id;
   if (model.title !== '') out.title = model.title;
 
-  if (model.launchMode === 'steam') {
+  if (model.launchMode === 'pc') {
+    // A local game: the absolute executable in its own block, plus the launch options an ordinary game
+    // has. No card-relative `executable` and no install block — the schema forbids both here.
+    out.pc = buildPc(model.pc);
+    const args = nonEmpty(model.args);
+    if (args.length > 0) out.args = args;
+    if (model.runAsAdmin) out.runAsAdmin = true;
+    const winetricks = nonEmpty(model.winetricks);
+    if (winetricks.length > 0) out.winetricks = winetricks;
+    if (model.umuGameId !== '') out.umuGameId = model.umuGameId;
+  } else if (model.launchMode === 'steam') {
     out.steam = buildSteam(model.steam);
+  } else if (model.launchMode === 'none') {
+    // PC-library draft: no launch block is written at all (that IS the draft state — see manifest.ts
+    // resolveOne). Only the launch-adjacent fields that don't belong to any specific block are kept, so
+    // filling them in before a method is chosen survives Save instead of silently vanishing (every other
+    // branch here is the only place that writes them).
+    const args = nonEmpty(model.args);
+    if (args.length > 0) out.args = args;
+    if (model.runAsAdmin) out.runAsAdmin = true;
+    const winetricks = nonEmpty(model.winetricks);
+    if (winetricks.length > 0) out.winetricks = winetricks;
+    if (model.umuGameId !== '') out.umuGameId = model.umuGameId;
   } else {
     if (model.executable !== '') out.executable = model.executable;
     const args = nonEmpty(model.args);
@@ -534,10 +613,31 @@ function buildManifestObject(
 // time; these two pure functions wrap/unwrap the array so the form's per-game model is reused verbatim.
 
 /** One game's serializable form state (model + preserved unknown/corrupt keys). */
-export interface GameFormState {
+export interface FormGameSlot {
   readonly model: ManifestFormModel;
   readonly rest: Readonly<Record<string, unknown>>;
   readonly corrupt: Readonly<Record<string, unknown>>;
+}
+
+/**
+ * A slot the form cannot represent at all (a non-object element — `textToGames` returns `ok:false` for
+ * it), kept as the VERBATIM parsed value so it can be written back untouched.
+ *
+ * It exists because of a case the per-game editor makes reachable and the old window never did: a card
+ * may carry several games, `readManifests` SKIPS the ones that do not resolve, and the rest stay
+ * perfectly playable — so the user edits game B while game A sits in the same file, unrepresentable. With
+ * only `FormGameSlot` to serialize from, saving B would have to drop A. Preserving it verbatim is not a
+ * nicety; it is the difference between editing a game and destroying its neighbour (see the plan, Р2).
+ */
+export interface RawGameSlot {
+  readonly raw: unknown;
+}
+
+export type GameFormState = FormGameSlot | RawGameSlot;
+
+/** Whether a slot is the verbatim kind (the form has nothing to show for it). */
+export function isRawSlot(slot: GameFormState): slot is RawGameSlot {
+  return 'raw' in slot;
 }
 
 export type ParseGamesResult =
@@ -545,6 +645,12 @@ export type ParseGamesResult =
       readonly ok: true;
       /** One parse result per game (each may individually be ok:false — a non-object element). */
       readonly games: readonly ParseFormResult[];
+      /**
+       * The parsed JSON value of each game, index-aligned with `games`. It is what a slot the form cannot
+       * represent is written back from (see RawGameSlot) — without it, an unrepresentable neighbour could
+       * only be dropped.
+       */
+      readonly values: readonly unknown[];
       /** Whether the source was an array (>1 games serialize back as an array; see gamesToText). */
       readonly isArray: boolean;
     }
@@ -564,21 +670,68 @@ export function textToGames(text: string): ParseGamesResult {
   }
   if (Array.isArray(parsed)) {
     if (parsed.length === 0) return { ok: false, message: 'the games array must not be empty' };
-    return { ok: true, isArray: true, games: parsed.map(valueToFormResult) };
+    const values: readonly unknown[] = parsed;
+    return { ok: true, isArray: true, games: values.map(valueToFormResult), values };
   }
   if (isRecord(parsed)) {
-    return { ok: true, isArray: false, games: [valueToFormResult(parsed)] };
+    return { ok: true, isArray: false, games: [valueToFormResult(parsed)], values: [parsed] };
   }
   return { ok: false, message: 'game.json must be a game object or a non-empty array of games' };
 }
 
+export type NewGameSlotsResult =
+  | {
+      readonly ok: true;
+      readonly slots: readonly GameFormState[];
+      /** Where the new game sits — always last, so the neighbours keep the indices they were read at. */
+      readonly index: number;
+    }
+  | { readonly ok: false; readonly message: string };
+
+/**
+ * The slot list a screen ADDING (or moving in) a game starts from: everything the root already carries,
+ * plus one slot at the end for `model` — a blank one for a new game, or a carried-over one for a move
+ * (see `carryFormToCard`). `text` is null when the root has no game.json at all (a blank card, a PC
+ * library with no local game yet) — the normal case here, and the reason this cannot simply be
+ * `textToGames`, which rejects an empty games array.
+ *
+ * The inserted game is a real slot rather than a special case beside the list on purpose: `slotIndex` is
+ * what the validator's `games.<i>.<field>` paths are matched against, so a game held outside the list
+ * would have its own problems reported as somebody else's — and Save would go green on an empty form.
+ */
+export function slotsWithInsertedGame(
+  text: string | null,
+  model: ManifestFormModel,
+): NewGameSlotsResult {
+  const inserted: GameFormState = { model, rest: {}, corrupt: {} };
+  if (text === null || text.trim() === '') return { ok: true, slots: [inserted], index: 0 };
+  const parsed = textToGames(text);
+  if (!parsed.ok) return { ok: false, message: parsed.message };
+  const existing: GameFormState[] = parsed.games.map((game, index) =>
+    game.ok
+      ? { model: game.model, rest: game.rest, corrupt: game.corrupt }
+      : { raw: parsed.values[index] },
+  );
+  return { ok: true, slots: [...existing, inserted], index: existing.length };
+}
+
+/** `slotsWithInsertedGame` with a blank slot — the Add-game screen's starting point. */
+export function slotsWithNewGame(text: string | null, launchMode: LaunchMode): NewGameSlotsResult {
+  return slotsWithInsertedGame(text, emptyFormModel(launchMode));
+}
+
 /**
  * Serializes a LIST of game form states back to manifest TEXT: exactly one game → a single object (legacy
- * shape, maximal backwards compatibility), more than one → an array (see the plan, decision 2). An empty
- * list is not expected (a card always has ≥1 game); it falls back to a single empty object for safety.
+ * shape, maximal backwards compatibility), more than one → an array (see the plan, decision 2).
+ *
+ * An EMPTY list serializes to `[]` — the PC library's "there are no local games any more", which main
+ * turns into deleting game.json. A card never reaches this (its last game cannot be removed).
  */
 export function gamesToText(games: readonly GameFormState[]): string {
-  const objects = games.map((g) => buildManifestObject(g.model, g.rest, g.corrupt));
+  if (games.length === 0) return '[]\n';
+  const objects = games.map((slot) =>
+    isRawSlot(slot) ? slot.raw : buildManifestObject(slot.model, slot.rest, slot.corrupt),
+  );
   const value: unknown = objects.length === 1 ? objects[0] : objects;
   return `${JSON.stringify(value, null, 2)}\n`;
 }

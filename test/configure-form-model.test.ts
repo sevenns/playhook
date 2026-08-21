@@ -1,10 +1,14 @@
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
+  emptyFormModel,
   formModelToText,
   slugifyId,
   textToFormModel,
   textToGames,
   gamesToText,
+  isRawSlot,
+  slotsWithNewGame,
   launchModeOf,
   KNOWN_MANIFEST_KEYS,
   type GameFormState,
@@ -365,6 +369,202 @@ describe('launch mode', () => {
   });
 });
 
+describe('pc mode (a local game on this PC)', () => {
+  // Native, absolute path: the PC library never travels, and CI runs this suite on Windows too.
+  const exe = path.join(path.resolve(path.sep), 'Games', 'Hades', 'Hades.exe');
+  const pcText = JSON.stringify({
+    schemaVersion: 1,
+    id: 'hades',
+    title: 'Hades',
+    pc: { executable: exe },
+    heroImage: 'assets/hero.jpg',
+    watchProcesses: ['Hades.exe'],
+  });
+
+  it('parses into pc mode without spilling the block into `rest`', () => {
+    const result = parseOk(pcText);
+    expect(launchModeOf(result.model)).toBe('pc');
+    expect(result.model.pc.executable).toBe(exe);
+    expect(result.rest).toEqual({});
+    expect(result.corrupt).toEqual({});
+  });
+
+  it('round-trips into a manifest the PC-source validator accepts', () => {
+    const text = serialize(pcText);
+    expect(validateManifestText(text, t, 'pc').ok).toBe(true);
+    expect(serialize(text)).toBe(text); // idempotent
+  });
+
+  it('does not emit the card-relative executable or an install block', () => {
+    const base = parseOk(pcText);
+    const model: ManifestFormModel = {
+      ...base.model,
+      executable: 'ghost.exe',
+      copyToPc: true,
+    };
+    const parsed = JSON.parse(formModelToText(model, {}, {})) as Record<string, unknown>;
+    expect(parsed).toHaveProperty('pc');
+    expect(parsed).not.toHaveProperty('executable');
+    expect(parsed).not.toHaveProperty('install');
+  });
+
+  it('keeps args/runAsAdmin/watchProcesses, which a local game may use like any other', () => {
+    const model: ManifestFormModel = {
+      ...parseOk(pcText).model,
+      args: ['-windowed'],
+      runAsAdmin: true,
+    };
+    const parsed = JSON.parse(formModelToText(model, {}, {})) as Record<string, unknown>;
+    expect(parsed['args']).toEqual(['-windowed']);
+    expect(parsed['runAsAdmin']).toBe(true);
+    expect(parsed['watchProcesses']).toEqual(['Hades.exe']);
+  });
+
+  it('switching a parsed pc game to another mode drops the block (modes are exclusive)', () => {
+    const model: ManifestFormModel = {
+      ...parseOk(pcText).model,
+      launchMode: 'executable',
+      executable: 'g/g.exe',
+    };
+    const parsed = JSON.parse(formModelToText(model, {}, {})) as Record<string, unknown>;
+    expect(parsed).not.toHaveProperty('pc');
+    expect(parsed['executable']).toBe('g/g.exe');
+  });
+
+  it('emptyFormModel("pc") starts a blank library in pc mode', () => {
+    expect(launchModeOf(emptyFormModel('pc'))).toBe('pc');
+    expect(launchModeOf(emptyFormModel())).toBe('executable');
+  });
+
+  it('serializes an EMPTY game list as [] (the PC library was emptied)', () => {
+    expect(gamesToText([])).toBe('[]\n');
+  });
+});
+
+describe('none mode (PC-library draft — no launch method chosen yet, Р1)', () => {
+  it('emits no launch block at all, but keeps args/runAsAdmin/winetricks/umuGameId', () => {
+    const model: ManifestFormModel = {
+      ...emptyFormModel('none'),
+      id: 'hades',
+      title: 'Hades',
+      heroImage: ['assets/hero.jpg'],
+      args: ['-windowed'],
+      runAsAdmin: true,
+      winetricks: ['dotnet48'],
+      umuGameId: 'umu-hades',
+    };
+    const parsed = JSON.parse(formModelToText(model, {}, {})) as Record<string, unknown>;
+    expect(parsed).not.toHaveProperty('pc');
+    expect(parsed).not.toHaveProperty('steam');
+    expect(parsed).not.toHaveProperty('install');
+    expect(parsed).not.toHaveProperty('executable');
+    expect(parsed['args']).toEqual(['-windowed']);
+    expect(parsed['runAsAdmin']).toBe(true);
+    expect(parsed['winetricks']).toEqual(['dotnet48']);
+    expect(parsed['umuGameId']).toBe('umu-hades');
+  });
+
+  it('serializes into a manifest the PC-library validator accepts as a draft', () => {
+    const model: ManifestFormModel = {
+      ...emptyFormModel('none'),
+      id: 'hades',
+      title: 'Hades',
+      heroImage: ['assets/hero.jpg'],
+    };
+    expect(validateManifestText(formModelToText(model, {}, {}), t, 'pc').ok).toBe(true);
+  });
+
+  it('round-trips args/runAsAdmin/winetricks/umuGameId — nothing vanishes silently on Save', () => {
+    const model: ManifestFormModel = {
+      ...emptyFormModel('none'),
+      id: 'hades',
+      title: 'Hades',
+      heroImage: ['assets/hero.jpg'],
+      args: ['-windowed'],
+      runAsAdmin: true,
+      winetricks: ['dotnet48'],
+      umuGameId: 'umu-hades',
+    };
+    const reparsed = parseOk(formModelToText(model, {}, {}));
+    // textToFormModel has no `source` — it defaults to 'executable' here; the screen corrects that via
+    // draftModeFor once it knows the manifest is from the PC library (see game-settings-model.test.ts).
+    expect(reparsed.model.args).toEqual(['-windowed']);
+    expect(reparsed.model.runAsAdmin).toBe(true);
+    expect(reparsed.model.winetricks).toEqual(['dotnet48']);
+    expect(reparsed.model.umuGameId).toBe('umu-hades');
+  });
+
+  it('unknown/corrupt keys still survive the round-trip in none mode', () => {
+    const model: ManifestFormModel = { ...emptyFormModel('none'), id: 'hades', title: 'Hades' };
+    const rest = { customLauncherHint: 'wine' };
+    const corrupt = { launchTimeoutSec: 'soon' };
+    const parsed = JSON.parse(formModelToText(model, rest, corrupt)) as Record<string, unknown>;
+    expect(parsed['customLauncherHint']).toBe('wine');
+    expect(parsed['launchTimeoutSec']).toBe('soon');
+  });
+
+  it('switching pc -> none -> pc does not lose the typed pc.executable path', () => {
+    const exe = path.join(path.resolve(path.sep), 'Games', 'Hades', 'Hades.exe');
+    const withPath: ManifestFormModel = {
+      ...emptyFormModel('pc'),
+      pc: { executable: exe, rest: {} },
+    };
+    const draft: ManifestFormModel = { ...withPath, launchMode: 'none' };
+    const backToPc: ManifestFormModel = { ...draft, launchMode: 'pc' };
+    expect(backToPc.pc.executable).toBe(exe);
+  });
+
+  it('emptyFormModel("none") is a valid, blank model', () => {
+    expect(launchModeOf(emptyFormModel('none'))).toBe('none');
+  });
+});
+
+describe('steam mode in the PC library (a Steam game installed on this PC)', () => {
+  const steamText = JSON.stringify({
+    schemaVersion: 1,
+    id: 'hades',
+    title: 'Hades',
+    steam: { appid: 1145360 },
+    watchProcesses: ['Hades.exe'],
+    heroImage: 'assets/hero.jpg',
+    pcSavePath: '%APPDATA%/Hades',
+  });
+
+  it('round-trips into a manifest the PC-source validator accepts', () => {
+    const result = parseOk(steamText);
+    expect(launchModeOf(result.model)).toBe('steam');
+    const text = serialize(steamText);
+    expect(validateManifestText(text, t, 'pc').ok).toBe(true);
+    expect(serialize(text)).toBe(text); // idempotent
+  });
+
+  it('keeps pcSavePath — the save backup a local Steam game gets from the library', () => {
+    const parsed = JSON.parse(serialize(steamText)) as Record<string, unknown>;
+    expect(parsed['pcSavePath']).toBe('%APPDATA%/Hades');
+    expect(parsed).not.toHaveProperty('saveOnCard');
+  });
+
+  // The counterpart of the rule above, and the reason `saveOnCard` may NOT be gated by launch mode: on a
+  // CARD a Steam game's save sync is exactly `saveOnCard` + `pcSavePath`. Suppressing it for steam mode
+  // would silently break every existing Steam card. The PC library is kept clean by the form instead (it
+  // hides the field and clears the slot when the edited root is the library — see FormView.setSource).
+  it('still emits saveOnCard for a CARD steam game', () => {
+    const cardSteam = JSON.stringify({
+      schemaVersion: 1,
+      id: 'hades',
+      title: 'Hades',
+      steam: { appid: 1145360 },
+      watchProcesses: ['Hades.exe'],
+      heroImage: 'assets/hero.jpg',
+      saveOnCard: 'saves/hades',
+      pcSavePath: '%APPDATA%/Hades',
+    });
+    const parsed = JSON.parse(serialize(cardSteam)) as Record<string, unknown>;
+    expect(parsed['saveOnCard']).toBe('saves/hades');
+    expect(validateManifestText(serialize(cardSteam), t, 'card').ok).toBe(true);
+  });
+});
+
 describe('multi-game wrapper (textToGames / gamesToText)', () => {
   const gameText = (id: string): string =>
     `{"schemaVersion":1,"id":"${id}","title":"${id}","executable":"g.exe","heroImage":"h.jpg"}`;
@@ -431,6 +631,95 @@ describe('multi-game wrapper (textToGames / gamesToText)', () => {
       expect(parsed.games[0]?.ok).toBe(true);
       expect(parsed.games[1]?.ok).toBe(false);
     }
+  });
+
+  // The per-game editor makes this reachable: readManifests SKIPS a game that does not resolve, the rest
+  // of the card stays playable, and the user edits one of them. Saving must not take the broken neighbour
+  // with it — hence the raw slot (see the plan, Р2).
+  it('writes an unrepresentable neighbour back VERBATIM instead of dropping it', () => {
+    const source = `[${gameText('a')}, ["not", "a game"]]`;
+    const parsed = textToGames(source);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) throw new Error('unreachable');
+
+    const rebuilt: GameFormState[] = parsed.games.map((game, index) => {
+      if (!game.ok) return { raw: parsed.values[index] };
+      return { model: game.model, rest: game.rest, corrupt: game.corrupt };
+    });
+    // The editable slot even changes, exactly as a real edit would.
+    const first = rebuilt[0];
+    if (first === undefined || !('model' in first)) throw new Error('unreachable');
+    rebuilt[0] = { ...first, model: { ...first.model, title: 'Renamed' } };
+
+    const out = JSON.parse(gamesToText(rebuilt)) as unknown;
+    expect(Array.isArray(out)).toBe(true);
+    const games = out as readonly Record<string, unknown>[];
+    expect(games).toHaveLength(2);
+    expect(games[0]?.title).toBe('Renamed');
+    expect(games[1]).toEqual(['not', 'a game']);
+  });
+});
+
+// Adding a game to a root the launcher has never written to is the case the multi-game wrapper alone
+// cannot express: `textToGames` rejects an empty list, so a blank card would look like a broken file.
+describe('slotsWithNewGame (the Add-game screen\'s starting point)', () => {
+  const gameText = (id: string): string =>
+    `{"schemaVersion":1,"id":"${id}","title":"${id}","executable":"g.exe","heroImage":"h.jpg"}`;
+
+  it('starts a root with NO game.json on a single blank slot', () => {
+    const result = slotsWithNewGame(null, 'pc');
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('unreachable');
+    expect(result.slots).toHaveLength(1);
+    expect(result.index).toBe(0);
+    const slot = result.slots[0];
+    if (slot === undefined || isRawSlot(slot)) throw new Error('unreachable');
+    expect(slot.model.launchMode).toBe('pc');
+    expect(slot.model.id).toBe('');
+  });
+
+  it('treats an empty file the same way (nothing to carry over)', () => {
+    const result = slotsWithNewGame('   ', 'executable');
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('unreachable');
+    expect(result.slots).toHaveLength(1);
+  });
+
+  it('appends the new game AFTER a single-object manifest', () => {
+    const result = slotsWithNewGame(gameText('hades'), 'executable');
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('unreachable');
+    expect(result.slots).toHaveLength(2);
+    expect(result.index).toBe(1);
+    const first = result.slots[0];
+    if (first === undefined || isRawSlot(first)) throw new Error('unreachable');
+    expect(first.model.id).toBe('hades');
+  });
+
+  it('appends the new game AFTER an array manifest', () => {
+    const result = slotsWithNewGame(`[${gameText('a')},${gameText('b')}]`, 'executable');
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('unreachable');
+    expect(result.slots).toHaveLength(3);
+    expect(result.index).toBe(2);
+  });
+
+  // The neighbour a naive rewrite destroys: an element the form cannot represent is carried verbatim.
+  it('keeps a slot the form cannot represent, verbatim', () => {
+    const result = slotsWithNewGame(`[${gameText('a')},42]`, 'executable');
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('unreachable');
+    const raw = result.slots[1];
+    if (raw === undefined || !isRawSlot(raw)) throw new Error('unreachable');
+    expect(raw.raw).toBe(42);
+    expect(JSON.parse(gamesToText(result.slots.slice(0, 2)))).toEqual([
+      expect.objectContaining({ id: 'a' }),
+      42,
+    ]);
+  });
+
+  it('reports an unreadable manifest rather than starting from a blank one', () => {
+    expect(slotsWithNewGame('{ not json', 'executable').ok).toBe(false);
   });
 });
 

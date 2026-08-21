@@ -149,7 +149,13 @@ const noopTranslator = createTranslator('en');
 function createSavePathResolver(deps: PlatformDeps): SavePathResolver {
   const env = (): ManifestEnv => ({ documents: deps.getDocuments(), t: noopTranslator });
   return {
-    resolvePcSavePath: (_manifest, pcSavePath) => {
+    resolvePcSavePath: (manifest, pcSavePath) => {
+      // A local PC game may point straight at a folder (`C:\Games\Hades\Saves`) — see the pc-mode
+      // decision in manifest.ts: it is already a host path, so there is nothing to expand. The user
+      // profile owns it just as it owns an expanded %PREFIX%, hence containerExists: true.
+      if (manifest.source === 'pc' && path.isAbsolute(pcSavePath)) {
+        return Promise.resolve({ path: path.normalize(pcSavePath), containerExists: true });
+      }
       const result = expandPcSavePath(pcSavePath, env());
       // containerExists is always true here: the env-based location lives under the user profile, which
       // exists for as long as the app runs. There is no Wine prefix to wipe, so the pre-port change-

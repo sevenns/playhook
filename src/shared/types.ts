@@ -14,8 +14,25 @@ export const MANIFEST_FILENAME = 'game.json' as const;
 export const CARD_STATS_FILENAME = 'stats.json' as const;
 
 /**
+ * Directory under `userData` that holds the PC library — the local games added from this machine's own
+ * disk. It is laid out exactly like a card (`game.json` + `assets/`, plus `saves/<id>/` standing in for
+ * the card's save copy), so the whole manifest/asset/history pipeline reads it as an always-inserted
+ * card. See ManifestSource.
+ */
+export const PC_LIBRARY_DIRNAME = 'pc-games' as const;
+
+/**
+ * Where a manifest came from. `card` — an inserted removable card (UNTRUSTED: every path must stay
+ * inside its root). `pc` — the local library in `<userData>/pc-games`, whose games live wherever the
+ * user installed them, so `pc.executable` (and a `pcSavePath`) may be ABSOLUTE. The two modes are
+ * mutually exclusive per manifest: a card manifest carrying a `pc` block is rejected, and so is a PC
+ * manifest without one.
+ */
+export type ManifestSource = 'card' | 'pc';
+
+/**
  * How many hero backgrounds one game may carry — a CARD-FORMAT limit (not a library budget), so it lives
- * in the shared contract: main enforces it (manifest.ts) and the Configure form caps its picker by it.
+ * in the shared contract: main enforces it (manifest.ts) and the Customize screen caps its list by it.
  *
  * Enforced with the same split as the "≥1 heroImage" policy: the EDITOR rejects a 4th image (it gates
  * Save), the runtime stays lenient — readManifests keeps the first three and logs a warn. A hard cap in
@@ -128,6 +145,21 @@ export interface SteamManifest {
 }
 
 /**
+ * Optional `pc` block in `game.json` (PC mode — a game already installed on this machine's disk).
+ * Only valid in the PC library (`<userData>/pc-games/game.json`): it is the one place a manifest may
+ * name an ABSOLUTE path, because there is no card root to be relative to. Mutually exclusive with
+ * `install`/`steam`/`executable`/`saveOnCard` (enforced by the schema).
+ */
+export interface PcManifest {
+  /**
+   * ABSOLUTE path to the game's .exe on this PC. Its existence is NOT checked at read time: a game
+   * deleted from disk keeps its library card (art, stats, save backup) and is merely `unavailable` —
+   * exactly like an install-mode game that isn't installed yet.
+   */
+  readonly executable: string;
+}
+
+/**
  * Raw `game.json` manifest after zod-schema validation.
  * The executable/saveOnCard paths and each heroImage entry are relative to the SD root;
  * pcSavePath is absolute with an env prefix from the whitelist.
@@ -182,6 +214,12 @@ export interface GameManifest {
    * `install`/`executable` and requires `watchProcesses` (enforced by the schema). See SteamManifest.
    */
   readonly steam?: SteamManifest;
+  /**
+   * Optional PC mode: the game already lives on this machine's disk and `pc.executable` is its absolute
+   * path. Accepted ONLY in the PC library (see ManifestSource); mutually exclusive with
+   * `install`/`steam`/`executable`/`saveOnCard`. See PcManifest.
+   */
+  readonly pc?: PcManifest;
   /** Optional looping background music (card-relative path), played while the window is visible. */
   readonly backgroundMusic?: string;
   /**
@@ -199,8 +237,21 @@ export interface GameManifest {
 }
 
 /** UI sound-effect slots. Each maps to a file in the bundled set chosen in Settings → Audio; a card
- *  cannot supply its own (the `sounds` block in an old game.json is ignored, not rejected). */
-export type SfxName = 'play' | 'navigate' | 'button' | 'back';
+ *  cannot supply its own (the `sounds` block in an old game.json is ignored, not rejected).
+ *  `limit` is the dead end — a press that changed nothing (end of a list, a button with no meaning
+ *  here); `popup-open`/`popup-close` mark a surface appearing over the screen and going away; `typing`
+ *  is a character going into the on-screen keyboard, which is a keystroke rather than navigation. The
+ *  kebab-case names are the file basenames, kept 1:1 so SFX_SLOT_FILE stays trivial. */
+export type SfxName =
+  | 'play'
+  | 'navigate'
+  | 'button'
+  | 'back'
+  | 'notify'
+  | 'limit'
+  | 'popup-open'
+  | 'popup-close'
+  | 'typing';
 
 /**
  * Manifest with already-resolved and security-checked paths.
@@ -210,6 +261,12 @@ export type SfxName = 'play' | 'navigate' | 'button' | 'back';
 export interface ResolvedManifest {
   readonly raw: GameManifest;
   readonly root: string;
+  /**
+   * Which root this manifest was read from — a card, or the PC library. Set in exactly one place (the
+   * resolver), and branched on wherever "is this game's source available?" differs: a card game needs its
+   * card inserted, a PC game is always there. See ManifestSource.
+   */
+  readonly source: ManifestSource;
   /**
    * The effective launch target. In install mode this is `<installDir>/<executable>` (and `cwd` its
    * dirname) — it may NOT exist yet (that is exactly the "not installed" state). For a normal game it
@@ -243,6 +300,8 @@ export interface ResolvedManifest {
   readonly steam?: {
     readonly appid: number;
   };
+  /** PC library only: no launch method chosen yet — the game is visible but cannot be started. */
+  readonly unconfigured?: true;
 }
 
 /**
@@ -292,11 +351,18 @@ export interface LibraryEntry {
   readonly active: boolean;
   /**
    * Revision of this game's stored artwork — it changes whenever main re-copies the card's images. The
-   * renderer caches decoded covers by `id + artRev`, so editing `gridImage` in Configure and hitting
-   * Save & Apply shows the new cover immediately, instead of serving the cached one until a restart.
+   * renderer caches decoded covers by `id + artRev`, so editing `gridImage` on the Customize screen and
+   * hitting Save & Apply shows the new cover immediately, instead of serving the cached one until a
+   * restart.
    * Absent while the background copy hasn't produced a record yet.
    */
   readonly artRev?: string;
+  /**
+   * PC library only: no launch method chosen yet. `active` stays true (the game IS the current local
+   * library — Customize must stay reachable), so consumers that gate on "ready to play" (the carousel
+   * dot, the "Ready to play" section, Play itself) must check this flag too, not `active` alone.
+   */
+  readonly unconfigured?: true;
 }
 
 /** The carousel list, already in display order — the renderer never sorts it (see orderForCarousel). */
@@ -398,6 +464,20 @@ export interface GameInfo {
    * user cancelled Steam's dialog, by a timeout in the background poller (→ back to "Play"/"Uninstall").
    */
   readonly steamUninstalling?: boolean;
+  /**
+   * PC mode only: the game's executable is not on disk right now (deleted, or an external drive is
+   * unplugged). The card stays in the library with its art, stats and save backup — only Play is
+   * disabled and the status reads "Game files not found". Undefined for card games, whose executable is
+   * verified at read time (and whose absence drops them from the card instead).
+   */
+  readonly unavailable?: boolean;
+  /**
+   * PC mode only: no launch method has been configured yet (a saved draft — see ResolvedManifest). The
+   * card stays in the library, fully editable, but Play is hidden and the status line is left EMPTY (the
+   * absent button already says it — see state-view.ts `statusOf`) — checked BEFORE `unavailable`, which
+   * does not apply (there is no executable to be missing).
+   */
+  readonly unconfigured?: boolean;
 }
 
 /** The flow state machine (discriminated union). */
@@ -481,17 +561,11 @@ export interface AppSettings {
   /** Launcher UI sound-effects volume, 0..1. Default 1. */
   readonly sfxVolume: number;
   /**
-   * Custom Empty-screen wallpaper: the file name of the user's image copied into userData (e.g.
-   * `wallpaper-custom.png`), or `null` for the bundled default. We store only the file name — never the
-   * user's original path or the bytes (settings.json is rewritten whole on each patch). Default null.
-   */
-  readonly customWallpaper: string | null;
-  /**
    * Keep the launcher visible on the empty "no card" screen instead of hiding to the tray when no card
    * is present. Default false (the background-app behaviour: hidden until a card is detected). When true
    * the empty screen stays on card removal AND is shown at startup.
    */
-  readonly alwaysShowEmptyScreen: boolean;
+  readonly keepOpenWithoutCard: boolean;
   /**
    * Disable trying silent mode for install-mode installers (Linux/Proton). Default false (installers run
    * unattended). When true, the installer shows its wizard so the user can click through steps a silent
@@ -518,13 +592,14 @@ export interface AppSettings {
    * Name of the UI sound set used for navigation (the folder under `audio/ui/<set>/`) — the only source
    * of UI sounds there is. A plain string (not an enum): sets are enumerated dynamically from what ships
    * in the bundle, and a missing/incomplete folder falls back at read time (see AssetReader).
-   * Default 'winhanced'. `.default('winhanced')` migrates an older settings.json without the field.
+   * Default 'playhook-abyss'. `.default(…)` migrates an older settings.json without the field.
    */
   readonly soundSet: string;
   /**
    * Default background ambience track (a file name under `audio/ambience/`, extension included), played
    * only when the current card has no music of its own — the game's music always wins. `null` = no
-   * ambience. Default null. `.default(null)` migrates an older settings.json without the field.
+   * ambience. Default 'playhook-abyss.mp3'; `.default(…)` migrates an older settings.json without the
+   * field. A name that is no longer bundled simply doesn't play (checked before reading — AssetReader).
    */
   readonly ambientTrack: string | null;
   /**
@@ -536,28 +611,89 @@ export interface AppSettings {
 
 /** The bundled UI sound sets + ambience tracks available to pick in the settings window. */
 export interface AudioOptions {
-  /** Sound-set folder names under `audio/ui/` (e.g. `winhanced`, `ps5`); `winhanced` is always present. */
+  /** Sound-set folder names under `audio/ui/` (e.g. `playhook-abyss`, `ps5`); the default is always present. */
   readonly soundSets: readonly string[];
   /** Ambience file names under `audio/ambience/`, extension included (e.g. `ps5.mp3`). */
   readonly ambientTracks: readonly string[];
 }
-
-/**
- * Result of picking a custom Empty-screen wallpaper (wallpaper:pick). A discriminated union so the
- * settings renderer handles each outcome explicitly (untrusted external data → Result-union): the image
- * data URL on success, a localized message on rejection (too large / not an image / copy failed), or a
- * plain cancellation when the OS dialog was dismissed.
- */
-export type WallpaperResult =
-  | { readonly ok: true; readonly dataUrl: string }
-  | { readonly ok: false; readonly message: string }
-  | { readonly ok: false; readonly cancelled: true };
 
 /** Launcher audio volumes (0..1), applied in the game renderer's AudioController. */
 export interface AudioVolumes {
   readonly music: number;
   readonly sfx: number;
 }
+
+// ── Notifications (main owns the inbox; the renderer only shows it) ─────────────
+
+/** What every notification carries, whatever it is about. */
+interface NotificationBase {
+  /** crypto.randomUUID(), assigned in main — the renderer addresses a notification by it. */
+  readonly id: string;
+  /** epoch ms, the sort key (ascending: the newest sits at the END of a snapshot). */
+  readonly at: number;
+  readonly read: boolean;
+}
+
+/**
+ * One entry of the notification inbox, discriminated by `kind` so the renderer's text assembly is
+ * checked by the compiler. The TEXT is deliberately not stored: it is built in the renderer from the
+ * kind plus these fields, because the UI language changes live (app:language-update) and a stored
+ * string would freeze at the language of the moment it was written.
+ */
+export type AppNotification =
+  | (NotificationBase & { readonly kind: 'update-ready'; readonly version: string })
+  | (NotificationBase & {
+      readonly kind: 'game-installed';
+      readonly gameId: string;
+      readonly gameTitle: string;
+    })
+  | (NotificationBase & {
+      readonly kind: 'game-uninstalled';
+      readonly gameId: string;
+      readonly gameTitle: string;
+    })
+  /**
+   * A game was added to a card that is NOT the active one, so it was written to disk and nothing else
+   * happened: the launcher's library cannot show it until that card becomes active. There is no `gameId`
+   * on purpose — the id names nothing the launcher can open, so pressing this entry only dismisses it.
+   */
+  | (NotificationBase & { readonly kind: 'game-added-deferred'; readonly gameTitle: string })
+  /** Same as `game-added-deferred`, but for a local game MOVED onto a card that is not active (Р2.5). */
+  | (NotificationBase & { readonly kind: 'game-moved-deferred'; readonly gameTitle: string })
+  /**
+   * A move to card succeeded, but its save folder already existed and was NOT empty on the card — the
+   * game's PC-side saves were left uncopied rather than overwriting someone else's progress there.
+   */
+  | (NotificationBase & { readonly kind: 'game-move-save-skipped'; readonly gameTitle: string })
+  /**
+   * The worst outcome a move can end in: the card was written, removing the game from the PC library
+   * failed, and undoing the card write failed too — so the game now exists in BOTH places. Defined
+   * behaviour rather than corruption (an inserted card shadows its local twin), but the user has to be
+   * told, because the screen reports the move as done and closes.
+   */
+  | (NotificationBase & { readonly kind: 'game-move-duplicate'; readonly gameTitle: string })
+  /**
+   * A settings change could not be written to disk, so it did not stick. Carries no detail: the cause is
+   * in the log, and the only thing the user can act on is that their setting did not save.
+   */
+  | (NotificationBase & { readonly kind: 'settings-write-failed' });
+
+// Distributes over the union so each member loses the base fields on its own (a plain Omit would
+// collapse the three into one non-discriminated object).
+type WithoutNotificationBase<T> = T extends unknown ? Omit<T, keyof NotificationBase> : never;
+
+/** What a source of events hands to NotificationsService.notify — the base fields are main's to fill. */
+export type NotificationInput = WithoutNotificationBase<AppNotification>;
+
+/**
+ * What the renderer must show OVER the UI (the toast plate, top right). Showing a plate does NOT make the
+ * notification read — that happens only when the popup is opened or an entry is pressed — so the dot
+ * beside the More item survives a toast the user may well have missed.
+ * `unread-summary` is the single plate shown after a game ends / after a long absence instead of a queue.
+ */
+export type NotificationToast =
+  | { readonly kind: 'item'; readonly item: AppNotification }
+  | { readonly kind: 'unread-summary'; readonly count: number };
 
 /** IPC channels (the preload typed bridge). */
 export const IPC = {
@@ -604,8 +740,6 @@ export const IPC = {
   ambientUpdate: 'ambient:update',
   /** game-renderer → main (invoke): request the current ambience data URL (on window startup). */
   ambientRequest: 'ambient:request',
-  /** main → game-renderer: play a one-shot UI sound (payload SfxName), e.g. "play" when an install ends. */
-  sfxPlay: 'sfx:play',
   /** main → renderer: hero background images for the current game (or null when no card). */
   heroUpdate: 'hero:update',
   /** renderer → main: request the current hero images (on window startup). */
@@ -621,6 +755,11 @@ export const IPC = {
   /** renderer → main: "the user is looking at this id" — main answers with browse:update + browse:hero
    * (+ browse:music). Does NOT change the selected game or the AppState. */
   libraryBrowse: 'library:browse',
+  /** renderer → main: drop this game from the play history (its record + the copied artwork). Only ever
+   * accepted for a game that is NOT available right now — main re-checks that, the menu item is the
+   * renderer's half of the same rule. Saves and playtime survive: this forgets the catalogue entry, not
+   * the game. */
+  libraryForget: 'library:forget',
   /** main → renderer: what is on screen (title/stats/active/GameInfo) — see BrowseInfo. */
   browseUpdate: 'browse:update',
   /** renderer → main (invoke): the current BrowseInfo (seed on window startup, like state:request). */
@@ -640,8 +779,8 @@ export const IPC = {
   actionSelect: 'action:select',
   /** renderer → main: request the fallback wallpaper data URL (for the idle / empty screen). */
   wallpaperRequest: 'wallpaper:request',
-  /** main → game-renderer: updated Empty-screen wallpaper data URL (pushed when changed in settings). */
-  wallpaperUpdate: 'wallpaper:update',
+  /** renderer → main (invoke): the bundled startup jingle as a data URL (played once, on boot). */
+  startupSoundRequest: 'audio:startup-request',
   /** game-renderer → main (invoke): request the current audio volumes (on window startup). */
   volumeRequest: 'volume:request',
   /** main → game-renderer: updated audio volumes (pushed when changed in the settings window). */
@@ -651,137 +790,141 @@ export const IPC = {
   /** main → game-renderer: updated effective UI locale (pushed when the language changes). */
   languageUpdate: 'app:language-update',
 
-  // ── Settings window: updates + app settings (separate namespace from the game channels) ──
-  /** main → settings-renderer: the current UpdateStatus snapshot (pushed on every change). */
+  // ── Updates + app settings (the launcher's Settings screen; own namespace) ──
+  /** main → game-renderer: the current UpdateStatus snapshot (pushed on every change). */
   updateStatusUpdate: 'update:status',
-  /** settings-renderer → main (invoke): request the current UpdateStatus. */
+  /** game-renderer → main (invoke): request the current UpdateStatus. */
   updateStatusRequest: 'update:request',
-  /** settings-renderer → main: run a manual update check. */
+  /** game-renderer → main: run a manual update check. */
   updateCheck: 'update:check',
-  /** settings-renderer → main: start downloading the available update (manual download). */
+  /** game-renderer → main: start downloading the available update (manual download). */
   updateDownload: 'update:download',
-  /** settings-renderer → main: install a downloaded update (quitAndInstall, guarded). */
+  /** game-renderer → main: install a downloaded update (quitAndInstall, guarded). */
   updateInstall: 'update:install',
-  /** settings-renderer → main (invoke): request the current AppSettings. */
+  /** game-renderer → main (invoke): request the current AppSettings. */
   settingsRequest: 'settings:request',
-  /** settings-renderer → main: change the auto-update mode (payload AutoUpdateMode). */
+  /** main → game-renderer: the full AppSettings after ANY change (including a reset) — the Settings
+   * screen's single source of truth, pushed from AppSettingsStore's one write point. */
+  settingsUpdate: 'settings:update',
+  /** game-renderer → main: change the auto-update mode (payload AutoUpdateMode). */
   settingsSetAutoUpdate: 'settings:set-auto-update',
-  /** settings-renderer → main: toggle keeping the empty "no card" screen visible (payload boolean). */
-  settingsSetAlwaysShowEmptyScreen: 'settings:set-always-show-empty-screen',
-  /** settings-renderer → main: toggle disabling silent installer mode (payload boolean). */
+  /** game-renderer → main: toggle keeping the empty "no card" screen visible (payload boolean). */
+  settingsSetKeepOpenWithoutCard: 'settings:set-keep-open-without-card',
+  /** game-renderer → main: toggle disabling silent installer mode (payload boolean). */
   settingsSetDisableSilentInstall: 'settings:set-disable-silent-install',
-  /** settings-renderer → main: toggle Game Mode auto-launch on card insertion (payload boolean). */
+  /** game-renderer → main: toggle Game Mode auto-launch on card insertion (payload boolean). */
   settingsSetSteamAutoLaunch: 'settings:set-steam-auto-launch',
-  /** settings-renderer → main (invoke): whether the Steam-shortcut feature exists here (linux AppImage). */
+  /** game-renderer → main (invoke): whether the Steam-shortcut feature exists here (linux AppImage). */
   settingsSteamAvailable: 'settings:steam-available',
-  /** settings-renderer → main: change the UI theme (payload ThemeMode). */
-  settingsSetTheme: 'settings:set-theme',
-  /** settings-renderer → main: toggle pre-release (beta) updates (payload boolean). */
+  /** game-renderer → main: toggle pre-release (beta) updates (payload boolean). */
   settingsSetPrerelease: 'settings:set-prerelease',
-  /** settings-renderer → main: toggle the Start+Back summon hotkey (payload boolean). */
+  /** game-renderer → main: toggle the Start+Back summon hotkey (payload boolean). */
   settingsSetSummonHotkey: 'settings:set-summon-hotkey',
-  /** settings-renderer → main: toggle keeping the display awake (no screensaver) (payload boolean). */
+  /** game-renderer → main: toggle keeping the display awake (no screensaver) (payload boolean). */
   settingsSetPreventScreensaver: 'settings:set-prevent-screensaver',
-  /** settings-renderer → main: set the background-music volume 0..1 (payload number). */
+  /** game-renderer → main: set the background-music volume 0..1 (payload number). */
   settingsSetMusicVolume: 'settings:set-music-volume',
-  /** settings-renderer → main: set the UI sound-effects volume 0..1 (payload number). */
+  /** game-renderer → main: set the UI sound-effects volume 0..1 (payload number). */
   settingsSetSfxVolume: 'settings:set-sfx-volume',
-  /** settings-renderer → main: change the UI language (payload LanguageMode). */
+  /** game-renderer → main: change the UI language (payload LanguageMode). */
   settingsSetLanguage: 'settings:set-language',
-  /** settings-renderer → main (invoke): request the current effective UI locale (on window startup). */
-  settingsLanguageRequest: 'settings:language-request',
-  /** main → settings-renderer: updated effective UI locale (pushed when the language changes). */
-  settingsLanguageUpdate: 'settings:language-update',
-  /** settings-renderer → main (invoke): reset all settings to defaults → returns the new AppSettings. */
+  /** game-renderer → main (invoke): reset all settings to defaults → returns the new AppSettings. */
   settingsReset: 'settings:reset',
-  /** settings-renderer → main (invoke): request the app version string. */
+  /** game-renderer → main (invoke): request the app version string. */
   appVersionRequest: 'app:version',
-  /** settings-renderer → main (invoke): request the app icon as a data URL (for the custom title bar). */
-  appIconRequest: 'app:icon',
-  /** settings-renderer → main (invoke): the "move" UI sound of a GIVEN set as a data URL (volume preview). */
-  moveSoundRequest: 'app:move-sound',
-  /** settings-renderer → main: change the navigation sound set (payload set name string). */
+  /** game-renderer → main: change the navigation sound set (payload set name string). */
   settingsSetSoundSet: 'settings:set-sound-set',
-  /** settings-renderer → main: change the default ambience track (payload file name string or null). */
+  /** game-renderer → main: change the default ambience track (payload file name string or null). */
   settingsSetAmbientTrack: 'settings:set-ambient-track',
-  /** settings-renderer → main: toggle using only the global ambience (payload boolean). */
+  /** game-renderer → main: toggle using only the global ambience (payload boolean). */
   settingsSetOnlyGlobalAmbient: 'settings:set-only-global-ambient',
-  /** settings-renderer → main (invoke): the bundled sound sets + ambience tracks to populate the dropdowns. */
+  /** game-renderer → main (invoke): the bundled sound sets + ambience tracks to populate the dropdowns. */
   audioOptionsRequest: 'app:audio-options',
-  /** settings-renderer → main: recolor the native title-bar overlay (caption buttons) for the theme. */
-  titleBarOverlayUpdate: 'settings:titlebar-overlay',
-  /** settings-renderer → main: open the log folder in the OS file manager. */
-  openLogs: 'app:open-logs',
-  /** settings-renderer → main: open the app-controlled games install folder in the OS file manager. */
-  openGamesFolder: 'app:open-games-folder',
-  /** settings-renderer → main (invoke): pick a custom Empty-screen wallpaper via a file dialog → WallpaperResult. */
-  wallpaperPick: 'wallpaper:pick',
-  /** settings-renderer → main (invoke): clear the custom Empty-screen wallpaper → the default data URL. */
-  wallpaperClear: 'wallpaper:clear',
-  /** settings-renderer → main (invoke): current Empty-screen wallpaper data URL (for the settings preview). */
-  wallpaperPreviewRequest: 'wallpaper:preview-request',
 
-  // ── Configure-game window: edit/init a card's game.json (own namespace, own preload) ──
-  /** configure-renderer → main (invoke): snapshot of removable-drive candidates (incl. blank drives). */
-  configDrivesRequest: 'config:drives-request',
-  /** main → configure-renderer: pushed drive-candidate list (only while the window is visible). */
-  configDrivesUpdate: 'config:drives-update',
-  /** configure-renderer → main (invoke): read a card's game.json text (payload root). */
-  configRead: 'config:read',
-  /** configure-renderer → main (invoke): static validation of manifest text (payload text). */
-  configValidate: 'config:validate',
-  /** configure-renderer → main (invoke): write game.json + try to apply without a restart (payload {root,text}). */
-  configSave: 'config:save',
-  /** configure-renderer → main (invoke): the manifest JSON Schema for the editor's completions/hover. */
-  configSchemaRequest: 'config:schema-request',
-  /** configure-renderer → main (invoke): the current AppSettings (for the window theme). */
-  configSettingsRequest: 'config:settings-request',
-  /** configure-renderer → main (invoke): the app icon as a data URL (for the custom title bar). */
-  configIconRequest: 'config:icon',
-  /** configure-renderer → main (invoke): the app version string (for the custom title bar). */
-  configVersionRequest: 'config:version',
-  /** main → configure-renderer: run an editor command from the native context menu (format). */
-  configEditorCommand: 'config:editor-command',
-  /** configure-renderer → main: whether the JSON editor tab is active (gates the Format context-menu item). */
-  configEditorActive: 'config:editor-active',
-  /** configure-renderer → main: recolor THIS window's native title-bar overlay for the theme. */
-  configTitleBarOverlay: 'config:titlebar-overlay',
-  /** configure-renderer → main (invoke): request the current effective UI locale (on window startup). */
-  configLanguageRequest: 'config:language-request',
-  /** main → configure-renderer: updated effective UI locale (pushed when the language changes). */
-  configLanguageUpdate: 'config:language-update',
-  /** main → configure-renderer: updated UI theme, pushed live when the theme changes in settings so an
-   * open Configure window recolors without waiting for a hide/show. */
-  configThemeUpdate: 'config:theme-update',
-  /** configure-renderer → main (invoke): pick file(s)/a folder from the card via a native dialog →
-   * ConfigPickResult (paths card-relative). Payload ConfigPickRequest. */
-  configPickPath: 'config:pick-path',
-  /** configure-renderer → main (invoke): read a card-relative image into a data URL for the hero
-   * preview (or null when unreadable/outside root). Payload {root, path}. */
-  configImagePreview: 'config:image-preview',
-  /** configure-renderer → main: open an external https URL in the default browser (e.g. the SteamDB
-   * appid lookup). Payload the URL string; main whitelists https. */
-  configOpenExternal: 'config:open-external',
+  // ── Customize screen: per-game game.json editing INSIDE the launcher (own namespace) ──
+  // A namespace of its own rather than a move of `config:*`: the ipc-channels test requires a channel to
+  // belong to exactly one preload, so these were given names of their own rather than re-pointing the
+  // Configure window's `config:*` — which let that window keep working until its replacement was done.
+  /** game-renderer → main (invoke): the game.json TEXT of one game by id, plus which root/source it came
+   * from and the manifest's content signature (the swap guard for Save). Payload the game id. */
+  gameConfigRead: 'gameConfig:read',
+  /** game-renderer → main (invoke): static validation of manifest text against a root's source.
+   * Payload {root, text}. */
+  gameConfigValidate: 'gameConfig:validate',
+  /** game-renderer → main (invoke): write game.json + try to apply it without a restart. Payload
+   * {root, signature, text}; a signature mismatch means the media was swapped and the write is refused. */
+  gameConfigSave: 'gameConfig:save',
+  /** game-renderer → main (invoke): read a root-relative image into a data URL for a row's thumbnail
+   * (null when unreadable / outside the root / not an image). Payload {root, path}. */
+  gameConfigImagePreview: 'gameConfig:image-preview',
+  /** game-renderer → main (invoke): post-process path(s) the in-launcher file picker chose — the same
+   * card-relative / %PREFIX% / import-into-library conversions the native dialog used to feed. Payload
+   * GameConfigAcceptRequest; main re-checks the root, the file type and the size. */
+  gameConfigAcceptPath: 'gameConfig:accept-path',
+  /** game-renderer → main (invoke): list one directory for the in-launcher file picker, plus the
+   * starting points offered beside it. Read-only. Payload GameConfigListDirRequest. */
+  gameConfigListDir: 'gameConfig:list-dir',
+  /** game-renderer → main (invoke): every root a new game may be added to — the removable candidates
+   * plus the PC library. No payload; answers with DriveCandidate[]. */
+  gameConfigSources: 'gameConfig:sources',
+  /** game-renderer → main (invoke): the game.json TEXT of one ROOT (not one game), for the Add-game
+   * screen — the chosen root may not carry a single game yet, which `hasManifest` states outright.
+   * Payload the root; answers with ConfigRootReadResult. */
+  gameConfigReadRoot: 'gameConfig:read-root',
+  /** game-renderer → main (invoke): moves a local (PC-library) game onto a card in one transaction — the
+   * whole point being that the renderer cannot do "write the card, then write the library" as two
+   * gameConfig:save calls without a window where the game exists twice or nowhere (see the plan, Р2.5).
+   * Payload GameMoveRequest; answers with ConfigMoveResult. */
+  gameConfigMoveToCard: 'gameConfig:move-to-card',
+  /** game-renderer → main (invoke): the system clipboard as text, for the on-screen keyboard's Paste.
+   * Reading it belongs to main like every other environment fact; the renderer is sandboxed and its own
+   * clipboard API would need a permission prompt that Game Mode has nowhere to show. No payload. */
+  clipboardRead: 'clipboard:read',
+
+  // ── Notifications (main owns the inbox; the renderer owns the two surfaces) ──
+  /** main → game-renderer: the whole inbox, oldest first. The unread COUNT is not sent — it is derived
+   * from the list, and a second source of truth would have to be kept in step in four places. */
+  notificationsUpdate: 'notifications:update',
+  /** main → game-renderer: show a plate (one notification, or the "N unread" summary). */
+  notificationsToast: 'notifications:toast',
+  /** game-renderer → main (invoke): the current inbox (seed on window startup / after a reload). */
+  notificationsRequest: 'notifications:request',
+  /** game-renderer → main: the user pressed a notification — drop it from the inbox. Payload id. */
+  notificationsDismiss: 'notifications:dismiss',
+  /** game-renderer → main: "Clear all" in the notifications popup. */
+  notificationsClear: 'notifications:clear',
+  /** game-renderer → main: the notifications popup was opened, so the whole inbox has been seen. The
+   * only other thing that clears an unread is pressing an entry, which removes it outright. */
+  notificationsMarkRead: 'notifications:mark-read',
 } as const;
 
-/** Editor commands dispatched from the Configure window's native right-click menu. Reset moved to a
- * visible button, so `format` is the only remaining command. */
-export type ConfigEditorCommand = 'format';
-
 /**
- * A removable-drive candidate for the Configure-game window (stage: init/edit game.json). Unlike
- * DriveWatcher.scan (which only sees cards WITH a game.json), this lists ALL removable/non-system
- * mountpoints so a BLANK drive can be initialized — `hasManifest` distinguishes them.
+ * A removable drive the editor may write to. Unlike DriveWatcher.scan (which only sees cards WITH a
+ * game.json), this lists ALL removable/non-system mountpoints, so a blank one is a candidate too —
+ * `hasManifest` distinguishes them. It is what isAllowedRoot is checked against in main, and it also
+ * crosses to the renderer over gameConfig:sources: the Add-game screen asks the user WHERE the new game
+ * goes, and every field of this shape answers part of that question (`root` is the value it stores,
+ * `label` what it shows, `isActive` which entry is preselected).
  */
 export interface DriveCandidate {
   /** Mountpoint / card root, e.g. "E:\\". */
   readonly root: string;
-  /** Display label: "E:\\ — Hollow Knight" | "E:\\ — 3 games" | "E:\\ — invalid game.json" | "E:\\ — blank drive". */
+  /**
+   * What this candidate is: a removable card, or the machine's own PC library (`<userData>/pc-games`,
+   * offered as one more entry in the same picker). Drives the icon/labelling and, in main, which
+   * manifest source the editor validates and saves against. See ManifestSource.
+   */
+  readonly kind: ManifestSource;
+  /**
+   * Display label: "E:\\ — Hollow Knight" | "E:\\ — 3 games" | "E:\\ — invalid game.json" |
+   * "E:\\ — blank drive". The PC library uses the same shape with its own name in front:
+   * "This PC — Hades" | "This PC — 3 games" | "This PC — no games yet".
+   */
   readonly label: string;
   /**
    * Content signature of this card's game.json — the sorted game ids (`''` blank, `'invalid'` unreadable).
-   * Identifies the MEDIA, not the slot: the Configure window compares it to detect a card swapped into the
-   * same mountpoint (the drive letter never changes) and to ignore cosmetic edits. Never displayed —
+   * Identifies the MEDIA, not the slot: a save compares it to detect a card swapped into the same
+   * mountpoint (the drive letter never changes) and to ignore cosmetic edits. Never displayed —
    * `label` may be a bare count ("3 games") that two different cards would share.
    */
   readonly signature: string;
@@ -822,21 +965,27 @@ export type ConfigSaveResult =
   | { readonly saved: false; readonly message: string };
 
 /**
- * What the Configure form's Browse button is picking — drives the dialog's filters and mode:
- * file pickers for exe/installer/image/audio (image is multi-select), a folder picker for `directory`
- * (card-relative), and `pc-save` (a PC folder OUTSIDE the card, converted to a %PREFIX%\… save path).
+ * What a Browse is picking — it decides what the picker filters to, and what main will accept back:
+ * files for exe/installer/image/audio (image is multi-select), a folder for `directory`
+ * (card-relative), `pc-save` (a PC folder OUTSIDE the card, converted to a %PREFIX%\… save path) and
+ * `pc-executable` (PC library only: any executable anywhere on this machine, kept ABSOLUTE).
+ * `pc-save-local` is `pc-save` WITHOUT that conversion — the picked folder is kept absolute. It is for a
+ * local game that runs from this machine's disk (its saves are an ordinary host folder); a local STEAM
+ * game keeps `pc-save`, because its saves live inside Steam's Proton prefix, which only the %PREFIX%
+ * form can name.
  */
 export type ConfigPickKind =
-  'executable' | 'installer' | 'image' | 'audio' | 'directory' | 'pc-save';
-
-/** Request payload for config:pick-path: the card root (re-checked in main) and the pick kind. */
-export interface ConfigPickRequest {
-  readonly root: string;
-  readonly kind: ConfigPickKind;
-}
+  | 'executable'
+  | 'installer'
+  | 'image'
+  | 'audio'
+  | 'directory'
+  | 'pc-save'
+  | 'pc-save-local'
+  | 'pc-executable';
 
 /**
- * Result of picking path(s) from the card via the native dialog. On success `paths` are card-RELATIVE
+ * Result of picking path(s) for a manifest field. On success `paths` are card-RELATIVE
  * with forward slashes (ready to drop into game.json). A discriminated union (untrusted external action →
  * Result-union): success (one or more relative paths), a plain cancellation, or a rejection carrying a
  * localized message (a file outside the card root, the card root itself for a folder pick, …).
@@ -845,6 +994,170 @@ export type ConfigPickResult =
   | { readonly ok: true; readonly paths: readonly string[] }
   | { readonly ok: false; readonly cancelled: true }
   | { readonly ok: false; readonly message: string };
+
+// ── Customize screen (per-game editing in the launcher) ─────────────────────────
+
+/**
+ * One game's manifest, addressed BY ID. `root`/`source` say which file it lives in and which dialect it
+ * speaks; `signature` identifies the MEDIA (the same sorted-ids signature DriveCandidate carries), so a
+ * card swapped into the same mountpoint while the screen is open cannot receive the edit.
+ *
+ * `text` is the WHOLE file, not the one game: a card may carry several, and the screen edits its slot in
+ * place so the neighbours (including any that failed to resolve) survive the round trip verbatim.
+ */
+export type GameConfigReadResult =
+  | {
+      readonly ok: true;
+      readonly root: string;
+      readonly source: ManifestSource;
+      readonly signature: string;
+      readonly text: string;
+      /**
+       * Whether the launcher is running on Windows. The renderer has no business asking the OS itself, and
+       * the screen needs it for one decision: a game installed on THIS PC under Windows will never be run
+       * through Proton, so its Linux section is not merely empty there but meaningless. A CARD keeps it on
+       * either OS — the card is the portable half, and its manifest is read on the Deck too.
+       */
+      readonly windows: boolean;
+    }
+  | { readonly ok: false; readonly message: string };
+
+/**
+ * One ROOT's manifest, addressed by the root itself — what the Add-game screen reads once the user has
+ * picked where the game goes. It is deliberately not gameConfig:read with a different payload: that
+ * channel's question is "which file does game X live in", and here there may be no game X yet.
+ *
+ * `hasManifest` is the field ConfigReadResult cannot express: a root with no game.json is the normal
+ * case here (a blank card, a first local game), and it must not be confused with a file that exists but
+ * cannot be read. When it is false, `text` is `''` and the screen starts from an empty slot list —
+ * sending `'[]'` instead would trip textToGames, which rejects an empty games array.
+ */
+export type ConfigRootReadResult =
+  | {
+      readonly ok: true;
+      readonly root: string;
+      readonly source: ManifestSource;
+      readonly signature: string;
+      readonly hasManifest: boolean;
+      readonly text: string;
+      /** Whether the launcher is running on Windows — see GameConfigReadResult.windows. */
+      readonly windows: boolean;
+    }
+  | { readonly ok: false; readonly message: string };
+
+/** Payload for gameConfig:save — the manifest text plus the media signature read alongside it. */
+export interface GameConfigSaveRequest {
+  readonly root: string;
+  /** The signature from gameConfig:read; a mismatch means a different card is in the slot now. */
+  readonly signature: string;
+  readonly text: string;
+}
+
+/**
+ * Payload for gameConfig:move-to-card — moving a local (PC-library) game onto a card (see the plan Р2.5).
+ * `fromText` is deliberately NOT part of this payload: main derives the PC library's post-move text
+ * itself, from a fresh read, by removing the game being moved (see game-move.ts) — the same
+ * never-trust-the-renderer's-derived-text stance the rest of this file takes for the writable side of a
+ * save (GameConfigService.save re-validates instead of trusting the renderer's verdict).
+ */
+export interface GameMoveRequest {
+  /** The id the moved game carries in `toText` — i.e. what it will be called ON THE CARD. */
+  readonly id: string;
+  /**
+   * The id the game was READ with, and the only thing the PC-library side of the move is addressed by
+   * (which slot to remove, whose manifest to resolve, whose sync-state to drop).
+   *
+   * Separate from `id` on purpose: `id` comes from an editable form field, so the two can disagree, and
+   * addressing the library by the EDITED value would remove — and copy the assets and saves of — whichever
+   * other local game happens to answer to it. main additionally refuses a move where they differ at all:
+   * a rename would orphan everything keyed by the old id (stats, history, pending-flush) — see the plan's
+   * assumption 4 — so the rename belongs in a separate Save, before or after the move.
+   */
+  readonly fromId: string;
+  readonly fromRoot: string;
+  /** The signature gameConfig:read gave for the PC library — a mismatch means it changed underneath us. */
+  readonly fromSignature: string;
+  readonly toRoot: string;
+  /** The signature the target card was read against (gameConfig:sources / gameConfig:read-root). */
+  readonly toSignature: string;
+  /** The target card's WHOLE game.json text, with the moved game's slot already inserted. */
+  readonly toText: string;
+}
+
+/**
+ * Result of a PC → card move. `moved` false → nothing changed on EITHER side (message tells why).
+ * `applied` mirrors ConfigSaveResult's meaning for the TARGET card. There is no `warning` counterpart:
+ * a move that succeeded but skipped something non-fatal (an existing non-empty save folder on the card,
+ * a library write that could not be undone) closes the screen, so the only place left to say it is a
+ * notification — which is where main sends it.
+ */
+export type ConfigMoveResult =
+  | {
+      readonly moved: true;
+      readonly applied: 'applied' | 'deferred';
+    }
+  | { readonly moved: false; readonly message: string };
+
+/**
+ * Payload for gameConfig:accept-path: absolute path(s) the in-launcher picker chose, and what field they
+ * are for. Unlike the native dialog this comes FROM the renderer, so main re-checks everything the dialog
+ * used to guarantee — see GameConfigService.acceptPickedPaths.
+ */
+export interface GameConfigAcceptRequest {
+  readonly root: string;
+  readonly kind: ConfigPickKind;
+  readonly paths: readonly string[];
+  /**
+   * A root-RELATIVE sub-directory the resulting manifest path is measured from, when the field is not
+   * measured from the root itself. Only "move game to PC" uses one: there the manifest resolves
+   * `executable` under the install directory, which receives the CONTENTS of the named game folder, so
+   * a card-relative path would be one level too deep. Re-checked against the root in main.
+   */
+  readonly base?: string;
+}
+
+/**
+ * Payload for gameConfig:list-dir. With `path` it lists that directory; without one main picks the
+ * STARTING point for the field (`kind`) — the directory of `current` when it is already filled, else the
+ * card root / the home folder / %APPDATA% (see the plan, Р5.2).
+ */
+export interface GameConfigListDirRequest {
+  readonly path?: string;
+  readonly root?: string;
+  readonly kind?: ConfigPickKind;
+  /** The field's current value, so a filled field reopens where it points. */
+  readonly current?: string;
+  /** The sub-directory this field is measured from — see GameConfigAcceptRequest.base. */
+  readonly base?: string;
+}
+
+/** One entry of a listed directory. Symlinks are reported as what they point AT, or skipped when broken. */
+export interface DirEntry {
+  readonly name: string;
+  readonly kind: 'dir' | 'file';
+}
+
+/** A starting point offered in the picker's left column. Not a restriction — see the plan, Р5.2. */
+export interface DirRoot {
+  readonly path: string;
+  readonly label: string;
+  readonly kind: 'card' | 'pc' | 'home' | 'drive';
+}
+
+/**
+ * Result of one directory listing. The roots travel with every answer (including a failure) so the picker
+ * can always offer a way out of a directory it could not read.
+ */
+export type ListDirResult =
+  | {
+      readonly ok: true;
+      readonly path: string;
+      /** null at a filesystem root — there is nowhere further up. */
+      readonly parent: string | null;
+      readonly entries: readonly DirEntry[];
+      readonly roots: readonly DirRoot[];
+    }
+  | { readonly ok: false; readonly message: string; readonly roots: readonly DirRoot[] };
 
 /** API that preload exposes on `window.api`. */
 export interface RendererApi {
@@ -877,8 +1190,6 @@ export interface RendererApi {
   onAmbientUpdate(callback: (url: string | null) => void): void;
   /** The current default-ambience data URL (on window startup); null when no ambience is set. */
   requestAmbient(): Promise<string | null>;
-  /** Play a one-shot UI sound pushed from main (e.g. the "play" sound when an install completes). */
-  onSfxPlay(callback: (name: SfxName) => void): void;
   onHeroUpdate(callback: (assets: HeroAssets | null) => void): void;
   requestHero(): Promise<HeroAssets | null>;
   /** Live carousel-list updates (card games + history, in display order; null when there is nothing). */
@@ -887,8 +1198,18 @@ export interface RendererApi {
   requestLibrary(): Promise<GameLibrary | null>;
   /** The carousel card artwork of one game as a data URL (null when it has none). Cached per id. */
   requestGrid(id: string): Promise<string | null>;
-  /** Tell main which game the carousel is on — it answers with browse:update/hero/music. */
-  browseGame(id: string): void;
+  /**
+   * Tell main which game the carousel is on — it answers with browse:update/hero/music. `immediate` says
+   * the user COMMITTED to this game (opened its screen) rather than flipped onto it, so the heavy half
+   * (hero images, music) is read at once instead of waiting out main's debounce.
+   *
+   * `null` is the carousel standing on one of the launcher's own cards: nothing is on screen, and main
+   * answers with an empty browse (and pins the cursor there — see the browse section in ipc.ts).
+   */
+  browseGame(id: string | null, immediate?: boolean): void;
+  /** Drop a game from the play history. Refused by main for a game that is available right now (on the
+   *  card or in the PC library) — that one is not history, it is a game you can play. */
+  forgetGame(id: string): void;
   /** Live updates of what is on screen (title/stats/active/GameInfo). */
   onBrowseUpdate(callback: (browse: BrowseInfo | null) => void): void;
   /** What is on screen right now (on window startup). */
@@ -904,122 +1225,96 @@ export interface RendererApi {
   /** Pick a game by id (entering its detail screen) — switches to it on the ready screen. */
   selectGame(id: string): void;
   requestWallpaper(): Promise<string | null>;
-  /** Live Empty-screen wallpaper updates, pushed when the custom wallpaper changes in the settings window. */
-  onWallpaperUpdate(callback: (url: string) => void): void;
+  /** The bundled startup jingle as a data URL, or null when it can't be read. Played once, on boot. */
+  requestStartupSound(): Promise<string | null>;
   /** Current launcher audio volumes (on window startup). */
   requestVolumes(): Promise<AudioVolumes>;
-  /** Live audio-volume updates, pushed when changed in the settings window. */
+  /** Live audio-volume updates, pushed when a volume changes (the Settings screen or a reset). */
   onVolumesUpdate(callback: (volumes: AudioVolumes) => void): void;
   /** Current effective UI locale (on window startup). */
   getLanguage(): Promise<Locale>;
   /** Live UI-locale updates, pushed when the language changes. */
   onLanguageUpdate(callback: (locale: Locale) => void): void;
-}
 
-/** API that the settings preload exposes on `window.settingsApi` (separate from the game `api`). */
-export interface SettingsApi {
-  getAppVersion(): Promise<string>;
-  getAppIcon(): Promise<string>;
-  /**
-   * The "move" UI sound of a GIVEN set as a data URL, played as a volume preview on slider release. The
-   * set is passed explicitly (not read from settings in main) so a just-changed dropdown previews the new
-   * set without racing the on-disk settings write.
-   */
-  getMoveSound(set: string): Promise<string>;
+  // ── Settings screen (moved here with the window it used to live in) ──
+  /** The current AppSettings (seed for the Settings screen). */
+  getSettings(): Promise<AppSettings>;
+  /** Live AppSettings pushes — the screen's single source of truth, including after a reset. */
+  onSettingsUpdate(callback: (settings: AppSettings) => void): void;
+  /** Whether the Steam-related row exists at all — false on Windows and on a non-AppImage run. */
+  isSteamAvailable(): Promise<boolean>;
   /** The bundled sound sets + ambience tracks, to populate the Audio dropdowns. */
   getAudioOptions(): Promise<AudioOptions>;
-  /** Change the navigation sound set (applied live to the game window by main). */
-  setSoundSet(set: string): void;
-  /** Change the default ambience track (null = no ambience; applied live to the game window by main). */
-  setAmbientTrack(track: string | null): void;
-  /** Toggle using only the global ambience (a card's own music ignored when on). */
-  setOnlyGlobalAmbient(on: boolean): void;
-  getSettings(): Promise<AppSettings>;
+  /** The app version string, shown beside the screen title. */
+  getAppVersion(): Promise<string>;
   setAutoUpdate(mode: AutoUpdateMode): void;
-  /** Toggle keeping the empty "no card" screen visible instead of hiding to the tray. */
-  setAlwaysShowEmptyScreen(on: boolean): void;
-  /** Toggle disabling silent installer mode (installers show their wizard when on). */
-  setDisableSilentInstall(on: boolean): void;
-  /** Toggle the Game Mode card-insert auto-launch (Steam Deck only; see AppSettings.steamAutoLaunch). */
-  setSteamAutoLaunch(on: boolean): void;
-  /** Whether to show the Steam-related settings at all — false on Windows and on a non-AppImage run. */
-  isSteamAvailable(): Promise<boolean>;
-  setTheme(mode: ThemeMode): void;
   setPrerelease(on: boolean): void;
   setSummonHotkey(on: boolean): void;
   /** Toggle keeping the display awake (no screensaver / display-sleep) while the launcher owns the session. */
   setPreventScreensaver(on: boolean): void;
+  /** Toggle keeping the empty "no card" screen visible instead of hiding to the tray. */
+  setKeepOpenWithoutCard(on: boolean): void;
+  /** Toggle disabling silent installer mode (installers show their wizard when on). */
+  setDisableSilentInstall(on: boolean): void;
+  /** Toggle the Game Mode card-insert auto-launch (Steam Deck only; see AppSettings.steamAutoLaunch). */
+  setSteamAutoLaunch(on: boolean): void;
+  /** Change the navigation sound set (applied live by main). */
+  setSoundSet(set: string): void;
+  /** Change the default ambience track (null = no ambience; applied live by main). */
+  setAmbientTrack(track: string | null): void;
+  /** Toggle using only the global ambience (a card's own music ignored when on). */
+  setOnlyGlobalAmbient(on: boolean): void;
   setMusicVolume(volume: number): void;
   setSfxVolume(volume: number): void;
   /** Change the UI language (the effective locale comes back via onLanguageUpdate). */
   setLanguage(mode: LanguageMode): void;
-  /** Current effective UI locale (on window startup). */
-  getLanguage(): Promise<Locale>;
-  /** Live UI-locale updates, pushed when the language changes. */
-  onLanguageUpdate(callback: (locale: Locale) => void): void;
-  /** Resets all settings to defaults; resolves with the new AppSettings so the UI can re-render. */
-  reset(): Promise<AppSettings>;
-  /** Tell main to recolor the native caption buttons to match the effective (dark/light) theme. */
-  setTitleBarDark(dark: boolean): void;
-  openLogs(): void;
-  openGamesFolder(): void;
-  /** Pick a custom Empty-screen wallpaper via a file dialog; resolves with the outcome (image / error / cancel). */
-  pickWallpaper(): Promise<WallpaperResult>;
-  /** Clear the custom Empty-screen wallpaper; resolves with the default wallpaper data URL for the preview. */
-  clearWallpaper(): Promise<{ dataUrl: string }>;
-  /** Current Empty-screen wallpaper data URL, for the settings preview (on open and after a general Reset). */
-  requestWallpaperPreview(): Promise<{ dataUrl: string }>;
-  onUpdateStatus(cb: (status: UpdateStatus) => void): void;
+  /** Resets all settings to defaults. The screen re-renders from the settings:update push instead. */
+  resetSettings(): Promise<AppSettings>;
+  onUpdateStatus(callback: (status: UpdateStatus) => void): void;
   requestUpdateStatus(): Promise<UpdateStatus>;
   checkForUpdates(): void;
   downloadUpdate(): void;
   installUpdate(): void;
-}
 
-/** API that the configure preload exposes on `window.configureApi` (separate from game/settings). */
-export interface ConfigureApi {
-  /** Snapshot of removable-drive candidates (incl. blank drives) for the picker. */
-  getDrives(): Promise<readonly DriveCandidate[]>;
-  /** Live candidate-list updates, pushed while the window is visible. */
-  onDrivesUpdate(callback: (drives: readonly DriveCandidate[]) => void): void;
-  /** Read a card's game.json text into the editor. */
-  readConfig(root: string): Promise<ConfigReadResult>;
-  /** Static (fs-free) validation of the current editor text — the Save verdict. */
-  validateConfig(text: string): Promise<ConfigValidationResult>;
-  /** Write game.json to the card and try to apply it without a restart. */
-  saveConfig(root: string, text: string): Promise<ConfigSaveResult>;
-  /** Pick file(s)/a folder from the card via a native dialog; resolves with card-relative paths. */
-  pickPath(root: string, kind: ConfigPickKind): Promise<ConfigPickResult>;
-  /** Read a card-relative image into a data URL for the hero preview (null when unreadable). */
-  getImagePreview(root: string, path: string): Promise<string | null>;
-  /** Open an external https URL in the default browser (e.g. the SteamDB appid lookup). */
-  openExternal(url: string): void;
-  /** The manifest JSON Schema, fed to the editor for completions/hover. */
-  getSchema(): Promise<unknown>;
-  /** The current AppSettings (for the window theme). */
-  getSettings(): Promise<AppSettings>;
-  /** The app icon as a data URL, shown in the custom title bar (matches the settings window). */
-  getAppIcon(): Promise<string>;
-  /** The app version string, shown in the custom title bar (matches the settings window). */
-  getAppVersion(): Promise<string>;
-  /** Editor commands (format) triggered from the native right-click menu. */
-  onEditorCommand(callback: (command: ConfigEditorCommand) => void): void;
-  /** Tell main whether the JSON editor tab is active (gates the Format context-menu item). */
-  setJsonEditorActive(active: boolean): void;
-  /** Tell main to recolor THIS window's native caption buttons to match the effective theme. */
-  setTitleBarDark(dark: boolean): void;
-  /** Current effective UI locale (on window startup). */
-  getLanguage(): Promise<Locale>;
-  /** Live UI-locale updates, pushed when the language changes. */
-  onLanguageUpdate(callback: (locale: Locale) => void): void;
-  /** Live UI-theme updates, pushed when the theme changes in the settings window. */
-  onThemeUpdate(callback: (mode: ThemeMode) => void): void;
+  // ── Customize screen (per-game game.json editing; see the gameConfig:* channels) ──
+  /** The manifest text of one game by id, with the root/source/signature it was read against. */
+  readGameConfig(id: string): Promise<GameConfigReadResult>;
+  /** Static (fs-free) validation of the edited text — the Save verdict, debounced by the screen. */
+  validateGameConfig(root: string, text: string): Promise<ConfigValidationResult>;
+  /** Write game.json and try to apply it without a restart; refused when the media signature moved on. */
+  saveGameConfig(request: GameConfigSaveRequest): Promise<ConfigSaveResult>;
+  /** A root-relative image as a data URL for a row's thumbnail (null when unreadable). */
+  getGameConfigImage(root: string, path: string): Promise<string | null>;
+  /** Post-process path(s) the in-launcher picker chose into what the manifest field stores. */
+  acceptGameConfigPaths(request: GameConfigAcceptRequest): Promise<ConfigPickResult>;
+  /** List one directory for the in-launcher file picker (read-only). */
+  listGameConfigDir(request: GameConfigListDirRequest): Promise<ListDirResult>;
+  /** Every root a new game may be added to — the cards plus the PC library (the Add-game screen). */
+  listGameConfigSources(): Promise<readonly DriveCandidate[]>;
+  /** The manifest text of one ROOT, for adding a game to it (the root may carry no game yet). */
+  readGameConfigRoot(root: string): Promise<ConfigRootReadResult>;
+  /** Moves a local (PC-library) game onto a card in one transaction (see GameMoveRequest). */
+  moveGameConfigToCard(request: GameMoveRequest): Promise<ConfigMoveResult>;
+  /** The clipboard as text, for the on-screen keyboard's Paste key. Empty when there is nothing to paste. */
+  readClipboard(): Promise<string>;
+
+  // ── Notifications (the toast + the "Notifications" popup; see the notifications:* channels) ──
+  /** Live inbox pushes — the popup list is drawn from the latest snapshot, never from local edits. */
+  onNotifications(callback: (items: readonly AppNotification[]) => void): void;
+  /** Show a plate over the UI (one notification, or the "N unread" summary). */
+  onNotificationToast(callback: (toast: NotificationToast) => void): void;
+  /** The current inbox (seed on window startup). */
+  requestNotifications(): Promise<readonly AppNotification[]>;
+  /** The user pressed a notification — it leaves the inbox (pressing one is what removes it). */
+  dismissNotification(id: string): void;
+  /** "Clear all" — empties the inbox. */
+  clearNotifications(): void;
+  /** The popup was opened — everything in the inbox counts as seen. */
+  markNotificationsRead(): void;
 }
 
 declare global {
   interface Window {
     readonly api: RendererApi;
-    readonly settingsApi: SettingsApi;
-    readonly configureApi: ConfigureApi;
   }
 }

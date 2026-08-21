@@ -33,8 +33,8 @@ The card can carry the game itself, an **installer** for heavy games
 > [Preparing a card](#preparing-a-card-gamejson) for the exact rules.
 
 <div align="center">
-  <img src="assets/github/playhook-bloodborne-example.jpg" width="760" alt="Playhook game card — Bloodborne">
-  <p><em>The Playhook game card, running Bloodborne. Ready-made cards like this — <code>game.json</code>, hero art and music — live in the <a href="https://sevenns.github.io/playhook-collection/">Playhook Collection</a>, whose UI you can also try right in the browser.</em></p>
+  <img src="assets/github/playhook-example.jpg" width="760" alt="Playhook home screen — the history carousel over the selected game's hero art">
+  <p><em>The Playhook home screen: the history carousel, with the selected game's hero art behind it. Ready-made cards — <code>game.json</code>, hero art and music — live in the <a href="https://sevenns.github.io/playhook-collection/">Playhook Collection</a>, whose UI you can also try right in the browser.</em></p>
 </div>
 
 ---
@@ -67,8 +67,8 @@ A couple of things to expect on first run **on Windows**:
 4. Press **A** on the gamepad (or click **Play**) — saves sync and the game launches.
 5. **Close the game** — Playhook counts the time, updates stats, and syncs saves back to the card.
 
-Don't want to hand-write a `game.json`? The tray has a **Configure game** editor that writes one onto
-the inserted card for you — see [Settings and the card editor](#settings-and-the-card-editor).
+Don't want to hand-write a `game.json`? Open a game's **More ⋯ → Customize** and edit it right in the
+launcher — see [Settings and Customize](#settings-and-customize).
 
 ---
 
@@ -97,9 +97,16 @@ state, offers:
   [Steam-mode](#steam-mode-launch-and-install-steam-games) cards (an uninstalled game has no Play
   button at all — you start from here);
 - **Force close** — while a game is running, kills it and still records the session and syncs saves;
+- **Remove from history** — for a game you no longer have (its card is out and it is not a local game),
+  drops it from the carousel along with the art copied for it. Saves and playtime stay: put the card
+  back in and the game returns with its stats. Games you *can* play right now don't offer this item —
+  they are rebuilt from their card / library every time it is read;
 - **System** — a submenu with Shutdown / Reboot / Sleep (each behind a confirmation) and
   **Minimize Playhook**, which sends the window back to the tray. In Game Mode that last item is
-  **Close Playhook** (a full quit) instead, since there is no tray to minimize into.
+  **Close Playhook** (a full quit) instead, since there is no tray to minimize into. It belongs to the
+  launcher rather than to any one game, so it lives in the **carousel's** own More menu (System + Close),
+  and a game's menu is only about that game. With no carousel to go up to — a single-game card, or the
+  empty screen — it stays where it was: that menu is then the only one there is.
 
 Every confirmation and every error uses that same popup; close it with **B** or a click on **Close**.
 If a launch fails, the reason appears there and you can simply retry.
@@ -112,7 +119,11 @@ have had once the card is out — pick one and you get its screen (title, stats,
 with no Play button: there is nothing to launch without the card.
 
 Flip through the row with **left/right** (hold to run through it), open a game with **A**, and step back
-to the row with **B**. With a mouse: the wheel scrolls the row, a click selects a card, a second click
+to the row with **B**. **Y** hands the highlight over to the **More** button beside the row and back
+again — the row's own menu is the launcher's (System + Close) — and so does **right** on the last card,
+though only as a separate press: holding right runs to the end of the row and stops there. From the
+button, **left** and **B** both return to the cards. With a mouse: the wheel scrolls the row, a click
+selects a card, a second click
 opens it, and a right-click steps back. The row is the top level — the game's screen sits one step
 inside it, which is where **More** ⋯ and its actions live.
 
@@ -120,11 +131,101 @@ The row is ordered by how recently you **touched** a game — the later of "its 
 played it" — so a card you put in yesterday and never got around to starting still sits near the front.
 The games on the currently inserted card come first, ordered by when you last played them. The history
 keeps 40 games; beyond that the least recently touched are dropped, and the games on the inserted card
-are never evicted.
+are never evicted. To drop one yourself, open it and use **Remove from history** in the More ⋯ menu.
 
 Use `gridImage` in `game.json` to control how a game looks in that row. It expects a **600x900** portrait
 cover — the same format Steam uses, so [SteamGridDB](https://www.steamgriddb.com/) is the easiest place to
 find one. Without it the card is cropped from the first `heroImage`.
+
+### Local games (already installed on this PC)
+
+Not every game lives on a card. A game that is already installed on this machine can be added to the
+launcher as a local game, and from then on it behaves like any other: its own hero art, carousel card,
+music, stats, save sync and Play button — with or without a card inserted. **More ⋯ → Add game** adds
+one from the launcher itself (pick "This PC" as the source); an existing one is edited the same way a
+card game's is, through **More ⋯ → Customize**.
+
+Local games are stored in `%APPDATA%/playhook/pc-games/` (`~/.config/playhook/pc-games/` on Linux),
+which is laid out exactly like a card: a `game.json`, an `assets/` folder for the art and music you
+pick (they are **copied in**, so moving or deleting the originals doesn't break anything), and a
+`saves/` folder for the save backups. The manifest is the same format, with one extra block and one
+rule of its own:
+
+```jsonc
+{
+  "schemaVersion": 1,
+  "id": "hades",
+  "title": "Hades",
+  // The FULL path to the game on this PC. Only valid here — a card may never name an absolute path.
+  "pc": { "executable": "C:\\Games\\Hades\\Hades.exe" },
+  "heroImage": ["assets/hades-hero.jpg"],
+  "gridImage": "assets/hades-grid.jpg",
+  // For a local game the save path may be absolute too (a card is limited to the %PREFIX% list).
+  "pcSavePath": "C:\\Games\\Hades\\Saves",
+  "watchProcesses": ["Hades.exe"]
+}
+```
+
+- `pc` replaces `executable` and is mutually exclusive with `install` and `steam`; everything else
+  (`args`, `runAsAdmin`, `watchProcesses`, the timeouts, `winetricks`, `umuGameId`, the art and the
+  music) works exactly as it does for a card game.
+
+A local game can also be a **Steam game installed on this PC** — the second launch mode the library
+accepts. Instead of `pc`, give it a `steam` block:
+
+```jsonc
+{
+  "schemaVersion": 1,
+  "id": "hades-steam",
+  "title": "Hades",
+  "steam": { "appid": 1145360 },
+  // Required in steam mode: Playhook cannot see Steam's own process tree, so it watches for these
+  // image names to know the game is running. Take the name from steamapps/common/<game>/ (or the
+  // game's SteamDB page) — it is the .exe even on the Deck, where the game runs under Proton.
+  "watchProcesses": ["Hades.exe"],
+  "heroImage": ["assets/hades-hero.jpg"],
+  // Optional. Under Proton the saves live inside Steam's own prefix, so use the %PREFIX% form here —
+  // Browse fills it in for you after the game has been run once.
+  "pcSavePath": "%APPDATA%/Hades"
+}
+```
+
+- The button follows Steam: **Install** while the game isn't installed (it opens Steam's download),
+  **Play** once it is, and **Uninstall** hands the removal back to Steam. Installing or removing the
+  game in Steam directly is picked up on its own, card or no card.
+- Everything Steam owns stays Steam's: there is no `install` block, no `runAsAdmin`, and no Wine prefix
+  of ours (the game runs in Steam's compatdata).
+- `pc` and `steam` are mutually exclusive — a local game is one or the other.
+- **Saves are backed up by Playhook itself** — there is no card to keep them on, so `saveOnCard` is not
+  allowed and the backup goes to `pc-games/saves/<id>/`. If you later insert a card carrying the same
+  game, the progress you made without it is copied onto the card on insertion.
+- **Deleting the game from your disk doesn't delete it from Playhook.** The card stays in the carousel
+  with its art and stats, the status line reads *Game files not found*, and Play is hidden. Put the game
+  back at the same path and it is playable again, saves included.
+- If a card carries a game with the **same `id`** as a local one, the card wins while it is inserted;
+  the local entry is hidden until the card is removed.
+- Paths here are **not portable**: they are written in this machine's native form, since this library
+  never travels (a card's `game.json`, by contrast, must work on both Windows and the Deck).
+
+**Draft games.** A local game may be saved with no launch method at all — no `pc`, no `steam`. Use this
+to fill in everything else (title, art, music, timings, `watchProcesses`) before you know how the game
+will actually be started. A draft is visible in the carousel and stays fully editable through Customize,
+but it has no dot, no Play button and no status line — the missing Play button says it. Save & Apply is
+still available once you fill in `pc` or `steam`.
+
+**Moving a local game to a card.** **More ⋯ → Move to card…** (a local game only) copies a game's
+metadata, art, music and save backup onto a card you pick, and removes it from the PC library once the
+write succeeds — the game itself, however, is **not** copied: put its files on the card yourself first
+(under whatever relative path you're about to give `executable`), or the move is refused with a message
+saying so. On the Customize screen this shows up as the form growing new fields once you have picked a
+target card (an `executable`/`install` block and, if you want save sync, `saveOnCard` + `pcSavePath`) —
+fill those in and Save the same way you would for an ordinary card game. Nothing is written anywhere
+until you do; backing out (Back, or the popup that closes the launcher screen) leaves both sides exactly
+as they were. If the target card isn't the one currently inserted, the move still succeeds — a
+notification says so, and the game shows up on the carousel once that card is.
+
+On the Steam Deck in **Game Mode** the launcher is started by a card being inserted, so local games are
+reachable there only if you open Playhook's tile yourself.
 
 The empty screen (no card inserted, no history) reuses the same layout over the wallpaper: "Insert a game card",
 no Play button, and **More** offering just the *System* submenu (where *Minimize Playhook* lives).
@@ -133,15 +234,16 @@ When the launcher is hidden you can **hold Start + Back** on the gamepad to re-s
 can be turned off in Settings). It is intentionally ignored **while a game is running** — pulling the
 launcher over a running game only causes focus trouble.
 
-Tray menu: **Show launcher**, **Configure game** (the built-in card editor), **Settings**, **Quit** —
-plus **Add to Steam** / **Remove from Steam** on the Steam Deck. The log folder opens from
-*Settings → Advanced → Open logs*.
+Tray menu: **Show launcher**, **Open logs**, **Open games folder**, **Quit** — plus **Add to Steam** /
+**Remove from Steam** on the Steam Deck. Settings and the manifest editor are screens of the launcher
+itself, reached from **More ⋯**, so they work in Game Mode too.
 
 ---
 
-## Settings and the card editor
+## Settings and Customize
 
-Both windows open from the tray, so they are **Desktop-Mode only** on the Steam Deck.
+Both are SCREENS of the launcher, opened from the **More ⋯** menu — so they work with a gamepad, and on
+the Steam Deck they work in **Game Mode** as well as on the desktop.
 
 ### Settings
 
@@ -162,22 +264,32 @@ Both windows open from the tray, so they are **Desktop-Mode only** on the Steam 
 Settings live in `settings.json` next to the rest of the app state (`%APPDATA%\playhook\` on Windows,
 `~/.config/playhook/` on Linux); a missing or corrupted file falls back to the defaults.
 
-### Configure game (card editor)
+### Customize (the manifest editor)
 
-**Configure game** writes the `game.json` onto the inserted card, so you never have to edit JSON by
-hand:
+**More ⋯ → Customize** edits the `game.json` of the game you are looking at — the one on the inserted
+card, or a local one — so you never have to edit JSON by hand. It is offered only for a game that is
+available right now, because that is the only case where there is a file to reach.
 
-- pick the card (any removable drive — a **blank** one can be initialized from scratch);
-- a **form** with sections *Basics / Launch / Images / Saves / Audio / Advanced*, with Browse pickers
-  for the executable, the hero backgrounds (up to 3), the 600x900 carousel card image, the background
-  music and the save folders
-  (a picked PC save folder is converted back into a `%APPDATA%`-style prefix automatically, and a file
-  outside the card is rejected);
-- a **JSON** tab with the raw manifest, live schema validation, error messages and a formatter — the
-  form and the JSON tab are two views of the same document;
-- **Add game** / **Remove current** for a multi-game card;
-- **Save & Apply** writes the file and reloads the launcher immediately (or on the card's next
-  insertion, if a game is running right now); **Reset** re-reads the card and drops your edits.
+- a **form** with sections *Basics / Launch / Artwork / Saves / Audio / Advanced / Linux*, whose rows
+  follow the launch type you pick (a Steam game has no executable, an installer has no "move to PC"
+  checkbox) — and *Linux* is dropped for a game installed on a Windows PC, which is never run through
+  Proton;
+- **Browse** for the executable, the installer, the hero backgrounds (up to 3), the 600x900 carousel
+  card image, the background music and the save folders — through the launcher's own file browser, which
+  a gamepad can drive (a picked PC save folder is converted back into a `%APPDATA%`-style prefix
+  automatically, and a file outside the card is rejected);
+- an **on-screen keyboard** for every text field, with English, Russian and symbol layouts — the Deck's
+  own keyboard is not available to an app outside Steam. The caret goes anywhere in the value (click it,
+  or the ◀ ▶ keys, or the arrows on a real keyboard), **X held** keeps deleting, and **Paste** pulls the
+  system clipboard in (Ctrl+V too), filtered by whatever the field accepts;
+- **live validation**: a problem is shown on the row that owns it, and Save stays unavailable until it
+  is gone. On a multi-game card, a problem in ANOTHER game is reported as a line of its own — and does
+  not block saving yours, since you cannot fix it from here anyway;
+- **Save & Apply** writes the file and reloads the launcher immediately (or after you finish playing, if
+  the game is running right now); **Discard changes** re-reads the file;
+- **Delete game** removes it from the manifest — never its files, and never a local game's save backups.
+  It is hidden while the game is running, and for the last game on a card (which would leave the card
+  with no manifest at all).
 
 ---
 
@@ -196,7 +308,7 @@ The file holds **either one game object** (below) **or an array of them** — a 
 games. The launcher opens on the history carousel and you switch by flipping through it; each game
 keeps its own stats, saves and install state (they are keyed by `id`). One bad entry doesn't sink the
 whole card — it is skipped (with a line in the log) and the rest still load; **duplicate `id`s are
-rejected**, since the id keys the PC-side storage. The Configure editor shows the issue per game.
+rejected**, since the id keys the PC-side storage. Customize reports the problem per game.
 
 ```jsonc
 {
@@ -545,8 +657,9 @@ These are ignored on Windows, so a dual-platform card can carry them safely:
 ### Game Mode notes
 
 - **No tray in Game Mode.** Playhook is a single window that always shows an empty "Insert a game card"
-  screen when no card is present, and surfaces manifest errors on screen. **Settings and the card editor
-  (Configure) open from the tray, so they are Desktop-Mode only.**
+  screen when no card is present, and surfaces manifest errors on screen. **Settings and Customize are
+  screens of the launcher**, reached from **More ⋯**, so both work here — keyboard and file browser
+  included.
 - **Cards are mounted automatically** — on top of what the session mounts itself, Playhook sweeps for an
   inserted-but-unmounted removable card (see [Preparing a card for the Deck](#preparing-a-card-for-the-deck)),
   so insert and eject just work.
@@ -570,8 +683,8 @@ These are ignored on Windows, so a dual-platform card can carry them safely:
   crash mid-install — this is a Wine/32-bit ceiling, not a Playhook bug, and retrying is a lottery. Use a
   **clean distributive**, or pre-extract the game on Windows and carry the ready folder — as a plain
   Executable card, or with `install.type: "copy"` if it should run from the Deck's internal drive.
-- **Installers in general are unpredictable under Proton** (the Configure editor says so out loud when
-  you pick the Installer type). Prefer a plain Executable card or `install.type: "copy"` on the Deck.
+- **Installers in general are unpredictable under Proton.** Prefer a plain Executable card or
+  `install.type: "copy"` on the Deck.
 - **First run needs network** (GE-Proton / Steam Runtime download).
 - **Save-sync for Windows dictionary paths** only happens once the game's prefix exists (first launch);
   before that there is simply nothing to sync.
@@ -762,8 +875,8 @@ launch/exit — useful when a save or stats copy to the card silently fails.
 src/
   main/        # all work with the FS/processes/disks (Electron main)
     platform/  # everything OS-specific (win32 / linux + Proton, umu)
-  preload/     # typed contextBridge bridges (launcher + settings)
-  renderer/    # UI + gamepad/keyboard input (launcher, settings, configure — no Node)
+  preload/     # the typed contextBridge bridge
+  renderer/    # UI + gamepad/keyboard input (launcher, settings, customize — no Node)
   shared/      # shared contract of types/IPC channels + the i18n dictionaries
 test/          # vitest suites (plain Node, no electron)
 ```
@@ -785,9 +898,9 @@ CI runs all three, on Windows **and** Linux.
 ## FAQ
 
 - **Do I have to write `game.json` myself?** No, twice over: the [**Playhook Collection**](https://sevenns.github.io/playhook-collection/)
-  hosts ready-made, verified manifests you can browse and drop straight onto a card, and the tray's
-  **Configure game** editor fills one in through a form (with a raw JSON tab and live validation for
-  when you do want to poke at it). Hand-write one only for a game the Collection doesn't cover yet
+  hosts ready-made, verified manifests you can browse and drop straight onto a card, and the launcher's
+  **More ⋯ → Customize** screen edits one through a form, with live validation. Hand-write one only for
+  a game the Collection doesn't cover yet
   (and consider [contributing it back](https://github.com/sevenns/playhook-collection)).
 - **Can one card hold several games?** Yes — put an **array** of game objects in `game.json` and switch
   between them in the history carousel (left/right, then **A**).

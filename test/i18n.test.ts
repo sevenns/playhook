@@ -38,6 +38,16 @@ describe('en dictionary integrity', () => {
       expect(value.length, `en[${key}] must be non-empty`).toBeGreaterThan(0);
     }
   });
+
+  // The launcher cards' captions are written from JS (no data-i18n to scan), and `ru` is a Partial — a
+  // forgotten translation compiles and merely falls back to English on screen. These three are the only
+  // guard against a Russian launcher naming its own cards in English.
+  it('names the launcher cards in BOTH locales', () => {
+    for (const key of ['launcher.card.notifications', 'launcher.card.settings', 'launcher.card.system'] as const) {
+      expect(en[key]?.length, `en[${key}] must be filled`).toBeGreaterThan(0);
+      expect(ru[key]?.length, `ru[${key}] must be filled`).toBeGreaterThan(0);
+    }
+  });
 });
 
 describe('plural (tp) via Intl.PluralRules', () => {
@@ -122,9 +132,7 @@ describe('translateIssueMessage', () => {
 // fallback text equal to that key's value — otherwise the two silently diverge. [data-i18n-aria-label]
 // keys are only checked for existence (the fallback lives in the aria-label attribute).
 describe('HTML data-i18n ↔ en dictionary', () => {
-  const HTML_FILES = ['index.html', 'settings.html', 'configure.html'].map((f) =>
-    path.resolve(__dirname, '../src/renderer', f),
-  );
+  const HTML_FILES = ['index.html'].map((f) => path.resolve(__dirname, '../src/renderer', f));
 
   /** Collapse whitespace runs and decode the entities we use, so indentation/wrapping don't cause false
    * mismatches. */

@@ -1,5 +1,8 @@
 <!DOCTYPE html>
-<html lang="en">
+<!-- mouse-asleep: the launcher opens with the mouse switched off — a pointer parked over the UI is not
+     input until it is deliberately shoved (mouse-sleep.ts). Set here, not from JS, so a resting cursor
+     cannot hover anything in the frames before controls.ts runs. -->
+<html lang="en" class="mouse-asleep">
   <head>
     <meta charset="UTF-8" />
     <meta
@@ -11,7 +14,10 @@
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
-    <main id="app" data-phase="idle">
+    <!-- data-boot: the launcher opens on the background alone and reveals its UI once the first state +
+         hero (and the palette computed from it) have landed — see the boot reveal in app.ts. Set here,
+         not from JS, so there is never a frame of a fully-drawn UI before the script runs. -->
+    <main id="app" data-phase="idle" data-boot="loading">
       <!-- Hero background: two stacked layers behind all UI (z-index only on the container, see
            styles.css). JS writes the image + pan into the idle layer and cross-fades it in, GTA-5-style,
            rotating through multiple hero images (and the idle wallpaper) — see app.ts. -->
@@ -23,18 +29,30 @@
           <div class="hero-layer"></div>
           <div class="hero-layer"></div>
         </div>
+        <!-- The boot backdrop: the bundled wallpaper on a layer of ITS OWN, on top of the hero layers
+             for the opening seconds. The game's hero is painted underneath it the moment it arrives, so
+             when this one dissolves there is a settled background behind it — nothing has to move back
+             into place. See the boot reveal in app.ts. -->
+        <div id="hero-boot"></div>
       </div>
 
-      <!-- History carousel (the `carousel` screen): a horizontal strip of game cards sliding under a
-           fixed anchor — the selected card stays put, the row moves. The inserted card's games come first
+      <!-- History carousel (the `carousel` screen): a horizontal strip of cards sliding under a fixed
+           anchor — the selected card stays put, the row moves. The inserted card's games come first
            (marked with a dot: they can be launched right now), then the games played on this device
-           before. Cards are built from JS (carousel.ts); artwork is fetched per card, on demand. -->
+           before, and last the launcher's own cards — Notifications / Settings / System (system-cards.ts).
+           Every card is built from JS (carousel.ts); artwork is fetched per game card, on demand. -->
       <div id="carousel" aria-hidden="true">
-        <div id="carousel-strip"></div>
+        <div id="carousel-strip">
+          <!-- The focus indicator: a soft body UNDER the covers, drawn on a canvas that rides inside the
+               strip, so it inherits the row's slide and its fades (focus-jelly.ts). -->
+          <canvas id="carousel-jelly" aria-hidden="true"></canvas>
+        </div>
       </div>
 
       <!-- Bottom bar (same layout for every screen): play / title / status + the More button on the
-           right. The empty (no-card) screen shows no Play; More there opens System + Close only. -->
+           right. On the carousel neither is shown — Play is the selected card's stand-in for the morph
+           and More is hidden (styles.css): the title line names the selected card, and the launcher's
+           own actions are cards in the row. -->
       <footer id="bottom-bar">
         <div class="bar-content">
           <!-- Play is a rounded square now; aria is STATIC ("Play") — the install action moved into the
@@ -63,7 +81,8 @@
           <div id="title" class="title"></div>
 
           <!-- More button: same rect-button component (invert-on-hover), three dots. Opens the Details
-               menu popup. Hidden on the empty screen; fades out while busy (like the old Info button). -->
+               menu popup — the GAME's menu, so it lives on the detail screen only (hidden on the carousel
+               by a rule in styles.css). -->
           <button id="more-button" class="rect-button" type="button" aria-label="More" data-i18n-aria-label="launcher.aria.more">
             <svg class="icon-more" viewBox="0 0 56 16" aria-hidden="true">
               <path d="M8 0C12.4183 0 16 3.58172 16 8C16 12.4183 12.4183 16 8 16C3.58172 16 0 12.4183 0 8C0 3.58172 3.58172 0 8 0Z" />
@@ -76,11 +95,14 @@
       </footer>
 
       <!-- Unified popup: ONE frosted veil + ONE right-side column (550px), whose content and action stack
-           switch by data-view (details / power / confirm / error) — a mirror of the popup state machine in
-           controls.ts. A single veil (vs one per section) avoids the cross-fade flicker of two identical
+           switch by data-view (details / power / notifications / confirm / error) — a mirror of the popup
+           state machine in controls.ts. `details` is a game's menu (reached from More on the detail
+           screen); `power` and `notifications` are opened straight from their carousel cards. A single veil (vs one per section) avoids the cross-fade flicker of two identical
            blur veils when moving Details ↔ Power: the veil stays, only the content changes.
            Default focus in every stack is the BOTTOM button (Close / No) — see controls.ts. -->
       <section id="popup" class="popup" aria-hidden="true" data-view="details">
+        <!-- Two layers, on purpose: the tint fades, the frost switches on in one frame (styles.css). -->
+        <div class="popup-blur"></div>
         <div class="popup-veil"></div>
         <div class="popup-column">
           <!-- Top content — only the block for the active view shows (CSS). -->
@@ -108,6 +130,10 @@
                 <span class="note-prefix" data-i18n="launcher.confirm.uninstallPrefixNote"
                   >The game stays on the card - only the prefix is removed (saves inside it too).</span
                 >
+                <!-- Deleting a game from its manifest. Text from JS: a LOCAL game's save backups outlive
+                     the deletion (gcOrphans sweeps artwork, never saves/), and saying so is the whole
+                     point of the note — so the two wordings differ by source. -->
+                <span class="note-delete" id="delete-note"></span>
               </div>
             </div>
             <!-- error: title + detail (arbitrary error text from main). -->
@@ -121,28 +147,49 @@
                Each group is a vertical stack (align-items: flex-end): a longer localized label grows
                to the LEFT, the right edge stays fixed. -->
           <div class="popup-actions">
-            <div class="actions-group" data-group="details">
-              <button id="menu-shutdown" class="text-button" type="button" data-i18n="launcher.menu.system">System</button>
+            <!-- ORDER MATTERS, and it is not thematic: the items that APPEAR AND DISAPPEAR with the
+                 game's phase (install/uninstall, force close, remove from history) are at the TOP, and
+                 the ones that are always there sit in a fixed block just above Close. The stack is
+                 bottom-focused and bottom-anchored, so anything volatile near the bottom shifts the
+                 stable items under the user's thumb between visits — which is how "Customize" got
+                 mis-pressed as "Uninstall". -->
+            <div class="actions-group" data-group="details" id="menu-stack">
               <!-- Install/Uninstall — one button; its text + visibility come from JS (executable games
                    have no install block, so the button is hidden entirely). -->
               <button id="menu-install-toggle" class="text-button" type="button"></button>
               <!-- Force-close the running game — its text + visibility come from JS (shown only while a
                    game is running), so no data-i18n (mirrors the install toggle, keeps the i18n HTML test happy). -->
               <button id="menu-kill" class="text-button" type="button"></button>
+              <!-- Drop this game from the history — shown only for a game that is NOT on the card and not
+                   in the PC library (those are playable, not history). Text from JS, like its neighbours. -->
+              <button id="menu-forget" class="text-button" type="button"></button>
               <!-- Back to the history carousel — the mouse counterpart of the B button (shown only on a
                    detail screen that HAS a carousel to return to). Text from JS, like its neighbours. -->
-              <button id="menu-library" class="text-button" type="button"></button>
+              <button id="menu-home" class="text-button" type="button"></button>
+              <!-- Customize — the per-game manifest editor, offered only for a game that is on the card
+                   or in the local library (an `active` game is the only one whose file we can reach). -->
+              <button id="menu-customize" class="text-button" type="button"></button>
               <button id="menu-close" class="text-button" type="button" data-i18n="launcher.menu.close">Close</button>
             </div>
             <div class="actions-group" data-group="power">
               <button id="power-shutdown" class="text-button" type="button" data-i18n="launcher.menu.shutdown">Shutdown</button>
               <button id="power-reboot" class="text-button" type="button" data-i18n="launcher.menu.reboot">Reboot</button>
               <button id="power-sleep" class="text-button" type="button" data-i18n="launcher.menu.sleep">Sleep</button>
-              <!-- Label set from JS (applyPowerPrimary): "Minimize Playhook" on Desktop/Windows, "Close
-                   Playhook" (full quit) in Game Mode where there is no tray to minimize into. No data-i18n
-                   so it stays out of the i18n HTML test and a language change relabels it at render time. -->
-              <button id="power-minimize" class="text-button" type="button">Minimize Playhook</button>
+              <!-- Hidden in Game Mode (applyPowerItems): there is no tray to minimize into there, so the
+                   quit below is the only way out. -->
+              <button id="power-minimize" class="text-button" type="button" data-i18n="launcher.menu.minimize">
+                Minimize Playhook
+              </button>
+              <button id="power-quit" class="text-button" type="button" data-i18n="launcher.menu.quit">Close Playhook</button>
               <button id="power-close" class="text-button" type="button" data-i18n="launcher.menu.close">Close</button>
+            </div>
+            <!-- Notifications: the list is built from JS (the inbox arrives on notifications:update),
+                 the two buttons under it are fixed. Pressing an entry removes it and performs its
+                 action; "Clear all" empties the inbox and leaves the popup open on its empty state. -->
+            <div class="actions-group" data-group="notifications">
+              <div id="notification-list" class="notification-list"></div>
+              <button id="notifications-clear" class="text-button" type="button" data-i18n="notifications.clearAll">Clear all</button>
+              <button id="notifications-close" class="text-button" type="button" data-i18n="launcher.menu.close">Close</button>
             </div>
             <div class="actions-group" data-group="confirm">
               <button id="confirm-yes" class="text-button" type="button" data-i18n="common.yes">Yes</button>
@@ -150,6 +197,163 @@
             </div>
             <div class="actions-group" data-group="error">
               <button id="error-close" class="text-button" type="button" data-i18n="launcher.menu.close">Close</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Notification toast: a plate in the top-right corner for 3s. It lives INSIDE #app on purpose —
+           that is where hero.ts writes the live --d1/--d2 palette, so the plate is painted in the current
+           game's colours and inherits their 1s crossfade. Outside #app the variables would still
+           resolve, but to the static :root fallbacks, and the colour would freeze.
+           Two nested elements, the same trick #hero / #hero-pan uses: the outer owns the entrance and
+           exit (translateX + opacity), the inner the pulse (scale) — one node cannot animate two
+           transforms independently. Not interactive (pointer-events: none): there is nothing to press,
+           notifications are clickable only inside the popup. -->
+      <div id="toast" class="toast" aria-hidden="true">
+        <div class="toast-pulse"><span class="toast-text" id="toast-text"></span></div>
+      </div>
+
+      <!-- Settings: the fourth surface (not a carousel screen — the strip keeps its position underneath).
+           Openness is published as #app[data-overlay="settings"]; the veil + the column are built from
+           JS (settings-screen.ts) into #settings-list. Hidden state is opacity + pointer-events, never
+           display:none — see the plan §3.1. -->
+      <section id="settings" class="settings" aria-hidden="true">
+        <div class="settings-veil"></div>
+        <div class="settings-column">
+          <div class="settings-header">
+            <div class="settings-title" data-i18n="window.settings">Settings</div>
+            <div class="settings-version" id="settings-version"></div>
+          </div>
+          <!-- TWO columns: the screen's sections (and the actions that end it) on the left, the rows of
+               the selected section on the right. One long scroll put Reset and Close behind the whole
+               form — see screen-sidebar.ts. -->
+          <div class="settings-body">
+            <div class="settings-nav" id="settings-nav"></div>
+            <div class="settings-list" id="settings-list"></div>
+          </div>
+        </div>
+        <!-- The dropdown's frost lives OUTSIDE the fading container: its own opacity animation would
+             otherwise fade the blur along with everything else, which is the cost we are avoiding. -->
+        <div class="settings-options-blur"></div>
+        <!-- Expanded dropdown: a list of the focused select's options, on top of the screen. -->
+        <div class="settings-options" id="settings-options" aria-hidden="true">
+          <div class="settings-options-veil"></div>
+          <div class="settings-options-list" id="settings-options-list"></div>
+        </div>
+      </section>
+
+      <!-- Customize: the per-game manifest editor, the fifth surface. Structurally a twin of #settings
+           (same .settings-* skeleton, same veil + column), because it IS the same kind of screen — only
+           its rows and its data differ. Its own openness value is #app[data-overlay="game-settings"];
+           every CSS rule that makes an overlay visible keys off the ATTRIBUTE, not off one value, so
+           adding this screen needed no second copy of them (see styles.css).
+           The keyboard and the file browser below live INSIDE it: data-overlay holds one value at a time,
+           so a surface with a value of its own would extinguish the screen underneath it. -->
+      <section id="game-settings" class="settings" aria-hidden="true">
+        <div class="settings-veil"></div>
+        <div class="settings-column">
+          <div class="settings-header">
+            <!-- Set from JS (game-settings-screen.ts render/relocalize), not via data-i18n: this screen
+                 has TWO names — "Customize" for a game that exists, "Add game" while one is being
+                 created — and localizeDocument would overwrite the mode-aware value on every language
+                 push. The English text here is only the pre-seed fallback, as elsewhere. -->
+            <div class="settings-title" id="game-settings-title">Customize</div>
+            <!-- The game's own name, from JS: it says WHOSE settings these are, which matters the moment
+                 a card carries more than one game — followed, in the same breath, by where its manifest
+                 lives. ONE group, so the two read as a phrase ("Hades (E:\)") instead of drifting to
+                 opposite ends of a space-between header. The source used to be a row in the form, which
+                 put a read-only fact among the editable ones. -->
+            <div class="settings-heading">
+              <span class="settings-source" id="game-settings-source"></span>
+              <span class="settings-version" id="game-settings-heading"></span>
+            </div>
+          </div>
+          <div class="settings-body">
+            <div class="settings-nav" id="game-settings-nav"></div>
+            <div class="settings-list" id="game-settings-list"></div>
+          </div>
+          <!-- Save's own feedback and the validation summary: they belong to the SCREEN, not to any one
+               section, so they sit under both columns and stay readable wherever the focus is. -->
+          <div class="settings-status" id="game-settings-status"></div>
+        </div>
+        <div class="settings-options-blur"></div>
+        <!-- One column menu for three jobs: an expanded dropdown, a path row's Browse/Clear, and the list
+             editor (whose levels stack inside it). -->
+        <div class="settings-options" id="game-settings-options" aria-hidden="true">
+          <div class="settings-options-veil"></div>
+          <div class="settings-options-list" id="game-settings-options-list"></div>
+        </div>
+
+        <!-- On-screen keyboard. There is no <input> anywhere else in this UI (the CSS forbids a caret at
+             all), and the Steam Deck's system keyboard is only available to games launched FROM Steam —
+             so on a gamepad this is the only way to type. -->
+        <div class="osk" id="osk" aria-hidden="true">
+          <div class="osk-veil"></div>
+          <div class="osk-panel">
+            <div class="osk-title" id="osk-title"></div>
+            <!-- The value is drawn in TWO halves with the caret between them, so the caret can sit
+                 anywhere in the text and a click can be resolved against the half it landed in. The
+                 halves live inside one inline wrapper so a long value still wraps as one paragraph. -->
+            <div class="osk-field" id="osk-field">
+              <span class="osk-line"
+                ><span id="osk-value"></span><span class="osk-caret" id="osk-caret"></span
+                ><span id="osk-value-after"></span
+              ></span>
+            </div>
+            <div class="osk-keys" id="osk-keys"></div>
+            <div class="osk-legend" id="osk-legend"></div>
+          </div>
+        </div>
+
+        <!-- File browser. The native dialog cannot be driven with a gamepad over a fullscreen window, and
+             in Game Mode it is a dead end — so browsing lives here, read-only, with the acceptance checks
+             in main (see the plan, Р5). -->
+        <div class="picker" id="file-picker" aria-hidden="true">
+          <div class="picker-veil"></div>
+          <div class="picker-panel">
+            <div class="picker-title" id="picker-title"></div>
+            <div class="picker-path" id="picker-path"></div>
+            <div class="picker-body">
+              <div class="picker-roots" id="picker-roots"></div>
+              <div class="picker-entries" id="picker-entries"></div>
+            </div>
+            <div class="picker-legend" id="picker-legend"></div>
+          </div>
+        </div>
+
+        <!-- Artwork at full size. A row's thumbnail is 96px wide — enough to see that a background is
+             set, nowhere near enough to see WHICH one, which is the question the user actually has. -->
+        <div class="lightbox" id="lightbox" aria-hidden="true">
+          <div class="lightbox-veil"></div>
+          <img class="lightbox-image" id="lightbox-image" alt="" />
+          <div class="lightbox-caption" id="lightbox-caption"></div>
+        </div>
+      </section>
+
+      <!-- Library: the whole game list as a grid of covers, the sixth surface. Structurally another twin
+           of #settings (veil + column + sidebar), but its pane is a scroller full of cards rather than a
+           list of rows, and it runs to the RIGHT EDGE of the screen so the gap after the sidebar and the
+           gap before the edge read as equal. Its openness value is #app[data-overlay="library"].
+           #library-empty sits OUTSIDE the scroller on purpose: screen-scroller measures the pane's last
+           child, and a hidden node at the tail would zero the bottom fade. -->
+      <section id="library" class="settings" aria-hidden="true">
+        <div class="settings-veil"></div>
+        <div class="settings-column">
+          <div class="settings-header">
+            <div class="settings-title" data-i18n="launcher.card.library">Library</div>
+          </div>
+          <div class="settings-body">
+            <div class="settings-nav" id="library-nav"></div>
+            <div class="library-pane">
+              <!-- The grid's focus body, the strip's twin. It sits OUTSIDE the scroller on purpose: a
+                   canvas as tall as a library of hundreds would cost tens of megabytes, so this one is
+                   the size of the viewport and the scroll offset is folded into the coordinates. -->
+              <canvas id="library-jelly" class="is-hidden" aria-hidden="true"></canvas>
+              <div class="library-scroll" id="library-scroll">
+                <div class="library-grid" id="library-grid"></div>
+              </div>
+              <div class="library-empty" id="library-empty" aria-hidden="true"></div>
             </div>
           </div>
         </div>

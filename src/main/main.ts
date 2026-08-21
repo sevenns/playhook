@@ -11,6 +11,7 @@ import { PcStore } from './pc-store';
 import { AppSettingsStore } from './app-settings';
 import { StatsService } from './stats';
 import { LibraryStore } from './library-store';
+import { PcLibraryStore } from './pc-library';
 import { DriveWatcher } from './drive-watcher';
 import { GameController } from './ipc';
 import { GlobalGamepad } from './gamepad-global';
@@ -18,9 +19,9 @@ import { createTray, buildTrayMenu, type TrayCallbacks, type TraySteamState } fr
 import { createSteamShortcutService } from './steam-shortcut';
 import { installDaemonUnit, removeDaemonUnit } from './daemon-unit';
 import { UpdaterService } from './updater';
-import { SettingsWindow } from './settings-window';
+import { NotificationsService } from './notifications';
+import { NotificationsStore } from './notifications-store';
 import { GameConfigService } from './game-config';
-import { ConfigureWindow } from './configure-window';
 import { LocaleService } from './locale';
 import { createPowerService } from './power';
 import { createKeepAwakeService, type KeepAwakeService } from './keep-awake';
@@ -44,13 +45,15 @@ const gameModeSession = isGamescopeSession();
 let trayRef: Tray | null = null;
 let controllerRef: GameController | null = null;
 let windowRef: GameWindow | null = null;
-let settingsWindowRef: SettingsWindow | null = null;
-let configureWindowRef: ConfigureWindow | null = null;
+// The inbox is built AFTER the settings store (it needs the window presence the store's own callback
+// also reaches for), so the store reports a failed write through this rather than through a constructor
+// argument that does not exist yet — the same late-binding `windowRef` above solves for the window.
+let notificationsRef: NotificationsService | null = null;
 let globalGamepadRef: GlobalGamepad | null = null;
 let keepAwakeRef: KeepAwakeService | null = null;
 let quitting = false;
 // Whether the global Start+Back summon chord is active (mirrors AppSettings.summonHotkeyEnabled, toggled
-// live from the settings window). Read inside the chord callback so a toggle takes effect immediately.
+// live from the Settings screen). Read inside the chord callback so a toggle takes effect immediately.
 let summonHotkeyEnabled = true;
 
 function configureAutoLaunch(): void {
@@ -96,7 +99,7 @@ function configureLinuxAutoLaunch(): void {
   }
 }
 
-// Opens the log folder (settings window "Open logs" — moved here from the tray menu).
+// Opens the log folder (the tray's "Open logs").
 function openLogs(): void {
   void shell.openPath(path.dirname(logFilePath()));
 }
@@ -123,8 +126,6 @@ function quit(): void {
   globalGamepadRef?.stop();
   keepAwakeRef?.dispose();
   windowRef?.allowClose();
-  settingsWindowRef?.allowClose();
-  configureWindowRef?.allowClose();
   app.quit();
 }
 
@@ -141,7 +142,20 @@ async function bootstrap(): Promise<void> {
   const store = new PcStore(app.getPath('userData'));
   await store.init();
 
-  const settings = new AppSettingsStore(app.getPath('userData'));
+  // Every write (a setter, a reset) funnels through the store's one persist() and is pushed straight to
+  // the launcher, so the Settings screen never has to derive state from a setter's own return value —
+  // and a setter added later cannot forget to notify. windowRef is used (not `window`, declared below)
+  // because this runs before the window exists; the guard covers that gap.
+  const settings = new AppSettingsStore(
+    app.getPath('userData'),
+    (next) => {
+      const bw = windowRef?.browserWindow ?? null;
+      if (bw !== null && !bw.isDestroyed()) bw.webContents.send(IPC.settingsUpdate, next);
+    },
+    // A settings write that fails leaves the user looking at a toggle that flipped back (or a language
+    // that did not change) with no explanation — every setter logs its own cause, this says it on screen.
+    () => notificationsRef?.notifySettingsWriteFailed(),
+  );
   const initialSettings = await settings.read();
   summonHotkeyEnabled = initialSettings.summonHotkeyEnabled;
 
@@ -155,11 +169,49 @@ async function bootstrap(): Promise<void> {
   const window = new GameWindow(getTranslator);
   const stats = new StatsService(store);
 
+  // The notification inbox. Whether an arriving notification may make noise is a question about the
+  // whole app — is the window on screen, is it in front, is a game running — and all three facts are
+  // main's own, read live here. Whether the user has TOUCHED anything recently is deliberately NOT one
+  // of them: someone reading the launcher without pressing buttons is still looking at it.
+  const notifications = new NotificationsService({
+    store: new NotificationsStore(app.getPath('userData')),
+    presence: () => {
+      const bw = windowRef?.browserWindow ?? null;
+      return {
+        windowVisible: window.isShown(),
+        windowFocused: bw !== null && !bw.isDestroyed() && bw.isFocused(),
+        gameRunning: state.get().kind === 'running',
+      };
+    },
+    push: (channel, payload) => {
+      const bw = windowRef?.browserWindow ?? null;
+      if (bw !== null && !bw.isDestroyed()) bw.webContents.send(channel, payload);
+    },
+  });
+  notificationsRef = notifications; // the settings store reports a failed write through it (see above)
+  await notifications.init();
+
+  // One summary plate for everything that piled up while a game was running. StateManager.subscribe
+  // hands the listener only the NEW state, so the previous kind is tracked here — the same shape the
+  // keep-awake recompute below uses.
+  let previousStateKind = state.get().kind;
+  state.subscribe((next) => {
+    const previous = previousStateKind;
+    previousStateKind = next.kind;
+    if (previous === 'running' && next.kind !== 'running') notifications.announceUnreadAfterGame();
+  });
+
   // The launch history behind the carousel: copies of every inserted game's art/audio, so the launcher
   // has something to show with no card in. init() re-syncs its cached stats and runs the GC; a failure
   // there must not stop the app from starting (the carousel just falls back to the card's games).
   const library = new LibraryStore({ baseDir: app.getPath('userData'), readStats: (id) => stats.read(id) });
   await library.init().catch((cause: unknown) => log.warn('[library] init failed:', cause));
+
+  // The PC library: local games added from this machine's own disk, kept in `<userData>/pc-games` and
+  // read as a card that is always inserted (see pc-library.ts). Its skeleton is created up front so the
+  // the editor can offer "This PC" even before the first local game exists.
+  const pcLibrary = new PcLibraryStore({ baseDir: app.getPath('userData') });
+  await pcLibrary.init().catch((cause: unknown) => log.warn('[pc-library] init failed:', cause));
 
   // Platform services (process monitor / Steam locator / launcher / save-path resolver / power) selected
   // once for the running OS. Every OS-specific behaviour flows through this bundle (see platform/index.ts).
@@ -191,8 +243,10 @@ async function bootstrap(): Promise<void> {
     store,
     stats,
     library,
+    pcLibrary,
     watcher,
     settings,
+    notifications,
     platform,
     isGamescope: gameModeSession,
     getTranslator,
@@ -221,11 +275,12 @@ async function bootstrap(): Promise<void> {
   // and setting sources push their own recompute). A second subscriber alongside the controller's replicator.
   state.subscribe(() => recomputeKeepAwake());
 
-  // Update service + settings window. isBusy covers ALL in-flight states (not just a running game),
-  // so a manual install can't tear down a save-sync / game install. beforeInstall drops both
-  // windows' close-guards synchronously before quitAndInstall.
+  // Update service. isBusy covers ALL in-flight states (not just a running game), so a manual install
+  // can't tear down a save-sync / game install. beforeInstall drops the windows' close-guards
+  // synchronously before quitAndInstall.
   const updater = new UpdaterService({
     settings,
+    notifications,
     isBusy: () => {
       const kind = state.get().kind;
       return kind !== 'idle' && kind !== 'ready' && kind !== 'error';
@@ -233,11 +288,7 @@ async function bootstrap(): Promise<void> {
     beforeInstall: () => {
       quitting = true;
       window.allowClose();
-      settingsWindow.allowClose();
-      configureWindow.allowClose();
     },
-    openLogs,
-    openGamesFolder,
     onSummonHotkeyChanged: (enabled) => {
       summonHotkeyEnabled = enabled;
     },
@@ -245,7 +296,7 @@ async function bootstrap(): Promise<void> {
       preventScreensaverEnabled = enabled;
       recomputeKeepAwake();
     },
-    onAlwaysShowEmptyScreenChanged: (enabled) => controller.setAlwaysShowEmptyScreen(enabled),
+    onKeepOpenWithoutCardChanged: (enabled) => controller.setKeepOpenWithoutCard(enabled),
     // Game Mode auto-launch toggle (Steam Deck): installs or tears down the watcher unit. Turning it off
     // stops a separate process, so the memory is actually returned — that is the point of the option.
     onSteamAutoLaunchChanged: (enabled) => steamShortcut.applyAutoLaunch(enabled),
@@ -255,39 +306,31 @@ async function bootstrap(): Promise<void> {
       if (bw !== null && !bw.isDestroyed()) bw.webContents.send(IPC.volumeUpdate, volumes);
     },
     // The sound-set / ambience / only-global changes are re-read + re-pushed by the controller (it owns the
-    // AssetReader and the game window) — the settings window only persisted the new value.
+    // AssetReader and the game window) — the Settings screen only persisted the new value.
     onSoundSetChanged: () => void controller.refreshAudio(),
     onAudioScopeChanged: () => void controller.refreshAudio(),
     onAmbientChanged: (track) => void controller.setAmbientTrack(track),
-    // A general "Reset to defaults" writes customWallpaper=null, but the copied file must be deleted
-    // separately — delegate to the controller (it owns the AssetReader + the game window push).
-    onWallpaperReset: () => controller.resetCustomWallpaper(),
     onLanguageChanged: (mode) => applyLanguage(mode),
-    // Push a theme change to the Configure window so an open one recolors live (the settings window
-    // applies it locally; the game window doesn't use the Fluent theme). No-op when it was never opened.
-    onThemeChanged: (mode) => {
-      const configureBw = configureWindow.browserWindow;
-      if (configureBw !== null && !configureBw.isDestroyed()) {
-        configureBw.webContents.send(IPC.configThemeUpdate, mode);
-      }
-    },
     getTranslator,
   });
-  const settingsWindow = new SettingsWindow(updater, getTranslator);
-  settingsWindowRef = settingsWindow;
 
-  // Configure-game window + its backend. getActiveRoot / reloadManifest come from the controller/watcher
-  // (interface-DI); the theme comes from the same settings store the settings window uses.
+  // Backend of the launcher's Customize screen. getActiveRoot / reloadManifest / findGameSource come
+  // from the controller and the watcher (interface-DI).
   const gameConfig = new GameConfigService({
-    settings,
     getActiveRoot: () => watcher.getActiveRoot(),
     reloadManifest: (root) => controller.reloadManifest(root),
+    pcLibrary,
+    reloadPcLibrary: () => controller.reloadPcLibrary(),
     getTranslator,
     toManifestPcSavePath: (absolute) => platform.savePathResolver.toManifestPcSavePath(absolute),
+    findGameSource: (id) => controller.findGameSource(id),
+    notify: (input) => notifications.notify(input),
+    resolveManifest: (id) => controller.findManifest(id),
+    isBusy: () => controller.isBusy(),
+    pcStore: store,
+    savePathResolver: platform.savePathResolver,
   });
   gameConfig.init();
-  const configureWindow = new ConfigureWindow(gameConfig, getTranslator);
-  configureWindowRef = configureWindow;
 
   window.create(
     (shown) => {
@@ -298,10 +341,22 @@ async function bootstrap(): Promise<void> {
     // close through and quit on window-all-closed (Р8, point 5). Desktop/Windows keep the hide-to-tray guard.
     { hideToTrayOnClose: !gameModeSession },
   );
+  // The update status is pushed to the launcher, which is where the Settings screen lives now. Attached
+  // once, right after the window exists: it survives the whole session (hiding to the tray does not
+  // destroy it), and every push re-checks isDestroyed().
+  const launcherWindow = window.browserWindow;
+  if (launcherWindow !== null) updater.attachWindow(launcherWindow);
+  // The launcher came back to the front — release whatever piled up while it was away (a toast held
+  // because the window was hidden or behind something, and the summary after a game). Both events are
+  // needed: showing from the tray does not necessarily focus, and focusing does not re-show.
+  if (launcherWindow !== null) {
+    launcherWindow.on('show', () => notifications.onLauncherFronted());
+    launcherWindow.on('focus', () => notifications.onLauncherFronted());
+  }
   // Normally start hidden in the tray — the window appears only when a valid game card is detected
   // (GameController shows it on the 'ready' state). But if "always show the no-card screen" is enabled,
   // seed the controller with it now so it shows the empty screen at startup (reconciles: idle + no card).
-  controller.setAlwaysShowEmptyScreen(initialSettings.alwaysShowEmptyScreen);
+  controller.setKeepOpenWithoutCard(initialSettings.keepOpenWithoutCard);
 
   // Steam Deck Game Mode tile: writes Playhook into Steam's shortcuts.vdf as a non-Steam game. Available
   // only for a packaged AppImage on linux (the appid is derived from the launcher path, which a dev run
@@ -355,8 +410,8 @@ async function bootstrap(): Promise<void> {
 
   const trayCallbacks: TrayCallbacks = {
     onShow: () => window.showAndFocus(),
-    onOpenConfigureGame: () => configureWindow.openOrFocus(),
-    onOpenSettings: () => settingsWindow.openOrFocus(),
+    onOpenLogs: () => openLogs(),
+    onOpenGamesFolder: () => openGamesFolder(),
     onToggleSteamShortcut: () => {
       void (steamShortcut.isRegistered() ? steamShortcut.remove() : steamShortcut.add());
     },
@@ -379,13 +434,10 @@ async function bootstrap(): Promise<void> {
       .catch((cause: unknown) => log.warn('[steam-shortcut] reconcile failed:', cause));
   }
 
-  // UI-locale wiring. Each window seeds via an invoke (effective Locale) and receives live pushes; the
-  // set-language SEND lives in UpdaterService (with the other settings:* writes). No did-finish-load hooks
-  // — the plain windows are created lazily, so there's nothing to hook; the invoke-seed covers startup
-  // instead. All three requests just return the current effective locale.
+  // UI-locale wiring. The launcher seeds via an invoke (effective Locale) and receives live pushes; the
+  // set-language SEND lives in UpdaterService (with the other settings:* writes). No did-finish-load hook
+  // — the invoke-seed covers startup instead.
   ipcMain.handle(IPC.languageRequest, (): Locale => localeService.current());
-  ipcMain.handle(IPC.settingsLanguageRequest, (): Locale => localeService.current());
-  ipcMain.handle(IPC.configLanguageRequest, (): Locale => localeService.current());
 
   // Power menu (Shutdown/Reboot/Sleep). Wired here, NOT in GameController, so the game controller stays
   // free of power concerns. The renderer confirms each action before sending; shutdown/reboot quit via
@@ -406,26 +458,16 @@ async function bootstrap(): Promise<void> {
   // close-guards, disposes services). Only ever sent from the Game Mode power menu — Desktop keeps hiding.
   ipcMain.on(IPC.actionQuit, () => quit());
 
-  // Applies a language change everywhere: re-resolve the locale, rebuild the tray menu, re-title the plain
-  // windows, and push the effective locale to every live webContents (game/settings/configure). Called
-  // from the settings set-language handler and from resetSettings (both via UpdaterService deps).
+  // Applies a language change everywhere: re-resolve the locale, rebuild the tray menu, re-title the
+  // and push the effective locale to the launcher.
+  // Called from the settings set-language handler and from resetSettings (both via UpdaterService deps).
   function applyLanguage(mode: typeof initialSettings.language): void {
     localeService.setMode(mode);
     const locale = localeService.current();
     refreshTrayMenu();
-    settingsWindow.refreshTitle();
-    configureWindow.refreshTitle();
     const gameBw = window.browserWindow;
     if (gameBw !== null && !gameBw.isDestroyed())
       gameBw.webContents.send(IPC.languageUpdate, locale);
-    const settingsBw = settingsWindow.browserWindow;
-    if (settingsBw !== null && !settingsBw.isDestroyed()) {
-      settingsBw.webContents.send(IPC.settingsLanguageUpdate, locale);
-    }
-    const configureBw = configureWindow.browserWindow;
-    if (configureBw !== null && !configureBw.isDestroyed()) {
-      configureBw.webContents.send(IPC.configLanguageUpdate, locale);
-    }
   }
 
   // Global Start+Back hotkey: re-summon the launcher when it's hidden (e.g. minimized to the tray
@@ -469,8 +511,6 @@ if (!gotSingleInstanceLock) {
     globalGamepadRef?.stop();
     keepAwakeRef?.dispose();
     windowRef?.allowClose();
-    settingsWindowRef?.allowClose();
-    configureWindowRef?.allowClose();
   });
 
   app
