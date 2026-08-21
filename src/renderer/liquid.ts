@@ -10,7 +10,15 @@
 //
 // The geometry is shared with focus-jelly.ts (the contour, the squeeze, the box around a target); this
 // module owns the springs, the windows and the question of WHAT has the focus.
-import { JELLY, jellyBoxOf, outlinePoint, pinchScale, type JellyBox } from './focus-jelly.js';
+import {
+  JELLY,
+  JELLY_UI,
+  jellyBoxOf,
+  outlinePoint,
+  pinchScale,
+  type JellyBox,
+  type JellyTuning,
+} from './focus-jelly.js';
 
 /**
  * What the body may sit under. Everything the launcher highlights carries `.is-focused` — that is the
@@ -59,17 +67,30 @@ interface Point {
   vy: number;
 }
 
+/**
+ * Which tuning the body runs on right now. A cover and a button are the same shape to this module and
+ * nothing alike to the eye: covers are big, far apart and slow, so softness reads as weight, while the
+ * bar's buttons are small and a few px from each other, where that same softness smears across them.
+ * The body carries its tuning with the thing it is under, so crossing from the row to the bar
+ * changes how it behaves as well as where it is.
+ */
+function tuningFor(el: Element): JellyTuning {
+  return el.classList.contains('card') ? JELLY : JELLY_UI;
+}
+
 /** The focused element's box in SCREEN coordinates, plus the corner radius the body should copy. */
-function targetOf(el: Element, unit: number): JellyBox {
+function targetOf(el: Element, unit: number, tuning: JellyTuning): JellyBox {
   const rect = el.getBoundingClientRect();
   const style = getComputedStyle(el);
   const parsed = Number.parseFloat(style.borderTopLeftRadius);
   const radius = Number.isFinite(parsed) ? parsed : 0;
-  return jellyBoxOf(rect.left, rect.top, rect.width, rect.height, radius, unit);
+  return jellyBoxOf(rect.left, rect.top, rect.width, rect.height, radius, unit, tuning);
 }
 
 export function createLiquidFocus(deps: LiquidDeps): LiquidFocus {
   const windows: LiquidWindow[] = [];
+  // The contour is allocated once and kept across tunings — the point COUNT is shared (both sets carry
+  // the same one), so switching tuning mid-flight changes how the body moves, never how it is built.
   const pts: Point[] = Array.from({ length: JELLY.points }, () => ({ x: 0, y: 0, vx: 0, vy: 0 }));
 
   let running = false;
@@ -109,11 +130,11 @@ export function createLiquidFocus(deps: LiquidDeps): LiquidFocus {
   }
 
   /** One frame of the springs — the same soft body the row carried, now in screen space. */
-  function step(dt: number, now: number, to: JellyBox): void {
+  function step(dt: number, now: number, to: JellyBox, tuning: JellyTuning): void {
     const unit = deps.unit();
-    const stiff = JELLY.stiffness / 1000;
-    const keep = 1 - JELLY.damping;
-    const amp = JELLY.wobble * unit;
+    const stiff = tuning.stiffness / 1000;
+    const keep = 1 - tuning.damping;
+    const amp = tuning.wobble * unit;
     const cx = to.x + to.w / 2;
     const cy = to.y + to.h / 2;
 
@@ -148,7 +169,7 @@ export function createLiquidFocus(deps: LiquidDeps): LiquidFocus {
       const ty = by + oy * wob;
 
       const lead = ox * dirx + oy * diry;
-      const k = stiff * (1 + 0.75 * lead) * (1000 / Math.max(JELLY.moveMs, 120)) * 60;
+      const k = stiff * (1 + 0.75 * lead) * (1000 / Math.max(tuning.moveMs, 120)) * 60;
 
       p.vx = (p.vx + (tx - p.x) * k * dt) * Math.pow(keep, dt * 60);
       p.vy = (p.vy + (ty - p.y) * k * dt) * Math.pow(keep, dt * 60);
@@ -242,7 +263,8 @@ export function createLiquidFocus(deps: LiquidDeps): LiquidFocus {
       return;
     }
 
-    const to = targetOf(focused, deps.unit());
+    const tuning = tuningFor(focused);
+    const to = targetOf(focused, deps.unit(), tuning);
     if (!seeded || pendingSnap) {
       seed(to);
       pendingSnap = false;
@@ -252,11 +274,11 @@ export function createLiquidFocus(deps: LiquidDeps): LiquidFocus {
     }
     owner = focused;
 
-    step(1 / 60, now, to);
+    step(1 / 60, now, to, tuning);
 
-    const squeeze =
-      moveStart < 0 ? 1 : pinchScale((now - moveStart) / Math.max(JELLY.moveMs, 60));
-    if (moveStart >= 0 && now - moveStart >= Math.max(JELLY.moveMs, 60)) moveStart = -1;
+    const span = Math.max(tuning.moveMs, 60);
+    const squeeze = moveStart < 0 ? 1 : pinchScale((now - moveStart) / span, tuning.pinch);
+    if (moveStart >= 0 && now - moveStart >= span) moveStart = -1;
 
     const reach = bounds(squeeze, to);
     const colour = deps.colour();
