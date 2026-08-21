@@ -39,6 +39,14 @@ export interface JellyTuning {
   readonly points: number;
   /** Slack a canvas must keep around the body, design px. */
   readonly margin: number;
+  /**
+   * How far a point may trail behind its place on the target, design px. The springs are what make the
+   * body stretch, and left unbounded that stretch is proportional to how far the focus jumped and how
+   * fast it is being repeated — holding a direction down a list of tall entries dragged the body clean
+   * off the screen. This is the leash: the shape still lags and still deforms, it simply cannot be
+   * pulled arbitrarily far.
+   */
+  readonly reach: number;
 }
 
 export const JELLY: JellyTuning = {
@@ -58,6 +66,8 @@ export const JELLY: JellyTuning = {
   points: 36,
   /** Slack around the drawn body the canvas must keep, design px (breathing and the glow reach out). */
   margin: 26,
+  /** Generous: a cover is 204 tall and the row is meant to feel heavy. */
+  reach: 150,
 };
 
 /**
@@ -78,6 +88,9 @@ export const JELLY_UI: JellyTuning = {
   inset: 6,
   points: JELLY.points,
   margin: JELLY.margin,
+  /* Tight. A held direction steps through a list several times a second, and a three-line entry
+     followed by a one-line button is exactly the pair that used to fling the body off-screen. */
+  reach: 60,
 };
 
 /** The box for a measured card: its own rectangle, pushed out by the stand-off on every side. */

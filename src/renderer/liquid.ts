@@ -175,6 +175,22 @@ export function createLiquidFocus(deps: LiquidDeps): LiquidFocus {
       p.vy = (p.vy + (ty - p.y) * k * dt) * Math.pow(keep, dt * 60);
       p.x += p.vx * dt * 60;
       p.y += p.vy * dt * 60;
+
+      // The leash (see `reach`): a point may lag, but only so far. Without it the stretch scales with
+      // how far the focus jumped and how fast it repeats, and a held direction through tall entries
+      // pulls the body off the screen entirely.
+      const slackX = p.x - tx;
+      const slackY = p.y - ty;
+      const slack = Math.hypot(slackX, slackY);
+      const limit = tuning.reach * unit;
+      if (slack > limit) {
+        const scale = limit / slack;
+        p.x = tx + slackX * scale;
+        p.y = ty + slackY * scale;
+        // The speed that carried it out there goes too, or it fights the leash every frame.
+        p.vx *= scale;
+        p.vy *= scale;
+      }
     }
   }
 
