@@ -815,12 +815,19 @@ body {
 
 /* :hover gated on a live cursor — see the note on .text-button:hover (avoids a stale hover highlight
    sticking under the pointer once the gamepad takes over). */
-html:not(.mouse-asleep) .play-button:hover,
 /* No fill: the liquid body IS the fill now (liquid.ts), and it flows in from wherever the focus was
    rather than appearing here. Only the inverted label stays — it is what the body is painted behind.
-   A rectangle drawn here as well would put the button's own hard edges back around a soft shape. */
-.play-button.is-focused {
+   A rectangle drawn here as well would put the button's own hard edges back around a soft shape.
+   Keyed on .is-lit, not .is-focused: the focus can be marked on a surface the body has left for a popup,
+   and an inverted label with nothing behind it cannot be read at all. */
+.play-button.is-lit {
   color: var(--d1);
+}
+
+/* Hover has no body behind it — the pointer can rest here while the pad drives something else — so it
+   tints with the accent instead of inverting into the background. */
+html:not(.mouse-asleep) .play-button:hover:not(.is-lit) {
+  color: var(--d2);
 }
 
 /* Press feedback (mouse :active, or gamepad A via .is-pressed): smooth scale down. */
@@ -885,10 +892,14 @@ html:not(.mouse-asleep) .play-button:hover,
   transition: opacity 0.3s ease, transform 0.12s ease;
 }
 
-/* :hover gated on a live cursor — see the note on .text-button:hover. */
-html:not(.mouse-asleep) .rect-button:hover,
-.rect-button.is-focused {
+.rect-button.is-lit {
   color: var(--d1);
+}
+
+/* :hover gated on a live cursor — see the note on .text-button:hover. Accent, not inversion: there is
+   no body under a merely hovered button. */
+html:not(.mouse-asleep) .rect-button:hover:not(.is-lit) {
+  color: var(--d2);
 }
 
 /* The launcher drives its own focus indicator via .is-focused (gamepad / arrow-key nav), so the native
@@ -1461,9 +1472,14 @@ html:not(.mouse-asleep) .rect-button:hover,
    bare :hover would keep that button highlighted alongside the gamepad's .is-focused one — two
    highlights, and A (which acts on .is-focused) would fire a different button than the hovered one looks.
    Gating :hover on :not(.mouse-asleep) drops the stale hover the moment the gamepad is used. */
-html:not(.mouse-asleep) .text-button:hover,
-.text-button.is-focused {
+.text-button.is-lit {
   color: var(--d1);
+}
+
+/* Hover without a body behind it: accent, not inversion. This is what made the update row's label vanish
+   under the pointer — inverted text drawn straight onto the screen's own background. */
+html:not(.mouse-asleep) .text-button:hover:not(.is-lit) {
+  color: var(--d2);
 }
 
 .text-button:active,
