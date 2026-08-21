@@ -2246,11 +2246,21 @@ html:not(.mouse-asleep) .setting-row:hover,
    like every other button in this UI — filling the whole row and then re-inverting the button inside it
    reads as two competing highlights. */
 .setting-row[data-kind='action'].is-focused,
-.setting-row[data-kind='update-status'].is-focused,
+/* HOVER only. These rows used to refuse the focus fill and tint their text with the accent instead —
+   which worked while nothing was drawn behind them. The liquid body now lies under the whole row, in
+   that same accent, so accent-on-accent text disappears; the focused case is split out below. */
 html:not(.mouse-asleep) .setting-row[data-kind='action']:hover,
 html:not(.mouse-asleep) .setting-row[data-kind='update-status']:hover {
   background: transparent;
   color: var(--d2);
+}
+
+/* Focused, i.e. with the body under it: inverted like every other focused row, so the label on the left
+   reads against the body rather than melting into it. */
+.setting-row[data-kind='action'].is-focused,
+.setting-row[data-kind='update-status'].is-focused {
+  background: transparent;
+  color: var(--d1);
 }
 
 .setting-row[data-kind='action'].is-focused .text-button,

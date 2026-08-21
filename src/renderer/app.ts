@@ -811,8 +811,11 @@ function mountLiquidWindows(): void {
   liquid.mount(reqQuery('#popup .popup-column'), 4);
   // Above the popup: both open over a screen that still marks a row of its own, and the body has to
   // follow what the user is actually driving.
-  liquid.mount(req('file-picker'), 5);
-  liquid.mount(req('osk'), 6);
+  // Into the PANEL of each, not the container: both open with a veil of their own as their first child,
+  // and a window ahead of it is painted underneath — which is why the key you were on looked unlit while
+  // the body was in fact flying to it.
+  liquid.mount(reqQuery('#file-picker .picker-panel'), 5);
+  liquid.mount(reqQuery('#osk .osk-panel'), 6);
 }
 
 function revealUi(): void {
