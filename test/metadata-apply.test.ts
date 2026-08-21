@@ -13,6 +13,7 @@ import {
   mergeCandidates,
   normalizeTitle,
   orderByProvider,
+  withMergedRefs,
 } from '../src/main/metadata/service';
 import type { ArtworkOffer } from '../src/main/metadata/provider';
 import type { GameCandidate } from '../src/shared/types';
@@ -245,6 +246,37 @@ describe('metadata search — merging the sources', () => {
     expect(normalizeTitle('The Witcher® 3: Wild Hunt')).toBe('the witcher 3 wild hunt');
     expect(normalizeTitle('  S.T.A.L.K.E.R.  ')).toBe('s t a l k e r');
     expect(normalizeTitle('Мор')).toBe('мор');
+  });
+});
+
+describe('metadata search — the appid shortcut still reaches the other sources', () => {
+  // Naming a game by its Steam appid skips the search, and the search is where sources are merged — so
+  // the shortcut has to collect the other references itself, or such a game would be offered Steam's
+  // backgrounds and nothing else however many GOG and RAWG hold.
+  const steamCandidate: GameCandidate = {
+    key: 'steam:1145360',
+    title: 'Hades',
+    provider: 'steam',
+    steamAppId: 1145360,
+  };
+
+  it("gains the other sources' references while keeping its own key", () => {
+    const enriched = withMergedRefs(steamCandidate, [
+      { key: 'rawg:274755', title: 'Hades', provider: 'rawg', rawgId: 274755 },
+      { key: 'gog:1', title: 'Hades', provider: 'gog', gogId: '1' },
+    ]);
+    expect(enriched).toEqual({ ...steamCandidate, rawgId: 274755, gogId: '1' });
+  });
+
+  it("ignores the other sources' near misses", () => {
+    const enriched = withMergedRefs(steamCandidate, [
+      { key: 'rawg:891238', title: 'Hades II', provider: 'rawg', rawgId: 891238 },
+    ]);
+    expect(enriched).toEqual(steamCandidate);
+  });
+
+  it('is unchanged when no other source answered at all', () => {
+    expect(withMergedRefs(steamCandidate, [])).toBe(steamCandidate);
   });
 });
 

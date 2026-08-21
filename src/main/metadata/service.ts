@@ -234,8 +234,27 @@ export class MetadataService {
         ? failure
         : { ok: false, message: this.t('metadata.noSources') };
     }
-    this.candidates.set(found.value.key, found.value);
-    return found;
+    const enriched = await this.withOtherSources(found.value);
+    this.candidates.set(enriched.key, enriched);
+    return { ok: true, value: enriched };
+  }
+
+  /**
+   * Fills in the references the OTHER sources have for a game that arrived from one of them alone.
+   *
+   * Skipping the search is the whole point of the appid shortcut, but the search is also where the merge
+   * happens — so without this a Steam game reached that way would be offered Steam's backgrounds and
+   * nothing else, however many the other sources hold. The extra searches are best-effort: they run on
+   * one explicit press, and a source that fails simply contributes no reference.
+   */
+  private async withOtherSources(candidate: GameCandidate): Promise<GameCandidate> {
+    const answers = await this.fromProviders((provider, signal) =>
+      provider.id === candidate.provider ? undefined : provider.search?.(candidate.title, signal),
+    );
+    return withMergedRefs(
+      candidate,
+      answers.flatMap((answer) => (answer.ok ? [...answer.value] : [])),
+    );
   }
 
   /**
@@ -723,6 +742,20 @@ export function mergeCandidates(candidates: readonly GameCandidate[]): readonly 
     };
   }
   return merged;
+}
+
+/**
+ * One candidate plus whatever the other sources called the same game, folded into a single entry that
+ * keeps the original's identity (its key is already in the renderer's hands) and gains their references.
+ * A search that matched nothing leaves the candidate exactly as it was.
+ */
+export function withMergedRefs(
+  candidate: GameCandidate,
+  others: readonly GameCandidate[],
+): GameCandidate {
+  if (others.length === 0) return candidate;
+  const merged = mergeCandidates([candidate, ...others]);
+  return merged.find((entry) => entry.key === candidate.key) ?? candidate;
 }
 
 /** Where a candidate's source sits in PROVIDER_ORDER — which entry leads a merge, and the menu. */

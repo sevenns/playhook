@@ -127,9 +127,22 @@ export function createMetadataPicker(deps: MetadataPickerDeps): MetadataPickerSu
     applyFocus(true);
   }
 
+  /**
+   * What each source is called on a tile. Proper names, so they are not translated — and spelled out per
+   * source rather than "SteamGridDB or else Steam", which is how every RAWG and GOG picture came to be
+   * labelled Steam.
+   */
+  const PROVIDER_LABEL: Readonly<Record<ArtworkVariant['provider'], string>> = {
+    steam: 'Steam',
+    steamgriddb: 'SteamGridDB',
+    rawg: 'RAWG',
+    gog: 'GOG',
+    khinsider: 'Khinsider',
+  };
+
   /** The source and, when it says so, the size — the two things that tell two similar tiles apart. */
   function captionOf(variant: ArtworkVariant): string {
-    const source = variant.provider === 'steamgriddb' ? 'SteamGridDB' : 'Steam';
+    const source = PROVIDER_LABEL[variant.provider];
     if (variant.width === undefined || variant.height === undefined) return source;
     return `${source} · ${variant.width}x${variant.height}`;
   }
