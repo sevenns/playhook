@@ -15,7 +15,6 @@ import { req } from './dom.js';
 import { clampIndex } from './index-math.js';
 import {
   filterLibrary,
-  LIB_CARD_SCALE,
   gridColumns,
   gridStep,
   isNearInGrid,
@@ -78,7 +77,6 @@ const nodeKey = (id: string): string => `g:${id}`;
 
 export function createLibraryScreen(deps: LibraryScreenDeps): LibraryScreen {
   const app = req('app');
-  const appStyle = getComputedStyle(app);
   const screen = req('library');
   const gridEl = req('library-grid');
   const scrollEl = req('library-scroll');
