@@ -1154,6 +1154,7 @@ html:not(.mouse-asleep) .rect-button:hover,
 }
 #popup[data-view='details'] .popup-info,
 #popup[data-view='confirm'] .popup-confirm,
+#popup[data-view='busy'] .popup-busy,
 #popup[data-view='error'] .popup-error {
   display: flex;
 }
@@ -1366,6 +1367,7 @@ html:not(.mouse-asleep) .rect-button:hover,
 #popup[data-view='notifications'] .actions-group[data-group='notifications'],
 #popup[data-view='power'] .actions-group[data-group='power'],
 #popup[data-view='confirm'] .actions-group[data-group='confirm'],
+#popup[data-view='busy'] .actions-group[data-group='busy'],
 #popup[data-view='error'] .actions-group[data-group='error'] {
   display: flex;
 }
@@ -2975,68 +2977,6 @@ html:not(.mouse-asleep) .picker-item:hover,
    The "Find online" picker: the same panel as the file browser, with a grid of pictures where that one
    has a list of names. `auto-fill` decides the column count, and the navigation reads it back off the
    layout rather than computing a second answer (see metadata-picker.ts). */
-
-/* What "Find online" has to say, as a popup over its own panel: a message with a button waits for the
-   user instead of racing them. It sits INSIDE the panel (not over the whole screen) because it belongs
-   to this surface — and it takes the input while it is up, which is what makes its button the only way
-   on, and the way out of a download in progress. */
-.online-note {
-  position: absolute;
-  inset: 0;
-  z-index: 3;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.2s ease;
-}
-
-.online-note.is-open {
-  opacity: 1;
-  pointer-events: auto;
-}
-
-.online-note-veil {
-  position: absolute;
-  inset: calc(-60 * var(--px));
-  background: color-mix(in srgb, var(--d1) 78%, transparent);
-}
-
-.online-note-panel {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: calc(16 * var(--px));
-  min-width: calc(520 * var(--px));
-  max-width: calc(900 * var(--px));
-  padding: calc(28 * var(--px));
-  background: var(--d1);
-  color: var(--d2);
-  border: 1px solid color-mix(in srgb, var(--d2) 30%, transparent);
-  border-radius: calc(14 * var(--px));
-}
-
-.online-note-text {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: calc(16 * var(--px));
-  font-weight: 300;
-  font-size: calc(28 * var(--px));
-  text-align: center;
-  overflow-wrap: anywhere;
-}
-
-.online-note .picker-item {
-  justify-content: center;
-  text-align: center;
-}
-
-.online-note .picker-item.is-hidden {
-  display: none;
-}
 
 /* The right column of "Find online". It holds a LIST (candidates, tracks) or a GRID (pictures), so it
    is a column by default and becomes a grid when the open section is about pictures — one scroller and

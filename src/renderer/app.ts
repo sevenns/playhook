@@ -193,6 +193,9 @@ const onlinePicker = createOnlinePicker({
   // plate that goes by itself; a failure is the error popup, which the user closes when they have read it.
   notify: (text) => toast.show(text),
   showError: (text) => controls.showError(text),
+  showBusy: (text, onStop) => controls.showBusy(text, onStop),
+  closeBusy: () => controls.closeBusy(),
+  confirmTitle: (title, onYes) => gameSettingsScreen.askOnlineTitle(title, onYes),
 });
 
 const gameSettingsScreen = createGameSettingsScreen({

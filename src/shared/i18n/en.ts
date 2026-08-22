@@ -14,6 +14,7 @@ export const en = {
   // "Discard"/"Replace", which is easy to confuse with the neighbouring "Cancel".
   'common.yes': 'Yes',
   'common.no': 'No',
+  'common.stop': 'Stop',
 
   // ── Tray context menu (tray.ts) ─────────────────────────────────────────────
   'tray.showLauncher': 'Show launcher',
@@ -438,11 +439,7 @@ export const en = {
   'metadata.actionClose': 'Close',
   'metadata.needsId': 'Give the game an id first — the downloaded files are named after it.',
   'metadata.applying': 'Downloading',
-  'metadata.noteOk': 'Got it',
   'metadata.titleConfirm': 'Replace the game title with "{title}"?',
-  'metadata.titleReplace': 'Replace',
-  'metadata.noteCancel': 'Cancel',
-  'metadata.noteStop': 'Stop',
   'metadata.applied': 'Applied. Save the game to keep it.',
   'metadata.heroAppend': 'Add to them ({count})',
   'metadata.heroRoom': 'Room for {count} more',

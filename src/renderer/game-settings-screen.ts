@@ -138,7 +138,14 @@ export interface GameSettingsScreenApi {
  * the card too. Which one arrives back is the user's answer to the second question — see controls.ts.
  */
 export type GameSettingsConfirm =
-  'reset' | 'delete' | 'delete-history' | 'discard' | 'switch-source' | 'cancel-move';
+  | 'reset'
+  | 'delete'
+  | 'delete-history'
+  | 'discard'
+  | 'switch-source'
+  | 'cancel-move'
+  // Asked by the "Find online" surface, answered here: taking the store's spelling into Title.
+  | 'replace-title';
 
 /** A surface that opens ON TOP of the screen and hands a value back when it is done. */
 export interface TextEntrySurface extends NavSurface {
@@ -216,6 +223,11 @@ export interface GameSettingsScreen extends NavSurface {
 
   /** Opens the keyboard for a new search query. */
   askOnlineQuery(initial: string, onDone: (query: string) => void): void;
+  /**
+   * Asks the launcher's confirm popup whether the store's spelling may replace the Title field. Routed
+   * through this screen because that popup answers to `confirmAccepted`, which is this screen's channel.
+   */
+  askOnlineTitle(title: string, onYes: () => void): void;
   /** Downloads the chosen pictures into the game and writes their paths into the form. */
   applyOnlineArtwork(
     kind: 'grid' | 'hero',
@@ -2000,6 +2012,8 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   // Nothing reaches the manifest until the user saves: an applied file only fills a FORM FIELD, exactly
   // as a path chosen in the file browser does.
 
+  /** What a "yes" to the title question runs — the surface's own callback, held until the popup answers. */
+  let pendingTitleReplace: (() => void) | null = null;
   /** Retires answers belonging to a flow the user has already left (a new search, a closed screen). */
   let metadataToken = 0;
   /** Whether an answer from main still belongs to the flow that asked for it. */
@@ -2560,6 +2574,10 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
         },
       });
     },
+    askOnlineTitle: (title, onYes) => {
+      pendingTitleReplace = onYes;
+      deps.onConfirmRequested('replace-title');
+    },
     applyOnlineArtwork: (kind, variantKeys, mode) => applyArtwork(kind, variantKeys, mode),
     applyOnlineTrack: (trackKey) => applyTrackKey(trackKey),
     applyOnlineTitle: (title) => {
@@ -2640,6 +2658,11 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
         pendingSource = null;
         if (root !== null) void adoptRoot(root);
       } else if (kind === 'cancel-move') cancelMove();
+      else if (kind === 'replace-title') {
+        const run = pendingTitleReplace;
+        pendingTitleReplace = null;
+        run?.();
+      }
     },
     relocalize: () => {
       if (model !== null) {

@@ -8,6 +8,7 @@ export const ru: Partial<Record<MessageKey, string>> = {
   // ── Common (shared across windows) ───────────────────────────────────────────
   'common.yes': 'Да',
   'common.no': 'Нет',
+  'common.stop': 'Прервать',
 
   // ── Tray context menu ────────────────────────────────────────────────────────
   'tray.showLauncher': 'Показать лаунчер',
@@ -391,11 +392,7 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'metadata.actionClose': 'Закрыть',
   'metadata.needsId': 'Сначала задайте id игры - скачанные файлы называются по нему.',
   'metadata.applying': 'Идёт скачивание',
-  'metadata.noteOk': 'Понятно',
   'metadata.titleConfirm': 'Заменить название игры на «{title}»?',
-  'metadata.titleReplace': 'Заменить',
-  'metadata.noteCancel': 'Отмена',
-  'metadata.noteStop': 'Прервать',
   'metadata.applied': 'Применено. Сохраните игру, чтобы закрепить.',
   'metadata.heroAppend': 'Добавить к ним ({count})',
   'metadata.heroRoom': 'Свободных мест: {count}',
