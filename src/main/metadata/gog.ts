@@ -15,6 +15,12 @@
 // Unofficial, like Steam's storesearch: `embed.gog.com/games/ajax/filtered`, which older launchers used,
 // now answers with an empty list, which is exactly why this uses `catalog.gog.com` instead. Every answer
 // is zod-validated, and a shape that moved on makes the provider drop out of the results, nothing more.
+//
+// One thing about that endpoint shapes everything below: `like:` is NOT a title search. It matches
+// descriptions and tags too, and there is no title-scoped form to ask for instead (`title:`/`name:` are
+// ignored and answer with the whole catalogue). So its answer is filtered here — see titleMatches — and
+// the cost is a real one: a one-word name searches badly there (`like:bastion`, `like:hades` come back
+// with neither game), so those games get no GOG pictures. Better than a menu of other people's games.
 import { z } from 'zod';
 import {
   type ArtworkKind,
@@ -31,6 +37,7 @@ import {
   type MetadataProvider,
 } from './provider';
 import { type HttpClient } from './http';
+import { searchableTitle } from './search-title';
 
 const CATALOG_ORIGIN = 'https://catalog.gog.com/v1';
 /** A shortlist for the candidate menu — a menu wants a handful of names, not a catalogue page. */
@@ -51,7 +58,47 @@ export function gogIdFromKey(key: string): string | undefined {
 }
 
 export function searchUrl(term: string): string {
-  return `${CATALOG_ORIGIN}/catalog?query=${encodeURIComponent(`like:${term}`)}&limit=${SEARCH_LIMIT}`;
+  const wanted = searchableTitle(term);
+  return `${CATALOG_ORIGIN}/catalog?query=${encodeURIComponent(`like:${wanted}`)}&limit=${SEARCH_LIMIT}`;
+}
+
+/**
+ * Whether a product is actually the game that was asked for.
+ *
+ * The catalogue's `like:` is NOT a title search — it matches descriptions and tags as well, and says so
+ * loudly once you look (measured 2026-08-22): `like:cyberpunk` answers with Cyberpunk 2077 and then
+ * RoboCop, Deus Ex and Mirror's Edge, which merely carry the tag; `like:hades` answers with "The
+ * Pedestrian Soundtrack"; `like:Watch Dogs`, a game GOG does not sell at all, answers with seven
+ * unrelated titles. Left alone, those become candidates in a menu where every line claims to be the
+ * user's game.
+ *
+ * So the answer is filtered here, by the only thing that can be checked: every meaningful word of the
+ * query must appear in the product's title. Deliberately strict — a name that is missing a word is a
+ * DIFFERENT game ("Sniper Elite V2" for "Sniper Elite 5"), and this source exists to add backgrounds to
+ * a game the user already named, not to suggest games.
+ */
+export function titleMatches(title: string, query: string): boolean {
+  const words = queryWords(query);
+  if (words.length === 0) return true;
+  const normalized = normalizeForMatch(title);
+  return words.every((word) => normalized.includes(word));
+}
+
+/** The words a title has to carry. Articles are dropped: stores put them in and leave them out freely. */
+function queryWords(query: string): readonly string[] {
+  const skip = new Set(['the', 'a', 'an', 'of', 'and']);
+  return normalizeForMatch(query)
+    .split(' ')
+    .filter((word) => word.length > 0 && !skip.has(word));
+}
+
+/** Case, trademark marks and punctuation out — shallow, like the candidate merge's own normalization. */
+function normalizeForMatch(text: string): string {
+  return searchableTitle(text)
+    .toLowerCase()
+    .replaceAll(/[™®©]/g, '')
+    .replaceAll(/[^\p{Letter}\p{Number}]+/gu, ' ')
+    .trim();
 }
 
 /**
@@ -164,14 +211,19 @@ export class GogProvider implements MetadataProvider {
       this.screenshots.set(product.id, toArtworkOffers(product));
       this.detailsById.set(product.id, toDetails(product));
     }
+    // Only the products whose NAME answers the query become candidates — see titleMatches. The rest stay
+    // in the caches above: a merged candidate can still reach them by id, which is how a game Steam
+    // named and GOG spells differently keeps its screenshots.
     return {
       ok: true,
-      value: answer.value.products.map((product) => ({
-        key: gogCandidateKey(product.id),
-        title: product.title,
-        provider: this.id,
-        gogId: product.id,
-      })),
+      value: answer.value.products
+        .filter((product) => titleMatches(product.title, query))
+        .map((product) => ({
+          key: gogCandidateKey(product.id),
+          title: product.title,
+          provider: this.id,
+          gogId: product.id,
+        })),
     };
   }
 

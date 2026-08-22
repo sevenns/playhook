@@ -259,7 +259,7 @@ export class MetadataService {
     const failures = answers.filter((answer) => !answer.ok);
     const found = answers.flatMap((answer) => (answer.ok ? [...answer.value] : []));
     if (found.length === 0 && failures.length > 0) return failures[0] ?? { ok: true, value: [] };
-    const merged = mergeCandidates(found);
+    const merged = withoutSpareStore(mergeCandidates(found));
     for (const candidate of merged) this.candidates.set(candidate.key, candidate);
     return { ok: true, value: merged };
   }
@@ -756,6 +756,24 @@ export function sameFilter(a: ArtworkFilter, b: ArtworkFilter): boolean {
     a.sources.length === b.sources.length &&
     a.sources.every((id, at) => b.sources[at] === id)
   );
+}
+
+/**
+ * GOG's own lines, dropped whenever Steam recognized the game at all.
+ *
+ * Steam's search matches TITLES; GOG's catalogue matches descriptions and tags as well, and there is no
+ * title-scoped query to ask it for instead (see gog.ts). Its answer is already filtered by name, but
+ * that filter cannot tell "the same game, spelled differently" from "a game whose name happens to
+ * contain these words" — so when Steam has answered, the entries it did NOT merge with are noise in a
+ * menu where every line claims to be the user's game.
+ *
+ * What is NOT dropped is the reference: a GOG entry that merged into a Steam candidate lives on inside
+ * it as `gogId`, so the gallery still shows GOG's screenshots for a game both stores sell. This removes
+ * lines from a menu, never a source from a gallery.
+ */
+export function withoutSpareStore(candidates: readonly GameCandidate[]): readonly GameCandidate[] {
+  if (!candidates.some((candidate) => candidate.provider === 'steam')) return candidates;
+  return candidates.filter((candidate) => candidate.provider !== 'gog');
 }
 
 /** Offers this gallery has not shown yet, with repeats inside the batch collapsed by key. */

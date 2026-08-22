@@ -7,6 +7,7 @@ import {
   gogCandidateKey,
   gogIdFromKey,
   searchUrl,
+  titleMatches,
   toArtworkOffers,
   toDetails,
   toIsoDate,
@@ -145,6 +146,77 @@ describe('gog provider', () => {
     it('reports a moved-on answer shape as a failure, not as an empty catalogue', async () => {
       const { provider } = providerOf(() => textResponse('<html>maintenance</html>'));
       expect((await provider.search('witcher')).ok).toBe(false);
+    });
+  });
+
+  // The catalogue's `like:` matches DESCRIPTIONS AND TAGS, not titles: measured against the live API,
+  // `like:Watch Dogs` (a game GOG does not sell) answered with "The Signal From Tölva", "Din's Curse"
+  // and five more, and `like:cyberpunk` answered with RoboCop and Mirror's Edge beside Cyberpunk 2077.
+  describe('only the products whose NAME answers the query become candidates', () => {
+    it('keeps the game and its editions', () => {
+      expect(titleMatches('Cyberpunk 2077', 'Cyberpunk 2077')).toBe(true);
+      expect(titleMatches('Cyberpunk 2077: Phantom Liberty', 'Cyberpunk 2077')).toBe(true);
+      expect(titleMatches('The Witcher 3: Wild Hunt - Complete Edition', 'The Witcher 3')).toBe(
+        true,
+      );
+    });
+
+    it('drops what merely shares a tag or a word of the description', () => {
+      expect(titleMatches('The Signal From Tölva', 'Watch Dogs')).toBe(false);
+      expect(titleMatches("Din's Curse", 'Watch Dogs')).toBe(false);
+      expect(titleMatches('RoboCop: Rogue City', 'Cyberpunk 2077')).toBe(false);
+      expect(titleMatches('The Pedestrian Soundtrack', 'Hades')).toBe(false);
+    });
+
+    it('drops another game of the same series — a missing word is a different game', () => {
+      expect(titleMatches('Sniper Elite V2 Remastered', 'Sniper Elite 5')).toBe(false);
+    });
+
+    it('ignores the articles and the marks stores sprinkle differently', () => {
+      expect(titleMatches('Witcher 3: Wild Hunt', 'The Witcher 3')).toBe(true);
+      expect(titleMatches('Watch Dogs', 'Watch_Dogs™')).toBe(true);
+    });
+
+    it('filters the candidates a search answers with', async () => {
+      const { provider } = providerOf(() =>
+        textResponse(
+          JSON.stringify({
+            products: [
+              { id: '1', title: 'The Witcher 3: Wild Hunt', screenshots: [] },
+              { id: '2', title: "Din's Curse", screenshots: [] },
+            ],
+          }),
+        ),
+      );
+      const result = await provider.search('The Witcher 3');
+      expect(result.ok === true && result.value.map((c) => c.title)).toEqual([
+        'The Witcher 3: Wild Hunt',
+      ]);
+    });
+
+    // The filter is about the MENU. A candidate that came from another source keeps its GOG pictures:
+    // they are reached by product id, and the id was cached while the answer was still whole.
+    it('still offers the pictures of a product the filter kept out of the menu', async () => {
+      const { provider } = providerOf(() =>
+        textResponse(
+          JSON.stringify({
+            products: [
+              {
+                id: '9',
+                title: 'Some Other Spelling',
+                screenshots: ['https://images.gog-statics.com/x_{formatter}.jpg'],
+              },
+            ],
+          }),
+        ),
+      );
+      await provider.search('The Witcher 3');
+      const art = await provider.artwork(
+        { key: 'steam:1', title: 'The Witcher 3', gogId: '9' },
+        'hero',
+        pageRequest(),
+      );
+      expect(art.ok === true && art.value.offers).toHaveLength(1);
     });
   });
 

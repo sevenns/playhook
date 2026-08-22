@@ -15,6 +15,7 @@ import {
   normalizeTitle,
   dedupe,
   orderByProvider,
+  withoutSpareStore,
   withMergedRefs,
 } from '../src/main/metadata/service';
 import type { ArtworkOffer } from '../src/main/metadata/provider';
@@ -299,6 +300,51 @@ describe('metadata details — merging what the sources know', () => {
 
   it('answers with nothing when no source knew anything', () => {
     expect(mergeDetails([{}, {}])).toEqual({});
+  });
+});
+
+describe('metadata candidates — GOG only fills the gaps Steam leaves', () => {
+  const candidate = (provider: 'steam' | 'gog' | 'steamgriddb', title: string): GameCandidate => ({
+    key: `${provider}:${title}`,
+    title,
+    provider,
+  });
+
+  it('drops GOG lines once Steam has recognized the game', () => {
+    const merged = withoutSpareStore([
+      candidate('steam', 'Watch Dogs'),
+      candidate('gog', "Din's Curse"),
+      candidate('gog', 'The Iron Oath'),
+    ]);
+    expect(merged.map((entry) => entry.title)).toEqual(['Watch Dogs']);
+  });
+
+  it('keeps them when Steam answered with nothing — a GOG-only game is still a game', () => {
+    const only = [candidate('gog', 'Beneath a Steel Sky')];
+    expect(withoutSpareStore(only)).toEqual(only);
+  });
+
+  it('leaves the other sources alone', () => {
+    const merged = withoutSpareStore([
+      candidate('steam', 'Hollow Knight'),
+      candidate('steamgriddb', 'Hollow Knight'),
+    ]);
+    expect(merged).toHaveLength(2);
+  });
+
+  // The reference survives inside the Steam entry, which is what the gallery reads — dropping a LINE
+  // from the menu must never cost a SOURCE in the gallery.
+  it('keeps the gog reference a merge folded into the Steam candidate', () => {
+    const withRef: GameCandidate = {
+      key: 'steam:292030',
+      title: 'The Witcher 3',
+      provider: 'steam',
+      steamAppId: 292030,
+      gogId: '1207658691',
+    };
+    expect(withoutSpareStore([withRef, candidate('gog', 'The Witcher Adventure Game')])).toEqual([
+      withRef,
+    ]);
   });
 });
 
