@@ -15,8 +15,10 @@
 import path from 'node:path';
 import fse from 'fs-extra';
 import { ipcMain } from 'electron';
+import { QUALITY_FLOOR, includesSource, meetsQuality } from '../../shared/artwork-filter';
 import {
   IPC,
+  type ArtworkFilter,
   type ArtworkKind,
   type ArtworkPage,
   type ArtworkVariant,
@@ -131,6 +133,8 @@ class BoundedMap<T> {
 interface GalleryPool {
   readonly candidateKey: string;
   readonly kind: ArtworkKind;
+  /** The filter this pool was built under — changing it in the sidebar starts a new gallery. */
+  readonly filter: ArtworkFilter;
   /** Fetched, not yet shown. Kept in source order so a later page keeps the gallery's grouping. */
   pending: readonly ArtworkOffer[];
   /** The page to ask a source for next. A source missing from here has nothing left to give. */
@@ -187,12 +191,14 @@ export class MetadataService {
           readonly candidateKey: string;
           readonly kind: ArtworkKind;
           readonly page?: number;
+          readonly filter?: ArtworkFilter;
         },
       ): Promise<MetadataResult<ArtworkPage>> =>
         this.artworkFor(
           payload.candidateKey,
           payload.kind,
           typeof payload.page === 'number' && payload.page > 0 ? Math.floor(payload.page) : 0,
+          toFilter(payload.filter),
         ),
     );
     ipcMain.handle(
@@ -313,10 +319,11 @@ export class MetadataService {
     candidateKey: string,
     kind: ArtworkKind,
     page: number,
+    filter: ArtworkFilter,
   ): Promise<MetadataResult<ArtworkPage>> {
     const ref = this.candidates.get(candidateKey);
     if (ref === undefined) return { ok: false, message: this.t('metadata.staleSelection') };
-    const pool = this.poolFor(candidateKey, kind, page);
+    const pool = this.poolFor(candidateKey, kind, page, filter);
     const asked = await this.askArtwork(pool, toCandidateRef(ref), kind);
     const failure = asked.find((answer) => !answer.result.ok)?.result;
     const fetched: ArtworkOffer[] = [];
@@ -329,7 +336,7 @@ export class MetadataService {
       }
       if (result.value.hasMore) pool.nextPage.set(id, (pool.nextPage.get(id) ?? 0) + 1);
       else pool.nextPage.delete(id);
-      fetched.push(...result.value.offers);
+      fetched.push(...result.value.offers.filter((offer) => meetsQuality(offer, filter.quality)));
     }
     const available = orderByProvider(dedupe([...pool.pending, ...fetched], pool.shown));
     const shown = capArtworkPerProvider(available, MAX_ARTWORK_PER_PROVIDER);
@@ -354,23 +361,33 @@ export class MetadataService {
    * The pool this request belongs to. A page 0 — or a request for a gallery other than the one in hand —
    * starts over; anything else continues where the previous page stopped.
    */
-  private poolFor(candidateKey: string, kind: ArtworkKind, page: number): GalleryPool {
+  private poolFor(
+    candidateKey: string,
+    kind: ArtworkKind,
+    page: number,
+    filter: ArtworkFilter,
+  ): GalleryPool {
     const current = this.gallery;
     if (
       page > 0 &&
       current !== null &&
       current.candidateKey === candidateKey &&
-      current.kind === kind
+      current.kind === kind &&
+      sameFilter(current.filter, filter)
     ) {
       return current;
     }
     const fresh: GalleryPool = {
       candidateKey,
       kind,
+      filter,
       pending: [],
       nextPage: new Map(
         this.deps.providers
-          .filter((provider) => provider.artwork !== undefined)
+          .filter(
+            (provider) =>
+              provider.artwork !== undefined && includesSource(filter.sources, provider.id),
+          )
           .map((provider) => [provider.id, 0]),
       ),
       shown: new Set<string>(),
@@ -397,7 +414,12 @@ export class MetadataService {
         const next = pool.nextPage.get(provider.id);
         if (next === undefined) return [];
         if ((held.get(provider.id) ?? 0) >= MAX_ARTWORK_PER_PROVIDER) return [];
-        const answer = provider.artwork?.(ref, kind, next, signal);
+        const answer = provider.artwork?.(
+          ref,
+          kind,
+          { page: next, minSize: QUALITY_FLOOR[pool.filter.quality] },
+          signal,
+        );
         return answer === undefined ? [] : [answer.then((result) => ({ id: provider.id, result }))];
       });
       return Promise.all(asked);
@@ -746,6 +768,24 @@ function toVariant(offer: ArtworkOffer, thumbDataUrl: string): ArtworkVariant {
     ...(offer.height === undefined ? {} : { height: offer.height }),
     thumbDataUrl,
   };
+}
+
+/** A filter as the renderer sent it, with anything unrecognized read as "no filter at all". */
+export function toFilter(stated: ArtworkFilter | undefined): ArtworkFilter {
+  const quality = stated?.quality;
+  return {
+    sources: Array.isArray(stated?.sources) ? stated.sources : [],
+    quality: quality !== undefined && quality in QUALITY_FLOOR ? quality : 'any',
+  };
+}
+
+/** Whether two filters ask for the same gallery — a difference means starting one over. */
+export function sameFilter(a: ArtworkFilter, b: ArtworkFilter): boolean {
+  return (
+    a.quality === b.quality &&
+    a.sources.length === b.sources.length &&
+    a.sources.every((id, at) => b.sources[at] === id)
+  );
 }
 
 /** Offers this gallery has not shown yet, with repeats inside the batch collapsed by key. */

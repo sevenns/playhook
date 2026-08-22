@@ -3029,7 +3029,37 @@ html:not(.mouse-asleep) .metadata-tile:hover,
   overflow-wrap: anywhere;
 }
 
-/* The panel's foot: the legend keeps the middle, the Apply button sits at its right end. */
+/* The gallery's sidebar — the file browser's roots column in another use: the two filters, then the
+   actions. Same width, so the two pickers line up when one opens over the other. */
+.metadata-side {
+  flex: 0 0 calc(360 * var(--px));
+  overflow-y: auto;
+  scrollbar-width: none;
+  display: flex;
+  flex-direction: column;
+  gap: calc(4 * var(--px));
+}
+
+.metadata-side::-webkit-scrollbar {
+  display: none;
+}
+
+.metadata-side-heading {
+  flex: 0 0 auto;
+  padding: calc(16 * var(--px)) calc(20 * var(--px)) calc(6 * var(--px));
+  font-weight: 500;
+  font-size: calc(22 * var(--px));
+  color: color-mix(in srgb, var(--d2) 55%, transparent);
+}
+
+/* An action with nothing to act on — Apply before anything is ticked. Still focusable, so the user can
+   see it is there and hear why it refuses. */
+.metadata-side .picker-item.is-disabled {
+  opacity: 0.45;
+}
+
+/* The panel's foot: the legend alone now — Apply lives in the sidebar, where a mouse finds it beside
+   the other actions rather than across the panel from what it acts on. */
 .metadata-picker-foot {
   display: flex;
   align-items: center;
@@ -3038,20 +3068,6 @@ html:not(.mouse-asleep) .metadata-tile:hover,
 
 .metadata-picker-foot .picker-legend {
   flex: 1 1 auto;
-}
-
-.metadata-picker-apply {
-  flex: 0 0 auto;
-}
-
-.metadata-picker-apply.is-hidden {
-  display: none;
-}
-
-/* Nothing ticked yet: shown, so the way out of multi-select is visible from the start, but inert. */
-.metadata-picker-apply.is-disabled {
-  opacity: 0.45;
-  pointer-events: none;
 }
 
 /* Ticked (multi-select backgrounds) — the same underline the file browser marks a ticked file with. */

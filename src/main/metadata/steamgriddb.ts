@@ -16,6 +16,7 @@ import { type ArtworkKind, type GameCandidate, type MetadataResult } from '../..
 import {
   type ArtworkOffer,
   type ArtworkOffers,
+  type ArtworkRequest,
   type GameCandidateRef,
   type MetadataProvider,
 } from './provider';
@@ -135,11 +136,11 @@ export class SteamGridDbProvider implements MetadataProvider {
   async artwork(
     ref: GameCandidateRef,
     kind: ArtworkKind,
-    page: number,
+    request: ArtworkRequest,
     signal?: AbortSignal,
   ): Promise<MetadataResult<ArtworkOffers>> {
     const nothing = { ok: true, value: { offers: [], hasMore: false } } as const;
-    if (kind !== 'grid' || page > 0) return nothing;
+    if (kind !== 'grid' || request.page > 0) return nothing;
     const options = this.options(signal);
     if (options === undefined) return nothing;
     const target = this.artRef(ref);

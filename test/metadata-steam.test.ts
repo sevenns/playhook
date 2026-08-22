@@ -17,6 +17,17 @@ import {
   toCandidates,
 } from '../src/main/metadata/steam';
 
+/** What a page request looks like now: the page, plus the size floor the sidebar's filter sets. */
+function pageRequest(
+  page = 0,
+  minSize = { width: 0, height: 0 },
+): {
+  readonly page: number;
+  readonly minSize: { readonly width: number; readonly height: number };
+} {
+  return { page, minSize };
+}
+
 const SEARCH_FIXTURE = JSON.stringify({
   total: 3,
   items: [
@@ -176,7 +187,7 @@ describe('steam metadata provider', () => {
       const result = await provider.artwork(
         { key: 'steam:220', title: 'Half-Life 2', steamAppId: 220 },
         'grid',
-        0,
+        pageRequest(),
       );
       expect(result.ok === true && result.value.offers.map((v) => v.key)).toEqual([
         'steam:220:grid',
@@ -188,7 +199,7 @@ describe('steam metadata provider', () => {
       const result = await provider.artwork(
         { key: 'steam:220', title: 'HL2', steamAppId: 220 },
         'hero',
-        0,
+        pageRequest(),
       );
       expect(result.ok === true && result.value.offers.map((v) => v.key)).toEqual([
         'steam:220:backdrop',
@@ -202,7 +213,7 @@ describe('steam metadata provider', () => {
       const result = await provider.artwork(
         { key: 'steam:220', title: 'HL2', steamAppId: 220 },
         'hero',
-        0,
+        pageRequest(),
       );
       expect(result.ok === true && result.value.offers[1]).toMatchObject({
         thumbUrl: 'https://cdn.test/220/shot1-thumb.jpg',
@@ -215,7 +226,7 @@ describe('steam metadata provider', () => {
       const result = await provider.artwork(
         { key: 'steam:220', title: 'HL2', steamAppId: 220 },
         'hero',
-        0,
+        pageRequest(),
       );
       const shot = result.ok === true ? result.value.offers[1] : undefined;
       expect(shot).not.toHaveProperty('width');
@@ -229,7 +240,11 @@ describe('steam metadata provider', () => {
       });
       const http = new HttpClient({ fetch, userAgent: 'Playhook/test' });
       const provider = new SteamProvider({ http, locale: () => 'en' });
-      await provider.artwork({ key: 'steam:220', title: 'HL2', steamAppId: 220 }, 'hero', 0);
+      await provider.artwork(
+        { key: 'steam:220', title: 'HL2', steamAppId: 220 },
+        'hero',
+        pageRequest(),
+      );
       expect(fetch).toHaveBeenCalledTimes(1);
     });
 
@@ -238,7 +253,7 @@ describe('steam metadata provider', () => {
       const result = await provider.artwork(
         { key: 'steam:220', title: 'HL2', steamAppId: 220 },
         'hero',
-        0,
+        pageRequest(),
       );
       expect(result).toEqual({ ok: true, value: { offers: [], hasMore: false } });
     });
@@ -250,14 +265,18 @@ describe('steam metadata provider', () => {
         return textResponse(ART_DETAILS);
       });
       const ref = { key: 'steam:220', title: 'HL2', steamAppId: 220 };
-      await provider.artwork(ref, 'hero', 0);
-      await provider.artwork(ref, 'hero', 0);
+      await provider.artwork(ref, 'hero', pageRequest());
+      await provider.artwork(ref, 'hero', pageRequest());
       expect(detailCalls).toBe(1);
     });
 
     it('has nothing to offer for a candidate that is not a Steam app', async () => {
       const provider = providerOf(() => textResponse('', 200));
-      const result = await provider.artwork({ key: 'sgdb:7', title: 'Some game' }, 'grid', 0);
+      const result = await provider.artwork(
+        { key: 'sgdb:7', title: 'Some game' },
+        'grid',
+        pageRequest(),
+      );
       expect(result).toEqual({ ok: true, value: { offers: [], hasMore: false } });
     });
   });

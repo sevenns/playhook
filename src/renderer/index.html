@@ -309,14 +309,16 @@
           <div class="picker-panel">
             <div class="picker-title" id="metadata-picker-title"></div>
             <div class="picker-path" id="metadata-picker-status"></div>
-            <div class="metadata-grid" id="metadata-picker-grid"></div>
+            <!-- Two columns, like the file browser: the filters and the actions on the left, the
+                 pictures on the right. The sidebar is where a MOUSE reaches what the gamepad has buttons
+                 for — Y opens a picture full size, A commits a multi-select — and it is built in JS
+                 because its rows depend on the kind of artwork being picked. -->
+            <div class="picker-body">
+              <div class="metadata-side" id="metadata-picker-side"></div>
+              <div class="metadata-grid" id="metadata-picker-grid"></div>
+            </div>
             <div class="metadata-picker-foot">
               <div class="picker-legend" id="metadata-picker-legend"></div>
-              <!-- Multi-select needs a way to say "done" that a MOUSE can reach: on a gamepad A ticks the
-                   focused tile and finishes in one press, but a mouse has no equivalent of X, so clicking
-                   tiles only ticks them and this button commits. Hidden for a single-choice gallery,
-                   where a click is the whole gesture. -->
-              <button type="button" class="text-button metadata-picker-apply" id="metadata-picker-apply"></button>
             </div>
           </div>
         </div>

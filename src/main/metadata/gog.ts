@@ -26,6 +26,7 @@ import {
 import {
   type ArtworkOffer,
   type ArtworkOffers,
+  type ArtworkRequest,
   type GameCandidateRef,
   type MetadataProvider,
 } from './provider';
@@ -204,11 +205,11 @@ export class GogProvider implements MetadataProvider {
   async artwork(
     ref: GameCandidateRef,
     kind: ArtworkKind,
-    page: number,
+    request: ArtworkRequest,
     signal?: AbortSignal,
   ): Promise<MetadataResult<ArtworkOffers>> {
     const nothing = { ok: true, value: { offers: [], hasMore: false } } as const;
-    if (kind !== 'hero' || page > 0) return nothing;
+    if (kind !== 'hero' || request.page > 0) return nothing;
     const productId = ref.gogId ?? gogIdFromKey(ref.key);
     if (productId === undefined) return nothing;
     const cached = this.screenshots.get(productId);

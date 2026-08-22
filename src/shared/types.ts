@@ -2,6 +2,7 @@
 // Types only — the file compiles to empty JS and creates no runtime dependencies,
 // so the renderer can import from here via `import type` without require.
 import type { Locale } from './i18n/index';
+import type { ArtworkQuality } from './artwork-filter';
 
 /** Display name (window title / tray tooltip). The %APPDATA% data folder is derived separately by
  * Electron from package.json `name` (currently "playhook"). */
@@ -1271,6 +1272,17 @@ export interface ArtworkVariant {
 }
 
 /**
+ * What a gallery was asked to show: the sources the user left switched on (empty means all of them) and
+ * the size floor from the sidebar. It travels with every page request, and changing it starts the
+ * gallery over — main asks fewer sources and drops what is too small BEFORE downloading a thumbnail,
+ * which for a source whose tile is its full-size file is the difference between megabytes and none.
+ */
+export interface ArtworkFilter {
+  readonly sources: readonly MetadataProviderId[];
+  readonly quality: ArtworkQuality;
+}
+
+/**
  * One page of a gallery. The sources hold far more than a screen's worth — a busy game has hundreds of
  * wallpapers, most of them not what this user wants — so the gallery shows a page at a time and says
  * whether there is another behind it. `hasMore` false is what removes the "load more" tile: an offer to
@@ -1507,6 +1519,7 @@ export interface RendererApi {
     candidateKey: string,
     kind: ArtworkKind,
     page: number,
+    filter: ArtworkFilter,
   ): Promise<MetadataResult<ArtworkPage>>;
   /** One variant at full size as a data: URL, for the lightbox. */
   requestMetadataArtworkPreview(variantKey: string): Promise<MetadataResult<string>>;

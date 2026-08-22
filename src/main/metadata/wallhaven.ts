@@ -21,10 +21,12 @@ import { type ArtworkKind, type MetadataResult } from '../../shared/types';
 import {
   type ArtworkOffer,
   type ArtworkOffers,
+  type ArtworkRequest,
   type GameCandidateRef,
   type MetadataProvider,
 } from './provider';
 import { type HttpClient } from './http';
+import { type SizeFloor } from '../../shared/artwork-filter';
 import { searchableTitle } from './search-title';
 
 const API_ORIGIN = 'https://wallhaven.cc/api/v1';
@@ -36,11 +38,12 @@ const CATEGORIES = '110';
 /** SFW only. This is the default and the only purity available without a key; NSFW is not offered. */
 const PURITY = '100';
 /**
- * The floor for a wallpaper's size. The Deck's panel is 1280x800, so 1080p already carries half again
- * the pixels it can show; asking for 1440p only narrowed the choice without looking any better on it.
- * Bigger ones still come back — this is a minimum, not a target.
+ * The floor for a wallpaper's size when the user asked for no particular one. The Deck's panel is
+ * 1280x800, so 1080p already carries half again the pixels it can show; asking for 1440p only narrowed
+ * the choice without looking any better on it. Bigger ones still come back — this is a minimum, not a
+ * target — and the gallery's own size filter raises it (see `atleast` in `searchUrl`).
  */
-const MIN_RESOLUTION = '1920x1080';
+const MIN_RESOLUTION = { width: 1920, height: 1080 };
 /**
  * Landscape, and landscape only — a portrait wallpaper would be cropped to a ribbon behind a 16:10
  * screen. Deliberately NOT a list of exact ratios: this endpoint matches those EXACTLY, so `16x9,16x10`
@@ -68,13 +71,19 @@ const EDITION_MARKERS: readonly string[] = [
   'remastered',
 ];
 
-/** `page` is 0-based here and 1-based there — the endpoint counts its pages from one. */
-export function searchUrl(term: string, page = 0): string {
+/**
+ * `page` is 0-based here and 1-based there — the endpoint counts its pages from one. `minSize` is the
+ * gallery's size filter: asking the endpoint for it beats filtering its answer, which for a 4K floor
+ * would leave two or three tiles out of a page of twenty-four.
+ */
+export function searchUrl(term: string, page = 0, minSize?: SizeFloor): string {
+  const floor =
+    minSize === undefined || minSize.width < MIN_RESOLUTION.width ? MIN_RESOLUTION : minSize;
   const query = new URLSearchParams({
     q: term,
     categories: CATEGORIES,
     purity: PURITY,
-    atleast: MIN_RESOLUTION,
+    atleast: `${floor.width}x${floor.height}`,
     ratios: RATIOS,
     sorting: 'relevance',
     page: String(page + 1),
@@ -235,7 +244,7 @@ export class WallhavenProvider implements MetadataProvider {
   async artwork(
     ref: GameCandidateRef,
     kind: ArtworkKind,
-    page: number,
+    request: ArtworkRequest,
     signal?: AbortSignal,
   ): Promise<MetadataResult<ArtworkOffers>> {
     const nothing = { ok: true, value: { offers: [], hasMore: false } } as const;
@@ -243,10 +252,14 @@ export class WallhavenProvider implements MetadataProvider {
     const title = this.deps.englishTitle(ref) ?? (isLatinTitle(ref.title) ? ref.title : undefined);
     if (title === undefined) return nothing;
     const options = signal === undefined ? undefined : { signal };
-    const remembered = page > 0 ? this.answeredTerm.get(ref.key) : undefined;
+    const remembered = request.page > 0 ? this.answeredTerm.get(ref.key) : undefined;
     let failure: MetadataResult<ArtworkOffers> | undefined;
     for (const term of remembered === undefined ? searchTerms(title) : [remembered]) {
-      const answer = await this.deps.http.json(searchUrl(term, page), searchSchema, options);
+      const answer = await this.deps.http.json(
+        searchUrl(term, request.page, request.minSize),
+        searchSchema,
+        options,
+      );
       if (!answer.ok) {
         failure = answer;
         continue;

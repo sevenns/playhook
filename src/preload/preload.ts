@@ -33,6 +33,7 @@ import type {
   LanguageMode,
   ListDirResult,
   ArtworkKind,
+  ArtworkFilter,
   ArtworkPage,
   GameCandidate,
   GameDetails,
@@ -216,9 +217,12 @@ const api: RendererApi = {
     return ipcRenderer.invoke(CHANNELS.heroRequest) as Promise<HeroAssets | null>;
   },
   onLibraryUpdate(callback: (library: GameLibrary | null) => void): void {
-    ipcRenderer.on(CHANNELS.libraryUpdate, (_event: IpcRendererEvent, library: GameLibrary | null) => {
-      callback(library);
-    });
+    ipcRenderer.on(
+      CHANNELS.libraryUpdate,
+      (_event: IpcRendererEvent, library: GameLibrary | null) => {
+        callback(library);
+      },
+    );
   },
   requestLibrary(): Promise<GameLibrary | null> {
     return ipcRenderer.invoke(CHANNELS.libraryRequest) as Promise<GameLibrary | null>;
@@ -346,9 +350,12 @@ const api: RendererApi = {
     return ipcRenderer.invoke(CHANNELS.settingsReset) as Promise<AppSettings>;
   },
   onUpdateStatus(callback: (status: UpdateStatus) => void): void {
-    ipcRenderer.on(CHANNELS.updateStatusUpdate, (_event: IpcRendererEvent, status: UpdateStatus) => {
-      callback(status);
-    });
+    ipcRenderer.on(
+      CHANNELS.updateStatusUpdate,
+      (_event: IpcRendererEvent, status: UpdateStatus) => {
+        callback(status);
+      },
+    );
   },
   requestUpdateStatus(): Promise<UpdateStatus> {
     return ipcRenderer.invoke(CHANNELS.updateStatusRequest) as Promise<UpdateStatus>;
@@ -411,10 +418,14 @@ const api: RendererApi = {
     candidateKey: string,
     kind: ArtworkKind,
     page: number,
+    filter: ArtworkFilter,
   ): Promise<MetadataResult<ArtworkPage>> {
-    return ipcRenderer.invoke(CHANNELS.metadataArtwork, { candidateKey, kind, page }) as Promise<
-      MetadataResult<ArtworkPage>
-    >;
+    return ipcRenderer.invoke(CHANNELS.metadataArtwork, {
+      candidateKey,
+      kind,
+      page,
+      filter,
+    }) as Promise<MetadataResult<ArtworkPage>>;
   },
   requestMetadataArtworkPreview(variantKey: string): Promise<MetadataResult<string>> {
     return ipcRenderer.invoke(CHANNELS.metadataArtworkPreview, variantKey) as Promise<
@@ -456,9 +467,12 @@ const api: RendererApi = {
     );
   },
   onNotificationToast(callback: (toast: NotificationToast) => void): void {
-    ipcRenderer.on(CHANNELS.notificationsToast, (_event: IpcRendererEvent, toast: NotificationToast) => {
-      callback(toast);
-    });
+    ipcRenderer.on(
+      CHANNELS.notificationsToast,
+      (_event: IpcRendererEvent, toast: NotificationToast) => {
+        callback(toast);
+      },
+    );
   },
   requestNotifications(): Promise<readonly AppNotification[]> {
     return ipcRenderer.invoke(CHANNELS.notificationsRequest) as Promise<readonly AppNotification[]>;

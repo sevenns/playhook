@@ -6,11 +6,24 @@
 // encoded — the renderer has no network of its own and its CSP admits no other image source — and every
 // tile is addressed by an opaque variant key, which is all that travels back to main.
 //
-// Modelled on file-picker.ts (same panel, same "A chooses, B leaves, X ticks" grammar), with a grid of
-// pictures where that one has a list of names: the question here is which picture, and only a picture
-// can answer it.
+// Modelled on file-picker.ts (same panel, same two columns, same "A chooses, B leaves, X ticks"
+// grammar), with a grid of pictures where that one has a list of names: the question here is which
+// picture, and only a picture can answer it.
+//
+// The left column is what keeps that question answerable. Two wallpaper sites and two stores together
+// offer more than anyone will look through, so the sidebar narrows it — by source and by size — and
+// carries the actions that a MOUSE has no gesture for: on a gamepad Y opens the focused picture full
+// size and A commits, and neither has a mouse equivalent on a tile whose click already means "tick".
+import {
+  QUALITY_LABEL,
+  QUALITY_ORDER,
+  sourceGroupsFor,
+  type ArtworkQuality,
+  type ArtworkSourceGroup,
+} from '../shared/artwork-filter.js';
 import {
   MAX_HERO_IMAGES,
+  type ArtworkFilter,
   type ArtworkKind,
   type ArtworkPage,
   type ArtworkVariant,
@@ -29,6 +42,7 @@ export interface MetadataPickerApi {
     candidateKey: string,
     kind: ArtworkKind,
     page: number,
+    filter: ArtworkFilter,
   ): Promise<
     | { readonly ok: true; readonly value: ArtworkPage }
     | { readonly ok: false; readonly message: string }
@@ -56,13 +70,24 @@ export interface MetadataPickerSurface extends NavSurface {
   }): void;
 }
 
+/** Which column holds the focus. The sidebar filters and acts; the grid answers the question. */
+type Column = 'side' | 'grid';
+
+/** One focusable row of the sidebar. Headings are drawn but never focused, so they are not here. */
+type SideAction =
+  | { readonly kind: 'source'; readonly group: ArtworkSourceGroup }
+  | { readonly kind: 'quality'; readonly quality: ArtworkQuality }
+  | { readonly kind: 'preview' }
+  | { readonly kind: 'apply' }
+  | { readonly kind: 'close' };
+
 export function createMetadataPicker(deps: MetadataPickerDeps): MetadataPickerSurface {
   const root = req('metadata-picker');
   const titleEl = req('metadata-picker-title');
   const statusEl = req('metadata-picker-status');
+  const sideEl = req('metadata-picker-side');
   const gridEl = req('metadata-picker-grid');
   const legendEl = req('metadata-picker-legend');
-  const applyEl = req<HTMLButtonElement>('metadata-picker-apply');
 
   const t = (): Translator => deps.getTranslator();
   const scroller = createScroller(gridEl);
@@ -77,20 +102,38 @@ export function createMetadataPicker(deps: MetadataPickerDeps): MetadataPickerSu
   } | null = null;
   /** Bumped on every open/close, so a slow answer from a previous visit cannot paint over this one. */
   let visit = 0;
+  /** Bumped on every request, so an answer to a filter the user has already changed is discarded. */
+  let attempt = 0;
   let variants: readonly ArtworkVariant[] = [];
   let tiles: HTMLButtonElement[] = [];
   let index = 0;
+  let column: Column = 'grid';
+  let sideIndex = 0;
+  let actions: SideAction[] = [];
+  let sideButtons: HTMLButtonElement[] = [];
+  /** Ticked variants, in the order they were ticked — that order becomes the hero rotation. */
+  let picked: string[] = [];
   /** Which page was last asked for, and whether the sources said another one exists behind it. */
   let page = 0;
   let hasMore = false;
   /** True while a page is in flight — the "load more" tile must not queue a second request. */
   let loading = false;
-  /** Ticked variants, in the order they were ticked — that order becomes the hero rotation. */
-  let picked: string[] = [];
+  /** The sidebar's two answers. They travel with every request and starting over on a change. */
+  let sourceKey = 'all';
+  let quality: ArtworkQuality = 'any';
 
   /** How many backgrounds a game may have; a cover is a single choice. */
   function maxPicks(): number {
     return request?.kind === 'hero' ? MAX_HERO_IMAGES : 1;
+  }
+
+  function groups(): readonly ArtworkSourceGroup[] {
+    return sourceGroupsFor(request?.kind ?? 'hero');
+  }
+
+  function filter(): ArtworkFilter {
+    const group = groups().find((entry) => entry.key === sourceKey);
+    return { sources: group?.providers ?? [], quality };
   }
 
   /**
@@ -122,11 +165,12 @@ export function createMetadataPicker(deps: MetadataPickerDeps): MetadataPickerSu
       button.append(image, caption);
       button.addEventListener('click', () => {
         hover.arm();
+        column = 'grid';
         index = position;
         applyFocus();
         // A mouse has no second button here (the gamepad ticks with X), so in a multi-select gallery a
-        // click TICKS and the Apply button commits. A single-choice gallery keeps the one-click gesture:
-        // there is nothing to accumulate, so asking for a second press would be ceremony.
+        // click TICKS and the sidebar's Apply commits. A single-choice gallery keeps the one-click
+        // gesture: there is nothing to accumulate, so asking for a second press would be ceremony.
         if (maxPicks() > 1) togglePick(variant);
         else choose(variant);
       });
@@ -164,16 +208,12 @@ export function createMetadataPicker(deps: MetadataPickerDeps): MetadataPickerSu
     button.append(box, caption);
     button.addEventListener('click', () => {
       hover.arm();
+      column = 'grid';
       index = tiles.length - 1;
       applyFocus();
       loadMore();
     });
     return button;
-  }
-
-  /** Whether a tile is the trailing "load more" one rather than a picture. */
-  function isOnMoreTile(tile: HTMLButtonElement | undefined): boolean {
-    return tile !== undefined && tile.classList.contains('metadata-tile-more');
   }
 
   /** Whether the focus is on the "load more" tile — the one position `variants` has no entry for. */
@@ -188,6 +228,136 @@ export function createMetadataPicker(deps: MetadataPickerDeps): MetadataPickerSu
     }
     deps.audio.play('button');
     void load(page + 1);
+  }
+
+  /** The sidebar: the two filters, then the actions a mouse cannot otherwise reach. */
+  function paintSide(): void {
+    actions = [];
+    sideButtons = [];
+    const nodes: HTMLElement[] = [heading(t()('metadata.filterSource'))];
+    for (const group of groups()) {
+      nodes.push(sideButton({ kind: 'source', group }, group.label ?? t()('metadata.filterAny')));
+    }
+    // Backgrounds only. A cover is a portrait 600x900 whatever the source, so a floor named after a
+    // screen would empty that gallery rather than narrow it.
+    if (request?.kind === 'hero') {
+      nodes.push(heading(t()('metadata.filterSize')));
+      for (const named of QUALITY_ORDER) {
+        nodes.push(
+          sideButton(
+            { kind: 'quality', quality: named },
+            QUALITY_LABEL[named] ?? t()('metadata.filterAny'),
+          ),
+        );
+      }
+    }
+    const divider = document.createElement('div');
+    divider.className = 'picker-divider';
+    nodes.push(divider);
+    nodes.push(sideButton({ kind: 'preview' }, t()('metadata.actionPreview')));
+    if (maxPicks() > 1) nodes.push(sideButton({ kind: 'apply' }, ''));
+    nodes.push(sideButton({ kind: 'close' }, t()('metadata.actionClose')));
+    sideEl.replaceChildren(...nodes);
+    sideIndex = Math.min(sideIndex, Math.max(0, sideButtons.length - 1));
+    paintApply();
+  }
+
+  function heading(text: string): HTMLElement {
+    const node = document.createElement('div');
+    node.className = 'metadata-side-heading';
+    node.textContent = text;
+    return node;
+  }
+
+  function sideButton(action: SideAction, label: string): HTMLButtonElement {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className =
+      action.kind === 'source' || action.kind === 'quality'
+        ? 'picker-item'
+        : 'picker-item is-action';
+    button.textContent = label;
+    const position = actions.length;
+    actions.push(action);
+    sideButtons.push(button);
+    button.addEventListener('click', () => {
+      hover.arm();
+      column = 'side';
+      sideIndex = position;
+      applyFocus();
+      runAction(action);
+    });
+    return button;
+  }
+
+  /** What a sidebar row does. Changing a filter starts the gallery over; the ticks survive it. */
+  function runAction(action: SideAction): void {
+    if (action.kind === 'source') {
+      if (sourceKey === action.group.key) {
+        deps.audio.playLimit();
+        return;
+      }
+      sourceKey = action.group.key;
+      deps.audio.play('button');
+      refilter();
+      return;
+    }
+    if (action.kind === 'quality') {
+      if (quality === action.quality) {
+        deps.audio.playLimit();
+        return;
+      }
+      quality = action.quality;
+      deps.audio.play('button');
+      refilter();
+      return;
+    }
+    if (action.kind === 'preview') {
+      const variant = variants[index];
+      if (variant === undefined) {
+        deps.audio.playLimit();
+        return;
+      }
+      deps.audio.play('button');
+      deps.onPreview(variant.key);
+      return;
+    }
+    if (action.kind === 'apply') {
+      if (picked.length === 0) {
+        deps.audio.playLimit();
+        return;
+      }
+      deps.audio.play('button');
+      finish(picked.slice(0, maxPicks()));
+      return;
+    }
+    deps.audio.play('popup-close');
+    finish([]);
+  }
+
+  /**
+   * A filter changed: whatever is still downloading belongs to the answer the user just replaced, so it
+   * is cancelled and the gallery starts at page 0. The ticks are kept — picking one background per
+   * source is exactly what the filter is for, and main resolves a key long after its tile is gone.
+   */
+  function refilter(): void {
+    deps.api.cancel();
+    loading = false;
+    index = 0;
+    void load(0);
+    paintFilters();
+  }
+
+  /** Marks the two rows that are switched on. */
+  function paintFilters(): void {
+    actions.forEach((action, position) => {
+      const button = sideButtons[position];
+      if (button === undefined) return;
+      const on =
+        (action.kind === 'source' && action.group.key === sourceKey) ||
+        (action.kind === 'quality' && action.quality === quality);
+      button.classList.toggle('is-picked', on);
+    });
   }
 
   /**
@@ -219,38 +389,47 @@ export function createMetadataPicker(deps: MetadataPickerDeps): MetadataPickerSu
     paintApply();
   }
 
-  /** The Apply button: present only where there is something to accumulate, inert until there is. */
+  /** The Apply row: present only where there is something to accumulate, inert until there is. */
   function paintApply(): void {
-    const multi = maxPicks() > 1;
-    applyEl.classList.toggle('is-hidden', !multi);
-    if (!multi) return;
-    applyEl.textContent = t()('metadata.applySelected', { count: String(picked.length) });
-    applyEl.classList.toggle('is-disabled', picked.length === 0);
+    const at = actions.findIndex((action) => action.kind === 'apply');
+    const button = at === -1 ? undefined : sideButtons[at];
+    if (button === undefined) return;
+    button.textContent = t()('metadata.applySelected', { count: String(picked.length) });
+    button.classList.toggle('is-disabled', picked.length === 0);
   }
 
   function applyFocus(instant = false): void {
-    tiles.forEach((tile, position) => tile.classList.toggle('is-focused', position === index));
+    tiles.forEach((tile, position) =>
+      tile.classList.toggle('is-focused', column === 'grid' && position === index),
+    );
+    sideButtons.forEach((button, position) =>
+      button.classList.toggle('is-focused', column === 'side' && position === sideIndex),
+    );
+    if (column !== 'grid') return;
     const focused = tiles[index];
     if (focused !== undefined) scroller.reveal(focused, instant);
   }
 
   function move(delta: number): void {
     hover.arm();
-    if (tiles.length === 0) {
+    const length = column === 'side' ? sideButtons.length : tiles.length;
+    const at = column === 'side' ? sideIndex : index;
+    if (length === 0) {
       deps.audio.playLimit();
       return;
     }
-    const next = clampIndex(index, delta, tiles.length);
-    if (next === index) {
+    const next = clampIndex(at, delta, length);
+    if (next === at) {
       deps.audio.playLimit();
       return;
     }
-    index = next;
+    if (column === 'side') sideIndex = next;
+    else index = next;
     deps.audio.play('navigate');
     applyFocus();
   }
 
-  /** A ticked variant becomes untucked; a fresh one is added unless the slot count is already full. */
+  /** A ticked variant becomes unticked; a fresh one is added unless the slot count is already full. */
   function togglePick(variant: ArtworkVariant): void {
     if (picked.includes(variant.key)) {
       picked = picked.filter((key) => key !== variant.key);
@@ -288,10 +467,13 @@ export function createMetadataPicker(deps: MetadataPickerDeps): MetadataPickerSu
     variants = [];
     picked = [];
     tiles = [];
+    actions = [];
+    sideButtons = [];
     page = 0;
     hasMore = false;
     loading = false;
     gridEl.replaceChildren();
+    sideEl.replaceChildren();
     root.classList.remove('is-open');
     root.setAttribute('aria-hidden', 'true');
     deps.api.cancel();
@@ -306,11 +488,14 @@ export function createMetadataPicker(deps: MetadataPickerDeps): MetadataPickerSu
     const at = request;
     if (at === null || loading) return;
     loading = true;
-    const token = visit;
+    attempt += 1;
+    const token = attempt;
+    const visited = visit;
     const shownBefore = variants.length;
     statusEl.textContent = t()('metadata.searching');
-    const result = await deps.api.artwork(at.candidateKey, at.kind, nextPage);
-    if (token !== visit) return; // the surface was closed (or reopened) while main was fetching
+    const result = await deps.api.artwork(at.candidateKey, at.kind, nextPage, filter());
+    // Closed, reopened, or asked again under another filter while main was fetching.
+    if (visited !== visit || token !== attempt) return;
     loading = false;
     if (!result.ok) {
       statusEl.textContent = result.message;
@@ -324,6 +509,9 @@ export function createMetadataPicker(deps: MetadataPickerDeps): MetadataPickerSu
     hasMore = result.value.hasMore;
     variants = nextPage === 0 ? result.value.variants : [...variants, ...result.value.variants];
     statusEl.textContent = variants.length === 0 ? t()('metadata.noArtwork') : '';
+    // Nothing came back — a filter can be narrow enough to empty the gallery, and the way out of that is
+    // the sidebar, so the focus goes there rather than onto a grid with nothing in it.
+    if (variants.length === 0 && !hasMore) column = 'side';
     paint();
     if (nextPage === 0) return;
     index = Math.min(shownBefore, Math.max(0, tiles.length - 1));
@@ -341,18 +529,32 @@ export function createMetadataPicker(deps: MetadataPickerDeps): MetadataPickerSu
       const tile = target.closest<HTMLButtonElement>('.metadata-tile');
       if (tile === null) return;
       const position = tiles.indexOf(tile);
-      if (position === -1 || position === index) return;
+      if (position === -1 || (position === index && column === 'grid')) return;
+      column = 'grid';
       index = position;
       applyFocus();
     },
     { passive: true },
   );
 
-  applyEl.addEventListener('click', () => {
-    if (picked.length === 0) return;
-    deps.audio.play('button');
-    finish(picked.slice(0, maxPicks()));
-  });
+  sideEl.addEventListener(
+    'mousemove',
+    (event) => {
+      if (!open) return;
+      if (document.documentElement.classList.contains('mouse-asleep')) return;
+      if (!hover.awake(event.clientX, event.clientY)) return;
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      const button = target.closest<HTMLButtonElement>('.picker-item');
+      if (button === null) return;
+      const position = sideButtons.indexOf(button);
+      if (position === -1 || (position === sideIndex && column === 'side')) return;
+      column = 'side';
+      sideIndex = position;
+      applyFocus();
+    },
+    { passive: true },
+  );
 
   root.querySelector<HTMLElement>('.picker-veil')?.addEventListener('click', () => {
     deps.audio.play('popup-close');
@@ -372,15 +574,20 @@ export function createMetadataPicker(deps: MetadataPickerDeps): MetadataPickerSu
       variants = [];
       picked = [];
       index = 0;
+      column = 'grid';
+      sideIndex = 0;
       page = 0;
       hasMore = false;
       loading = false;
+      sourceKey = 'all';
+      quality = 'any';
       deps.audio.play('popup-open');
       titleEl.textContent = next.title;
       legendEl.textContent = t()(
         next.kind === 'hero' ? 'metadata.pickerLegendMulti' : 'metadata.pickerLegend',
       );
-      paintApply();
+      paintSide();
+      paintFilters();
       gridEl.replaceChildren();
       root.classList.add('is-open');
       root.setAttribute('aria-hidden', 'false');
@@ -388,12 +595,53 @@ export function createMetadataPicker(deps: MetadataPickerDeps): MetadataPickerSu
       hover.arm();
       void load(0);
     },
-    navUp: () => move(-columns()),
-    navDown: () => move(columns()),
-    navLeft: () => move(-1),
-    navRight: () => move(1),
+    navUp: () => move(column === 'side' ? -1 : -columns()),
+    navDown: () => move(column === 'side' ? 1 : columns()),
+    /**
+     * Left walks the row and then steps into the sidebar — but a HELD left stops at the wall, the same
+     * rule the library grid follows: crossing into another surface is a press of its own, not something
+     * a hold should carry the focus through.
+     */
+    navLeft: (repeat) => {
+      hover.arm();
+      if (column === 'side') {
+        deps.audio.playLimit();
+        return;
+      }
+      if (tiles.length > 0 && index % Math.max(1, columns()) !== 0) {
+        move(-1);
+        return;
+      }
+      if (repeat === true) return;
+      column = 'side';
+      deps.audio.play('navigate');
+      applyFocus();
+    },
+    navRight: () => {
+      hover.arm();
+      if (column !== 'side') {
+        move(1);
+        return;
+      }
+      if (tiles.length === 0) {
+        deps.audio.playLimit(); // nothing to walk into — the gallery came back empty
+        return;
+      }
+      column = 'grid';
+      deps.audio.play('navigate');
+      applyFocus();
+    },
     navActivate: () => {
       hover.arm();
+      if (column === 'side') {
+        const action = actions[sideIndex];
+        if (action === undefined) {
+          deps.audio.playLimit();
+          return;
+        }
+        runAction(action);
+        return;
+      }
       if (isOnMore()) {
         loadMore();
         return;
@@ -411,7 +659,7 @@ export function createMetadataPicker(deps: MetadataPickerDeps): MetadataPickerSu
     },
     /** X ticks a background, the one gesture a single-choice gallery has no use for. */
     navSecondary: () => {
-      const variant = variants[index];
+      const variant = column === 'grid' ? variants[index] : undefined;
       if (variant === undefined || maxPicks() === 1) {
         deps.audio.playLimit();
         return;
@@ -435,11 +683,14 @@ export function createMetadataPicker(deps: MetadataPickerDeps): MetadataPickerSu
       if (variants.length === 0 && statusEl.textContent !== '') {
         statusEl.textContent = t()('metadata.noArtwork');
       }
-      const more = tiles[variants.length]?.querySelector('.metadata-tile-caption');
-      if (isOnMoreTile(tiles[variants.length]) && more !== null && more !== undefined) {
-        more.textContent = t()('metadata.loadMore');
+      paintSide();
+      paintFilters();
+      applyFocus(true);
+      const more = tiles[variants.length];
+      if (more !== undefined && more.classList.contains('metadata-tile-more')) {
+        const caption = more.querySelector('.metadata-tile-caption');
+        if (caption !== null) caption.textContent = t()('metadata.loadMore');
       }
-      paintApply();
     },
   };
 }

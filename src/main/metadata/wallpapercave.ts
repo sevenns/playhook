@@ -28,6 +28,7 @@ import { IMAGE_EXTENSIONS } from '../asset-reader';
 import {
   type ArtworkOffer,
   type ArtworkOffers,
+  type ArtworkRequest,
   type GameCandidateRef,
   type MetadataProvider,
 } from './provider';
@@ -299,13 +300,13 @@ export class WallpaperCaveProvider implements MetadataProvider {
   async artwork(
     ref: GameCandidateRef,
     kind: ArtworkKind,
-    page: number,
+    request: ArtworkRequest,
     signal?: AbortSignal,
   ): Promise<MetadataResult<ArtworkOffers>> {
     const nothing = { ok: true, value: { offers: [], hasMore: false } } as const;
     if (kind !== 'hero') return nothing;
     const options = signal === undefined ? undefined : { signal };
-    const remembered = page > 0 ? this.searches.get(ref.key) : undefined;
+    const remembered = request.page > 0 ? this.searches.get(ref.key) : undefined;
     const found = remembered ?? (await this.findAlbums(ref, options));
     if (found === undefined) return nothing;
     if (!('albums' in found)) return found;
@@ -313,11 +314,11 @@ export class WallpaperCaveProvider implements MetadataProvider {
     // The 302 case: one album, all of it already parsed out of the answer to the search itself. The
     // service keeps whatever did not fit on screen, so there is nothing left for a later page to fetch.
     if (found.albums.length === 0) {
-      return page > 0
+      return request.page > 0
         ? nothing
         : { ok: true, value: { offers: toArtworkOffers(found.wallpapers), hasMore: false } };
     }
-    return this.fromAlbums(found.albums, page, options);
+    return this.fromAlbums(found.albums, request.page, options);
   }
 
   /**

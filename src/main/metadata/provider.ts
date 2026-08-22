@@ -9,6 +9,7 @@
 //
 // Every method is optional: Steam searches, offers art and knows descriptions; SteamGridDB searches and
 // offers art; Khinsider only knows music. The service asks whoever answers.
+import { type SizeFloor } from '../../shared/artwork-filter';
 import {
   type ArtworkKind,
   type GameCandidate,
@@ -42,6 +43,16 @@ export interface ArtworkOffer {
   readonly thumbUrl: string;
   /** What gets downloaded when the user picks this variant (and what the lightbox shows). */
   readonly fullUrl: string;
+}
+
+/**
+ * What a gallery page is asking a source for: which page, and the size floor the user set in the
+ * sidebar. The floor is passed on rather than only applied afterwards — a source that can search by size
+ * (Wallhaven does) fills a page of 4K wallpapers where filtering its answer would leave three tiles.
+ */
+export interface ArtworkRequest {
+  readonly page: number;
+  readonly minSize: SizeFloor;
 }
 
 /**
@@ -83,7 +94,7 @@ export interface MetadataProvider {
   artwork?(
     ref: GameCandidateRef,
     kind: ArtworkKind,
-    page: number,
+    request: ArtworkRequest,
     signal?: AbortSignal,
   ): Promise<MetadataResult<ArtworkOffers>>;
   musicSearch?(query: string, signal?: AbortSignal): Promise<MetadataResult<readonly MusicAlbum[]>>;

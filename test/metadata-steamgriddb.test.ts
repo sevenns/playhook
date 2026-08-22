@@ -10,6 +10,17 @@ import {
   toArtworkOffers,
 } from '../src/main/metadata/steamgriddb';
 
+/** What a page request looks like now: the page, plus the size floor the sidebar's filter sets. */
+function pageRequest(
+  page = 0,
+  minSize = { width: 0, height: 0 },
+): {
+  readonly page: number;
+  readonly minSize: { readonly width: number; readonly height: number };
+} {
+  return { page, minSize };
+}
+
 const SEARCH_FIXTURE = JSON.stringify({
   success: true,
   data: [
@@ -102,7 +113,9 @@ describe('steamgriddb metadata provider', () => {
 
     it('offers no artwork and makes no request', async () => {
       const { provider, fetch } = providerOf('');
-      await expect(provider.artwork({ key: 'sgdb:1', title: 'x' }, 'grid', 0)).resolves.toEqual({
+      await expect(
+        provider.artwork({ key: 'sgdb:1', title: 'x' }, 'grid', pageRequest()),
+      ).resolves.toEqual({
         ok: true,
         value: { offers: [], hasMore: false },
       });
@@ -155,7 +168,7 @@ describe('steamgriddb metadata provider', () => {
       const result = await provider.artwork(
         { key: 'steam:220', title: 'HL2', steamAppId: 220 },
         'hero',
-        0,
+        pageRequest(),
       );
       expect(result).toEqual({ ok: true, value: { offers: [], hasMore: false } });
       expect(fetch).not.toHaveBeenCalled();
@@ -166,7 +179,7 @@ describe('steamgriddb metadata provider', () => {
       const result = await provider.artwork(
         { key: 'steam:220', title: 'HL2', steamAppId: 220 },
         'grid',
-        0,
+        pageRequest(),
       );
       expect(fetch.mock.calls[0]?.[0]).toContain('/grids/steam/220');
       expect(result.ok === true && result.value.offers).toHaveLength(2);
@@ -174,7 +187,11 @@ describe('steamgriddb metadata provider', () => {
 
     it('reports a rejected key as a failure rather than as an empty gallery', async () => {
       const { provider } = providerOf('bad', () => textResponse('{"success":false}', 401));
-      const result = await provider.artwork({ key: 'sgdb:5250', title: 'HK' }, 'grid', 0);
+      const result = await provider.artwork(
+        { key: 'sgdb:5250', title: 'HK' },
+        'grid',
+        pageRequest(),
+      );
       expect(result.ok).toBe(false);
     });
   });

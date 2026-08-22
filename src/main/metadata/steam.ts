@@ -27,6 +27,7 @@ import {
 import {
   type ArtworkOffer,
   type ArtworkOffers,
+  type ArtworkRequest,
   type GameCandidateRef,
   type MetadataProvider,
 } from './provider';
@@ -354,10 +355,10 @@ export class SteamProvider implements MetadataProvider {
   async artwork(
     ref: GameCandidateRef,
     kind: ArtworkKind,
-    page: number,
+    request: ArtworkRequest,
     signal?: AbortSignal,
   ): Promise<MetadataResult<ArtworkOffers>> {
-    if (page > 0) return { ok: true, value: { offers: [], hasMore: false } };
+    if (request.page > 0) return { ok: true, value: { offers: [], hasMore: false } };
     const appId = ref.steamAppId ?? steamAppIdFromKey(ref.key);
     if (appId === undefined) return { ok: true, value: { offers: [], hasMore: false } };
     const offers =
