@@ -3029,6 +3029,31 @@ html:not(.mouse-asleep) .metadata-tile:hover,
   overflow-wrap: anywhere;
 }
 
+/* The panel's foot: the legend keeps the middle, the Apply button sits at its right end. */
+.metadata-picker-foot {
+  display: flex;
+  align-items: center;
+  gap: calc(20 * var(--px));
+}
+
+.metadata-picker-foot .picker-legend {
+  flex: 1 1 auto;
+}
+
+.metadata-picker-apply {
+  flex: 0 0 auto;
+}
+
+.metadata-picker-apply.is-hidden {
+  display: none;
+}
+
+/* Nothing ticked yet: shown, so the way out of multi-select is visible from the start, but inert. */
+.metadata-picker-apply.is-disabled {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
 /* Ticked (multi-select backgrounds) — the same underline the file browser marks a ticked file with. */
 .metadata-tile.is-picked .metadata-tile-caption {
   text-decoration: underline;

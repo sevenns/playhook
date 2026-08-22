@@ -56,6 +56,7 @@ export function createMetadataPicker(deps: MetadataPickerDeps): MetadataPickerSu
   const statusEl = req('metadata-picker-status');
   const gridEl = req('metadata-picker-grid');
   const legendEl = req('metadata-picker-legend');
+  const applyEl = req<HTMLButtonElement>('metadata-picker-apply');
 
   const t = (): Translator => deps.getTranslator();
   const scroller = createScroller(gridEl);
@@ -112,7 +113,11 @@ export function createMetadataPicker(deps: MetadataPickerDeps): MetadataPickerSu
         hover.arm();
         index = position;
         applyFocus();
-        choose(variant);
+        // A mouse has no second button here (the gamepad ticks with X), so in a multi-select gallery a
+        // click TICKS and the Apply button commits. A single-choice gallery keeps the one-click gesture:
+        // there is nothing to accumulate, so asking for a second press would be ceremony.
+        if (maxPicks() > 1) togglePick(variant);
+        else choose(variant);
       });
       return button;
     });
@@ -152,6 +157,16 @@ export function createMetadataPicker(deps: MetadataPickerDeps): MetadataPickerSu
       const key = variants[position]?.key;
       tile.classList.toggle('is-picked', key !== undefined && picked.includes(key));
     });
+    paintApply();
+  }
+
+  /** The Apply button: present only where there is something to accumulate, inert until there is. */
+  function paintApply(): void {
+    const multi = maxPicks() > 1;
+    applyEl.classList.toggle('is-hidden', !multi);
+    if (!multi) return;
+    applyEl.textContent = t()('metadata.applySelected', { count: String(picked.length) });
+    applyEl.classList.toggle('is-disabled', picked.length === 0);
   }
 
   function applyFocus(instant = false): void {
@@ -256,6 +271,12 @@ export function createMetadataPicker(deps: MetadataPickerDeps): MetadataPickerSu
     { passive: true },
   );
 
+  applyEl.addEventListener('click', () => {
+    if (picked.length === 0) return;
+    deps.audio.play('button');
+    finish(picked.slice(0, maxPicks()));
+  });
+
   root.querySelector<HTMLElement>('.picker-veil')?.addEventListener('click', () => {
     deps.audio.play('popup-close');
     finish([]);
@@ -279,6 +300,7 @@ export function createMetadataPicker(deps: MetadataPickerDeps): MetadataPickerSu
       legendEl.textContent = t()(
         next.kind === 'hero' ? 'metadata.pickerLegendMulti' : 'metadata.pickerLegend',
       );
+      paintApply();
       gridEl.replaceChildren();
       root.classList.add('is-open');
       root.setAttribute('aria-hidden', 'false');
@@ -329,6 +351,7 @@ export function createMetadataPicker(deps: MetadataPickerDeps): MetadataPickerSu
       if (variants.length === 0 && statusEl.textContent !== '') {
         statusEl.textContent = t()('metadata.noArtwork');
       }
+      paintApply();
     },
   };
 }

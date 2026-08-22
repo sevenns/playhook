@@ -310,7 +310,14 @@
             <div class="picker-title" id="metadata-picker-title"></div>
             <div class="picker-path" id="metadata-picker-status"></div>
             <div class="metadata-grid" id="metadata-picker-grid"></div>
-            <div class="picker-legend" id="metadata-picker-legend"></div>
+            <div class="metadata-picker-foot">
+              <div class="picker-legend" id="metadata-picker-legend"></div>
+              <!-- Multi-select needs a way to say "done" that a MOUSE can reach: on a gamepad A ticks the
+                   focused tile and finishes in one press, but a mouse has no equivalent of X, so clicking
+                   tiles only ticks them and this button commits. Hidden for a single-choice gallery,
+                   where a click is the whole gesture. -->
+              <button type="button" class="text-button metadata-picker-apply" id="metadata-picker-apply"></button>
+            </div>
           </div>
         </div>
 

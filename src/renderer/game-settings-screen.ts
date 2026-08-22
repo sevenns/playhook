@@ -43,6 +43,7 @@ import type {
   MusicTrack,
 } from '../shared/types';
 import type { MessageKey, Translator } from '../shared/i18n/index.js';
+import { MAX_HERO_IMAGES } from '../shared/types';
 import { type AudioController } from './audio.js';
 import { req } from './dom.js';
 import { createEntrance } from './entrance.js';
@@ -990,12 +991,18 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
    * same: stepping out of a deeper level is a step INSIDE the menu and keeps `back`; leaving the last one
    * is the menu going away.
    */
-  function popMenu(): void {
+  /**
+   * `keepWork` is for a level the SCREEN closes because it is done with it — a question that has just
+   * been answered — rather than one the user backed out of. Leaving is normally the signal to abandon
+   * whatever was running, and the answer to a question is immediately followed by acting on it: aborting
+   * there would cancel the very download the answer just asked for.
+   */
+  function popMenu(options?: { readonly keepWork?: boolean }): void {
     if (menuStack.length > 0) deps.audio.play(menuStack.length > 1 ? 'back' : 'popup-close');
     menuStack.pop();
     // Leaving a level ends whatever it had running: an audition belongs to the track list it was
     // started from, and a download the user has walked away from has nobody left to arrive for.
-    stopMetadataWork();
+    if (options?.keepWork !== true) stopMetadataWork();
     paintMenu();
   }
 
@@ -2113,27 +2120,77 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       title: candidate.title,
       onDone: (variantKeys) => {
         if (variantKeys.length === 0) return; // backed out — the form keeps what it had
-        void applyArtwork(kind, variantKeys);
+        if (kind === 'grid') {
+          void applyArtwork(kind, variantKeys, 'replace');
+          return;
+        }
+        askHowToApplyHeroes(variantKeys);
       },
     });
   }
 
   /**
-   * Downloads the chosen variants and writes the resulting manifest paths into the form. A hero pick
-   * REPLACES the list rather than appending to it: the gallery answers "which backgrounds", and adding
-   * to what is already there is what the ordinary list editor is for.
+   * What a hero pick does to the backgrounds already in the form.
+   *
+   * Replacing is the natural reading of "choose the backgrounds", and it was the only behaviour — but
+   * building a set from SEVERAL searches (a wallpaper here, a screenshot there) was then impossible,
+   * since every visit wiped the last. So a partial pick asks; a full one does not, because choosing the
+   * maximum IS the statement that these are the backgrounds.
    */
-  async function applyArtwork(kind: 'grid' | 'hero', variantKeys: readonly string[]): Promise<void> {
+  function askHowToApplyHeroes(variantKeys: readonly string[]): void {
+    const existing = form.heroImage.length;
+    if (existing === 0 || variantKeys.length >= MAX_HERO_IMAGES) {
+      void applyArtwork('hero', variantKeys, 'replace');
+      return;
+    }
+    const entries: MenuEntry[] = [];
+    // Absent once the list is full: "add" would have nowhere to add to, and offering it only to explain
+    // that afterwards is worse than not offering it.
+    if (existing < MAX_HERO_IMAGES) {
+      entries.push({
+        label: t()('metadata.heroAppend'),
+        // The question is answered, so its level goes: leaving it up would ask again on the way back.
+        run: () => {
+          popMenu({ keepWork: true });
+          void applyArtwork('hero', variantKeys, 'append');
+        },
+      });
+    }
+    entries.push({
+      label: t()('metadata.heroReplace'),
+      run: () => {
+        popMenu({ keepWork: true });
+        void applyArtwork('hero', variantKeys, 'replace');
+      },
+    });
+    pushMenu(asMenu({ title: t()('metadata.heroExists'), entries }));
+  }
+
+  /**
+   * Downloads the chosen variants and writes the resulting manifest paths into the form.
+   *
+   * The slot INDEX matters as much as the order: it names the file on disk
+   * (`assets/<id>-hero-<n>.<ext>`), so appending has to start after the backgrounds already there —
+   * writing from zero would overwrite the very files it is adding to.
+   */
+  async function applyArtwork(
+    kind: 'grid' | 'hero',
+    variantKeys: readonly string[],
+    mode: 'replace' | 'append',
+  ): Promise<void> {
     const target = metadataTarget();
     if (target === null) {
       setStatus(t()('metadata.needsId'));
       return;
     }
+    const existing = mode === 'append' ? form.heroImage : [];
+    const room = kind === 'grid' ? variantKeys.length : MAX_HERO_IMAGES - existing.length;
+    const accepted = variantKeys.slice(0, Math.max(0, room));
     const token = metadataToken;
     setStatus(t()('metadata.applying'));
     const paths: string[] = [];
-    for (const [index, variantKey] of variantKeys.entries()) {
-      const slot: MetadataApplySlot = kind === 'grid' ? 'grid' : { hero: index };
+    for (const [index, variantKey] of accepted.entries()) {
+      const slot: MetadataApplySlot = kind === 'grid' ? 'grid' : { hero: existing.length + index };
       const result = await deps.api.applyMetadata({ ...target, variantKey, slot });
       if (!metadataCurrent(token)) return;
       if (!result.ok) {
@@ -2142,9 +2199,19 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       }
       paths.push(result.path);
     }
-    if (kind === 'grid') setField('gridImage', paths[0] ?? '');
-    else setList('heroImage', paths);
-    setStatus(t()('metadata.applied'));
+    if (kind === 'grid') {
+      setField('gridImage', paths[0] ?? '');
+    } else {
+      setList('heroImage', [...existing, ...paths]);
+    }
+    // A pick that did not fit says so: silently dropping the third of three chosen backgrounds would
+    // read as the download having failed.
+    const dropped = variantKeys.length - accepted.length;
+    setStatus(
+      dropped > 0
+        ? t()('metadata.appliedPartly', { count: String(dropped) })
+        : t()('metadata.applied'),
+    );
   }
 
   /** One variant at full size, in the screen's own lightbox (which sits above the gallery). */
