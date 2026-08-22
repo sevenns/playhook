@@ -772,11 +772,11 @@ describe('drift guard: form keys vs the zod schema', () => {
     };
     const objectSchema = schema.oneOf?.[0];
     const schemaKeys = new Set(Object.keys(objectSchema?.properties ?? {}));
-    // `description` is the one schema key the form deliberately does NOT own: it is written by the
-    // "Find online" flow straight into `rest` (which round-trips it verbatim) and no row edits it, so
-    // giving it a form field would mean a control for a value the UI has nothing to say about. Every
+    // These four are the schema keys the form deliberately does NOT own: they are written by the "Find
+    // online" flow straight into `rest` (which round-trips them verbatim) and no row edits them, so
+    // giving them form fields would mean controls for values the UI has nothing to say about yet. Every
     // OTHER schema key must still be listed — that is what this guard exists for.
-    schemaKeys.delete('description');
+    for (const key of ['description', 'genres', 'releaseDate', 'platforms']) schemaKeys.delete(key);
     expect(schemaKeys).toEqual(new Set(KNOWN_MANIFEST_KEYS));
   });
 });

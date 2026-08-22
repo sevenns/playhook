@@ -23,6 +23,8 @@ import {
   type LocalizedText,
   type MetadataApplyRequest,
   type MetadataApplyResult,
+  type GameDetails,
+  type GamePlatform,
   type MetadataProviderId,
   type MetadataResult,
   type MusicAlbum,
@@ -178,8 +180,8 @@ export class MetadataService {
     );
     ipcMain.handle(
       IPC.metadataDescriptions,
-      (_event, candidateKey: unknown): Promise<MetadataResult<LocalizedText>> =>
-        this.descriptions(typeof candidateKey === 'string' ? candidateKey : ''),
+      (_event, candidateKey: unknown): Promise<MetadataResult<GameDetails>> =>
+        this.details(typeof candidateKey === 'string' ? candidateKey : ''),
     );
     ipcMain.handle(
       IPC.metadataApply,
@@ -358,23 +360,25 @@ export class MetadataService {
     return { ok: true, value: toDataUrl(sniffed, bytes.value.bytes) };
   }
 
-  private async descriptions(candidateKey: string): Promise<MetadataResult<LocalizedText>> {
+  /**
+   * Everything known about the game that is not a picture, merged across the sources that answered.
+   * Earlier answers win: the providers are asked in PROVIDER_ORDER, so Steam's genres stand and GOG only
+   * fills what Steam had nothing to say about — which for a game Steam does not sell is everything.
+   */
+  private async details(candidateKey: string): Promise<MetadataResult<GameDetails>> {
     const ref = this.candidates.get(candidateKey);
     if (ref === undefined) return { ok: false, message: this.t('metadata.staleSelection') };
     const answers = await this.fromProviders((provider, signal) =>
-      provider.descriptions?.(toCandidateRef(ref), signal),
+      provider.details?.(toCandidateRef(ref), signal),
     );
-    const texts = answers.flatMap((answer) => (answer.ok ? [answer.value] : []));
-    if (texts.length === 0) {
+    const known = answers.flatMap((answer) => (answer.ok ? [answer.value] : []));
+    if (known.length === 0) {
       const failure = answers.find((answer) => !answer.ok);
       return failure !== undefined && !failure.ok
         ? failure
         : { ok: false, message: this.t('metadata.noDescriptions') };
     }
-    return {
-      ok: true,
-      value: texts.reduce<LocalizedText>((all, text) => ({ ...all, ...text }), {}),
-    };
+    return { ok: true, value: mergeDetails(known) };
   }
 
   /**
@@ -656,6 +660,39 @@ export function orderByProvider(offers: readonly ArtworkOffer[]): readonly Artwo
     return at === -1 ? PROVIDER_ORDER.length : at;
   };
   return [...offers].sort((a, b) => rank(a.provider) - rank(b.provider));
+}
+
+/**
+ * Several sources' facts about one game, folded into a single set. First answer wins per FIELD rather
+ * than per source: a game can be on Steam (which knows its genres) and on GOG (which may state a
+ * platform Steam does not), and taking one source wholesale would throw away the other's half.
+ */
+export function mergeDetails(known: readonly GameDetails[]): GameDetails {
+  const merged: {
+    description?: LocalizedText;
+    genres?: readonly string[];
+    releaseDate?: string;
+    platforms?: readonly GamePlatform[];
+  } = {};
+  for (const entry of known) {
+    if (merged.description === undefined && entry.description !== undefined) {
+      merged.description = entry.description;
+    }
+    if (merged.genres === undefined && entry.genres !== undefined && entry.genres.length > 0) {
+      merged.genres = entry.genres;
+    }
+    if (merged.releaseDate === undefined && entry.releaseDate !== undefined) {
+      merged.releaseDate = entry.releaseDate;
+    }
+    if (
+      merged.platforms === undefined &&
+      entry.platforms !== undefined &&
+      entry.platforms.length > 0
+    ) {
+      merged.platforms = entry.platforms;
+    }
+  }
+  return merged;
 }
 
 /** Everything a provider may need to recognize a merged candidate as one of its own. */

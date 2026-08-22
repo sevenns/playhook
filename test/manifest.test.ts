@@ -70,7 +70,9 @@ describe('stripCopySourcePrefix (copy mode: executable relative to the copied di
 
   it('normalizes Windows backslashes on both sides (Р12)', () => {
     expect(stripCopySourcePrefix('game\\game.exe', 'game')).toBe('game.exe');
-    expect(stripCopySourcePrefix('Games\\MyGame\\bin\\game.exe', 'Games\\MyGame')).toBe('bin/game.exe');
+    expect(stripCopySourcePrefix('Games\\MyGame\\bin\\game.exe', 'Games\\MyGame')).toBe(
+      'bin/game.exe',
+    );
   });
 
   it('tolerates a trailing slash on the source', () => {
@@ -133,7 +135,6 @@ describe('expandPcSavePath', () => {
 });
 
 describe('validateManifestText', () => {
-
   it('rejects JSONC (README-style // comments) as a syntax error', () => {
     const jsonc = '{\n  "schemaVersion": 1, // a comment\n  "id": "x"\n}';
     const result = validateManifestText(jsonc, t);
@@ -147,7 +148,10 @@ describe('validateManifestText', () => {
   });
 
   it('rejects a non-steam CARD manifest with no executable (semantic — the schema no longer requires it, to allow the PC-library draft state)', () => {
-    const result = validateManifestText(JSON.stringify({ schemaVersion: 1, id: 'x', title: 'X' }), t);
+    const result = validateManifestText(
+      JSON.stringify({ schemaVersion: 1, id: 'x', title: 'X' }),
+      t,
+    );
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.issues.some((i) => i.path === 'executable')).toBe(true);
@@ -182,6 +186,41 @@ describe('validateManifestText', () => {
         description,
       });
       expect(validateManifestText(text, t).ok, JSON.stringify(description)).toBe(true);
+    }
+  });
+
+  it('accepts the facts stored for a future library view', () => {
+    const text = JSON.stringify({
+      schemaVersion: 1,
+      id: 'x',
+      title: 'X',
+      executable: 'g/g.exe',
+      heroImage: 'a/hero.jpg',
+      genres: ['Action', 'Roguelike'],
+      releaseDate: '2020-09-17',
+      platforms: ['windows', 'linux'],
+    });
+    expect(validateManifestText(text, t).ok).toBe(true);
+  });
+
+  it('drops a malformed genre list / date / platform rather than rejecting the game', () => {
+    const cases: readonly Record<string, unknown>[] = [
+      { genres: 'Action' },
+      { genres: [1, 2] },
+      { releaseDate: 'Coming soon' },
+      { platforms: ['amiga'] },
+      { platforms: 'windows' },
+    ];
+    for (const extra of cases) {
+      const text = JSON.stringify({
+        schemaVersion: 1,
+        id: 'x',
+        title: 'X',
+        executable: 'g/g.exe',
+        heroImage: 'a/hero.jpg',
+        ...extra,
+      });
+      expect(validateManifestText(text, t).ok, JSON.stringify(extra)).toBe(true);
     }
   });
 
@@ -337,7 +376,7 @@ describe('validateManifestText — multi-game array', () => {
     if (!result.ok) expect(result.issues.some((i) => i.path === 'games.1.id')).toBe(true);
   });
 
-  it('prefixes each element\'s issue path with games.<i>.', () => {
+  it("prefixes each element's issue path with games.<i>.", () => {
     // Second game is missing its hero → the issue is attributed to games.1.heroImage.
     const text = JSON.stringify([game('a'), game('b', { heroImage: undefined })]);
     const result = validateManifestText(text, t);
@@ -375,7 +414,9 @@ describe('absoluteToPcSavePath (reverse of expandPcSavePath, for the folder pick
   });
 
   it('maps a folder under %DOCUMENTS%', () => {
-    expect(absoluteToPcSavePath(path.join(docs, 'MyGame', 'Saves'), env)).toBe('%DOCUMENTS%/MyGame/Saves');
+    expect(absoluteToPcSavePath(path.join(docs, 'MyGame', 'Saves'), env)).toBe(
+      '%DOCUMENTS%/MyGame/Saves',
+    );
   });
 
   it('prefers the most specific base (%APPDATA% over %USERPROFILE%)', () => {
@@ -409,7 +450,9 @@ describe('manifestJsonSchema', () => {
     expect(Object.keys(objectSchema?.properties ?? {})).toEqual(
       expect.arrayContaining(['schemaVersion', 'id', 'title']),
     );
-    expect(objectSchema?.required).toEqual(expect.arrayContaining(['schemaVersion', 'id', 'title']));
+    expect(objectSchema?.required).toEqual(
+      expect.arrayContaining(['schemaVersion', 'id', 'title']),
+    );
     // Second branch: an array of the same object schema.
     expect(arraySchema?.type).toBe('array');
     expect(arraySchema?.items?.type).toBe('object');
@@ -457,7 +500,10 @@ describe('validateManifestText — gridImage', () => {
   });
 
   it('rejects a 4th heroImage (editor-only cap)', () => {
-    const result = validateManifestText(game({ heroImage: ['a.jpg', 'b.jpg', 'c.jpg', 'd.jpg'] }), t);
+    const result = validateManifestText(
+      game({ heroImage: ['a.jpg', 'b.jpg', 'c.jpg', 'd.jpg'] }),
+      t,
+    );
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.issues.some((i) => i.path === 'heroImage')).toBe(true);
   });
@@ -506,7 +552,13 @@ describe('readManifests — gridImage + hero truncation (runtime is lenient)', (
   });
 
   it('resolves gridImage inside the card root', async () => {
-    await write({ schemaVersion: 1, id: 'x', title: 'X', executable: 'g/g.exe', gridImage: 'art/grid.jpg' });
+    await write({
+      schemaVersion: 1,
+      id: 'x',
+      title: 'X',
+      executable: 'g/g.exe',
+      gridImage: 'art/grid.jpg',
+    });
     const result = await readManifests(cardRoot, env, resolveInstallDir);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -624,7 +676,9 @@ describe('validateManifestText — pc mode', () => {
   it('accepts a lone pcSavePath (the backup side is supplied by the app)', () => {
     const abs = path.join(path.resolve(path.sep), 'Games', 'Hades', 'Saves');
     expect(validateManifestText(pcGame({ pcSavePath: abs }), t, 'pc').ok).toBe(true);
-    expect(validateManifestText(pcGame({ pcSavePath: '%DOCUMENTS%/Hades' }), t, 'pc').ok).toBe(true);
+    expect(validateManifestText(pcGame({ pcSavePath: '%DOCUMENTS%/Hades' }), t, 'pc').ok).toBe(
+      true,
+    );
   });
 
   it('rejects an absolute pcSavePath on a CARD (the allowlist still rules there)', () => {
@@ -684,12 +738,18 @@ describe('validateManifestText — a STEAM game in the PC library', () => {
     if (!result.ok) expect(result.issues.some((i) => i.path === 'saveOnCard')).toBe(true);
     // …while the very same manifest is the normal spelling on a card.
     expect(
-      validateManifestText(steamGame({ saveOnCard: 'saves', pcSavePath: '%APPDATA%/Hades' }), t, 'card').ok,
+      validateManifestText(
+        steamGame({ saveOnCard: 'saves', pcSavePath: '%APPDATA%/Hades' }),
+        t,
+        'card',
+      ).ok,
     ).toBe(true);
   });
 
   it('accepts a %PREFIX% pcSavePath (a Proton game keeps its saves inside the prefix)', () => {
-    expect(validateManifestText(steamGame({ pcSavePath: '%APPDATA%/Hades' }), t, 'pc').ok).toBe(true);
+    expect(validateManifestText(steamGame({ pcSavePath: '%APPDATA%/Hades' }), t, 'pc').ok).toBe(
+      true,
+    );
   });
 });
 

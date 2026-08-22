@@ -35,7 +35,7 @@ import type {
   ArtworkKind,
   ArtworkVariant,
   GameCandidate,
-  LocalizedText,
+  GameDetails,
   MetadataApplyRequest,
   MetadataApplyResult,
   MetadataResult,
@@ -435,9 +435,9 @@ const api: RendererApi = {
       MetadataResult<string>
     >;
   },
-  requestMetadataDescriptions(candidateKey: string): Promise<MetadataResult<LocalizedText>> {
+  requestMetadataDescriptions(candidateKey: string): Promise<MetadataResult<GameDetails>> {
     return ipcRenderer.invoke(CHANNELS.metadataDescriptions, candidateKey) as Promise<
-      MetadataResult<LocalizedText>
+      MetadataResult<GameDetails>
     >;
   },
   applyMetadata(request: MetadataApplyRequest): Promise<MetadataApplyResult> {

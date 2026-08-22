@@ -16,7 +16,13 @@
 // now answers with an empty list, which is exactly why this uses `catalog.gog.com` instead. Every answer
 // is zod-validated, and a shape that moved on makes the provider drop out of the results, nothing more.
 import { z } from 'zod';
-import { type ArtworkKind, type GameCandidate, type MetadataResult } from '../../shared/types';
+import {
+  type ArtworkKind,
+  type GameCandidate,
+  type GameDetails,
+  type GamePlatform,
+  type MetadataResult,
+} from '../../shared/types';
 import { type ArtworkOffer, type GameCandidateRef, type MetadataProvider } from './provider';
 import { type HttpClient } from './http';
 
@@ -59,6 +65,10 @@ const searchSchema = z.object({
         id: z.string().min(1),
         title: z.string().min(1),
         screenshots: z.array(z.string().min(1)).default([]),
+        // Stated in the catalogue answer the search already makes — see GameDetails on why they are kept.
+        genres: z.array(z.object({ name: z.string().min(1) })).optional(),
+        releaseDate: z.string().optional(),
+        operatingSystems: z.array(z.string().min(1)).optional(),
       }),
     )
     .default([]),
@@ -79,6 +89,45 @@ export function toArtworkOffers(product: GogProduct): readonly ArtworkOffer[] {
   }));
 }
 
+/** GOG writes dates as `2017.02.24`; the manifest keeps ISO. Anything else is left out rather than guessed. */
+export function toIsoDate(stated: string | undefined): string | undefined {
+  if (stated === undefined) return undefined;
+  const parts = /^(\d{4})[.\-/](\d{2})[.\-/](\d{2})$/.exec(stated.trim());
+  if (parts !== null) return `${parts[1]}-${parts[2]}-${parts[3]}`;
+  const year = /^(\d{4})$/.exec(stated.trim());
+  return year === null ? undefined : (year[1] ?? undefined);
+}
+
+/** GOG's `osx` is the same platform the Steam answer calls `mac`; anything unknown is dropped. */
+export function toPlatforms(
+  stated: readonly string[] | undefined,
+): readonly GamePlatform[] | undefined {
+  if (stated === undefined) return undefined;
+  const known: Readonly<Record<string, GamePlatform>> = {
+    windows: 'windows',
+    osx: 'mac',
+    mac: 'mac',
+    linux: 'linux',
+  };
+  const named = stated.flatMap((os) => {
+    const platform = known[os.toLowerCase()];
+    return platform === undefined ? [] : [platform];
+  });
+  return named.length > 0 ? named : undefined;
+}
+
+/** One catalogue product as GameDetails. GOG states no description in this answer, so none is returned. */
+export function toDetails(product: GogProduct): GameDetails {
+  const genres = (product.genres ?? []).map((genre) => genre.name);
+  const releaseDate = toIsoDate(product.releaseDate);
+  const platforms = toPlatforms(product.operatingSystems);
+  return {
+    ...(genres.length > 0 ? { genres } : {}),
+    ...(releaseDate === undefined ? {} : { releaseDate }),
+    ...(platforms === undefined ? {} : { platforms }),
+  };
+}
+
 export interface GogDeps {
   readonly http: HttpClient;
 }
@@ -90,6 +139,8 @@ export class GogProvider implements MetadataProvider {
    * search purely to reach pictures the provider has held in memory since the candidate was chosen.
    */
   private readonly screenshots = new Map<string, readonly ArtworkOffer[]>();
+  /** The genres/date/platforms the same search answer carried, by product id — see GameDetails. */
+  private readonly detailsById = new Map<string, GameDetails>();
 
   constructor(private readonly deps: GogDeps) {}
 
@@ -105,6 +156,7 @@ export class GogProvider implements MetadataProvider {
     if (!answer.ok) return answer;
     for (const product of answer.value.products) {
       this.screenshots.set(product.id, toArtworkOffers(product));
+      this.detailsById.set(product.id, toDetails(product));
     }
     return {
       ok: true,
@@ -115,6 +167,29 @@ export class GogProvider implements MetadataProvider {
         gogId: product.id,
       })),
     };
+  }
+
+  /**
+   * What the catalogue said about the game, out of the search answer already in hand. GOG states no
+   * description there, so this fills only the other fields — which is exactly what matters for a game
+   * Steam does not sell, where Steam can state nothing at all.
+   */
+  async details(ref: GameCandidateRef, signal?: AbortSignal): Promise<MetadataResult<GameDetails>> {
+    const productId = ref.gogId ?? gogIdFromKey(ref.key);
+    if (productId === undefined) return { ok: true, value: {} };
+    const cached = this.detailsById.get(productId);
+    if (cached !== undefined) return { ok: true, value: cached };
+    const answer = await this.deps.http.json(
+      searchUrl(ref.title),
+      searchSchema,
+      signal === undefined ? undefined : { signal },
+    );
+    if (!answer.ok) return answer;
+    const product = answer.value.products.find((candidate) => candidate.id === productId);
+    if (product === undefined) return { ok: true, value: {} };
+    const details = toDetails(product);
+    this.detailsById.set(productId, details);
+    return { ok: true, value: details };
   }
 
   /**

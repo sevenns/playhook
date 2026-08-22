@@ -8,6 +8,9 @@ import {
   gogIdFromKey,
   searchUrl,
   toArtworkOffers,
+  toDetails,
+  toIsoDate,
+  toPlatforms,
   withFormatter,
 } from '../src/main/metadata/gog';
 
@@ -55,6 +58,41 @@ function providerOf(routes: (url: string) => FetchResponse = () => textResponse(
   const http = new HttpClient({ fetch, userAgent: 'Playhook/test' });
   return { provider: new GogProvider({ http }), fetch };
 }
+
+describe('gog facts kept for a future library view', () => {
+  it('normalizes the dotted catalogue date to ISO', () => {
+    expect(toIsoDate('2017.02.24')).toBe('2017-02-24');
+    expect(toIsoDate('2017')).toBe('2017');
+    expect(toIsoDate('soon')).toBeUndefined();
+    expect(toIsoDate(undefined)).toBeUndefined();
+  });
+
+  it("maps GOG's osx onto the same platform Steam calls mac", () => {
+    expect(toPlatforms(['windows', 'linux', 'osx'])).toEqual(['windows', 'linux', 'mac']);
+  });
+
+  it('drops an operating system it does not know', () => {
+    expect(toPlatforms(['windows', 'amiga'])).toEqual(['windows']);
+    expect(toPlatforms([])).toBeUndefined();
+    expect(toPlatforms(undefined)).toBeUndefined();
+  });
+
+  it('states no description — the catalogue answer carries none', () => {
+    const details = toDetails({
+      id: '1',
+      title: 'Hollow Knight',
+      screenshots: [],
+      genres: [{ name: 'Metroidvania' }],
+      releaseDate: '2017.02.24',
+      operatingSystems: ['windows', 'linux'],
+    });
+    expect(details).toEqual({
+      genres: ['Metroidvania'],
+      releaseDate: '2017-02-24',
+      platforms: ['windows', 'linux'],
+    });
+  });
+});
 
 describe('gog provider', () => {
   describe('urls and keys', () => {

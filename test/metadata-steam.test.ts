@@ -8,6 +8,9 @@ import {
   libraryGridUrl,
   sanitizeDescription,
   toAppArt,
+  toDetails,
+  toIsoDate,
+  toPlatforms,
   steamAppIdFromKey,
   steamCandidateKey,
   storeSearchUrl,
@@ -252,6 +255,54 @@ describe('steam metadata provider', () => {
     });
   });
 
+  describe('the facts kept for a future library view', () => {
+    // The store writes the month first with `cc=US`, which is what this app asks with — and day-first
+    // elsewhere. Both are read: a date that does not parse is dropped SILENTLY, so getting the order
+    // wrong loses the field without a single error to notice.
+    it('normalizes the English store date to ISO, whichever order it comes in', () => {
+      expect(toIsoDate('Sep 17, 2020')).toBe('2020-09-17');
+      expect(toIsoDate('Nov 16, 2004')).toBe('2004-11-16');
+      expect(toIsoDate('17 Sep, 2020')).toBe('2020-09-17');
+      expect(toIsoDate('1 Jan, 1998')).toBe('1998-01-01');
+      expect(toIsoDate('Sep 2020')).toBe('2020-09');
+      expect(toIsoDate('2020')).toBe('2020');
+    });
+
+    it('states no date rather than a guessed one', () => {
+      expect(toIsoDate('Coming soon')).toBeUndefined();
+      expect(toIsoDate('Q4 2026')).toBeUndefined();
+      expect(toIsoDate(undefined)).toBeUndefined();
+    });
+
+    it('lists only the platforms the store flags', () => {
+      expect(toPlatforms({ windows: true, mac: false, linux: true })).toEqual(['windows', 'linux']);
+      expect(toPlatforms({ windows: false })).toBeUndefined();
+      expect(toPlatforms(undefined)).toBeUndefined();
+    });
+
+    it('carries genres, date and platforms out of one answer', () => {
+      const details = toDetails(
+        { en: 'A game.' },
+        {
+          genres: [{ description: 'Action' }, { description: 'Roguelike' }],
+          release_date: { date: 'Sep 17, 2020' },
+          platforms: { windows: true, mac: true, linux: false },
+        },
+      );
+      expect(details).toEqual({
+        description: { en: 'A game.' },
+        genres: ['Action', 'Roguelike'],
+        releaseDate: '2020-09-17',
+        platforms: ['windows', 'mac'],
+      });
+    });
+
+    it('leaves out what the store did not state, rather than storing empties', () => {
+      expect(toDetails({}, undefined)).toEqual({});
+      expect(toDetails({}, { genres: [] })).toEqual({});
+    });
+  });
+
   describe('reading the art fields of an appdetails answer', () => {
     const answer = JSON.parse(ART_DETAILS) as Parameters<typeof toAppArt>[0];
 
@@ -302,24 +353,27 @@ describe('steam metadata provider', () => {
       const provider = providerOf((url) =>
         textResponse(url.includes('russian') ? DETAILS_RU : DETAILS_EN),
       );
-      const result = await provider.descriptions({
+      const result = await provider.details({
         key: 'steam:220',
         title: 'HL2',
         steamAppId: 220,
       });
-      expect(result).toEqual({ ok: true, value: { en: '1998. A war.', ru: 'Война.' } });
+      expect(result.ok === true && result.value.description).toEqual({
+        en: '1998. A war.',
+        ru: 'Война.',
+      });
     });
 
     it('keeps the language that answered when the other one fails', async () => {
       const provider = providerOf((url) =>
         url.includes('russian') ? textResponse('', 500) : textResponse(DETAILS_EN),
       );
-      const result = await provider.descriptions({
+      const result = await provider.details({
         key: 'steam:220',
         title: 'HL2',
         steamAppId: 220,
       });
-      expect(result).toEqual({ ok: true, value: { en: '1998. A war.' } });
+      expect(result.ok === true && result.value.description).toEqual({ en: '1998. A war.' });
     });
 
     it('omits a language Steam has no text for', async () => {
@@ -327,12 +381,12 @@ describe('steam metadata provider', () => {
       const provider = providerOf((url) =>
         textResponse(url.includes('russian') ? empty : DETAILS_EN),
       );
-      const result = await provider.descriptions({
+      const result = await provider.details({
         key: 'steam:220',
         title: 'HL2',
         steamAppId: 220,
       });
-      expect(result).toEqual({ ok: true, value: { en: '1998. A war.' } });
+      expect(result.ok === true && result.value.description).toEqual({ en: '1998. A war.' });
     });
   });
 });

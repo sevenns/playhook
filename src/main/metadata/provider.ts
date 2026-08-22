@@ -12,7 +12,7 @@
 import {
   type ArtworkKind,
   type GameCandidate,
-  type LocalizedText,
+  type GameDetails,
   type MetadataProviderId,
   type MetadataResult,
   type MusicAlbum,
@@ -75,10 +75,12 @@ export interface MetadataProvider {
   ): Promise<MetadataResult<readonly MusicTrackOffer[]>>;
   /** The direct audio URL of one track — the extra hop Khinsider's markup forces. */
   musicTrackUrl?(track: MusicTrackOffer, signal?: AbortSignal): Promise<MetadataResult<string>>;
-  descriptions?(
-    ref: GameCandidateRef,
-    signal?: AbortSignal,
-  ): Promise<MetadataResult<LocalizedText>>;
+  /**
+   * Everything about the game that is not a picture. Named for what it began as — the descriptions — and
+   * widened since: the same answers carry the genres, the date and the platforms, and dropping them
+   * would mean asking again later for a game the user has already moved past.
+   */
+  details?(ref: GameCandidateRef, signal?: AbortSignal): Promise<MetadataResult<GameDetails>>;
 }
 
 /** `MusicTrack` as the renderer sees it — the page URL dropped. */

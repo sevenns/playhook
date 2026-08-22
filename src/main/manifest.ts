@@ -82,6 +82,8 @@ const installSchema = z
 
 /** How long a stored description may be, per language. Longer is dropped rather than rejected. */
 const MAX_DESCRIPTION_CHARS = 4000;
+/** How many genres are kept. Stores state a handful; a longer list is a sign of something else. */
+const MAX_GENRES = 20;
 
 const manifestSchema = z
   .object({
@@ -138,6 +140,16 @@ const manifestSchema = z
       })
       .optional()
       .catch(undefined),
+    // Stored for a library view that does not exist yet (genres to filter by, a date to sort by, the
+    // platforms a store claims). Lenient for the same reason `description` is: nothing reads them, so a
+    // hand-written oddity here must never be what stops a game from appearing.
+    genres: z.array(z.string().min(1)).max(MAX_GENRES).optional().catch(undefined),
+    releaseDate: z
+      .string()
+      .regex(/^\d{4}(-\d{2}(-\d{2})?)?$/)
+      .optional()
+      .catch(undefined),
+    platforms: z.array(z.enum(['windows', 'mac', 'linux'])).optional().catch(undefined),
     // Linux-only (Р7b): extra winetricks verbs/settings provisioned into the game's Wine prefix BEFORE the
     // game launches, on top of the app's baseline set — a runtime a game needs on a bare Proton prefix
     // (e.g. `d3dx9`) OR a winetricks SETTING like `vd=1920x1080` (virtual desktop — fixes old games that

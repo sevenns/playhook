@@ -300,7 +300,10 @@ export function createLibraryScreen(deps: LibraryScreenDeps): LibraryScreen {
       const node = nodeOf(game);
       if (node === undefined) return;
       node.classList.toggle('is-selected', active && at === index);
-      node.classList.toggle('shows-dot', (game.active && game.unconfigured !== true) || game.id === busyId);
+      node.classList.toggle(
+        'shows-dot',
+        (game.active && game.unconfigured !== true) || game.id === busyId,
+      );
       node.classList.toggle('is-busy', game.id === busyId);
     });
     placeJelly(instant);
@@ -535,9 +538,11 @@ export function createLibraryScreen(deps: LibraryScreenDeps): LibraryScreen {
   function step(dir: GridDir, repeat: boolean): void {
     const move = gridStep(index, dir, shown.length, cols);
     if (move.result === 'to-sidebar') {
-      // A held left hands over too, unlike the boundaries that leave a SCREEN: the column is the wall on
-      // this side, so running into it has to end in the column rather than against the first card. It
-      // goes no further — left in the column is a dead end.
+      // Leaving the grid takes a press of its OWN. A hold walks the row, and letting it carry on into the
+      // column meant a held left crossed a surface boundary the user was not aiming at — they were
+      // running to the first card, and the focus jumped out of the grid entirely. So the hold stops at
+      // the edge like any other wall, and the next deliberate press hands over.
+      if (repeat) return; // silent while held, exactly as `at-end` below treats the other three walls
       deps.audio.play('navigate');
       leaveGrid();
       return;

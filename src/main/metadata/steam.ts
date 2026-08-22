@@ -19,6 +19,8 @@ import { type Locale } from '../../shared/i18n/index';
 import {
   type ArtworkKind,
   type GameCandidate,
+  type GameDetails,
+  type GamePlatform,
   type LocalizedText,
   type MetadataResult,
 } from '../../shared/types';
@@ -96,6 +98,15 @@ const appDetailsSchema = z.record(
         short_description: z.string().optional(),
         /** The store page's art backdrop. Optional — plenty of apps have none. */
         background_raw: z.string().optional(),
+        genres: z.array(z.object({ description: z.string().min(1) })).optional(),
+        release_date: z.object({ date: z.string().optional() }).optional(),
+        platforms: z
+          .object({
+            windows: z.boolean().optional(),
+            mac: z.boolean().optional(),
+            linux: z.boolean().optional(),
+          })
+          .optional(),
         /**
          * Gameplay screenshots. No dimensions are stated anywhere in the answer, and the `.1920x1080.`
          * in a path is a BOUNDING BOX rather than a promise: an old game's shot comes back 1024x768.
@@ -183,6 +194,64 @@ export function toAppArt(
     ...(name !== undefined && name.length > 0 ? { englishName: name } : {}),
     screenshots,
   };
+}
+
+/** The month names the English store writes dates with — the only spelling this has to understand. */
+const MONTHS: Readonly<Record<string, string>> = {
+  jan: '01',
+  feb: '02',
+  mar: '03',
+  apr: '04',
+  may: '05',
+  jun: '06',
+  jul: '07',
+  aug: '08',
+  sep: '09',
+  oct: '10',
+  nov: '11',
+  dec: '12',
+};
+
+/**
+ * Steam's release date as `YYYY-MM-DD`, or `YYYY` when that is all it states ("Coming soon" yields
+ * nothing at all). The store writes it in the language it was ASKED in, so this only ever runs on the
+ * English answer — a Russian "17 сен. 2020 г." is not worth a second month table.
+ *
+ * BOTH orders are read, because the store uses both: `cc=US` (what this app asks with) answers
+ * "Sep 17, 2020", while the day-first "17 Sep, 2020" is what other regions return — and getting that
+ * wrong is silent, since a date that does not parse simply is not stored.
+ */
+export function toIsoDate(stated: string | undefined): string | undefined {
+  if (stated === undefined) return undefined;
+  const text = stated.trim();
+  const monthFirst = /^([A-Za-z]{3})[a-z]*\.?\s+(\d{1,2}),?\s+(\d{4})$/.exec(text);
+  const dayFirst = /^(\d{1,2})\s+([A-Za-z]{3})[a-z]*\.?,?\s+(\d{4})$/.exec(text);
+  const parts =
+    monthFirst !== null
+      ? { month: monthFirst[1], day: monthFirst[2], year: monthFirst[3] }
+      : dayFirst !== null
+        ? { month: dayFirst[2], day: dayFirst[1], year: dayFirst[3] }
+        : undefined;
+  const month = parts === undefined ? undefined : MONTHS[(parts.month ?? '').toLowerCase()];
+  if (parts !== undefined && month !== undefined) {
+    return `${parts.year}-${month}-${(parts.day ?? '').padStart(2, '0')}`;
+  }
+  const bareMonth = /^([A-Za-z]{3})[a-z]*\.?\s+(\d{4})$/.exec(text);
+  const loneMonth = bareMonth === null ? undefined : MONTHS[(bareMonth[1] ?? '').toLowerCase()];
+  if (bareMonth !== null && loneMonth !== undefined) return `${bareMonth[2]}-${loneMonth}`;
+  const year = /^(\d{4})$/.exec(text);
+  return year === null ? undefined : (year[1] ?? undefined);
+}
+
+/** The platform flags as a list, in the order a store page lists them. */
+export function toPlatforms(
+  flags: { windows?: boolean; mac?: boolean; linux?: boolean } | undefined,
+): readonly GamePlatform[] | undefined {
+  if (flags === undefined) return undefined;
+  const named: readonly GamePlatform[] = (['windows', 'mac', 'linux'] as const).filter(
+    (platform) => flags[platform] === true,
+  );
+  return named.length > 0 ? named : undefined;
 }
 
 /** Turns a validated storesearch answer into candidates, keeping only entries that are actual games. */
@@ -418,10 +487,7 @@ export class SteamProvider implements MetadataProvider {
    * roughly 200 calls per five minutes, which is why this runs on an explicit pick and never in a sweep.
    * A language Steam has nothing for is simply left out of the result.
    */
-  async descriptions(
-    ref: GameCandidateRef,
-    signal?: AbortSignal,
-  ): Promise<MetadataResult<LocalizedText>> {
+  async details(ref: GameCandidateRef, signal?: AbortSignal): Promise<MetadataResult<GameDetails>> {
     const appId = ref.steamAppId ?? steamAppIdFromKey(ref.key);
     if (appId === undefined) return { ok: false, message: 'not a Steam app' };
     const options = signal === undefined ? undefined : { signal };
@@ -431,14 +497,42 @@ export class SteamProvider implements MetadataProvider {
     ]);
     if (!en.ok && !ru.ok) return en;
     // The same answer carries the backdrop and the screenshots; keeping them here spares the gallery a
-    // second call for a game the user has just picked (descriptions are fetched on exactly that press).
+    // second call for a game the user has just picked (details are fetched on exactly that press).
     if (en.ok) this.rememberArt(appId, en.value, { english: true });
-    const text: LocalizedText = {
+    const description: LocalizedText = {
       ...(en.ok ? pickDescription(en.value, appId, 'en') : {}),
       ...(ru.ok ? pickDescription(ru.value, appId, 'ru') : {}),
     };
-    return { ok: true, value: text };
+    // Genres, date and platforms come from the ENGLISH answer alone: a filter compares them, and a value
+    // that changes wording with the interface language cannot be compared with one stored last week.
+    const data = en.ok ? (en.value[String(appId)]?.data ?? undefined) : undefined;
+    return { ok: true, value: toDetails(description, data) };
   }
+}
+
+/** What appdetails states about the game itself, as GameDetails. Absent fields are simply left out. */
+export function toDetails(
+  description: LocalizedText,
+  data:
+    | {
+        genres?: readonly { description: string }[];
+        release_date?: { date?: string };
+        platforms?: { windows?: boolean; mac?: boolean; linux?: boolean };
+      }
+    | undefined,
+): GameDetails {
+  const genres = (data?.genres ?? [])
+    .map((genre) => genre.description)
+    .filter((name) => name !== '');
+  const releaseDate = toIsoDate(data?.release_date?.date);
+  const platforms = toPlatforms(data?.platforms);
+  const hasText = description.en !== undefined || description.ru !== undefined;
+  return {
+    ...(hasText ? { description } : {}),
+    ...(genres.length > 0 ? { genres } : {}),
+    ...(releaseDate === undefined ? {} : { releaseDate }),
+    ...(platforms === undefined ? {} : { platforms }),
+  };
 }
 
 /** The one entry appdetails answers with, reduced to `{ en: … }` / `{ ru: … }` (or nothing at all). */

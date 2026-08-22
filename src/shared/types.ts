@@ -228,6 +228,12 @@ export interface GameManifest {
    * malformed value is dropped, never a reason to reject the manifest (see manifest.ts).
    */
   readonly description?: LocalizedText;
+  /** Genres, in the English store's wording. Same deal as `description`: stored now, shown later. */
+  readonly genres?: readonly string[];
+  /** Release date, `YYYY-MM-DD` or `YYYY`. Stored now, shown later. */
+  readonly releaseDate?: string;
+  /** Platforms the store states native support for. Stored now, shown later. */
+  readonly platforms?: readonly GamePlatform[];
   /**
    * Linux-only (Р7b): extra winetricks verbs provisioned into the game's Wine prefix before the game
    * launches, on top of the app's baseline set (e.g. `d3dx9` for an old DX9 title). Ignored on Windows.
@@ -926,7 +932,8 @@ export const IPC = {
   /** game-renderer → main (invoke): one track as an audio data: URL, to listen before applying it.
    * Payload the track key. This is a full download — the renderer shows a status line for it. */
   metadataTrackPreview: 'metadata:track-preview',
-  /** game-renderer → main (invoke): the candidate's en/ru descriptions. Payload the candidate key. */
+  /** game-renderer → main (invoke): everything known about the candidate that is not a picture — the
+   * en/ru descriptions, the genres, the release date, the platforms. Payload the candidate key. */
   metadataDescriptions: 'metadata:descriptions',
   /** game-renderer → main (invoke): download the chosen variant into the game's root and answer with the
    * manifest-relative path the form field takes. Payload MetadataApplyRequest. */
@@ -1280,6 +1287,29 @@ export interface LocalizedText {
   readonly ru?: string;
 }
 
+/** The platforms a store states a game runs on. Kept as the store's own three, lower-cased. */
+export type GamePlatform = 'windows' | 'mac' | 'linux';
+
+/**
+ * The facts about a game that are worth keeping but have no screen of their own yet: the description,
+ * and the three fields a future library view would sort and filter by.
+ *
+ * Stored now, shown later — deliberately. They arrive inside answers this feature already fetches (the
+ * Steam store page, the GOG catalogue entry), so keeping them costs nothing extra at the time the user
+ * picks a game, whereas going back for them afterwards would mean asking the same endpoints again for a
+ * game the user has moved on from.
+ */
+export interface GameDetails {
+  /** Short description per language (see LocalizedText). */
+  readonly description?: LocalizedText;
+  /** Genres as the ENGLISH store names them — a filter has to compare them, so they must not shift. */
+  readonly genres?: readonly string[];
+  /** Release date as `YYYY-MM-DD`, or `YYYY` when the store states no more than a year. */
+  readonly releaseDate?: string;
+  /** Which platforms the store says it runs on natively. */
+  readonly platforms?: readonly GamePlatform[];
+}
+
 /** Which manifest field an applied download lands in. `hero` carries the 0-based rotation index. */
 export type MetadataApplySlot = 'grid' | 'music' | { readonly hero: number };
 
@@ -1465,8 +1495,8 @@ export interface RendererApi {
   requestMetadataTracks(albumKey: string): Promise<MetadataResult<readonly MusicTrack[]>>;
   /** One track as an audio data: URL (a full download — show a status line while it runs). */
   requestMetadataTrackPreview(trackKey: string): Promise<MetadataResult<string>>;
-  /** The candidate's en/ru descriptions, for the manifest's `description` field. */
-  requestMetadataDescriptions(candidateKey: string): Promise<MetadataResult<LocalizedText>>;
+  /** The candidate's descriptions, genres, release date and platforms — see GameDetails. */
+  requestMetadataDescriptions(candidateKey: string): Promise<MetadataResult<GameDetails>>;
   /** Download the chosen variant into the game's root; answers with the manifest-relative path. */
   applyMetadata(request: MetadataApplyRequest): Promise<MetadataApplyResult>;
   /** Abort whatever is still being fetched (the user left the surface). */

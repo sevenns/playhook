@@ -33,7 +33,7 @@ import type {
   GameConfigSaveRequest,
   GameMoveRequest,
   GameCandidate,
-  LocalizedText,
+  GameDetails,
   ManifestSource,
   MetadataApplyRequest,
   MetadataApplyResult,
@@ -132,8 +132,9 @@ export interface GameSettingsScreenApi {
   metadataTracks(albumKey: string): Promise<MetadataResult<readonly MusicTrack[]>>;
   /** One track as an audio data: URL — a full download, hence the status line beside it. */
   metadataTrackPreview(trackKey: string): Promise<MetadataResult<string>>;
-  /** The candidate's en/ru descriptions, carried into the manifest through the form's `rest`. */
-  metadataDescriptions(candidateKey: string): Promise<MetadataResult<LocalizedText>>;
+  /** The candidate's descriptions, genres, release date and platforms — carried into the manifest
+   * through the form's `rest` (see GameDetails). */
+  metadataDescriptions(candidateKey: string): Promise<MetadataResult<GameDetails>>;
   /** Downloads the chosen variant into the game's root; answers with the manifest-relative path. */
   applyMetadata(request: MetadataApplyRequest): Promise<MetadataApplyResult>;
   /** Aborts whatever main is still fetching (the user left the flow). */
@@ -2071,7 +2072,10 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
         candidate.provider === 'steamgriddb' ? `${candidate.title} (SteamGridDB)` : candidate.title,
       run: () => chooseMetadataCandidate(candidate, { replace: true }),
     }));
-    entries.push({ label: t()('metadata.searchAgain'), run: () => askMetadataQuery(metadataQuery) });
+    entries.push({
+      label: t()('metadata.searchAgain'),
+      run: () => askMetadataQuery(metadataQuery),
+    });
     pushMenu(asMenu({ title: t()('metadata.candidates'), entries }));
   }
 
@@ -2086,7 +2090,10 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   ): void {
     metadataCandidate = candidate;
     if (candidate.steamAppId !== undefined) void fetchMetadataDescriptions(candidate);
-    const level = asMenu({ title: t()('metadata.categories'), entries: categoryEntries(candidate) });
+    const level = asMenu({
+      title: t()('metadata.categories'),
+      entries: categoryEntries(candidate),
+    });
     if (options.replace) replaceMenu(level);
     else pushMenu(level);
   }
@@ -2227,18 +2234,26 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   }
 
   /**
-   * Fills `rest.description` in the background. main deliberately never writes this field itself: the
-   * manifest TEXT belongs to this form while the screen is open, so a write from the other side would be
-   * overwritten by the next Save (see configure-form-model.ts and 4.5 of the plan).
+   * Fills the manifest's non-picture facts in the background: the description, and the genres, release
+   * date and platforms a future library view will sort by. main deliberately never writes them itself —
+   * the manifest TEXT belongs to this form while the screen is open, so a write from the other side
+   * would be overwritten by the next Save (see configure-form-model.ts and 4.5 of the plan).
    */
   async function fetchMetadataDescriptions(candidate: GameCandidate): Promise<void> {
     const token = metadataToken;
     const result = await deps.api.metadataDescriptions(candidate.key);
     if (!metadataCurrent(token) || !result.ok) return;
-    if (result.value.en === undefined && result.value.ru === undefined) return;
+    const { description, genres, releaseDate, platforms } = result.value;
+    const known = {
+      ...(description === undefined ? {} : { description }),
+      ...(genres === undefined ? {} : { genres }),
+      ...(releaseDate === undefined ? {} : { releaseDate }),
+      ...(platforms === undefined ? {} : { platforms }),
+    };
+    if (Object.keys(known).length === 0) return;
     // `rest` is the screen's own slot for keys the form model has no field for; currentText() folds it
     // back into the manifest text, so this alone makes the screen dirty and Save carries it through.
-    rest = { ...rest, description: result.value };
+    rest = { ...rest, ...known };
     updateForm(form);
   }
 
@@ -2368,7 +2383,11 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     }
     const token = metadataToken;
     setStatus(t()('metadata.applying'));
-    const result = await deps.api.applyMetadata({ ...target, variantKey: track.key, slot: 'music' });
+    const result = await deps.api.applyMetadata({
+      ...target,
+      variantKey: track.key,
+      slot: 'music',
+    });
     if (!metadataCurrent(token)) return;
     if (!result.ok) {
       setStatus(result.message);

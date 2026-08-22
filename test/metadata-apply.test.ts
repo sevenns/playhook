@@ -11,6 +11,7 @@ import { sniffMedia } from '../src/main/metadata/media-type';
 import {
   capArtworkPerProvider,
   mergeCandidates,
+  mergeDetails,
   normalizeTitle,
   orderByProvider,
   withMergedRefs,
@@ -268,6 +269,35 @@ describe('metadata search — the appid shortcut still reaches the other sources
 
   it('is unchanged when no other source answered at all', () => {
     expect(withMergedRefs(steamCandidate, [])).toBe(steamCandidate);
+  });
+});
+
+describe('metadata details — merging what the sources know', () => {
+  it('takes the first answer that states a field, per FIELD', () => {
+    const merged = mergeDetails([
+      { description: { en: 'From Steam.' }, genres: ['Action'] },
+      { genres: ['Adventure'], releaseDate: '2017-02-24', platforms: ['windows', 'linux'] },
+    ]);
+    expect(merged).toEqual({
+      description: { en: 'From Steam.' },
+      genres: ['Action'],
+      releaseDate: '2017-02-24',
+      platforms: ['windows', 'linux'],
+    });
+  });
+
+  it('lets a later source fill what the first knew nothing about', () => {
+    const merged = mergeDetails([{}, { genres: ['Metroidvania'], releaseDate: '2017' }]);
+    expect(merged).toEqual({ genres: ['Metroidvania'], releaseDate: '2017' });
+  });
+
+  it('never stores an empty list as an answer', () => {
+    const merged = mergeDetails([{ genres: [], platforms: [] }, { genres: ['RPG'] }]);
+    expect(merged).toEqual({ genres: ['RPG'] });
+  });
+
+  it('answers with nothing when no source knew anything', () => {
+    expect(mergeDetails([{}, {}])).toEqual({});
   });
 });
 
