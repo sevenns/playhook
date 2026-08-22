@@ -17,8 +17,21 @@ import { type HttpClient } from './http';
 import { searchableTitle } from './search-title';
 
 const ORIGIN = 'https://downloads.khinsider.com';
+/**
+ * How large one scraped page may be. Far above the client's default, because these pages are not API
+ * answers: an album page lists EVERY track with its row, and a gamerip of a few hundred tracks comes to
+ * megabytes (TUNIC measures 8 MB). The default 4 MB turned exactly those albums — the big ones people
+ * actually look for a track in — into "larger than 4194304 bytes".
+ */
+const MAX_PAGE_BYTES = 24 * 1024 * 1024;
 /** How many albums a search offers. The site returns everything it matched; a menu wants a shortlist. */
 const MAX_ALBUMS = 20;
+/**
+ * How many tracks of one album are offered. A gamerip lists everything the game ships with — TUNIC's is
+ * 4244 rows — and every row becomes a button in the list. Past a few hundred that is a wall to scroll
+ * and a bill to build, and the tracks anyone picks a background theme from are near the top.
+ */
+const MAX_TRACKS = 300;
 
 /**
  * The search URL for a term. The title is cleaned first (see search-title.ts): this site matches on
@@ -86,30 +99,39 @@ export function parseSize(text: string): number | undefined {
 }
 
 /**
- * One album page's tracks. The size is read from whatever follows the link up to the end of its row —
- * the first figure there is the mp3's, and a page that states none simply yields no size.
+ * One album page's tracks, read ROW BY ROW.
+ *
+ * The row is the unit because a track is spread across four cells — name, length, mp3 size, flac size —
+ * and every one of them is a link to the SAME file. A pattern that matched "a link, then a bit of text,
+ * then the end of the row" walked straight over the first three `</a>` to reach a `</tr>` close enough,
+ * and produced titles like "Gen Prop Int Filigreechestopen Singer Waterfall 2:20 4.05 MB 7.58 MB"
+ * (measured on TUNIC's gamerip). Splitting on the row first makes each cell's boundary matter.
+ *
+ * The size is the first figure the row states after the name, which is the mp3's — the file this app
+ * actually downloads.
  */
 export function parseTracks(html: string, albumKey: string): readonly MusicTrackOffer[] {
   const tracks: MusicTrackOffer[] = [];
   const seen = new Set<string>();
   const escaped = albumKey.replaceAll(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const pattern = new RegExp(
-    `<a\\s+href="/game-soundtracks/album/${escaped}/([^"?#]+)"[^>]*>([\\s\\S]*?)</a>([\\s\\S]{0,400}?)</tr>`,
-    'g',
+  const link = new RegExp(
+    `<a\\s+href="/game-soundtracks/album/${escaped}/([^"?#]+)"[^>]*>((?:(?!</a>)[\\s\\S])*)</a>`,
   );
-  for (const match of html.matchAll(pattern)) {
-    const file = match[1];
+  for (const row of html.split(/<tr\b/i).slice(1)) {
+    const match = link.exec(row);
+    const file = match?.[1];
     if (file === undefined || seen.has(file)) continue;
-    const label = stripTags(match[2] ?? '');
+    const label = stripTags(match?.[2] ?? '');
     const title = label.length > 0 ? label : decodeURIComponent(file);
     seen.add(file);
-    const sizeBytes = parseSize(stripTags(match[3] ?? ''));
+    const sizeBytes = parseSize(stripTags(row.slice(match?.index ?? 0)));
     tracks.push({
       key: trackKey(albumKey, file),
       title,
       ...(sizeBytes === undefined ? {} : { sizeBytes }),
       pageUrl: `${ORIGIN}/game-soundtracks/album/${albumKey}/${file}`,
     });
+    if (tracks.length >= MAX_TRACKS) break;
   }
   return tracks;
 }
@@ -146,14 +168,19 @@ export class KhinsiderProvider implements MetadataProvider {
 
   constructor(private readonly deps: KhinsiderDeps) {}
 
+  /** The request options every page here is fetched with — the user's Back, and the bigger cap. */
+  private pageOptions(signal?: AbortSignal): {
+    readonly maxBytes: number;
+    readonly signal?: AbortSignal;
+  } {
+    return { maxBytes: MAX_PAGE_BYTES, ...(signal === undefined ? {} : { signal }) };
+  }
+
   async musicSearch(
     query: string,
     signal?: AbortSignal,
   ): Promise<MetadataResult<readonly MusicAlbum[]>> {
-    const page = await this.deps.http.text(
-      searchUrl(query),
-      signal === undefined ? undefined : { signal },
-    );
+    const page = await this.deps.http.text(searchUrl(query), this.pageOptions(signal));
     if (!page.ok) return page;
     return { ok: true, value: parseAlbums(page.value) };
   }
@@ -162,10 +189,7 @@ export class KhinsiderProvider implements MetadataProvider {
     albumKey: string,
     signal?: AbortSignal,
   ): Promise<MetadataResult<readonly MusicTrackOffer[]>> {
-    const page = await this.deps.http.text(
-      albumUrl(albumKey),
-      signal === undefined ? undefined : { signal },
-    );
+    const page = await this.deps.http.text(albumUrl(albumKey), this.pageOptions(signal));
     if (!page.ok) return page;
     return { ok: true, value: parseTracks(page.value, albumKey) };
   }
@@ -177,10 +201,7 @@ export class KhinsiderProvider implements MetadataProvider {
   ): Promise<MetadataResult<string>> {
     if (parseTrackKey(track.key) === undefined)
       return { ok: false, message: 'not a khinsider track' };
-    const page = await this.deps.http.text(
-      track.pageUrl,
-      signal === undefined ? undefined : { signal },
-    );
+    const page = await this.deps.http.text(track.pageUrl, this.pageOptions(signal));
     if (!page.ok) return page;
     const url = parseAudioUrl(page.value);
     return url === undefined

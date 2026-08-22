@@ -378,7 +378,7 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'metadata.noCandidate': 'Игра не выбрана',
   'metadata.applyMode': 'Уже есть фоны',
   'metadata.searchAgain': 'Искать заново',
-  'metadata.applyTitle': 'Название',
+  'metadata.applyTitle': 'Обновить название',
   'metadata.cover': 'Обложка',
   'metadata.backgrounds': 'Фоны',
   'metadata.music': 'Музыка',

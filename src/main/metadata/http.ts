@@ -23,7 +23,12 @@ import { describe } from '../util';
 const HEADER_TIMEOUT_MS = 10_000;
 /** How long the body may stall BETWEEN chunks. Resets on every chunk, so a slow-but-alive download lives. */
 const BODY_IDLE_TIMEOUT_MS = 30_000;
-/** Cap for the text/JSON calls (an API answer or one HTML page; art and audio pass their own). */
+/**
+ * Cap for the text/JSON calls (art and audio pass their own). Four megabytes is generous for an API
+ * answer and NOT for a scraped page: Khinsider's album page for a gamerip with hundreds of tracks
+ * measures 8 MB (TUNIC), which used to come back as "larger than 4194304 bytes" and no soundtrack. A
+ * caller that scrapes HTML passes its own, larger cap — see `maxBytes` on HttpOptions.
+ */
 const MAX_TEXT_BYTES = 4 * 1024 * 1024;
 
 /**
@@ -65,6 +70,8 @@ export interface HttpDeps {
 export interface HttpOptions {
   readonly headers?: Record<string, string>;
   readonly signal?: AbortSignal;
+  /** A cap of the caller's own for `text`/`json`, when the default is too small for what it fetches. */
+  readonly maxBytes?: number;
 }
 
 /** A downloaded body plus the one header the caller needs to name the file it writes. */
@@ -100,7 +107,7 @@ export class HttpClient {
 
   /** Fetches a body as UTF-8 text, capped at MAX_TEXT_BYTES (an API answer, or one scraped page). */
   async text(url: string, options?: HttpOptions): Promise<MetadataResult<string>> {
-    const result = await this.bytes(url, MAX_TEXT_BYTES, options);
+    const result = await this.bytes(url, options?.maxBytes ?? MAX_TEXT_BYTES, options);
     if (!result.ok) return result;
     return { ok: true, value: new TextDecoder().decode(result.value.bytes) };
   }

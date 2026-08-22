@@ -120,6 +120,32 @@ describe('khinsider parsing', () => {
     it('yields nothing for a page whose markup moved on', () => {
       expect(parseTracks('<div>Album unavailable</div>', 'hades-original-soundtrack')).toEqual([]);
     });
+
+    // A row states the same file FOUR times — name, length, mp3 size, flac size — and every cell is a
+    // link to it. Reading "a link, then some text, then the end of the row" walked over the first three
+    // closing tags and produced a title with the sizes glued onto it (measured on TUNIC's gamerip).
+    it('takes the name from its own cell, not from the whole row', () => {
+      const row = `<tr>
+        <td class="clickable-row"><a href="/game-soundtracks/album/tunic/001.mp3">Waterfall</a></td>
+        <td class="clickable-row" align="right"><a href="/game-soundtracks/album/tunic/001.mp3" style="font-weight:normal;">2:20</a></td>
+        <td class="clickable-row" align="right"><a href="/game-soundtracks/album/tunic/001.mp3" style="font-weight:normal;">4.05 MB</a></td>
+        <td class="clickable-row" align="right"><a href="/game-soundtracks/album/tunic/001.mp3" style="font-weight:normal;">7.58 MB</a></td>
+      </tr>`;
+      const parsed = parseTracks(row, 'tunic');
+      expect(parsed).toHaveLength(1);
+      expect(parsed[0]?.title).toBe('Waterfall');
+      expect(parsed[0]?.sizeBytes).toBe(Math.round(4.05 * 1024 * 1024));
+    });
+
+    // A gamerip lists everything the game ships with (TUNIC: 4244 rows), and every row becomes a button.
+    it('stops at a few hundred tracks rather than building a list nobody can scroll', () => {
+      const rows = Array.from(
+        { length: 400 },
+        (_, index) =>
+          `<tr><td><a href="/game-soundtracks/album/big/${index}.mp3">Track ${index}</a></td></tr>`,
+      ).join('');
+      expect(parseTracks(rows, 'big')).toHaveLength(300);
+    });
   });
 
   describe('sizes', () => {

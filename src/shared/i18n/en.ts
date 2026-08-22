@@ -425,7 +425,7 @@ export const en = {
   'metadata.noCandidate': 'No game chosen',
   'metadata.applyMode': 'Backgrounds already set',
   'metadata.searchAgain': 'Search again',
-  'metadata.applyTitle': 'Title',
+  'metadata.applyTitle': 'Update title',
   'metadata.cover': 'Cover',
   'metadata.backgrounds': 'Backgrounds',
   'metadata.music': 'Music',
