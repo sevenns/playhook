@@ -216,7 +216,7 @@ const gameSettingsScreen = createGameSettingsScreen({
     // when the detail screen itself is left (leaveDetail consumes the same flag).
     if (carousel.screen() !== 'detail') restoreOrigin();
   },
-  onConfirmRequested: (kind) => controls.confirmGameSettings(kind),
+  onConfirmRequested: (kind, options) => controls.confirmGameSettings(kind, options),
   onAdded: (id) => showAddedGame(id),
   // The same two channels the online surface speaks through, read lazily for the same reason: both are
   // declared below, and no message can arrive before the user has opened this screen.

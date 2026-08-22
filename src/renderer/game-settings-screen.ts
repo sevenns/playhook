@@ -188,7 +188,12 @@ export interface GameSettingsScreenDeps {
   /** The screen closed itself (B / Esc / veil) — controls.ts restores the bar focus. */
   onClosed(): void;
   /** Asks the shared confirm popup; the answer arrives back through confirmAccepted. */
-  onConfirmRequested(kind: GameSettingsConfirm): void;
+  /**
+   * Opens the launcher's confirm popup for one of this screen's questions. `options.title` is the name
+   * the question QUOTES — the popup builds its other messages from the open game, but "replace the
+   * title with X?" is about a candidate the popup has never heard of.
+   */
+  onConfirmRequested(kind: GameSettingsConfirm, options?: { readonly title?: string }): void;
   /** Whether the game is running / installing / being force-closed — Delete is hidden then (Р3). */
   isBusy(): boolean;
   /** A game was added AND applied: the launcher's library has it now, so the carousel goes to it. */
@@ -2576,7 +2581,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     },
     askOnlineTitle: (title, onYes) => {
       pendingTitleReplace = onYes;
-      deps.onConfirmRequested('replace-title');
+      deps.onConfirmRequested('replace-title', { title });
     },
     applyOnlineArtwork: (kind, variantKeys, mode) => applyArtwork(kind, variantKeys, mode),
     applyOnlineTrack: (trackKey) => applyTrackKey(trackKey),
