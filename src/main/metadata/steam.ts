@@ -24,6 +24,7 @@ import {
 } from '../../shared/types';
 import { type ArtworkOffer, type GameCandidateRef, type MetadataProvider } from './provider';
 import { type HttpClient } from './http';
+import { log } from '../logger';
 
 const STORE_ORIGIN = 'https://store.steampowered.com';
 const CDN_ORIGIN = 'https://cdn.cloudflare.steamstatic.com';
@@ -32,26 +33,35 @@ const MAX_DESCRIPTION_CHARS = 2000;
 /** How many appdetails answers the provider remembers. One session looks at a handful of games. */
 const MAX_CACHED_APPS = 50;
 
-/** The `l`/`cc` pair a locale searches with. Searching a Russian title with `l=english` finds nothing. */
-export function storeLocaleParams(locale: Locale): {
-  readonly language: string;
-  readonly country: string;
-} {
-  return locale === 'ru'
-    ? { language: 'russian', country: 'RU' }
-    : { language: 'english', country: 'US' };
+/**
+ * The STORE REGION every request is made from, regardless of where the user is.
+ *
+ * `cc` decides what the store considers available, not what language it answers in — and a region where
+ * a game is not sold makes Steam behave as though the game did not exist: `storesearch` leaves it out of
+ * the results entirely, and `appdetails` answers `success: false` with no data at all. That is a
+ * catalogue hole, not a localization: a Russian region hides plenty of Western releases, and the launcher
+ * would show a user "nothing found" for a game they have installed and are looking at.
+ *
+ * The language is a separate parameter and keeps following the UI (see storeLanguage), so Russian titles
+ * and Russian descriptions are unaffected — verified against the endpoints: `l=russian&cc=US` returns
+ * both the Russian text and the games `cc=RU` hides. Prices and regional availability are the only things
+ * `cc` changes for real, and this feature reads neither.
+ */
+const STORE_COUNTRY = 'US';
+
+/** The `l` a locale searches and reads with. Searching a Russian title with `l=english` finds nothing. */
+export function storeLanguage(locale: Locale): string {
+  return locale === 'ru' ? 'russian' : 'english';
 }
 
 /** `storesearch` — the store's own type-ahead, and the only keyless way to turn a title into an appid. */
 export function storeSearchUrl(term: string, locale: Locale): string {
-  const { language, country } = storeLocaleParams(locale);
-  return `${STORE_ORIGIN}/api/storesearch/?term=${encodeURIComponent(term)}&l=${language}&cc=${country}`;
+  return `${STORE_ORIGIN}/api/storesearch/?term=${encodeURIComponent(term)}&l=${storeLanguage(locale)}&cc=${STORE_COUNTRY}`;
 }
 
 /** `appdetails` for ONE language — the caller asks twice (en + ru) to fill a LocalizedText. */
 export function appDetailsUrl(appId: number, locale: Locale): string {
-  const { language } = storeLocaleParams(locale);
-  return `${STORE_ORIGIN}/api/appdetails?appids=${appId}&l=${language}`;
+  return `${STORE_ORIGIN}/api/appdetails?appids=${appId}&l=${storeLanguage(locale)}&cc=${STORE_COUNTRY}`;
 }
 
 /** The portrait cover (600x900) — the grid image the carousel wants. `2x` is the same art at 1200x1800. */
@@ -353,8 +363,18 @@ export class SteamProvider implements MetadataProvider {
       appDetailsSchema,
       signal === undefined ? undefined : { signal },
     );
-    if (!details.ok) return undefined; // not cached: a failed call says nothing about the app
-    return this.rememberArt(appId, details.value, { english: this.deps.locale() === 'en' });
+    if (!details.ok) {
+      log.warn(`[metadata] appdetails failed for ${appId}: ${details.message}`);
+      return undefined; // not cached: a failed call says nothing about the app
+    }
+    const art = this.rememberArt(appId, details.value, { english: this.deps.locale() === 'en' });
+    // A store that answers `success: false` — a delisted app, or one the request's region does not sell —
+    // looks exactly like a successful call with nothing in it. Worth a line: it is the difference between
+    // "this game has no pictures" and "this store will not talk about this game".
+    if (art.backdrop === undefined && art.screenshots.length === 0) {
+      log.warn(`[metadata] appdetails returned no artwork for ${appId}`);
+    }
+    return art;
   }
 
   /**

@@ -95,15 +95,25 @@ describe('steam metadata provider', () => {
       );
     });
 
-    it('searches the Russian store for a Russian UI, so Russian titles are findable', () => {
+    it('searches in Russian for a Russian UI, so Russian titles are findable', () => {
       expect(storeSearchUrl('Мор', 'ru')).toBe(
-        'https://store.steampowered.com/api/storesearch/?term=%D0%9C%D0%BE%D1%80&l=russian&cc=RU',
+        'https://store.steampowered.com/api/storesearch/?term=%D0%9C%D0%BE%D1%80&l=russian&cc=US',
       );
+    });
+
+    // `cc` decides what the store admits EXISTS, not what language it speaks: from a region where a game
+    // is not sold, the search omits it and appdetails answers success:false with no artwork. Following
+    // the UI language there cost the user every game their own region does not carry.
+    it('always asks from one store region, whatever the interface language', () => {
+      for (const locale of ['en', 'ru'] as const) {
+        expect(storeSearchUrl('Atomfall', locale)).toContain('cc=US');
+        expect(appDetailsUrl(801800, locale)).toContain('cc=US');
+      }
     });
 
     it('builds the appdetails url per language', () => {
       expect(appDetailsUrl(220, 'ru')).toBe(
-        'https://store.steampowered.com/api/appdetails?appids=220&l=russian',
+        'https://store.steampowered.com/api/appdetails?appids=220&l=russian&cc=US',
       );
     });
 

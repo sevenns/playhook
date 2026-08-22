@@ -326,8 +326,21 @@ body {
    hit-testable it swallows every click meant for the bar's own buttons, More included. Nothing is bound to
    the container itself: the card listeners live on the cards (carousel.ts) and the right-click-to-go-back
    on the window. Gated on the screen because a card must NOT re-enable itself through the invisible strip
-   left behind on the detail screen — `pointer-events: none` on a parent is undone by an `auto` child. */
-#app[data-screen='carousel'] .card {
+   left behind on the detail screen — `pointer-events: none` on a parent is undone by an `auto` child.
+
+   Gated on the OVERLAY for the same reason, one level up: a full-screen overlay hides its screen with
+   opacity plus `pointer-events: none` on the section, and an `auto` child punches straight through that
+   too. Without this, cards under an open Customize / Add-game screen still took clicks — the pointer
+   turned into a hand over a game nobody could see, and clicking it selected that game behind the
+   screen. The library's own cards are re-enabled below, for the overlay that does show them. */
+#app[data-screen='carousel']:not([data-overlay]) .card {
+  pointer-events: auto;
+}
+
+/* The library IS an overlay, and its cards are what it exists to be clicked on. Named per overlay rather
+   than "any overlay" so a screen opened ON TOP of the library (Add game is reached from it) keeps the
+   grid underneath inert. */
+#app[data-overlay='library'] #library .library-grid .card {
   pointer-events: auto;
 }
 
