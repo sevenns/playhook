@@ -18,6 +18,7 @@ import { ipcMain } from 'electron';
 import {
   IPC,
   type ArtworkKind,
+  type ArtworkPage,
   type ArtworkVariant,
   type GameCandidate,
   type LocalizedText,
@@ -41,6 +42,7 @@ import { sniffMedia, type MediaKind } from './media-type';
 import { type HttpClient } from './http';
 import {
   type ArtworkOffer,
+  type ArtworkOffers,
   type GameCandidateRef,
   type MetadataProvider,
   type MusicTrackOffer,
@@ -59,10 +61,13 @@ const THUMB_CONCURRENCY = 3;
 /** How many keys each map remembers. Bounded for the reason card-art's LRU is: a session is unbounded. */
 const CACHE_LIMIT = 300;
 /**
- * How many pictures ONE source may offer for one game. SteamGridDB answers with everything the community
- * uploaded — for a popular game that is dozens of covers, every one of which would be downloaded as a
- * thumbnail and held in the renderer as a data: URL until the gallery closes. A gallery is a shortlist,
- * not an archive, and what gets dropped is logged rather than silently swallowed.
+ * How many pictures ONE source puts on ONE page of the gallery. SteamGridDB answers with everything the
+ * community uploaded, and a wallpaper site with more than anyone will look at — every one of which would
+ * be downloaded as a thumbnail and held in the renderer as a data: URL until the gallery closes.
+ *
+ * What no longer fits is KEPT (see the gallery pool below) instead of being dropped: the user asks for
+ * the next page and gets it, from memory when the source has already answered and with a fresh request
+ * when it has not. So this is a page size now, not a ceiling on what a game may be offered.
  */
 const MAX_ARTWORK_PER_PROVIDER = 24;
 
@@ -115,6 +120,25 @@ class BoundedMap<T> {
   }
 }
 
+/**
+ * One gallery in progress: which candidate it belongs to, what has already been shown, what was fetched
+ * but did not fit, and which page each source will be asked for next.
+ *
+ * Only one is kept — a gallery is a screen the user is looking at, and opening another one replaces it.
+ * The pool is what makes "load more" cheap: a source that answered with sixty pictures is not asked
+ * again until its sixty are on screen.
+ */
+interface GalleryPool {
+  readonly candidateKey: string;
+  readonly kind: ArtworkKind;
+  /** Fetched, not yet shown. Kept in source order so a later page keeps the gallery's grouping. */
+  pending: readonly ArtworkOffer[];
+  /** The page to ask a source for next. A source missing from here has nothing left to give. */
+  readonly nextPage: Map<MetadataProviderId, number>;
+  /** Every key already handed to the renderer — two albums really do share a picture. */
+  readonly shown: Set<string>;
+}
+
 export interface MetadataDeps {
   readonly http: HttpClient;
   /** Every source, in the order their answers are merged. A provider answers only what it knows. */
@@ -138,6 +162,8 @@ export class MetadataService {
    * request that is still running belongs to the surface they just left.
    */
   private readonly inFlight = new Set<AbortController>();
+  /** The gallery the renderer is paging through, or null before the first page of one is asked for. */
+  private gallery: GalleryPool | null = null;
 
   constructor(private readonly deps: MetadataDeps) {}
 
@@ -157,9 +183,17 @@ export class MetadataService {
       IPC.metadataArtwork,
       (
         _event,
-        payload: { readonly candidateKey: string; readonly kind: ArtworkKind },
-      ): Promise<MetadataResult<readonly ArtworkVariant[]>> =>
-        this.artworkFor(payload.candidateKey, payload.kind),
+        payload: {
+          readonly candidateKey: string;
+          readonly kind: ArtworkKind;
+          readonly page?: number;
+        },
+      ): Promise<MetadataResult<ArtworkPage>> =>
+        this.artworkFor(
+          payload.candidateKey,
+          payload.kind,
+          typeof payload.page === 'number' && payload.page > 0 ? Math.floor(payload.page) : 0,
+        ),
     );
     ipcMain.handle(
       IPC.metadataArtworkPreview,
@@ -268,34 +302,106 @@ export class MetadataService {
   }
 
   /**
-   * The gallery for one candidate: every source's offers, with their thumbnails already downloaded and
-   * encoded. A thumbnail that cannot be fetched drops its variant rather than showing an empty tile —
-   * whatever is wrong with it would be wrong with the full-size download too.
+   * One page of the gallery for a candidate: every source's offers, with their thumbnails already
+   * downloaded and encoded. A thumbnail that cannot be fetched drops its variant rather than showing an
+   * empty tile — whatever is wrong with it would be wrong with the full-size download too.
+   *
+   * Page 0 starts a fresh gallery. Every later page is served from what the sources have already said
+   * where possible, and only the sources whose pool has run dry are asked for another page of their own.
    */
   private async artworkFor(
     candidateKey: string,
     kind: ArtworkKind,
-  ): Promise<MetadataResult<readonly ArtworkVariant[]>> {
+    page: number,
+  ): Promise<MetadataResult<ArtworkPage>> {
     const ref = this.candidates.get(candidateKey);
     if (ref === undefined) return { ok: false, message: this.t('metadata.staleSelection') };
-    const answers = await this.fromProviders((provider, signal) =>
-      provider.artwork?.(toCandidateRef(ref), kind, signal),
-    );
-    const offers = answers.flatMap((answer) => (answer.ok ? [...answer.value] : []));
-    if (offers.length === 0) {
-      const failure = answers.find((answer) => !answer.ok);
-      if (failure !== undefined && !failure.ok) return failure;
-      return { ok: true, value: [] };
+    const pool = this.poolFor(candidateKey, kind, page);
+    const asked = await this.askArtwork(pool, toCandidateRef(ref), kind);
+    const failure = asked.find((answer) => !answer.result.ok)?.result;
+    const fetched: ArtworkOffer[] = [];
+    for (const { id, result } of asked) {
+      if (!result.ok) {
+        // A source that failed is done for this gallery: pressing "load more" must not keep retrying a
+        // host that is refusing, and the other sources still have their pages.
+        pool.nextPage.delete(id);
+        continue;
+      }
+      if (result.value.hasMore) pool.nextPage.set(id, (pool.nextPage.get(id) ?? 0) + 1);
+      else pool.nextPage.delete(id);
+      fetched.push(...result.value.offers);
     }
-    const shown = capArtworkPerProvider(orderByProvider(offers), MAX_ARTWORK_PER_PROVIDER);
-    if (shown.length < offers.length) {
-      log.info(
-        `[metadata] showing ${shown.length} of ${offers.length} ${kind} variants (${MAX_ARTWORK_PER_PROVIDER} per source)`,
-      );
+    const available = orderByProvider(dedupe([...pool.pending, ...fetched], pool.shown));
+    const shown = capArtworkPerProvider(available, MAX_ARTWORK_PER_PROVIDER);
+    const shownKeys = new Set(shown.map((offer) => offer.key));
+    pool.pending = available.filter((offer) => !shownKeys.has(offer.key));
+    for (const offer of shown) {
+      pool.shown.add(offer.key);
+      this.artwork.set(offer.key, offer);
     }
-    for (const offer of shown) this.artwork.set(offer.key, offer);
-    const variants = await this.withThumbnails(shown);
-    return { ok: true, value: variants };
+    const hasMore = pool.pending.length > 0 || pool.nextPage.size > 0;
+    if (shown.length === 0) {
+      if (!hasMore && failure !== undefined && !failure.ok) return failure;
+      return { ok: true, value: { variants: [], hasMore } };
+    }
+    if (pool.pending.length > 0) {
+      log.info(`[metadata] ${pool.pending.length} more ${kind} variants held for the next page`);
+    }
+    return { ok: true, value: { variants: await this.withThumbnails(shown), hasMore } };
+  }
+
+  /**
+   * The pool this request belongs to. A page 0 — or a request for a gallery other than the one in hand —
+   * starts over; anything else continues where the previous page stopped.
+   */
+  private poolFor(candidateKey: string, kind: ArtworkKind, page: number): GalleryPool {
+    const current = this.gallery;
+    if (
+      page > 0 &&
+      current !== null &&
+      current.candidateKey === candidateKey &&
+      current.kind === kind
+    ) {
+      return current;
+    }
+    const fresh: GalleryPool = {
+      candidateKey,
+      kind,
+      pending: [],
+      nextPage: new Map(
+        this.deps.providers
+          .filter((provider) => provider.artwork !== undefined)
+          .map((provider) => [provider.id, 0]),
+      ),
+      shown: new Set<string>(),
+    };
+    this.gallery = fresh;
+    return fresh;
+  }
+
+  /**
+   * Asks the sources that still have something to give — and only them. A source whose pool already
+   * holds a page's worth is left alone: its pictures are on their way to the screen without a request.
+   */
+  private async askArtwork(
+    pool: GalleryPool,
+    ref: GameCandidateRef,
+    kind: ArtworkKind,
+  ): Promise<
+    readonly { readonly id: MetadataProviderId; readonly result: MetadataResult<ArtworkOffers> }[]
+  > {
+    const held = new Map<MetadataProviderId, number>();
+    for (const offer of pool.pending) held.set(offer.provider, (held.get(offer.provider) ?? 0) + 1);
+    return this.run(async (signal) => {
+      const asked = this.deps.providers.flatMap((provider) => {
+        const next = pool.nextPage.get(provider.id);
+        if (next === undefined) return [];
+        if ((held.get(provider.id) ?? 0) >= MAX_ARTWORK_PER_PROVIDER) return [];
+        const answer = provider.artwork?.(ref, kind, next, signal);
+        return answer === undefined ? [] : [answer.then((result) => ({ id: provider.id, result }))];
+      });
+      return Promise.all(asked);
+    });
   }
 
   /** One variant at full size, for the lightbox. Downloaded on demand and never kept on disk. */
@@ -640,6 +746,19 @@ function toVariant(offer: ArtworkOffer, thumbDataUrl: string): ArtworkVariant {
     ...(offer.height === undefined ? {} : { height: offer.height }),
     thumbDataUrl,
   };
+}
+
+/** Offers this gallery has not shown yet, with repeats inside the batch collapsed by key. */
+export function dedupe(
+  offers: readonly ArtworkOffer[],
+  shown: ReadonlySet<string>,
+): readonly ArtworkOffer[] {
+  const seen = new Set<string>();
+  return offers.filter((offer) => {
+    if (shown.has(offer.key) || seen.has(offer.key)) return false;
+    seen.add(offer.key);
+    return true;
+  });
 }
 
 /**

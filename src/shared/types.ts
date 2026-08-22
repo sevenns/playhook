@@ -1270,6 +1270,17 @@ export interface ArtworkVariant {
   readonly thumbDataUrl: string;
 }
 
+/**
+ * One page of a gallery. The sources hold far more than a screen's worth — a busy game has hundreds of
+ * wallpapers, most of them not what this user wants — so the gallery shows a page at a time and says
+ * whether there is another behind it. `hasMore` false is what removes the "load more" tile: an offer to
+ * fetch nothing is worse than no offer at all.
+ */
+export interface ArtworkPage {
+  readonly variants: readonly ArtworkVariant[];
+  readonly hasMore: boolean;
+}
+
 /** One soundtrack album as the music provider knows it. */
 export interface MusicAlbum {
   readonly key: string;
@@ -1488,11 +1499,15 @@ export interface RendererApi {
   searchMetadata(query: string): Promise<MetadataResult<readonly GameCandidate[]>>;
   /** The candidate behind a Steam appid the manifest already names — no search needed. */
   requestMetadataSteamCandidate(appId: number): Promise<MetadataResult<GameCandidate>>;
-  /** The artwork gallery for one candidate — thumbnails arrive as data: URLs. */
+  /**
+   * One page of the artwork gallery for a candidate — thumbnails arrive as data: URLs. Page 0 starts the
+   * gallery over; every later page continues where the previous one stopped.
+   */
   requestMetadataArtwork(
     candidateKey: string,
     kind: ArtworkKind,
-  ): Promise<MetadataResult<readonly ArtworkVariant[]>>;
+    page: number,
+  ): Promise<MetadataResult<ArtworkPage>>;
   /** One variant at full size as a data: URL, for the lightbox. */
   requestMetadataArtworkPreview(variantKey: string): Promise<MetadataResult<string>>;
   /** Soundtrack albums matching a title. */

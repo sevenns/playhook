@@ -174,7 +174,8 @@ const metadataPicker = createMetadataPicker({
   audio,
   getTranslator,
   api: {
-    artwork: (candidateKey, kind) => window.api.requestMetadataArtwork(candidateKey, kind),
+    artwork: (candidateKey, kind, page) =>
+      window.api.requestMetadataArtwork(candidateKey, kind, page),
     cancel: () => window.api.cancelMetadata(),
   },
   // Read lazily: the screen is created just below, and it owns the lightbox the preview opens in.

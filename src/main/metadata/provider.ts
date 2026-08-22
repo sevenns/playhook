@@ -44,6 +44,18 @@ export interface ArtworkOffer {
   readonly fullUrl: string;
 }
 
+/**
+ * One page of a source's pictures, and whether that source can serve another behind it.
+ *
+ * Stated by the SOURCE rather than guessed from the count: a full page means "more" for Wallhaven (whose
+ * answer names its last page) and means nothing for Steam (whose screenshots are simply all there is).
+ * The gallery's "load more" tile is only shown when something is actually there to load.
+ */
+export interface ArtworkOffers {
+  readonly offers: readonly ArtworkOffer[];
+  readonly hasMore: boolean;
+}
+
 /** One offered track. The audio URL is NOT here: Khinsider only reveals it on the track's own page. */
 export interface MusicTrackOffer {
   readonly key: string;
@@ -63,11 +75,17 @@ export interface MetadataProvider {
   search?(query: string, signal?: AbortSignal): Promise<MetadataResult<readonly GameCandidate[]>>;
   /** The candidate for an appid the caller already knows — the manifest's own `steam.appid`. */
   candidateByAppId?(appId: number, signal?: AbortSignal): Promise<MetadataResult<GameCandidate>>;
+  /**
+   * One page of what this source has for the game, 0-based. A source that serves everything it knows at
+   * once (Steam's screenshots, GOG's, a SteamGridDB list) answers page 0 with the lot and every later
+   * page with nothing — the service keeps what did not fit on screen and hands it out itself.
+   */
   artwork?(
     ref: GameCandidateRef,
     kind: ArtworkKind,
+    page: number,
     signal?: AbortSignal,
-  ): Promise<MetadataResult<readonly ArtworkOffer[]>>;
+  ): Promise<MetadataResult<ArtworkOffers>>;
   musicSearch?(query: string, signal?: AbortSignal): Promise<MetadataResult<readonly MusicAlbum[]>>;
   musicTracks?(
     albumKey: string,

@@ -13,6 +13,7 @@ import {
   mergeCandidates,
   mergeDetails,
   normalizeTitle,
+  dedupe,
   orderByProvider,
   withMergedRefs,
 } from '../src/main/metadata/service';
@@ -298,6 +299,29 @@ describe('metadata details — merging what the sources know', () => {
 
   it('answers with nothing when no source knew anything', () => {
     expect(mergeDetails([{}, {}])).toEqual({});
+  });
+});
+
+describe('metadata artwork — what a later page may repeat', () => {
+  const offer = (key: string): ArtworkOffer => ({
+    key,
+    kind: 'hero',
+    provider: 'wallpapercave',
+    thumbUrl: `https://cdn.test/${key}.jpg`,
+    fullUrl: `https://cdn.test/${key}.jpg`,
+  });
+
+  it('drops what the gallery has already shown — two albums really do share a picture', () => {
+    const shown = new Set(['a']);
+    expect(dedupe([offer('a'), offer('b')], shown).map((o) => o.key)).toEqual(['b']);
+  });
+
+  it('drops a repeat inside one batch as well', () => {
+    expect(dedupe([offer('a'), offer('a')], new Set()).map((o) => o.key)).toEqual(['a']);
+  });
+
+  it('keeps the order it was given', () => {
+    expect(dedupe([offer('b'), offer('a')], new Set()).map((o) => o.key)).toEqual(['b', 'a']);
   });
 });
 

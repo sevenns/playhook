@@ -9,7 +9,12 @@
 // Modelled on file-picker.ts (same panel, same "A chooses, B leaves, X ticks" grammar), with a grid of
 // pictures where that one has a list of names: the question here is which picture, and only a picture
 // can answer it.
-import { MAX_HERO_IMAGES, type ArtworkKind, type ArtworkVariant } from '../shared/types';
+import {
+  MAX_HERO_IMAGES,
+  type ArtworkKind,
+  type ArtworkPage,
+  type ArtworkVariant,
+} from '../shared/types';
 import type { Translator } from '../shared/i18n/index.js';
 import { type AudioController } from './audio.js';
 import { req } from './dom.js';
@@ -23,8 +28,9 @@ export interface MetadataPickerApi {
   artwork(
     candidateKey: string,
     kind: ArtworkKind,
+    page: number,
   ): Promise<
-    | { readonly ok: true; readonly value: readonly ArtworkVariant[] }
+    | { readonly ok: true; readonly value: ArtworkPage }
     | { readonly ok: false; readonly message: string }
   >;
   /** The user left — abort whatever is still downloading for this surface. */
@@ -74,6 +80,11 @@ export function createMetadataPicker(deps: MetadataPickerDeps): MetadataPickerSu
   let variants: readonly ArtworkVariant[] = [];
   let tiles: HTMLButtonElement[] = [];
   let index = 0;
+  /** Which page was last asked for, and whether the sources said another one exists behind it. */
+  let page = 0;
+  let hasMore = false;
+  /** True while a page is in flight — the "load more" tile must not queue a second request. */
+  let loading = false;
   /** Ticked variants, in the order they were ticked — that order becomes the hero rotation. */
   let picked: string[] = [];
 
@@ -121,6 +132,7 @@ export function createMetadataPicker(deps: MetadataPickerDeps): MetadataPickerSu
       });
       return button;
     });
+    if (hasMore) tiles.push(moreTile());
     gridEl.replaceChildren(...tiles);
     if (tiles.length === 0) {
       const empty = document.createElement('div');
@@ -130,6 +142,52 @@ export function createMetadataPicker(deps: MetadataPickerDeps): MetadataPickerSu
     }
     applyPicked();
     applyFocus(true);
+  }
+
+  /**
+   * The last tile of the grid, and the only one that is not a picture: the sources hold far more than
+   * fits on a screen, and most of a wallpaper site's answer is not what this user wants. It sits WHERE
+   * the next thumbnail would be, so the gesture that reaches it is the one the user is already making —
+   * and it is absent altogether when there is nothing left to fetch.
+   */
+  function moreTile(): HTMLButtonElement {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'metadata-tile metadata-tile-more';
+    button.dataset['kind'] = request?.kind ?? 'hero';
+    const box = document.createElement('span');
+    box.className = 'metadata-tile-more-box';
+    box.textContent = '+';
+    const caption = document.createElement('span');
+    caption.className = 'metadata-tile-caption';
+    caption.textContent = t()('metadata.loadMore');
+    button.append(box, caption);
+    button.addEventListener('click', () => {
+      hover.arm();
+      index = tiles.length - 1;
+      applyFocus();
+      loadMore();
+    });
+    return button;
+  }
+
+  /** Whether a tile is the trailing "load more" one rather than a picture. */
+  function isOnMoreTile(tile: HTMLButtonElement | undefined): boolean {
+    return tile !== undefined && tile.classList.contains('metadata-tile-more');
+  }
+
+  /** Whether the focus is on the "load more" tile — the one position `variants` has no entry for. */
+  function isOnMore(): boolean {
+    return hasMore && index === variants.length;
+  }
+
+  function loadMore(): void {
+    if (loading) {
+      deps.audio.playLimit();
+      return;
+    }
+    deps.audio.play('button');
+    void load(page + 1);
   }
 
   /**
@@ -230,28 +288,46 @@ export function createMetadataPicker(deps: MetadataPickerDeps): MetadataPickerSu
     variants = [];
     picked = [];
     tiles = [];
+    page = 0;
+    hasMore = false;
+    loading = false;
     gridEl.replaceChildren();
     root.classList.remove('is-open');
     root.setAttribute('aria-hidden', 'true');
     deps.api.cancel();
   }
 
-  async function load(): Promise<void> {
+  /**
+   * One page into the grid. Page 0 replaces what is on screen; a later page is APPENDED, keeps the ticks
+   * the user has already made, and moves the focus to the first picture it brought — that is what they
+   * pressed for. A failed later page leaves the gallery standing and says so in the status line.
+   */
+  async function load(nextPage: number): Promise<void> {
     const at = request;
-    if (at === null) return;
+    if (at === null || loading) return;
+    loading = true;
     const token = visit;
+    const shownBefore = variants.length;
     statusEl.textContent = t()('metadata.searching');
-    const result = await deps.api.artwork(at.candidateKey, at.kind);
+    const result = await deps.api.artwork(at.candidateKey, at.kind, nextPage);
     if (token !== visit) return; // the surface was closed (or reopened) while main was fetching
+    loading = false;
     if (!result.ok) {
-      variants = [];
       statusEl.textContent = result.message;
+      if (nextPage > 0) return;
+      variants = [];
+      hasMore = false;
       paint();
       return;
     }
-    variants = result.value;
+    page = nextPage;
+    hasMore = result.value.hasMore;
+    variants = nextPage === 0 ? result.value.variants : [...variants, ...result.value.variants];
     statusEl.textContent = variants.length === 0 ? t()('metadata.noArtwork') : '';
     paint();
+    if (nextPage === 0) return;
+    index = Math.min(shownBefore, Math.max(0, tiles.length - 1));
+    applyFocus();
   }
 
   gridEl.addEventListener(
@@ -296,6 +372,9 @@ export function createMetadataPicker(deps: MetadataPickerDeps): MetadataPickerSu
       variants = [];
       picked = [];
       index = 0;
+      page = 0;
+      hasMore = false;
+      loading = false;
       deps.audio.play('popup-open');
       titleEl.textContent = next.title;
       legendEl.textContent = t()(
@@ -307,7 +386,7 @@ export function createMetadataPicker(deps: MetadataPickerDeps): MetadataPickerSu
       root.setAttribute('aria-hidden', 'false');
       scroller.to(0, true);
       hover.arm();
-      void load();
+      void load(0);
     },
     navUp: () => move(-columns()),
     navDown: () => move(columns()),
@@ -315,6 +394,10 @@ export function createMetadataPicker(deps: MetadataPickerDeps): MetadataPickerSu
     navRight: () => move(1),
     navActivate: () => {
       hover.arm();
+      if (isOnMore()) {
+        loadMore();
+        return;
+      }
       const variant = variants[index];
       if (variant === undefined) {
         deps.audio.playLimit();
@@ -351,6 +434,10 @@ export function createMetadataPicker(deps: MetadataPickerDeps): MetadataPickerSu
       );
       if (variants.length === 0 && statusEl.textContent !== '') {
         statusEl.textContent = t()('metadata.noArtwork');
+      }
+      const more = tiles[variants.length]?.querySelector('.metadata-tile-caption');
+      if (isOnMoreTile(tiles[variants.length]) && more !== null && more !== undefined) {
+        more.textContent = t()('metadata.loadMore');
       }
       paintApply();
     },

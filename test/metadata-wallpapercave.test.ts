@@ -48,6 +48,14 @@ const SECOND_ALBUM_PAGE = `
 <img class="wimg" src="/wp/iee9mCb.jpg" width="1600" height="900">
 `;
 
+/** Four albums, so a page of three leaves one behind — what "load more" is there to reach. */
+const SEARCH_PAGE_MANY = `
+<a href="/atomfall-wallpapers" title="27 wallpapers in Atomfall"></a>
+<a href="/atomfall-2-wallpapers" title="20 wallpapers in Atomfall 2"></a>
+<a href="/atomfall-3-wallpapers" title="15 wallpapers in Atomfall 3"></a>
+<a href="/atomfall-4-wallpapers" title="10 wallpapers in Atomfall 4"></a>
+`;
+
 function textResponse(text: string, status = 200): FetchResponse {
   const chunks = [new TextEncoder().encode(text)];
   let index = 0;
@@ -168,7 +176,7 @@ describe('wallpapercave album page', () => {
 
 describe('wallpapercave offers', () => {
   it('serves the same file as the tile and as the full size', () => {
-    const offers = toArtworkOffers([paper('wp111.webp', 1920, 1080)], 24);
+    const offers = toArtworkOffers([paper('wp111.webp', 1920, 1080)]);
     expect(offers[0]).toEqual({
       key: 'wallpapercave:wp111.webp',
       kind: 'hero',
@@ -181,23 +189,24 @@ describe('wallpapercave offers', () => {
   });
 
   it('drops portrait pictures — a phone shot behind a 16:10 screen is a ribbon', () => {
-    const offers = toArtworkOffers([paper('a.jpg', 1242, 2688), paper('b.jpg', 1920, 1080)], 24);
+    const offers = toArtworkOffers([paper('a.jpg', 1242, 2688), paper('b.jpg', 1920, 1080)]);
     expect(offers.map((offer) => offer.key)).toEqual(['wallpapercave:b.jpg']);
   });
 
   it('offers a picture once when two albums both carry it', () => {
-    const offers = toArtworkOffers(
-      [paper('wp111.webp', 1920, 1080), paper('wp111.webp', 1920, 1080)],
-      24,
-    );
+    const offers = toArtworkOffers([
+      paper('wp111.webp', 1920, 1080),
+      paper('wp111.webp', 1920, 1080),
+    ]);
     expect(offers).toHaveLength(1);
   });
 
   it('takes the sizes the Deck can use before the 4K ones', () => {
-    const offers = toArtworkOffers(
-      [paper('big.png', 3840, 2160), paper('hd.jpg', 1920, 1080), paper('qhd.jpg', 2560, 1440)],
-      24,
-    );
+    const offers = toArtworkOffers([
+      paper('big.png', 3840, 2160),
+      paper('hd.jpg', 1920, 1080),
+      paper('qhd.jpg', 2560, 1440),
+    ]);
     expect(offers.map((offer) => offer.key)).toEqual([
       'wallpapercave:qhd.jpg',
       'wallpapercave:hd.jpg',
@@ -205,9 +214,11 @@ describe('wallpapercave offers', () => {
     ]);
   });
 
-  it('keeps to the cap', () => {
+  // The gallery's page size lives in the service now (MAX_ARTWORK_PER_PROVIDER); what does not fit on a
+  // page is kept for the next one, so a source that trimmed its own answer would hide pictures for good.
+  it('offers everything it parsed, leaving the page size to the service', () => {
     const many = Array.from({ length: 30 }, (_, index) => paper(`wp${index}.jpg`, 1920, 1080));
-    expect(toArtworkOffers(many, 24)).toHaveLength(24);
+    expect(toArtworkOffers(many)).toHaveLength(30);
   });
 });
 
@@ -216,10 +227,10 @@ describe('wallpapercave provider', () => {
     const { provider, fetch } = providerOf((url) =>
       textResponse(url.includes('/search') ? SEARCH_PAGE : ALBUM_PAGE),
     );
-    const result = await provider.artwork({ key: 'steam:1', title: 'Атомфолл' }, 'hero');
+    const result = await provider.artwork({ key: 'steam:1', title: 'Атомфолл' }, 'hero', 0);
     expect(urlsOf(fetch)[0]).toBe(searchUrl('Atomfall'));
     expect(urlsOf(fetch)[1]).toBe('https://wallpapercave.com/atomfall-wallpapers');
-    expect(result.ok === true && result.value.map((offer) => offer.key)).toEqual([
+    expect(result.ok === true && result.value.offers.map((offer) => offer.key)).toEqual([
       'wallpapercave:wp222.jpg',
       'wallpapercave:wp111.webp',
       'wallpapercave:wp333.png',
@@ -230,9 +241,9 @@ describe('wallpapercave provider', () => {
   // comes back for a search URL is the album's. Getting this wrong would blind the best-covered games.
   it('takes the album page the search redirected to, without asking for anything else', async () => {
     const { provider, fetch } = providerOf(() => textResponse(ALBUM_PAGE));
-    const result = await provider.artwork({ key: 'steam:1', title: 'Atomfall' }, 'hero');
+    const result = await provider.artwork({ key: 'steam:1', title: 'Atomfall' }, 'hero', 0);
     expect(fetch).toHaveBeenCalledTimes(1);
-    expect(result.ok === true && result.value).toHaveLength(3);
+    expect(result.ok === true && result.value.offers).toHaveLength(3);
   });
 
   it('collects from several albums and offers a shared picture once', async () => {
@@ -245,24 +256,65 @@ describe('wallpapercave provider', () => {
       const path = new URL(url).pathname;
       return textResponse(pages[path] ?? '');
     });
-    const result = await provider.artwork({ key: 'steam:1', title: 'Atomfall' }, 'hero');
-    expect(result.ok === true && result.value.map((offer) => offer.key)).toEqual([
+    const result = await provider.artwork({ key: 'steam:1', title: 'Atomfall' }, 'hero', 0);
+    expect(result.ok === true && result.value.offers.map((offer) => offer.key)).toEqual([
       'wallpapercave:wp111.webp',
       'wallpapercave:iee9mCb.jpg',
     ]);
   });
 
+  it('opens the next albums on a later page, and says when none are left', async () => {
+    const opened: string[] = [];
+    const { provider } = providerOf((url) => {
+      if (url.includes('/search')) return textResponse(SEARCH_PAGE_MANY);
+      opened.push(new URL(url).pathname);
+      return textResponse(SECOND_ALBUM_PAGE);
+    });
+    const ref = { key: 'steam:1', title: 'Atomfall' };
+    const first = await provider.artwork(ref, 'hero', 0);
+    expect(opened).toHaveLength(3);
+    expect(first.ok === true && first.value.hasMore).toBe(true);
+    opened.length = 0;
+    const second = await provider.artwork(ref, 'hero', 1);
+    expect(opened).toEqual(['/atomfall-4-wallpapers']);
+    expect(second.ok === true && second.value.hasMore).toBe(false);
+  });
+
+  it('searches once for a gallery, however many pages it is paged through', async () => {
+    const { provider, fetch } = providerOf((url) =>
+      textResponse(url.includes('/search') ? SEARCH_PAGE_MANY : SECOND_ALBUM_PAGE),
+    );
+    const ref = { key: 'steam:1', title: 'Atomfall' };
+    await provider.artwork(ref, 'hero', 0);
+    fetch.mockClear();
+    await provider.artwork(ref, 'hero', 1);
+    expect(urlsOf(fetch).filter((url) => url.includes('/search'))).toEqual([]);
+  });
+
+  // The redirect case has no list to page through: everything the album holds arrived with page 0, and
+  // the service hands out what did not fit on screen.
+  it('has no later page after a search that landed on the album itself', async () => {
+    const { provider } = providerOf(() => textResponse(ALBUM_PAGE));
+    const ref = { key: 'steam:1', title: 'Atomfall' };
+    const first = await provider.artwork(ref, 'hero', 0);
+    expect(first.ok === true && first.value.hasMore).toBe(false);
+    expect(await provider.artwork(ref, 'hero', 1)).toEqual({
+      ok: true,
+      value: { offers: [], hasMore: false },
+    });
+  });
+
   it('falls back to the candidate title when it is already Latin', async () => {
     const { provider, fetch } = providerOf(() => textResponse(ALBUM_PAGE), null);
-    await provider.artwork({ key: 'gog:1', title: 'Hollow Knight' }, 'hero');
+    await provider.artwork({ key: 'gog:1', title: 'Hollow Knight' }, 'hero', 0);
     expect(urlsOf(fetch)[0]).toBe(searchUrl('Hollow Knight'));
   });
 
   it('does not search at all for a title it can only spell in another script', async () => {
     const { provider, fetch } = providerOf(() => textResponse(ALBUM_PAGE), null);
-    expect(await provider.artwork({ key: 'steam:1', title: 'Ведьмак 3' }, 'hero')).toEqual({
+    expect(await provider.artwork({ key: 'steam:1', title: 'Ведьмак 3' }, 'hero', 0)).toEqual({
       ok: true,
-      value: [],
+      value: { offers: [], hasMore: false },
     });
     expect(fetch).not.toHaveBeenCalled();
   });
@@ -272,32 +324,32 @@ describe('wallpapercave provider', () => {
       (url) => textResponse(url.includes('Complete') ? '' : ALBUM_PAGE),
       'The Witcher 3: Wild Hunt - Complete Edition',
     );
-    const result = await provider.artwork({ key: 'steam:292030', title: 'x' }, 'hero');
+    const result = await provider.artwork({ key: 'steam:292030', title: 'x' }, 'hero', 0);
     expect(urlsOf(fetch)).toEqual([
       searchUrl('The Witcher 3: Wild Hunt - Complete Edition'),
       searchUrl('The Witcher 3: Wild Hunt'),
     ]);
-    expect(result.ok === true && result.value).toHaveLength(3);
+    expect(result.ok === true && result.value.offers).toHaveLength(3);
   });
 
   it('reports nothing found as an empty gallery, not as an error', async () => {
     const { provider } = providerOf(() => textResponse('<html></html>'), 'Some Niche Indie');
-    expect(await provider.artwork({ key: 'steam:1', title: 'x' }, 'hero')).toEqual({
+    expect(await provider.artwork({ key: 'steam:1', title: 'x' }, 'hero', 0)).toEqual({
       ok: true,
-      value: [],
+      value: { offers: [], hasMore: false },
     });
   });
 
   it('reports a failing site as a failure', async () => {
     const { provider } = providerOf(() => textResponse('', 503));
-    expect((await provider.artwork({ key: 'steam:1', title: 'x' }, 'hero')).ok).toBe(false);
+    expect((await provider.artwork({ key: 'steam:1', title: 'x' }, 'hero', 0)).ok).toBe(false);
   });
 
   it('offers no covers — it is a wallpaper source', async () => {
     const { provider, fetch } = providerOf(() => textResponse(ALBUM_PAGE));
-    expect(await provider.artwork({ key: 'steam:1', title: 'x' }, 'grid')).toEqual({
+    expect(await provider.artwork({ key: 'steam:1', title: 'x' }, 'grid', 0)).toEqual({
       ok: true,
-      value: [],
+      value: { offers: [], hasMore: false },
     });
     expect(fetch).not.toHaveBeenCalled();
   });

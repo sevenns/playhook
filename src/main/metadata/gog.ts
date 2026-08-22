@@ -23,7 +23,12 @@ import {
   type GamePlatform,
   type MetadataResult,
 } from '../../shared/types';
-import { type ArtworkOffer, type GameCandidateRef, type MetadataProvider } from './provider';
+import {
+  type ArtworkOffer,
+  type ArtworkOffers,
+  type GameCandidateRef,
+  type MetadataProvider,
+} from './provider';
 import { type HttpClient } from './http';
 
 const CATALOG_ORIGIN = 'https://catalog.gog.com/v1';
@@ -199,13 +204,15 @@ export class GogProvider implements MetadataProvider {
   async artwork(
     ref: GameCandidateRef,
     kind: ArtworkKind,
+    page: number,
     signal?: AbortSignal,
-  ): Promise<MetadataResult<readonly ArtworkOffer[]>> {
-    if (kind !== 'hero') return { ok: true, value: [] };
+  ): Promise<MetadataResult<ArtworkOffers>> {
+    const nothing = { ok: true, value: { offers: [], hasMore: false } } as const;
+    if (kind !== 'hero' || page > 0) return nothing;
     const productId = ref.gogId ?? gogIdFromKey(ref.key);
-    if (productId === undefined) return { ok: true, value: [] };
+    if (productId === undefined) return nothing;
     const cached = this.screenshots.get(productId);
-    if (cached !== undefined) return { ok: true, value: cached };
+    if (cached !== undefined) return { ok: true, value: { offers: cached, hasMore: false } };
     // A candidate merged in from another source: the catalogue was searched under a title this product
     // did not answer to, so its pictures are fetched now, by the title the candidate carries.
     const answer = await this.deps.http.json(
@@ -215,9 +222,9 @@ export class GogProvider implements MetadataProvider {
     );
     if (!answer.ok) return answer;
     const product = answer.value.products.find((candidate) => candidate.id === productId);
-    if (product === undefined) return { ok: true, value: [] };
+    if (product === undefined) return nothing;
     const offers = toArtworkOffers(product);
     this.screenshots.set(product.id, offers);
-    return { ok: true, value: offers };
+    return { ok: true, value: { offers, hasMore: false } };
   }
 }

@@ -162,8 +162,9 @@ describe('gog provider', () => {
       const result = await provider.artwork(
         { key: 'gog:1207658691', title: 'The Witcher 3', gogId: '1207658691' },
         'hero',
+        0,
       );
-      expect(result.ok === true && result.value).toHaveLength(2);
+      expect(result.ok === true && result.value.offers).toHaveLength(2);
       expect(fetch.mock.calls.length).toBe(calls);
     });
 
@@ -177,8 +178,9 @@ describe('gog provider', () => {
           gogId: '1207658691',
         },
         'hero',
+        0,
       );
-      expect(result.ok === true && result.value).toHaveLength(2);
+      expect(result.ok === true && result.value.offers).toHaveLength(2);
       expect(fetch).toHaveBeenCalledTimes(1);
     });
 
@@ -187,8 +189,9 @@ describe('gog provider', () => {
       const result = await provider.artwork(
         { key: 'steam:220', title: 'HL2', steamAppId: 220 },
         'hero',
+        0,
       );
-      expect(result).toEqual({ ok: true, value: [] });
+      expect(result).toEqual({ ok: true, value: { offers: [], hasMore: false } });
       expect(fetch).not.toHaveBeenCalled();
     });
 
@@ -197,8 +200,9 @@ describe('gog provider', () => {
       const result = await provider.artwork(
         { key: 'gog:1207658691', title: 'x', gogId: '1207658691' },
         'grid',
+        0,
       );
-      expect(result).toEqual({ ok: true, value: [] });
+      expect(result).toEqual({ ok: true, value: { offers: [], hasMore: false } });
       expect(fetch).not.toHaveBeenCalled();
     });
 
@@ -208,8 +212,9 @@ describe('gog provider', () => {
       const result = await provider.artwork(
         { key: 'gog:1207666393', title: 'The Witcher', gogId: '1207666393' },
         'hero',
+        0,
       );
-      expect(result).toEqual({ ok: true, value: [] });
+      expect(result).toEqual({ ok: true, value: { offers: [], hasMore: false } });
     });
   });
 });

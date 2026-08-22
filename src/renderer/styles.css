@@ -3055,6 +3055,31 @@ html:not(.mouse-asleep) .metadata-tile:hover,
 }
 
 /* Ticked (multi-select backgrounds) — the same underline the file browser marks a ticked file with. */
+/* The trailing "load more" tile: the same box a thumbnail occupies, so the grid keeps its rhythm and the
+   tile is reached by the same press as the picture before it. A frame rather than a picture, because
+   there is nothing to show yet. */
+.metadata-tile-more-box {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  aspect-ratio: 2 / 3;
+  border: calc(2 * var(--px)) dashed color-mix(in srgb, var(--d2) 45%, transparent);
+  border-radius: calc(8 * var(--px));
+  font-size: calc(48 * var(--px));
+  font-weight: 300;
+  line-height: 1;
+}
+
+.metadata-tile-more[data-kind='hero'] .metadata-tile-more-box {
+  aspect-ratio: 16 / 9;
+}
+
+html:not(.mouse-asleep) .metadata-tile-more:hover .metadata-tile-more-box,
+.metadata-tile-more.is-focused .metadata-tile-more-box {
+  border-color: var(--d1);
+}
+
 .metadata-tile.is-picked .metadata-tile-caption {
   text-decoration: underline;
   text-underline-offset: calc(6 * var(--px));

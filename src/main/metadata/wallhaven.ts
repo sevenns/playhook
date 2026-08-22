@@ -18,7 +18,12 @@
 //    such edition tails, hence the fallback cascade in `searchTerms`.
 import { z } from 'zod';
 import { type ArtworkKind, type MetadataResult } from '../../shared/types';
-import { type ArtworkOffer, type GameCandidateRef, type MetadataProvider } from './provider';
+import {
+  type ArtworkOffer,
+  type ArtworkOffers,
+  type GameCandidateRef,
+  type MetadataProvider,
+} from './provider';
 import { type HttpClient } from './http';
 
 const API_ORIGIN = 'https://wallhaven.cc/api/v1';
@@ -62,7 +67,8 @@ const EDITION_MARKERS: readonly string[] = [
   'remastered',
 ];
 
-export function searchUrl(term: string): string {
+/** `page` is 0-based here and 1-based there — the endpoint counts its pages from one. */
+export function searchUrl(term: string, page = 0): string {
   const query = new URLSearchParams({
     q: term,
     categories: CATEGORIES,
@@ -70,6 +76,7 @@ export function searchUrl(term: string): string {
     atleast: MIN_RESOLUTION,
     ratios: RATIOS,
     sorting: 'relevance',
+    page: String(page + 1),
   });
   return `${API_ORIGIN}/search?${query.toString()}`;
 }
@@ -141,6 +148,17 @@ export function isLatinTitle(title: string): boolean {
 }
 
 const searchSchema = z.object({
+  /**
+   * The endpoint states which page it just served and how many there are, which is what makes "load
+   * more" honest: the gallery offers another page only when one exists. Optional all the same — a
+   * missing `meta` costs the extra pages, not the answer.
+   */
+  meta: z
+    .object({
+      current_page: z.number().int().positive().optional(),
+      last_page: z.number().int().positive().optional(),
+    })
+    .optional(),
   data: z
     .array(
       z.object({
@@ -156,6 +174,14 @@ const searchSchema = z.object({
 });
 
 type Wallpaper = z.infer<typeof searchSchema>['data'][number];
+type SearchMeta = z.infer<typeof searchSchema>['meta'];
+
+/** Whether the answer says another page follows. Silence means no: an empty page is a worse offer. */
+export function hasMorePages(meta: SearchMeta): boolean {
+  const current = meta?.current_page;
+  const last = meta?.last_page;
+  return current !== undefined && last !== undefined && current < last;
+}
 
 /**
  * Wallpapers as offers, with the ones too heavy to apply left out. The thumbnail is Wallhaven's own
@@ -188,6 +214,8 @@ export interface WallhavenDeps {
 
 export class WallhavenProvider implements MetadataProvider {
   readonly id = 'wallhaven' as const;
+  /** The query that answered for a candidate, so "load more" pages through THAT search, not another. */
+  private readonly answeredTerm = new Map<string, string>();
 
   constructor(private readonly deps: WallhavenDeps) {}
 
@@ -195,26 +223,38 @@ export class WallhavenProvider implements MetadataProvider {
    * Backgrounds only, and only for a title this can search in English. Each term of the cascade is tried
    * until one answers with something; an empty result is not a failure, just a game nobody has made a
    * wallpaper for.
+   *
+   * A later page repeats the term that worked rather than walking the cascade again: the cascade exists
+   * to find A query that answers, and page 2 of a different query would be a different set of pictures
+   * appended to the same gallery.
    */
   async artwork(
     ref: GameCandidateRef,
     kind: ArtworkKind,
+    page: number,
     signal?: AbortSignal,
-  ): Promise<MetadataResult<readonly ArtworkOffer[]>> {
-    if (kind !== 'hero') return { ok: true, value: [] };
+  ): Promise<MetadataResult<ArtworkOffers>> {
+    const nothing = { ok: true, value: { offers: [], hasMore: false } } as const;
+    if (kind !== 'hero') return nothing;
     const title = this.deps.englishTitle(ref) ?? (isLatinTitle(ref.title) ? ref.title : undefined);
-    if (title === undefined) return { ok: true, value: [] };
+    if (title === undefined) return nothing;
     const options = signal === undefined ? undefined : { signal };
-    let failure: MetadataResult<readonly ArtworkOffer[]> | undefined;
-    for (const term of searchTerms(title)) {
-      const answer = await this.deps.http.json(searchUrl(term), searchSchema, options);
+    const remembered = page > 0 ? this.answeredTerm.get(ref.key) : undefined;
+    let failure: MetadataResult<ArtworkOffers> | undefined;
+    for (const term of remembered === undefined ? searchTerms(title) : [remembered]) {
+      const answer = await this.deps.http.json(searchUrl(term, page), searchSchema, options);
       if (!answer.ok) {
         failure = answer;
         continue;
       }
       const offers = toArtworkOffers(answer.value.data);
-      if (offers.length > 0) return { ok: true, value: offers };
+      const hasMore = hasMorePages(answer.value.meta);
+      // A later page of the term already in use is this game's answer whether or not the filters left
+      // anything on it; on the first page an empty result means "try the next term".
+      if (offers.length === 0 && remembered === undefined) continue;
+      this.answeredTerm.set(ref.key, term);
+      return { ok: true, value: { offers, hasMore } };
     }
-    return failure ?? { ok: true, value: [] };
+    return failure ?? nothing;
   }
 }

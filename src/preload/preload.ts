@@ -33,7 +33,7 @@ import type {
   LanguageMode,
   ListDirResult,
   ArtworkKind,
-  ArtworkVariant,
+  ArtworkPage,
   GameCandidate,
   GameDetails,
   MetadataApplyRequest,
@@ -410,9 +410,10 @@ const api: RendererApi = {
   requestMetadataArtwork(
     candidateKey: string,
     kind: ArtworkKind,
-  ): Promise<MetadataResult<readonly ArtworkVariant[]>> {
-    return ipcRenderer.invoke(CHANNELS.metadataArtwork, { candidateKey, kind }) as Promise<
-      MetadataResult<readonly ArtworkVariant[]>
+    page: number,
+  ): Promise<MetadataResult<ArtworkPage>> {
+    return ipcRenderer.invoke(CHANNELS.metadataArtwork, { candidateKey, kind, page }) as Promise<
+      MetadataResult<ArtworkPage>
     >;
   },
   requestMetadataArtworkPreview(variantKey: string): Promise<MetadataResult<string>> {

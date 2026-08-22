@@ -383,6 +383,7 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'metadata.pickerLegend': 'A - выбрать, Y - открыть целиком, B - назад',
   'metadata.pickerLegendMulti': 'X - отметить, A - выбрать, Y - открыть целиком, B - назад',
   'metadata.applySelected': 'Применить выбранные ({count})',
+  'metadata.loadMore': 'Загрузить ещё',
   'metadata.needsId': 'Сначала задайте id игры - скачанные файлы называются по нему.',
   'metadata.applying': 'Идёт скачивание',
   'metadata.applied': 'Применено. Сохраните игру, чтобы закрепить.',

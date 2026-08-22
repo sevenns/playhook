@@ -24,7 +24,12 @@ import {
   type LocalizedText,
   type MetadataResult,
 } from '../../shared/types';
-import { type ArtworkOffer, type GameCandidateRef, type MetadataProvider } from './provider';
+import {
+  type ArtworkOffer,
+  type ArtworkOffers,
+  type GameCandidateRef,
+  type MetadataProvider,
+} from './provider';
 import { type HttpClient } from './http';
 import { log } from '../logger';
 
@@ -341,15 +346,23 @@ export class SteamProvider implements MetadataProvider {
    * 600x900 cover and the hero are simply absent for many older apps, and a gallery tile whose apply
    * would 404 is worse than one tile fewer.
    */
+  /**
+   * Everything Steam holds for the game, on page 0. There is nothing to page through here: an app has
+   * the screenshots it has, and whatever did not fit on the gallery's first screen is kept by the
+   * service and handed out when the user asks for more.
+   */
   async artwork(
     ref: GameCandidateRef,
     kind: ArtworkKind,
+    page: number,
     signal?: AbortSignal,
-  ): Promise<MetadataResult<readonly ArtworkOffer[]>> {
+  ): Promise<MetadataResult<ArtworkOffers>> {
+    if (page > 0) return { ok: true, value: { offers: [], hasMore: false } };
     const appId = ref.steamAppId ?? steamAppIdFromKey(ref.key);
-    if (appId === undefined) return { ok: true, value: [] };
-    if (kind === 'hero') return { ok: true, value: await this.backgrounds(appId, signal) };
-    return { ok: true, value: await this.covers(appId, signal) };
+    if (appId === undefined) return { ok: true, value: { offers: [], hasMore: false } };
+    const offers =
+      kind === 'hero' ? await this.backgrounds(appId, signal) : await this.covers(appId, signal);
+    return { ok: true, value: { offers, hasMore: false } };
   }
 
   /**

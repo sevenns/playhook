@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { HttpClient, type FetchResponse } from '../src/main/metadata/http';
 import {
   WallhavenProvider,
+  hasMorePages,
   isLatinTitle,
   searchTerms,
   searchUrl,
@@ -105,6 +106,19 @@ describe('wallhaven search parameters', () => {
   });
 });
 
+describe('wallhaven paging', () => {
+  it('counts pages from one, where the endpoint does', () => {
+    expect(new URL(searchUrl('Hades')).searchParams.get('page')).toBe('1');
+    expect(new URL(searchUrl('Hades', 2)).searchParams.get('page')).toBe('3');
+  });
+
+  it('offers another page only when the answer says one exists', () => {
+    expect(hasMorePages({ current_page: 1, last_page: 7 })).toBe(true);
+    expect(hasMorePages({ current_page: 7, last_page: 7 })).toBe(false);
+    expect(hasMorePages(undefined)).toBe(false);
+  });
+});
+
 describe('wallhaven edition tails', () => {
   it('cuts the edition markers Steam titles carry', () => {
     expect(withoutEditionTail('The Witcher 3: Wild Hunt - Complete Edition')).toBe(
@@ -194,20 +208,20 @@ describe('wallhaven offers', () => {
 describe('wallhaven provider', () => {
   it('searches by the English name, not by the localized candidate title', async () => {
     const { provider, fetch } = providerOf(() => textResponse(RESULTS), 'Hades');
-    await provider.artwork({ key: 'steam:1145360', title: 'Аид', steamAppId: 1145360 }, 'hero');
+    await provider.artwork({ key: 'steam:1145360', title: 'Аид', steamAppId: 1145360 }, 'hero', 0);
     expect(queriesOf(fetch)).toEqual(['Hades']);
   });
 
   it('falls back to the candidate title when it is already Latin', async () => {
     const { provider, fetch } = providerOf(() => textResponse(RESULTS), null);
-    await provider.artwork({ key: 'gog:1', title: 'Hollow Knight', gogId: '1' }, 'hero');
+    await provider.artwork({ key: 'gog:1', title: 'Hollow Knight', gogId: '1' }, 'hero', 0);
     expect(queriesOf(fetch)).toEqual(['Hollow Knight']);
   });
 
   it('does not search at all for a title it can only spell in another script', async () => {
     const { provider, fetch } = providerOf(() => textResponse(RESULTS), null);
-    const result = await provider.artwork({ key: 'steam:1', title: 'Ведьмак 3' }, 'hero');
-    expect(result).toEqual({ ok: true, value: [] });
+    const result = await provider.artwork({ key: 'steam:1', title: 'Ведьмак 3' }, 'hero', 0);
+    expect(result).toEqual({ ok: true, value: { offers: [], hasMore: false } });
     expect(fetch).not.toHaveBeenCalled();
   });
 
@@ -216,12 +230,12 @@ describe('wallhaven provider', () => {
       (url) => textResponse(url.includes('Complete') ? EMPTY : RESULTS),
       'The Witcher 3: Wild Hunt - Complete Edition',
     );
-    const result = await provider.artwork({ key: 'steam:292030', title: 'x' }, 'hero');
+    const result = await provider.artwork({ key: 'steam:292030', title: 'x' }, 'hero', 0);
     expect(queriesOf(fetch)).toEqual([
       'The Witcher 3: Wild Hunt - Complete Edition',
       'The Witcher 3: Wild Hunt',
     ]);
-    expect(result.ok === true && result.value).toHaveLength(1);
+    expect(result.ok === true && result.value.offers).toHaveLength(1);
   });
 
   it('stops at the first term that finds something', async () => {
@@ -229,28 +243,47 @@ describe('wallhaven provider', () => {
       () => textResponse(RESULTS),
       'Disco Elysium - The Final Cut',
     );
-    await provider.artwork({ key: 'steam:632470', title: 'x' }, 'hero');
+    await provider.artwork({ key: 'steam:632470', title: 'x' }, 'hero', 0);
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 
   it('reports nothing found as an empty gallery, not as an error', async () => {
     const { provider } = providerOf(() => textResponse(EMPTY), 'Some Niche Indie');
-    expect(await provider.artwork({ key: 'steam:1', title: 'x' }, 'hero')).toEqual({
+    expect(await provider.artwork({ key: 'steam:1', title: 'x' }, 'hero', 0)).toEqual({
       ok: true,
-      value: [],
+      value: { offers: [], hasMore: false },
     });
   });
 
   it('reports a failing endpoint as a failure', async () => {
     const { provider } = providerOf(() => textResponse('', 429), 'Hades');
-    expect((await provider.artwork({ key: 'steam:1', title: 'x' }, 'hero')).ok).toBe(false);
+    expect((await provider.artwork({ key: 'steam:1', title: 'x' }, 'hero', 0)).ok).toBe(false);
+  });
+
+  it('pages through the term that answered, not through the cascade again', async () => {
+    const { provider, fetch } = providerOf(
+      (url) => textResponse(url.includes('Complete') ? EMPTY : RESULTS),
+      'The Witcher 3: Wild Hunt - Complete Edition',
+    );
+    const ref = { key: 'steam:292030', title: 'x' };
+    await provider.artwork(ref, 'hero', 0);
+    fetch.mockClear();
+    await provider.artwork(ref, 'hero', 1);
+    expect(queriesOf(fetch)).toEqual(['The Witcher 3: Wild Hunt']);
+    expect(new URL(String(fetch.mock.calls[0]?.[0])).searchParams.get('page')).toBe('2');
+  });
+
+  it('reports a later page as the last one when the answer states no more', async () => {
+    const { provider } = providerOf(() => textResponse(RESULTS), 'Hades');
+    const result = await provider.artwork({ key: 'steam:1', title: 'x' }, 'hero', 0);
+    expect(result.ok === true && result.value.hasMore).toBe(false);
   });
 
   it('offers no covers — it is a wallpaper source', async () => {
     const { provider, fetch } = providerOf(() => textResponse(RESULTS), 'Hades');
-    expect(await provider.artwork({ key: 'steam:1', title: 'x' }, 'grid')).toEqual({
+    expect(await provider.artwork({ key: 'steam:1', title: 'x' }, 'grid', 0)).toEqual({
       ok: true,
-      value: [],
+      value: { offers: [], hasMore: false },
     });
     expect(fetch).not.toHaveBeenCalled();
   });

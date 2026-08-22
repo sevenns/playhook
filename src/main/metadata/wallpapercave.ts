@@ -25,21 +25,22 @@
 // extensions are taken from the markup only, never rebuilt from a template.
 import { type ArtworkKind, type MetadataResult } from '../../shared/types';
 import { IMAGE_EXTENSIONS } from '../asset-reader';
-import { type ArtworkOffer, type GameCandidateRef, type MetadataProvider } from './provider';
+import {
+  type ArtworkOffer,
+  type ArtworkOffers,
+  type GameCandidateRef,
+  type MetadataProvider,
+} from './provider';
 import { type HttpClient } from './http';
 import { isLatinTitle, searchTerms } from './wallhaven';
 
 const ORIGIN = 'https://wallpapercave.com';
 /**
- * How many albums of one search are opened. Each is a separate page fetch, and the ranked top of the
- * list is where a game's own albums sit — the rest are other games that merely share a word.
+ * How many albums one page of the gallery opens. Each is a separate page fetch, and the ranked top of
+ * the list is where a game's own albums sit — the rest are other games that merely share a word. "Load
+ * more" opens the next three, which is what keeps a deep search free until it is asked for.
  */
-const MAX_ALBUMS = 3;
-/**
- * How many pictures this source may contribute. The same number the service caps every provider at
- * (MAX_ARTWORK_PER_PROVIDER), stated here as well so the albums stop being opened once it is reached.
- */
-const MAX_OFFERS = 24;
+const ALBUMS_PER_PAGE = 3;
 /**
  * Slug fragments that mark a phone album. Matched as SUBSTRINGS rather than as words on purpose: the
  * live listing carries `android-`, `smartphone-`, `cellphone-` and `-4k-phone-`, and `phone` catches all
@@ -224,10 +225,7 @@ function normalizeTitle(title: string): string {
  * repeats across albums collapsed by file name, and the rest ordered so the sizes that suit the Deck are
  * taken first — see PREFERRED_MAX_AREA. `thumbUrl` and `fullUrl` are the same file, deliberately.
  */
-export function toArtworkOffers(
-  wallpapers: readonly CaveWallpaper[],
-  limit: number,
-): readonly ArtworkOffer[] {
+export function toArtworkOffers(wallpapers: readonly CaveWallpaper[]): readonly ArtworkOffer[] {
   const seen = new Set<string>();
   return [...wallpapers]
     .filter(
@@ -242,7 +240,6 @@ export function toArtworkOffers(
     .sort((a, b) =>
       sizeGroup(a) === sizeGroup(b) ? withinGroup(a, b) : sizeGroup(a) - sizeGroup(b),
     )
-    .slice(0, limit)
     .map((paper) => ({
       key: `wallpapercave:${paper.file}`,
       kind: 'hero' as const,
@@ -281,8 +278,17 @@ export interface WallpaperCaveDeps {
   readonly englishTitle: (ref: GameCandidateRef) => string | undefined;
 }
 
+/** What one search turned up, kept so that "load more" continues it instead of searching afresh. */
+interface CaveSearch {
+  readonly albums: readonly CaveAlbum[];
+  /** Set only for the 302 case: the album page itself came back, and there is no list to page through. */
+  readonly wallpapers: readonly CaveWallpaper[];
+}
+
 export class WallpaperCaveProvider implements MetadataProvider {
   readonly id = 'wallpapercave' as const;
+  /** One search per candidate, by candidate key — see CaveSearch. */
+  private readonly searches = new Map<string, CaveSearch>();
 
   constructor(private readonly deps: WallpaperCaveDeps) {}
 
@@ -293,56 +299,73 @@ export class WallpaperCaveProvider implements MetadataProvider {
   async artwork(
     ref: GameCandidateRef,
     kind: ArtworkKind,
+    page: number,
     signal?: AbortSignal,
-  ): Promise<MetadataResult<readonly ArtworkOffer[]>> {
-    if (kind !== 'hero') return { ok: true, value: [] };
-    const title = this.deps.englishTitle(ref) ?? (isLatinTitle(ref.title) ? ref.title : undefined);
-    if (title === undefined) return { ok: true, value: [] };
+  ): Promise<MetadataResult<ArtworkOffers>> {
+    const nothing = { ok: true, value: { offers: [], hasMore: false } } as const;
+    if (kind !== 'hero') return nothing;
     const options = signal === undefined ? undefined : { signal };
-    let failure: MetadataResult<readonly ArtworkOffer[]> | undefined;
+    const remembered = page > 0 ? this.searches.get(ref.key) : undefined;
+    const found = remembered ?? (await this.findAlbums(ref, options));
+    if (found === undefined) return nothing;
+    if (!('albums' in found)) return found;
+    this.searches.set(ref.key, found);
+    // The 302 case: one album, all of it already parsed out of the answer to the search itself. The
+    // service keeps whatever did not fit on screen, so there is nothing left for a later page to fetch.
+    if (found.albums.length === 0) {
+      return page > 0
+        ? nothing
+        : { ok: true, value: { offers: toArtworkOffers(found.wallpapers), hasMore: false } };
+    }
+    return this.fromAlbums(found.albums, page, options);
+  }
+
+  /**
+   * The search behind a gallery: the first term of the cascade that answers with anything, as either a
+   * list of albums or — after the 302 a strong match earns — the album page itself. Undefined means the
+   * title cannot be searched at all; a failure travels back as one.
+   */
+  private async findAlbums(
+    ref: GameCandidateRef,
+    options: { readonly signal: AbortSignal } | undefined,
+  ): Promise<CaveSearch | MetadataResult<ArtworkOffers> | undefined> {
+    const title = this.deps.englishTitle(ref) ?? (isLatinTitle(ref.title) ? ref.title : undefined);
+    if (title === undefined) return undefined;
+    let failure: MetadataResult<ArtworkOffers> | undefined;
     for (const term of searchTerms(title)) {
       const page = await this.deps.http.text(searchUrl(term), options);
       if (!page.ok) {
         failure = page;
         continue;
       }
-      const offers = await this.offersFrom(page.value, term, options);
-      if (!offers.ok) {
-        failure = offers;
-        continue;
-      }
-      if (offers.value.length > 0) return offers;
+      const albums = rankAlbums(parseAlbums(page.value), term);
+      if (albums.length > 0) return { albums, wallpapers: [] };
+      const wallpapers = parseWallpapers(page.value);
+      if (wallpapers.length > 0) return { albums: [], wallpapers };
     }
-    return failure ?? { ok: true, value: [] };
+    return failure;
   }
 
-  /**
-   * The offers behind one search answer, whichever page that answer turned out to be: a list of albums,
-   * or — after the 302 a strong match earns — the album itself, already downloaded. The second case is
-   * the cheap one, and it is also the one the best-covered games take.
-   */
-  private async offersFrom(
-    searchPage: string,
-    term: string,
+  /** The pictures of one page's worth of albums, with "more" meaning "there are albums left to open". */
+  private async fromAlbums(
+    albums: readonly CaveAlbum[],
+    page: number,
     options: { readonly signal: AbortSignal } | undefined,
-  ): Promise<MetadataResult<readonly ArtworkOffer[]>> {
-    const albums = rankAlbums(parseAlbums(searchPage), term);
-    if (albums.length === 0) {
-      return { ok: true, value: toArtworkOffers(parseWallpapers(searchPage), MAX_OFFERS) };
-    }
+  ): Promise<MetadataResult<ArtworkOffers>> {
+    const from = page * ALBUMS_PER_PAGE;
+    const hasMore = albums.length > from + ALBUMS_PER_PAGE;
     const wallpapers: CaveWallpaper[] = [];
-    let failure: MetadataResult<readonly ArtworkOffer[]> | undefined;
-    for (const album of albums.slice(0, MAX_ALBUMS)) {
-      const page = await this.deps.http.text(albumUrl(album.path), options);
-      if (!page.ok) {
-        failure = page;
+    let failure: MetadataResult<ArtworkOffers> | undefined;
+    for (const album of albums.slice(from, from + ALBUMS_PER_PAGE)) {
+      const opened = await this.deps.http.text(albumUrl(album.path), options);
+      if (!opened.ok) {
+        failure = opened;
         continue;
       }
-      wallpapers.push(...parseWallpapers(page.value));
-      if (toArtworkOffers(wallpapers, MAX_OFFERS).length >= MAX_OFFERS) break;
+      wallpapers.push(...parseWallpapers(opened.value));
     }
-    const offers = toArtworkOffers(wallpapers, MAX_OFFERS);
+    const offers = toArtworkOffers(wallpapers);
     if (offers.length === 0 && failure !== undefined) return failure;
-    return { ok: true, value: offers };
+    return { ok: true, value: { offers, hasMore } };
   }
 }

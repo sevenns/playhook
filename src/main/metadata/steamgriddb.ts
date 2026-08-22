@@ -13,7 +13,12 @@
 // Steam-only — no error, no prompt, just fewer variants.
 import { z } from 'zod';
 import { type ArtworkKind, type GameCandidate, type MetadataResult } from '../../shared/types';
-import { type ArtworkOffer, type GameCandidateRef, type MetadataProvider } from './provider';
+import {
+  type ArtworkOffer,
+  type ArtworkOffers,
+  type GameCandidateRef,
+  type MetadataProvider,
+} from './provider';
 import { type HttpClient } from './http';
 
 const API_ORIGIN = 'https://www.steamgriddb.com/api/v2';
@@ -130,16 +135,18 @@ export class SteamGridDbProvider implements MetadataProvider {
   async artwork(
     ref: GameCandidateRef,
     kind: ArtworkKind,
+    page: number,
     signal?: AbortSignal,
-  ): Promise<MetadataResult<readonly ArtworkOffer[]>> {
-    if (kind !== 'grid') return { ok: true, value: [] };
+  ): Promise<MetadataResult<ArtworkOffers>> {
+    const nothing = { ok: true, value: { offers: [], hasMore: false } } as const;
+    if (kind !== 'grid' || page > 0) return nothing;
     const options = this.options(signal);
-    if (options === undefined) return { ok: true, value: [] };
+    if (options === undefined) return nothing;
     const target = this.artRef(ref);
-    if (target === undefined) return { ok: true, value: [] };
+    if (target === undefined) return nothing;
     const answer = await this.deps.http.json(coversUrl(target), artworkSchema, options);
     if (!answer.ok) return answer;
-    return { ok: true, value: toArtworkOffers(answer.value.data) };
+    return { ok: true, value: { offers: toArtworkOffers(answer.value.data), hasMore: false } };
   }
 
   /** A Steam candidate is addressed by its appid; anything else must carry an `sgdb:` key of its own. */

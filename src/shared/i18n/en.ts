@@ -430,6 +430,7 @@ export const en = {
   'metadata.pickerLegend': 'A - choose, Y - view full size, B - back',
   'metadata.pickerLegendMulti': 'X - tick, A - choose, Y - view full size, B - back',
   'metadata.applySelected': 'Apply selected ({count})',
+  'metadata.loadMore': 'Load more',
   'metadata.needsId': 'Give the game an id first — the downloaded files are named after it.',
   'metadata.applying': 'Downloading',
   'metadata.applied': 'Applied. Save the game to keep it.',
