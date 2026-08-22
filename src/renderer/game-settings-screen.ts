@@ -2589,6 +2589,11 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       setField('title', title);
     },
     onOnlineCandidate: (candidate) => {
+      // An empty form takes the name at once, without the question "Take the name" asks: there is
+      // nothing to replace. It is also what makes the rest of the screen usable — the id follows the
+      // title (see setField), and the id is what every downloaded file is NAMED by, so a game added
+      // through this flow could otherwise pick a background and be told it has no id to write it under.
+      if (form.title.trim() === '') setField('title', candidate.title);
       // Only a Steam entry can be asked for facts: the others carry no appid, and the appid is what the
       // descriptions, genres and dates are addressed by.
       if (candidate.steamAppId !== undefined) void fetchMetadataDescriptions(candidate);
