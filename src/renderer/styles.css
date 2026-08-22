@@ -1614,20 +1614,28 @@ html:not(.mouse-asleep) .notification-item:hover .notification-dot {
   max-width: calc(550 * var(--px));
   z-index: 4;
   pointer-events: none;
-  opacity: 0;
-  transform: translateX(calc(40 * var(--px)));
-  transition: opacity 0.3s ease, transform 0.3s ease;
+  display: flex;
+  flex-direction: column;
+  gap: calc(12 * var(--px));
 }
 
-.toast.is-open {
+/* One message. The NEWEST is prepended, so the ones already up slide down by exactly their own height —
+   the stack moves rather than overlapping, which is what makes two messages in a row readable. The
+   entrance/exit lives here (translateX + opacity) and the pulse on the inner node (scale): one element
+   cannot animate two transforms independently. */
+.toast-plate {
+  opacity: 0;
+  transform: translateX(calc(40 * var(--px)));
+  transition:
+    opacity 0.3s ease,
+    transform 0.3s ease;
+}
+
+.toast-plate.is-open {
   opacity: 1;
   transform: none;
 }
 
-/* The inner node carries the pulse, so the entrance/exit transform above stays its own. The border is
-   there because the palette only guarantees the two colours are APART (dominant-color.ts keeps a
-   distance of 0.18), not that they meet a contrast ratio — a thin outline keeps the plate readable
-   against a hero that happens to sit close to --d1. */
 .toast-pulse {
   background: var(--d1);
   color: var(--d2);
@@ -1639,11 +1647,10 @@ html:not(.mouse-asleep) .notification-item:hover .notification-dot {
 /* TWO beats over the plate's six seconds, and no more — a repeating pulse reads as an alarm and keeps
    pulling the eye back to something already read. The first lands halfway through ("still here"), the
    second just before the plate slides out, so it reads as hopping and then leaving of its own accord.
-   The duration MUST match SHOW_MS in toast.ts: that is what places the beats at 3s and at 5.6s rather
-   than wherever a loop happens to be. Both return to `none` on purpose, and the last one by 100% — the
-   animation stops the moment `is-open` goes (the selector stops matching), and a keyframe left
-   mid-scale would snap back with a visible pop right as the exit begins. */
-.toast.is-open .toast-pulse {
+   The duration MUST match SHOW_MS in toast.ts. Both return to `none` on purpose, and the last one by
+   100% — the animation stops the moment `is-open` goes (the selector stops matching), and a keyframe
+   left mid-scale would snap back with a visible pop right as the exit begins. */
+.toast-plate.is-open .toast-pulse {
   animation: toast-pulse 6s ease-in-out 1;
 }
 
