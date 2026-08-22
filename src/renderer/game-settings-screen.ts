@@ -125,8 +125,6 @@ export interface GameSettingsScreenApi {
   searchMetadata(query: string): Promise<MetadataResult<readonly GameCandidate[]>>;
   /** The candidate behind a Steam appid the manifest already names — no search needed. */
   requestSteamCandidate(appId: number): Promise<MetadataResult<GameCandidate>>;
-  /** One variant at full size as a data: URL, for the lightbox. */
-  metadataArtworkPreview(variantKey: string): Promise<MetadataResult<string>>;
   /** Soundtrack albums for a title, and one album's tracks. */
   metadataMusicAlbums(query: string): Promise<MetadataResult<readonly MusicAlbum[]>>;
   metadataTracks(albumKey: string): Promise<MetadataResult<readonly MusicTrack[]>>;
@@ -211,11 +209,6 @@ export interface GameSettingsScreen extends NavSurface {
   isDirty(): boolean;
   /** Whether the loaded game is a LOCAL one — its save backups outlive a deletion, and the confirm says so. */
   deletesLocalGame(): boolean;
-  /**
-   * Shows one online artwork variant at full size. Called by the gallery, which has no lightbox of its
-   * own: the screen owns that surface, and it must sit ABOVE the gallery rather than inside it.
-   */
-  previewMetadataArtwork(variantKey: string): void;
 }
 
 /**
@@ -2222,17 +2215,6 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   }
 
   /** One variant at full size, in the screen's own lightbox (which sits above the gallery). */
-  async function previewArtwork(variantKey: string): Promise<void> {
-    const token = metadataToken;
-    const result = await deps.api.metadataArtworkPreview(variantKey);
-    if (!metadataCurrent(token)) return;
-    if (!result.ok) {
-      setStatus(result.message);
-      return;
-    }
-    openLightbox(result.value, metadataCandidate?.title ?? '');
-  }
-
   /**
    * Fills the manifest's non-picture facts in the background: the description, and the genres, release
    * date and platforms a future library view will sort by. main deliberately never writes them itself —
@@ -2825,7 +2807,6 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     navBack,
     isDirty: dirty,
     deletesLocalGame: () => origin?.source === 'pc',
-    previewMetadataArtwork: (variantKey) => void previewArtwork(variantKey),
     // The secondary buttons belong to whatever surface is on top, exactly as the six primitives do.
     // controls.ts routes them to the open OVERLAY — that is this screen — so they die here unless they
     // are handed down the stack.

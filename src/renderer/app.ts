@@ -152,7 +152,6 @@ const gameSettingsApi: GameSettingsScreenApi = {
   acceptPath: (request) => window.api.acceptGameConfigPaths(request),
   searchMetadata: (query) => window.api.searchMetadata(query),
   requestSteamCandidate: (appId) => window.api.requestMetadataSteamCandidate(appId),
-  metadataArtworkPreview: (variantKey) => window.api.requestMetadataArtworkPreview(variantKey),
   metadataMusicAlbums: (query) => window.api.searchMetadataMusic(query),
   metadataTracks: (albumKey) => window.api.requestMetadataTracks(albumKey),
   metadataTrackPreview: (trackKey) => window.api.requestMetadataTrackPreview(trackKey),
@@ -178,8 +177,6 @@ const metadataPicker = createMetadataPicker({
       window.api.requestMetadataArtwork(candidateKey, kind, page, filter),
     cancel: () => window.api.cancelMetadata(),
   },
-  // Read lazily: the screen is created just below, and it owns the lightbox the preview opens in.
-  onPreview: (variantKey) => gameSettingsScreen.previewMetadataArtwork(variantKey),
 });
 
 const gameSettingsScreen = createGameSettingsScreen({

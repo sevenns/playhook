@@ -923,9 +923,6 @@ export const IPC = {
   /** game-renderer → main (invoke): the artwork gallery for one candidate — thumbnails already encoded
    * as data: URLs (the renderer's CSP admits nothing else). Payload {candidateKey, kind}. */
   metadataArtwork: 'metadata:artwork',
-  /** game-renderer → main (invoke): one variant at FULL size as a data: URL, for the lightbox. Payload
-   * the variant key. Downloaded on demand — the gallery only ever holds thumbnails. */
-  metadataArtworkPreview: 'metadata:artwork-preview',
   /** game-renderer → main (invoke): soundtrack albums matching a title. Payload the query string. */
   metadataMusicAlbums: 'metadata:music-albums',
   /** game-renderer → main (invoke): one album's tracks. Payload the album key. */
@@ -1521,8 +1518,6 @@ export interface RendererApi {
     page: number,
     filter: ArtworkFilter,
   ): Promise<MetadataResult<ArtworkPage>>;
-  /** One variant at full size as a data: URL, for the lightbox. */
-  requestMetadataArtworkPreview(variantKey: string): Promise<MetadataResult<string>>;
   /** Soundtrack albums matching a title. */
   searchMetadataMusic(query: string): Promise<MetadataResult<readonly MusicAlbum[]>>;
   /** One album's tracks. */

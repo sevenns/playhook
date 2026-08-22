@@ -202,11 +202,6 @@ export class MetadataService {
         ),
     );
     ipcMain.handle(
-      IPC.metadataArtworkPreview,
-      (_event, variantKey: unknown): Promise<MetadataResult<string>> =>
-        this.fullPreview(typeof variantKey === 'string' ? variantKey : ''),
-    );
-    ipcMain.handle(
       IPC.metadataMusicAlbums,
       (_event, query: unknown): Promise<MetadataResult<readonly MusicAlbum[]>> =>
         this.musicAlbums(typeof query === 'string' ? query : ''),
@@ -424,31 +419,6 @@ export class MetadataService {
       });
       return Promise.all(asked);
     });
-  }
-
-  /** One variant at full size, for the lightbox. Downloaded on demand and never kept on disk. */
-  private async fullPreview(variantKey: string): Promise<MetadataResult<string>> {
-    const offer = this.artwork.get(variantKey);
-    if (offer === undefined) return { ok: false, message: this.t('metadata.staleSelection') };
-    // Wallpaper Cave serves one file as both the tile and the full size, so the picture the lightbox
-    // wants is already encoded in the thumbnail cache — downloading it again would fetch the same
-    // megabytes twice over the Deck's Wi-Fi to show what is on screen.
-    if (offer.thumbUrl === offer.fullUrl) {
-      const cached = this.thumbs.get(offer.key);
-      if (cached !== undefined) return { ok: true, value: cached };
-    }
-    const bytes = await this.run((signal) =>
-      this.deps.http.bytes(offer.fullUrl, MAX_BYTES.image, { signal }),
-    );
-    if (!bytes.ok) {
-      log.warn(`[metadata] full-size preview failed: ${bytes.message}`);
-      return { ok: false, message: this.t('metadata.downloadFailed') };
-    }
-    const sniffed = sniffMedia(bytes.value.bytes);
-    if (sniffed === null || sniffed.kind !== 'image') {
-      return { ok: false, message: this.t('metadata.downloadFailed') };
-    }
-    return { ok: true, value: toDataUrl(sniffed, bytes.value.bytes) };
   }
 
   private async musicAlbums(query: string): Promise<MetadataResult<readonly MusicAlbum[]>> {

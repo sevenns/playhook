@@ -127,7 +127,6 @@ const CHANNELS = {
   metadataSearch: 'metadata:search',
   metadataSteamCandidate: 'metadata:steam-candidate',
   metadataArtwork: 'metadata:artwork',
-  metadataArtworkPreview: 'metadata:artwork-preview',
   metadataMusicAlbums: 'metadata:music-albums',
   metadataMusicTracks: 'metadata:music-tracks',
   metadataTrackPreview: 'metadata:track-preview',
@@ -426,11 +425,6 @@ const api: RendererApi = {
       page,
       filter,
     }) as Promise<MetadataResult<ArtworkPage>>;
-  },
-  requestMetadataArtworkPreview(variantKey: string): Promise<MetadataResult<string>> {
-    return ipcRenderer.invoke(CHANNELS.metadataArtworkPreview, variantKey) as Promise<
-      MetadataResult<string>
-    >;
   },
   searchMetadataMusic(query: string): Promise<MetadataResult<readonly MusicAlbum[]>> {
     return ipcRenderer.invoke(CHANNELS.metadataMusicAlbums, query) as Promise<

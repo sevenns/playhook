@@ -18,8 +18,8 @@
 //  * every wallpaper states its own `width`/`height` in the markup, so portrait shots are dropped and the
 //    tiles are sized without downloading a byte;
 //  * the thumbnail and the full size are ONE file (the `/download/…` endpoint serves the identical
-//    bytes), which is why an offer carries the same URL twice and the lightbox reuses the tile it
-//    already fetched (see fullPreview in service.ts).
+//    bytes), which is why an offer carries the same URL twice — the tile the gallery shows IS what
+//    applying it downloads again.
 //
 // File names follow no fixed shape — `/wp/wp123.webp`, `wp123.jpg`, `/wp/iee9mCb.jpg` — so URLs and
 // extensions are taken from the markup only, never rebuilt from a template.

@@ -12,8 +12,8 @@
 //
 // The left column is what keeps that question answerable. Two wallpaper sites and two stores together
 // offer more than anyone will look through, so the sidebar narrows it — by source and by size — and
-// carries the actions that a MOUSE has no gesture for: on a gamepad Y opens the focused picture full
-// size and A commits, and neither has a mouse equivalent on a tile whose click already means "tick".
+// carries the actions a MOUSE has no gesture for: A commits a multi-select, and a tile whose click
+// already means "tick" has no second gesture to spare for it.
 import {
   QUALITY_LABEL,
   QUALITY_ORDER,
@@ -55,8 +55,6 @@ export interface MetadataPickerDeps {
   readonly audio: AudioController;
   getTranslator(): Translator;
   readonly api: MetadataPickerApi;
-  /** Shows one variant at full size in the screen's lightbox (which sits above this surface). */
-  onPreview(variantKey: string): void;
 }
 
 export interface MetadataPickerSurface extends NavSurface {
@@ -77,7 +75,6 @@ type Column = 'side' | 'grid';
 type SideAction =
   | { readonly kind: 'source'; readonly group: ArtworkSourceGroup }
   | { readonly kind: 'quality'; readonly quality: ArtworkQuality }
-  | { readonly kind: 'preview' }
   | { readonly kind: 'apply' }
   | { readonly kind: 'close' };
 
@@ -254,7 +251,6 @@ export function createMetadataPicker(deps: MetadataPickerDeps): MetadataPickerSu
     const divider = document.createElement('div');
     divider.className = 'picker-divider';
     nodes.push(divider);
-    nodes.push(sideButton({ kind: 'preview' }, t()('metadata.actionPreview')));
     if (maxPicks() > 1) nodes.push(sideButton({ kind: 'apply' }, ''));
     nodes.push(sideButton({ kind: 'close' }, t()('metadata.actionClose')));
     sideEl.replaceChildren(...nodes);
@@ -310,16 +306,6 @@ export function createMetadataPicker(deps: MetadataPickerDeps): MetadataPickerSu
       quality = action.quality;
       deps.audio.play('button');
       refilter();
-      return;
-    }
-    if (action.kind === 'preview') {
-      const variant = variants[index];
-      if (variant === undefined) {
-        deps.audio.playLimit();
-        return;
-      }
-      deps.audio.play('button');
-      deps.onPreview(variant.key);
       return;
     }
     if (action.kind === 'apply') {
@@ -665,15 +651,6 @@ export function createMetadataPicker(deps: MetadataPickerDeps): MetadataPickerSu
         return;
       }
       togglePick(variant);
-    },
-    /** Y opens the focused variant at full size — a thumbnail cannot answer "is this the right one?". */
-    navTertiary: () => {
-      const variant = variants[index];
-      if (variant === undefined) {
-        deps.audio.playLimit();
-        return;
-      }
-      deps.onPreview(variant.key);
     },
     relocalize: () => {
       if (!open) return;
