@@ -50,8 +50,7 @@ import { clampIndex, wrapIndex } from './index-math.js';
 import { createScroller, pxUnit } from './screen-scroller.js';
 import { createSidebar, type SidebarEntry } from './screen-sidebar.js';
 import type { NavSurface } from './nav-surface.js';
-import type { MetadataPickerSurface } from './metadata-picker.js';
-import type { MusicPickerSurface } from './music-picker.js';
+import type { ApplyOutcome, OnlinePickerSurface } from './online-picker.js';
 import {
   emptyFormModel,
   gamesToText,
@@ -178,8 +177,7 @@ export interface GameSettingsScreenDeps {
   /** The in-launcher file browser — the native dialog cannot be driven in Game Mode (Р5). */
   readonly picker: FilePickerSurface;
   /** The online artwork gallery — the surface "Find online" picks a cover or a background in. */
-  readonly metadataPicker: MetadataPickerSurface;
-  readonly musicPicker: MusicPickerSurface;
+  readonly onlinePicker: OnlinePickerSurface;
   /** The screen closed itself (B / Esc / veil) — controls.ts restores the bar focus. */
   onClosed(): void;
   /** Asks the shared confirm popup; the answer arrives back through confirmAccepted. */
@@ -204,6 +202,24 @@ export interface GameSettingsScreen extends NavSurface {
   isDirty(): boolean;
   /** Whether the loaded game is a LOCAL one — its save backups outlive a deletion, and the confirm says so. */
   deletesLocalGame(): boolean;
+
+  // What the "Find online" surface cannot do for itself: this screen owns the form, the files that land
+  // beside the game, and the on-screen keyboard. The surface asks; these answer.
+
+  /** Opens the keyboard for a new search query. */
+  askOnlineQuery(initial: string, onDone: (query: string) => void): void;
+  /** Downloads the chosen pictures into the game and writes their paths into the form. */
+  applyOnlineArtwork(
+    kind: 'grid' | 'hero',
+    variantKeys: readonly string[],
+    mode: 'replace' | 'append',
+  ): Promise<ApplyOutcome>;
+  applyOnlineTrack(trackKey: string): Promise<ApplyOutcome>;
+  applyOnlineTitle(title: string): void;
+  /** The user named the game — its description, genres and dates are fetched from here. */
+  onOnlineCandidate(candidate: GameCandidate): void;
+  /** How many backgrounds the form already holds — what makes "add or replace" a question at all. */
+  heroCount(): number;
 }
 
 /**
@@ -1953,15 +1969,12 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
 
   // ── "Find online" (the metadata:* flow — see main/metadata/) ───────────────
   //
-  // Four steps, each one a level of the menu stack the screen already has: a query, a candidate, a
-  // category, and whatever that category opens (the gallery for pictures, two more levels for music).
-  // Nothing lands in the manifest until the user saves: an applied file only fills a FORM FIELD, exactly
+  // The surface itself is online-picker.ts: one screen with the game, the cover, the backgrounds and the
+  // soundtrack as sections. What lives HERE is the half of it that touches this screen — the keyboard
+  // for a query, the downloads that land beside the game, and the form fields their paths go into.
+  // Nothing reaches the manifest until the user saves: an applied file only fills a FORM FIELD, exactly
   // as a path chosen in the file browser does.
 
-  /** The last query, so "Search again" opens the keyboard on it rather than on an empty line. */
-  let metadataQuery = '';
-  /** The game the user said this is. Every later request is addressed by its key. */
-  let metadataCandidate: GameCandidate | null = null;
   /** Retires answers belonging to a flow the user has already left (a new search, a closed screen). */
   let metadataToken = 0;
   /** Whether an answer from main still belongs to the flow that asked for it. */
@@ -1982,180 +1995,21 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   }
 
   /**
-   * The entry point. A Steam game whose appid is already filled in skips the search entirely — that
-   * number is the very thing a search exists to find.
+   * The entry point. Everything the sources offer lives on ONE surface now (online-picker.ts): the game,
+   * its cover, its backgrounds and its soundtrack, each a section of the same screen. What stays here is
+   * what only this screen can do — write into the form, and put the downloaded files beside the game.
+   *
+   * A Steam game whose appid is already filled in skips the search: that number is the very thing a
+   * search exists to find.
    */
   function startFindOnline(): void {
     metadataToken += 1;
     const appId = Number(form.steam.appid.trim());
-    if (form.launchMode === 'steam' && Number.isSafeInteger(appId) && appId > 0) {
-      void openSteamCandidate(appId);
-      return;
-    }
-    const query = form.title.trim();
-    if (query === '') {
-      askMetadataQuery('');
-      return;
-    }
-    void runMetadataSearch(query);
-  }
-
-  /** The keyboard: for a game with no title yet, and for "Search again" on a query that found nothing. */
-  function askMetadataQuery(initial: string): void {
-    deps.keyboard.open({
-      value: initial,
-      mode: 'text',
-      title: t()('metadata.searchTitle'),
-      onDone: (value) => {
-        const query = value.trim();
-        if (query === '') return;
-        metadataToken += 1;
-        void runMetadataSearch(query);
-      },
+    const steamApp = form.launchMode === 'steam' && Number.isSafeInteger(appId) && appId > 0;
+    deps.onlinePicker.open({
+      query: form.title.trim(),
+      ...(steamApp ? { appId } : {}),
     });
-  }
-
-  async function openSteamCandidate(appId: number): Promise<void> {
-    const token = metadataToken;
-    setStatus(t()('metadata.searching'));
-    const result = await deps.api.requestSteamCandidate(appId);
-    if (!metadataCurrent(token)) return;
-    if (!result.ok) {
-      setStatus(result.message);
-      return;
-    }
-    setStatus(null);
-    // Straight to the categories: asking "which game is it?" about the game the user already identified
-    // by appid would be a question with exactly one answer.
-    chooseMetadataCandidate(result.value, { replace: false });
-  }
-
-  async function runMetadataSearch(query: string): Promise<void> {
-    const token = metadataToken;
-    metadataQuery = query;
-    setStatus(t()('metadata.searching'));
-    const result = await deps.api.searchMetadata(query);
-    if (!metadataCurrent(token)) return;
-    if (!result.ok) {
-      setStatus(result.message);
-      return;
-    }
-    setStatus(null);
-    if (result.value.length === 0) {
-      setStatus(t()('metadata.nothingFound'));
-      askMetadataQuery(metadataQuery);
-      return;
-    }
-    openCandidateMenu(result.value);
-  }
-
-  function openCandidateMenu(candidates: readonly GameCandidate[]): void {
-    const entries: MenuEntry[] = candidates.map((candidate) => ({
-      // The source is named only where it matters: an entry only SteamGridDB knows has no appid, so it
-      // can offer art but neither a description nor Steam's own cover.
-      label:
-        candidate.provider === 'steamgriddb' ? `${candidate.title} (SteamGridDB)` : candidate.title,
-      run: () => chooseMetadataCandidate(candidate, { replace: true }),
-    }));
-    entries.push({
-      label: t()('metadata.searchAgain'),
-      run: () => askMetadataQuery(metadataQuery),
-    });
-    pushMenu(asMenu({ title: t()('metadata.candidates'), entries }));
-  }
-
-  /**
-   * The user named the game. The descriptions are fetched HERE rather than when Title is applied: the
-   * title may well already be right (so Title is never pressed), and this is the moment the game's
-   * identity becomes known.
-   */
-  function chooseMetadataCandidate(
-    candidate: GameCandidate,
-    options: { readonly replace: boolean },
-  ): void {
-    metadataCandidate = candidate;
-    if (candidate.steamAppId !== undefined) void fetchMetadataDescriptions(candidate);
-    const level = asMenu({
-      title: t()('metadata.categories'),
-      entries: categoryEntries(candidate),
-    });
-    if (options.replace) replaceMenu(level);
-    else pushMenu(level);
-  }
-
-  /** The menu stays open after a category is applied — several of them are usually wanted at once. */
-  function categoryEntries(candidate: GameCandidate): readonly MenuEntry[] {
-    return [
-      {
-        label: t()('metadata.applyTitle'),
-        run: () => {
-          setField('title', candidate.title);
-          setStatus(t()('metadata.applied'));
-        },
-      },
-      { label: t()('metadata.cover'), sound: 'none', run: () => openArtworkGallery('grid') },
-      { label: t()('metadata.backgrounds'), sound: 'none', run: () => openArtworkGallery('hero') },
-      { label: t()('metadata.music'), run: () => openMusicPicker(candidate) },
-    ];
-  }
-
-  /**
-   * The gallery, over the menu that opened it — the same rule browseInto follows: backing out of the
-   * pictures lands on the category list, not on the form two levels below.
-   */
-  function openArtworkGallery(kind: 'grid' | 'hero'): void {
-    const candidate = metadataCandidate;
-    if (candidate === null) return;
-    deps.metadataPicker.open({
-      candidateKey: candidate.key,
-      kind,
-      title: candidate.title,
-      onDone: (variantKeys) => {
-        if (variantKeys.length === 0) return; // backed out — the form keeps what it had
-        if (kind === 'grid') {
-          void applyArtwork(kind, variantKeys, 'replace');
-          return;
-        }
-        askHowToApplyHeroes(variantKeys);
-      },
-    });
-  }
-
-  /**
-   * What a hero pick does to the backgrounds already in the form.
-   *
-   * Replacing is the natural reading of "choose the backgrounds", and it was the only behaviour — but
-   * building a set from SEVERAL searches (a wallpaper here, a screenshot there) was then impossible,
-   * since every visit wiped the last. So a partial pick asks; a full one does not, because choosing the
-   * maximum IS the statement that these are the backgrounds.
-   */
-  function askHowToApplyHeroes(variantKeys: readonly string[]): void {
-    const existing = form.heroImage.length;
-    if (existing === 0 || variantKeys.length >= MAX_HERO_IMAGES) {
-      void applyArtwork('hero', variantKeys, 'replace');
-      return;
-    }
-    const entries: MenuEntry[] = [];
-    // Absent once the list is full: "add" would have nowhere to add to, and offering it only to explain
-    // that afterwards is worse than not offering it.
-    if (existing < MAX_HERO_IMAGES) {
-      entries.push({
-        label: t()('metadata.heroAppend'),
-        // The question is answered, so its level goes: leaving it up would ask again on the way back.
-        run: () => {
-          popMenu({ keepWork: true });
-          void applyArtwork('hero', variantKeys, 'append');
-        },
-      });
-    }
-    entries.push({
-      label: t()('metadata.heroReplace'),
-      run: () => {
-        popMenu({ keepWork: true });
-        void applyArtwork('hero', variantKeys, 'replace');
-      },
-    });
-    pushMenu(asMenu({ title: t()('metadata.heroExists'), entries }));
   }
 
   /**
@@ -2169,26 +2023,19 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     kind: 'grid' | 'hero',
     variantKeys: readonly string[],
     mode: 'replace' | 'append',
-  ): Promise<void> {
+  ): Promise<ApplyOutcome> {
     const target = metadataTarget();
-    if (target === null) {
-      setStatus(t()('metadata.needsId'));
-      return;
-    }
+    if (target === null) return { ok: false, message: t()('metadata.needsId') };
     const existing = mode === 'append' ? form.heroImage : [];
     const room = kind === 'grid' ? variantKeys.length : MAX_HERO_IMAGES - existing.length;
     const accepted = variantKeys.slice(0, Math.max(0, room));
     const token = metadataToken;
-    setStatus(t()('metadata.applying'));
     const paths: string[] = [];
     for (const [index, variantKey] of accepted.entries()) {
       const slot: MetadataApplySlot = kind === 'grid' ? 'grid' : { hero: existing.length + index };
       const result = await deps.api.applyMetadata({ ...target, variantKey, slot });
-      if (!metadataCurrent(token)) return;
-      if (!result.ok) {
-        setStatus(result.message);
-        return;
-      }
+      if (!metadataCurrent(token)) return { ok: false, message: '' };
+      if (!result.ok) return { ok: false, message: result.message };
       paths.push(result.path);
     }
     if (kind === 'grid') {
@@ -2199,11 +2046,13 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     // A pick that did not fit says so: silently dropping the third of three chosen backgrounds would
     // read as the download having failed.
     const dropped = variantKeys.length - accepted.length;
-    setStatus(
-      dropped > 0
-        ? t()('metadata.appliedPartly', { count: String(dropped) })
-        : t()('metadata.applied'),
-    );
+    return {
+      ok: true,
+      message:
+        dropped > 0
+          ? t()('metadata.appliedPartly', { count: String(dropped) })
+          : t()('metadata.applied'),
+    };
   }
 
   /** One variant at full size, in the screen's own lightbox (which sits above the gallery). */
@@ -2231,43 +2080,19 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     updateForm(form);
   }
 
-  // ── Music ─────────────────────────────────────────────────────────────────
-  // A surface of its own now (music-picker.ts), the artwork gallery's twin: the albums are its left
-  // column and the chosen album's tracks its right. It used to be two nested menus plus a menu per
-  // track — the same shape the gallery had before it grew a sidebar, and it read the same way: a list
-  // of names where the question is "which of these", with the actions hidden one level deeper.
-
-  function openMusicPicker(candidate: GameCandidate): void {
-    deps.musicPicker.open({
-      query: candidate.title,
-      title: candidate.title,
-      onDone: (trackKey) => {
-        if (trackKey === null) return; // backed out — the form keeps what it had
-        void applyTrackKey(trackKey);
-      },
-    });
-  }
-
-  async function applyTrackKey(trackKey: string): Promise<void> {
+  async function applyTrackKey(trackKey: string): Promise<ApplyOutcome> {
     const target = metadataTarget();
-    if (target === null) {
-      setStatus(t()('metadata.needsId'));
-      return;
-    }
+    if (target === null) return { ok: false, message: t()('metadata.needsId') };
     const token = metadataToken;
-    setStatus(t()('metadata.applying'));
     const result = await deps.api.applyMetadata({
       ...target,
       variantKey: trackKey,
       slot: 'music',
     });
-    if (!metadataCurrent(token)) return;
-    if (!result.ok) {
-      setStatus(result.message);
-      return;
-    }
+    if (!metadataCurrent(token)) return { ok: false, message: '' };
+    if (!result.ok) return { ok: false, message: result.message };
     setField('backgroundMusic', result.path);
-    setStatus(t()('metadata.applied'));
+    return { ok: true, message: t()('metadata.applied') };
   }
 
   /** Everything the flow leaves running, ended in one place: whatever main is still fetching for it. */
@@ -2283,8 +2108,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     if (lightboxOpen) return 'lightbox';
     if (deps.keyboard.isOpen()) return deps.keyboard;
     if (deps.picker.isOpen()) return deps.picker;
-    if (deps.metadataPicker.isOpen()) return deps.metadataPicker;
-    if (deps.musicPicker.isOpen()) return deps.musicPicker;
+    if (deps.onlinePicker.isOpen()) return deps.onlinePicker;
     if (menuStack.length > 0) return 'menu';
     return 'form';
   }
@@ -2544,8 +2368,8 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     closeImage({ silent: true });
     closeMenus({ silent: true });
     deps.keyboard.close();
-    // The soundtrack surface holds an audition — real sound, which would outlive the screen otherwise.
-    deps.musicPicker.close();
+    // The online surface holds an audition — real sound, which would outlive the screen otherwise.
+    deps.onlinePicker.close();
     entrance.cancel();
     if (previewTimer !== 0) {
       window.clearTimeout(previewTimer);
@@ -2700,6 +2524,28 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     navBack,
     isDirty: dirty,
     deletesLocalGame: () => origin?.source === 'pc',
+    askOnlineQuery: (initial, onDone) => {
+      deps.keyboard.open({
+        value: initial,
+        mode: 'text',
+        title: t()('metadata.searchTitle'),
+        onDone: (value) => {
+          metadataToken += 1;
+          onDone(value);
+        },
+      });
+    },
+    applyOnlineArtwork: (kind, variantKeys, mode) => applyArtwork(kind, variantKeys, mode),
+    applyOnlineTrack: (trackKey) => applyTrackKey(trackKey),
+    applyOnlineTitle: (title) => {
+      setField('title', title);
+    },
+    onOnlineCandidate: (candidate) => {
+      // Only a Steam entry can be asked for facts: the others carry no appid, and the appid is what the
+      // descriptions, genres and dates are addressed by.
+      if (candidate.steamAppId !== undefined) void fetchMetadataDescriptions(candidate);
+    },
+    heroCount: () => form.heroImage.length,
     // The secondary buttons belong to whatever surface is on top, exactly as the six primitives do.
     // controls.ts routes them to the open OVERLAY — that is this screen — so they die here unless they
     // are handed down the stack.
@@ -2792,8 +2638,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       }
       deps.keyboard.relocalize();
       deps.picker.relocalize();
-      deps.metadataPicker.relocalize();
-      deps.musicPicker.relocalize();
+      deps.onlinePicker.relocalize();
       // A menu's labels are built from the model, so it is rebuilt rather than patched.
       if (menuStack.length > 0) paintMenu();
     },

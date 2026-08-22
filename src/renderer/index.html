@@ -304,33 +304,18 @@
         <!-- The artwork gallery of "Find online": what the online sources offer for this game, as a
              grid of thumbnails. Every picture arrives as a data: URL main downloaded and encoded — the
              renderer has no network of its own (see the CSP above). -->
-        <div class="picker metadata-picker" id="metadata-picker" aria-hidden="true">
+        <!-- "Find online": one surface for the game, its cover, its backgrounds and its soundtrack.
+             The left column carries the game, the section, that section's filters and its actions; the
+             right one carries whatever the section is about. Both are built in JS, since their rows
+             depend on which section is open. -->
+        <div class="picker metadata-picker" id="online-picker" aria-hidden="true">
           <div class="picker-veil"></div>
           <div class="picker-panel">
-            <div class="picker-title" id="metadata-picker-title"></div>
-            <div class="picker-path" id="metadata-picker-status"></div>
-            <!-- Two columns, like the file browser: the filters and the actions on the left, the
-                 pictures on the right. The sidebar is where a MOUSE reaches what the gamepad has buttons
-                 for — Y opens a picture full size, A commits a multi-select — and it is built in JS
-                 because its rows depend on the kind of artwork being picked. -->
+            <div class="picker-title" id="online-picker-title"></div>
+            <div class="picker-path" id="online-picker-status"></div>
             <div class="picker-body">
-              <div class="metadata-side" id="metadata-picker-side"></div>
-              <div class="metadata-grid" id="metadata-picker-grid"></div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Soundtracks: the gallery's twin for the one thing the sources offer that is not a picture.
-             The albums are the left column (choosing one is the same gesture as choosing a source in the
-             gallery) and the chosen album's tracks fill the right. -->
-        <div class="picker metadata-picker" id="music-picker" aria-hidden="true">
-          <div class="picker-veil"></div>
-          <div class="picker-panel">
-            <div class="picker-title" id="music-picker-title"></div>
-            <div class="picker-path" id="music-picker-status"></div>
-            <div class="picker-body">
-              <div class="metadata-side" id="music-picker-side"></div>
-              <div class="picker-entries music-list" id="music-picker-list"></div>
+              <div class="metadata-side" id="online-picker-side"></div>
+              <div class="picker-entries online-content" id="online-picker-content"></div>
             </div>
           </div>
         </div>

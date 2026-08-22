@@ -21,8 +21,7 @@ import { createSettingsScreen, type SettingsScreenApi } from './settings-screen.
 import { createGameSettingsScreen, type GameSettingsScreenApi } from './game-settings-screen.js';
 import { createOsk } from './osk.js';
 import { createFilePicker } from './file-picker.js';
-import { createMetadataPicker } from './metadata-picker.js';
-import { createMusicPicker } from './music-picker.js';
+import { createOnlinePicker } from './online-picker.js';
 import { createCarousel } from './carousel.js';
 import { createCardArtCache } from './card-art.js';
 import { createLibraryScreen } from './library-screen.js';
@@ -167,28 +166,28 @@ const filePicker = createFilePicker({
     acceptPaths: (request) => window.api.acceptGameConfigPaths(request),
   },
 });
-// The online artwork gallery — the third surface that opens on top of Customize, beside the keyboard
-// and the file browser. Its own picker seam keeps app.ts the only place window.api is touched.
-const metadataPicker = createMetadataPicker({
+// "Find online" — one surface for the game, its cover, its backgrounds and its soundtrack. Its own seam
+// keeps app.ts the only place window.api is touched; what it CANNOT do (write into the form, put files
+// beside the game, open the keyboard) it asks the Customize screen for, which is read lazily below.
+const onlinePicker = createOnlinePicker({
   audio,
   getTranslator,
   api: {
+    searchGames: (query) => window.api.searchMetadata(query),
+    steamCandidate: (appId) => window.api.requestMetadataSteamCandidate(appId),
     artwork: (candidateKey, kind, page, filter) =>
       window.api.requestMetadataArtwork(candidateKey, kind, page, filter),
-    cancel: () => window.api.cancelMetadata(),
-  },
-});
-
-// Soundtracks — the gallery's twin, and the second surface the "Find online" flow opens.
-const musicPicker = createMusicPicker({
-  audio,
-  getTranslator,
-  api: {
     albums: (query) => window.api.searchMetadataMusic(query),
     tracks: (albumKey) => window.api.requestMetadataTracks(albumKey),
     preview: (trackKey) => window.api.requestMetadataTrackPreview(trackKey),
     cancel: () => window.api.cancelMetadata(),
   },
+  editQuery: (initial, onDone) => gameSettingsScreen.askOnlineQuery(initial, onDone),
+  applyArtwork: (kind, keys, mode) => gameSettingsScreen.applyOnlineArtwork(kind, keys, mode),
+  applyTrack: (trackKey) => gameSettingsScreen.applyOnlineTrack(trackKey),
+  applyTitle: (title) => gameSettingsScreen.applyOnlineTitle(title),
+  onCandidate: (candidate) => gameSettingsScreen.onOnlineCandidate(candidate),
+  heroCount: () => gameSettingsScreen.heroCount(),
 });
 
 const gameSettingsScreen = createGameSettingsScreen({
@@ -197,8 +196,7 @@ const gameSettingsScreen = createGameSettingsScreen({
   api: gameSettingsApi,
   keyboard: osk,
   picker: filePicker,
-  metadataPicker,
-  musicPicker,
+  onlinePicker,
   // Read lazily for the same reason the carousel seam is: `controls` is created just below.
   onClosed: () => {
     controls.settingsClosed();

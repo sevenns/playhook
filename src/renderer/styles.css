@@ -2969,20 +2969,18 @@ html:not(.mouse-asleep) .picker-item:hover,
    has a list of names. `auto-fill` decides the column count, and the navigation reads it back off the
    layout rather than computing a second answer (see metadata-picker.ts). */
 
-.metadata-grid {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow-y: auto;
-  scrollbar-width: none;
+/* The right column of "Find online". It holds a LIST (candidates, tracks) or a GRID (pictures), so it
+   is a column by default and becomes a grid when the open section is about pictures — one scroller and
+   one focus model either way, which is what lets the sections share a surface. */
+.online-content {
+  padding: calc(4 * var(--px));
+}
+
+.online-content.is-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(calc(200 * var(--px)), 1fr));
   gap: calc(24 * var(--px));
   align-content: start;
-  padding: calc(4 * var(--px));
-}
-
-.metadata-grid::-webkit-scrollbar {
-  display: none;
 }
 
 .metadata-tile {
