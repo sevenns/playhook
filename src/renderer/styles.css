@@ -3033,11 +3033,30 @@ html:not(.mouse-asleep) .metadata-tile:hover,
    actions. Same width, so the two pickers line up when one opens over the other. */
 .metadata-side {
   flex: 0 0 calc(360 * var(--px));
+  min-height: 0;
   overflow-y: auto;
   scrollbar-width: none;
   display: flex;
   flex-direction: column;
   gap: calc(4 * var(--px));
+  /* Long enough to scroll — a game can have twenty soundtracks — so it carries the same edge fades the
+     file browser's columns do, driven by the scroller's --fade-top / --fade-bottom. */
+  --fade-top: 0px;
+  --fade-bottom: 0px;
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 var(--fade-top),
+    #000 calc(100% - var(--fade-bottom)),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 var(--fade-top),
+    #000 calc(100% - var(--fade-bottom)),
+    transparent 100%
+  );
 }
 
 .metadata-side::-webkit-scrollbar {

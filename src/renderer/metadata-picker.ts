@@ -87,6 +87,8 @@ export function createMetadataPicker(deps: MetadataPickerDeps): MetadataPickerSu
 
   const t = (): Translator => deps.getTranslator();
   const scroller = createScroller(gridEl);
+  /** The sidebar scrolls on its own — see the same note in music-picker.ts. */
+  const sideScroller = createScroller(sideEl);
   const hover = createHoverGuard();
 
   let open = false;
@@ -460,7 +462,11 @@ export function createMetadataPicker(deps: MetadataPickerDeps): MetadataPickerSu
     sideButtons.forEach((button, position) =>
       button.classList.toggle('is-focused', column === 'side' && position === sideIndex),
     );
-    if (column !== 'grid') return;
+    if (column === 'side') {
+      const row = sideButtons[sideIndex];
+      if (row !== undefined) sideScroller.reveal(row, instant);
+      return;
+    }
     const focused = tiles[index];
     if (focused !== undefined) scroller.reveal(focused, instant);
   }
@@ -644,6 +650,7 @@ export function createMetadataPicker(deps: MetadataPickerDeps): MetadataPickerSu
       root.classList.add('is-open');
       root.setAttribute('aria-hidden', 'false');
       scroller.to(0, true);
+      sideScroller.to(0, true);
       hover.arm();
       void load(0);
     },

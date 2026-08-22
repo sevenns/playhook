@@ -66,6 +66,9 @@ export function createMusicPicker(deps: MusicPickerDeps): MusicPickerSurface {
 
   const t = (): Translator => deps.getTranslator();
   const scroller = createScroller(listEl);
+  // The albums column scrolls too: a game with twenty soundtracks fills it past the panel, and without
+  // a scroller of its own the focus simply walked off the bottom of the screen.
+  const sideScroller = createScroller(sideEl);
   const hover = createHoverGuard();
 
   let open = false;
@@ -241,7 +244,11 @@ export function createMusicPicker(deps: MusicPickerDeps): MusicPickerSurface {
     sideButtons.forEach((button, position) =>
       button.classList.toggle('is-focused', column === 'side' && position === sideIndex),
     );
-    if (column !== 'tracks') return;
+    if (column === 'side') {
+      const row = sideButtons[sideIndex];
+      if (row !== undefined) sideScroller.reveal(row, instant);
+      return;
+    }
     const focused = rows[index];
     if (focused !== undefined) scroller.reveal(focused, instant);
   }
@@ -496,6 +503,7 @@ export function createMusicPicker(deps: MusicPickerDeps): MusicPickerSurface {
       root.classList.add('is-open');
       root.setAttribute('aria-hidden', 'false');
       scroller.to(0, true);
+      sideScroller.to(0, true);
       hover.arm();
       void loadAlbums();
     },
