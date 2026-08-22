@@ -1218,7 +1218,13 @@ export type ListDirResult =
  * candidate; every request is addressed by an opaque `key` instead, so a provider can change how it
  * identifies a game without the renderer knowing.
  */
-export type MetadataProviderId = 'steam' | 'steamgriddb' | 'wallhaven' | 'gog' | 'khinsider';
+export type MetadataProviderId =
+  | 'steam'
+  | 'steamgriddb'
+  | 'wallhaven'
+  | 'wallpapercave'
+  | 'gog'
+  | 'khinsider';
 
 /** Which artwork slot a variant is offered for: the portrait cover, or a hero background. */
 export type ArtworkKind = 'grid' | 'hero';

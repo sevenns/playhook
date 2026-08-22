@@ -71,13 +71,16 @@ const MAX_ARTWORK_PER_PROVIDER = 24;
  * first": the answers arrive in parallel, and a gallery that reshuffles itself between two visits to the
  * same game is a gallery the user cannot navigate from memory.
  *
- * Wallhaven leads for backgrounds because wallpapers are what a full-screen background actually wants —
- * a picture composed to be looked at, rather than a gameplay frame with a HUD in it. Sorting is by
- * SOURCE, so Steam's own curated backdrop stays first within Steam's block rather than ahead of
- * everything: interleaving individual offers would mean a second ranking to keep in step with this one.
+ * Both wallpaper sources lead for backgrounds because wallpapers are what a full-screen background
+ * actually wants — a picture composed to be looked at, rather than a gameplay frame with a HUD in it.
+ * Wallhaven goes first of the two as the clean and filterable one; Wallpaper Cave follows because its
+ * strength is coverage rather than quality. Sorting is by SOURCE, so Steam's own curated backdrop stays
+ * first within Steam's block rather than ahead of everything: interleaving individual offers would mean
+ * a second ranking to keep in step with this one.
  */
 const PROVIDER_ORDER: readonly MetadataProviderId[] = [
   'wallhaven',
+  'wallpapercave',
   'steam',
   'steamgriddb',
   'gog',
@@ -299,6 +302,13 @@ export class MetadataService {
   private async fullPreview(variantKey: string): Promise<MetadataResult<string>> {
     const offer = this.artwork.get(variantKey);
     if (offer === undefined) return { ok: false, message: this.t('metadata.staleSelection') };
+    // Wallpaper Cave serves one file as both the tile and the full size, so the picture the lightbox
+    // wants is already encoded in the thumbnail cache — downloading it again would fetch the same
+    // megabytes twice over the Deck's Wi-Fi to show what is on screen.
+    if (offer.thumbUrl === offer.fullUrl) {
+      const cached = this.thumbs.get(offer.key);
+      if (cached !== undefined) return { ok: true, value: cached };
+    }
     const bytes = await this.run((signal) =>
       this.deps.http.bytes(offer.fullUrl, MAX_BYTES.image, { signal }),
     );

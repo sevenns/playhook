@@ -310,9 +310,19 @@ describe('metadata artwork — the order sources appear in', () => {
     fullUrl: 'https://cdn.test/f.jpg',
   });
 
-  it('lists wallpapers first, then Steam, then GOG — a stable order between visits', () => {
-    const ordered = orderByProvider([offerOf('gog'), offerOf('steam'), offerOf('wallhaven')]);
-    expect(ordered.map((offer) => offer.provider)).toEqual(['wallhaven', 'steam', 'gog']);
+  it('lists both wallpaper sources first, then Steam, then GOG — a stable order between visits', () => {
+    const ordered = orderByProvider([
+      offerOf('gog'),
+      offerOf('steam'),
+      offerOf('wallpapercave'),
+      offerOf('wallhaven'),
+    ]);
+    expect(ordered.map((offer) => offer.provider)).toEqual([
+      'wallhaven',
+      'wallpapercave',
+      'steam',
+      'gog',
+    ]);
   });
 
   it('keeps the relative order inside one source', () => {

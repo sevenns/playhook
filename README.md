@@ -933,6 +933,8 @@ stored next to the game, so a card keeps working offline.
 - Titles, descriptions, covers and backgrounds: the [Steam](https://store.steampowered.com/) store.
 - Wallpapers, offered first among the backgrounds: [Wallhaven](https://wallhaven.cc/) — no key needed,
   SFW only.
+- More wallpapers, especially for recent releases:
+  [Wallpaper Cave](https://wallpapercave.com/) — no key needed.
 - Alternative covers: [SteamGridDB](https://www.steamgriddb.com/) — optional, needs your own API key.
 - Backgrounds for games sold there: [GOG](https://www.gog.com/).
 - Soundtracks: [Khinsider](https://downloads.khinsider.com/).

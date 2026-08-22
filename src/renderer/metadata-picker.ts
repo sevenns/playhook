@@ -141,6 +141,7 @@ export function createMetadataPicker(deps: MetadataPickerDeps): MetadataPickerSu
     steam: 'Steam',
     steamgriddb: 'SteamGridDB',
     wallhaven: 'Wallhaven',
+    wallpapercave: 'Wallpaper Cave',
     gog: 'GOG',
     khinsider: 'Khinsider',
   };

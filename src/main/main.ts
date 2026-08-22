@@ -29,6 +29,7 @@ import { SteamGridDbProvider } from './metadata/steamgriddb';
 import { KhinsiderProvider } from './metadata/khinsider';
 import { GogProvider } from './metadata/gog';
 import { WallhavenProvider } from './metadata/wallhaven';
+import { WallpaperCaveProvider } from './metadata/wallpapercave';
 import { LocaleService } from './locale';
 import { createPowerService } from './power';
 import { createKeepAwakeService, type KeepAwakeService } from './keep-awake';
@@ -349,8 +350,8 @@ async function bootstrap(): Promise<void> {
     fetch: (url, init) => globalThis.fetch(url, init),
     userAgent: `Playhook/${app.getVersion()}`,
   });
-  // Named rather than inlined: the wallpaper source asks it for the game's English name, which is the
-  // only spelling Wallhaven's search understands (see wallhaven.ts).
+  // Named rather than inlined: the wallpaper sources ask it for the game's English name, which is the
+  // only spelling their searches understand (see wallhaven.ts).
   const steamProvider = new SteamProvider({
     http: metadataHttp,
     locale: () => localeService.current(),
@@ -367,6 +368,11 @@ async function bootstrap(): Promise<void> {
       }),
       // Wallpapers — the backgrounds this feature is really after. Keyless, and first in the gallery.
       new WallhavenProvider({
+        http: metadataHttp,
+        englishTitle: (ref) => steamProvider.englishTitle(ref),
+      }),
+      // The wide, scraped one: it covers the recent releases Wallhaven has nothing for.
+      new WallpaperCaveProvider({
         http: metadataHttp,
         englishTitle: (ref) => steamProvider.englishTitle(ref),
       }),
