@@ -30,13 +30,19 @@ const CATEGORIES = '110';
 /** SFW only. This is the default and the only purity available without a key; NSFW is not offered. */
 const PURITY = '100';
 /**
- * The floor for a wallpaper's size. The Deck's panel is 1280x800, so 1440p is already a double-density
- * source; demanding 4K would only narrow the choice without looking any better. Bigger ones still come
- * back — this is a minimum, not a target.
+ * The floor for a wallpaper's size. The Deck's panel is 1280x800, so 1080p already carries half again
+ * the pixels it can show; asking for 1440p only narrowed the choice without looking any better on it.
+ * Bigger ones still come back — this is a minimum, not a target.
  */
-const MIN_RESOLUTION = '2560x1440';
-/** Landscape only: a portrait wallpaper would be cropped to ribbons behind a 16:10 screen. */
-const RATIOS = '16x9,16x10';
+const MIN_RESOLUTION = '1920x1080';
+/**
+ * Landscape, and landscape only — a portrait wallpaper would be cropped to a ribbon behind a 16:10
+ * screen. Deliberately NOT a list of exact ratios: this endpoint matches those EXACTLY, so `16x9,16x10`
+ * threw away a 4096x2286 wallpaper for being 1.79 rather than 1.78, and with it most of what the less
+ * photographed games have. The gallery shows each tile whole (object-fit) and states its size, so a
+ * wider-than-usual wallpaper is something the user can see and judge, not something to hide from them.
+ */
+const RATIOS = 'landscape';
 /**
  * Anything heavier than the image cap would be refused at apply time anyway (see MAX_BYTES in
  * service.ts), and the search answer states each file's size — so an unusable offer is dropped before it

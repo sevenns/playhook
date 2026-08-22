@@ -84,9 +84,14 @@ describe('wallhaven search parameters', () => {
     expect(params.get('purity')).toBe('100');
   });
 
-  it('asks for landscape wallpapers of at least 1440p', () => {
-    expect(params.get('atleast')).toBe('2560x1440');
-    expect(params.get('ratios')).toBe('16x9,16x10');
+  it('asks for landscape wallpapers of at least 1080p', () => {
+    expect(params.get('atleast')).toBe('1920x1080');
+  });
+
+  // The endpoint matches listed ratios EXACTLY: '16x9,16x10' dropped a 4096x2286 wallpaper for being
+  // 1.79 instead of 1.78, which cost most of the choice for anything but the most photographed games.
+  it('asks for landscape as a shape, not as a list of exact ratios', () => {
+    expect(params.get('ratios')).toBe('landscape');
   });
 
   it('sorts by relevance, so the gallery keeps its order within a session', () => {
