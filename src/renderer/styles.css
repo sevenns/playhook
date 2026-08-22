@@ -1618,6 +1618,10 @@ html:not(.mouse-asleep) .notification-item:hover .notification-dot {
   pointer-events: none;
   display: flex;
   flex-direction: column;
+  /* Each plate is as wide as its own text and hangs off the RIGHT edge — the same rule the popup's
+     action stack follows. Stretched (the flex default) they all took the width of the widest one, so
+     when that one left, the rest shrank and their left edges jumped inward. */
+  align-items: flex-end;
   gap: calc(12 * var(--px));
 }
 
