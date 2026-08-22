@@ -325,7 +325,11 @@
               <div class="online-note-veil"></div>
               <div class="online-note-panel">
                 <div class="online-note-text" id="online-picker-note-text"></div>
+                <!-- One button for a message, two for a question (taking the game's name overwrites a
+                     field the user may have typed themselves). The second is hidden when there is
+                     nothing to decline. -->
                 <button type="button" class="picker-item is-action" id="online-picker-note-button"></button>
+                <button type="button" class="picker-item is-action is-hidden" id="online-picker-note-cancel"></button>
               </div>
             </div>
           </div>

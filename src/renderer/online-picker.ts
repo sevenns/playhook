@@ -138,6 +138,7 @@ export function createOnlinePicker(deps: OnlinePickerDeps): OnlinePickerSurface 
   const noteEl = req('online-picker-note');
   const noteTextEl = req('online-picker-note-text');
   const noteButtonEl = req<HTMLButtonElement>('online-picker-note-button');
+  const noteCancelEl = req<HTMLButtonElement>('online-picker-note-cancel');
   const sideEl = req('online-picker-side');
   const contentEl = req('online-picker-content');
 
@@ -181,11 +182,22 @@ export function createOnlinePicker(deps: OnlinePickerDeps): OnlinePickerSurface 
   let sideButtons: HTMLButtonElement[] = [];
   let loading = false;
   /**
-   * What the popup is saying, if anything. `busy` marks work the user can only wait for or stop — the
-   * download that becomes a file beside the game — and `done` a message they close when they have read
-   * it. Nothing behind the popup takes input while it is up.
+   * What the popup is saying, if anything.
+   *
+   *  • `busy` — work the user can only wait for or stop: the download that becomes a file beside the
+   *    game. Its button cancels, which is also how the screen is left mid-apply;
+   *  • `confirm` — a question with two buttons, for the one thing here that OVERWRITES something the
+   *    user may have typed: taking the store's name into the Title field.
+   *
+   * Nothing behind the popup takes input while it is up.
    */
-  let note: { readonly text: string; readonly busy: boolean } | null = null;
+  let note: {
+    readonly text: string;
+    readonly busy: boolean;
+    readonly confirm?: () => void;
+  } | null = null;
+  /** Which of the two buttons a question has the focus on. 0 is the deciding one, 1 the way out. */
+  let noteFocus = 0;
 
   /**
    * Says something the user has to answer. This is for WORK, not for news: a download that is about to
@@ -199,6 +211,8 @@ export function createOnlinePicker(deps: OnlinePickerDeps): OnlinePickerSurface 
       return;
     }
     note = { text, busy };
+    noteFocus = 0;
+    noteCancelEl.classList.add('is-hidden');
     noteTextEl.replaceChildren();
     // Work in progress spins beside its own words: a popup that only says "Applying" cannot be told
     // apart from one that has stopped saying anything.
@@ -218,16 +232,72 @@ export function createOnlinePicker(deps: OnlinePickerDeps): OnlinePickerSurface 
     noteEl.setAttribute('aria-hidden', 'false');
   }
 
+  /**
+   * Asks something, with a way out. Used where an action would overwrite what the user has: the title
+   * they may have typed by hand. Every other action here only ADDS a file, which a wrong choice can be
+   * undone by picking again.
+   */
+  function askNote(text: string, yes: string, confirm: () => void): void {
+    note = { text, busy: false, confirm };
+    noteFocus = 0;
+    noteTextEl.replaceChildren();
+    const line = document.createElement('span');
+    line.textContent = text;
+    noteTextEl.append(line);
+    noteButtonEl.textContent = yes;
+    noteCancelEl.textContent = t()('metadata.noteCancel');
+    noteCancelEl.classList.remove('is-hidden');
+    paintNoteFocus();
+    noteEl.classList.add('is-open');
+    noteEl.setAttribute('aria-hidden', 'false');
+  }
+
+  function paintNoteFocus(): void {
+    noteButtonEl.classList.toggle('is-focused', noteFocus === 0);
+    noteCancelEl.classList.toggle('is-focused', noteFocus === 1);
+  }
+
+  /** Moves between a question's two buttons. A one-button popup has nowhere to go. */
+  function moveNoteFocus(delta: number): void {
+    if (note?.confirm === undefined) {
+      deps.audio.playLimit();
+      return;
+    }
+    const next = clampIndex(noteFocus, delta, 2);
+    if (next === noteFocus) {
+      deps.audio.playLimit();
+      return;
+    }
+    noteFocus = next;
+    deps.audio.play('navigate');
+    paintNoteFocus();
+  }
+
   function closeNote(): void {
     note = null;
+    noteFocus = 0;
+    noteCancelEl.classList.add('is-hidden');
+    noteCancelEl.classList.remove('is-focused');
     noteButtonEl.classList.remove('is-focused');
     noteEl.classList.remove('is-open');
     noteEl.setAttribute('aria-hidden', 'true');
   }
 
-  /** The popup's only press: it acknowledges a message, or stops the work one is describing. */
-  function dismissNote(): void {
-    const busy = note?.busy === true;
+  /**
+   * The popup's press: it answers a question, acknowledges a message, or stops the work one describes.
+   * `decline` is B — on a question that is No, and on anything else it is the same as pressing it.
+   */
+  function dismissNote(decline = false): void {
+    const current = note;
+    const busy = current?.busy === true;
+    const confirm = current?.confirm;
+    if (confirm !== undefined) {
+      const yes = !decline && noteFocus === 0;
+      deps.audio.play(yes ? 'button' : 'back');
+      closeNote();
+      if (yes) confirm();
+      return;
+    }
     deps.audio.play(busy ? 'back' : 'button');
     closeNote();
     if (!busy) return;
@@ -759,8 +829,16 @@ export function createOnlinePicker(deps: OnlinePickerDeps): OnlinePickerSurface 
         return;
       }
       deps.audio.play('button');
-      deps.applyTitle(named.title);
-      deps.notify(t()('metadata.applied'));
+      // The one action here that REPLACES something rather than adding to it: the title may well have
+      // been typed by hand, and the store's spelling is not always the one the user wants ("Watch_Dogs™").
+      askNote(
+        t()('metadata.titleConfirm', { title: named.title }),
+        t()('metadata.titleReplace'),
+        () => {
+          deps.applyTitle(named.title);
+          deps.notify(t()('metadata.applied'));
+        },
+      );
       return;
     }
     if (action.kind === 'section') {
@@ -1152,11 +1230,16 @@ export function createOnlinePicker(deps: OnlinePickerDeps): OnlinePickerSurface 
   });
 
   noteEl.querySelector<HTMLElement>('.online-note-veil')?.addEventListener('click', () => {
-    dismissNote();
+    dismissNote(true);
   });
 
   noteButtonEl.addEventListener('click', () => {
+    noteFocus = 0;
     dismissNote();
+  });
+
+  noteCancelEl.addEventListener('click', () => {
+    dismissNote(true);
   });
 
   window.addEventListener('mousemove', (event) => hover.track(event.clientX, event.clientY), {
@@ -1214,10 +1297,8 @@ export function createOnlinePicker(deps: OnlinePickerDeps): OnlinePickerSurface 
       }
       void search(request.query);
     },
-    navUp: () =>
-      note === null ? move(column === 'side' ? -1 : -columns()) : deps.audio.playLimit(),
-    navDown: () =>
-      note === null ? move(column === 'side' ? 1 : columns()) : deps.audio.playLimit(),
+    navUp: () => (note === null ? move(column === 'side' ? -1 : -columns()) : moveNoteFocus(-1)),
+    navDown: () => (note === null ? move(column === 'side' ? 1 : columns()) : moveNoteFocus(1)),
     /** Left walks the row and then steps into the sidebar — a HELD left stops at that wall. */
     navLeft: (repeat) => {
       hover.arm();
@@ -1302,7 +1383,7 @@ export function createOnlinePicker(deps: OnlinePickerDeps): OnlinePickerSurface 
     },
     navBack: () => {
       if (note !== null) {
-        dismissNote();
+        dismissNote(true); // B on a question is No
         return;
       }
       deps.audio.play('popup-close');

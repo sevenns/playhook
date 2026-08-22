@@ -3027,6 +3027,10 @@ html:not(.mouse-asleep) .picker-item:hover,
   text-align: center;
 }
 
+.online-note .picker-item.is-hidden {
+  display: none;
+}
+
 /* The right column of "Find online". It holds a LIST (candidates, tracks) or a GRID (pictures), so it
    is a column by default and becomes a grid when the open section is about pictures — one scroller and
    one focus model either way, which is what lets the sections share a surface. */
