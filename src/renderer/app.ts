@@ -215,6 +215,10 @@ const gameSettingsScreen = createGameSettingsScreen({
   },
   onConfirmRequested: (kind) => controls.confirmGameSettings(kind),
   onAdded: (id) => showAddedGame(id),
+  // The same two channels the online surface speaks through, read lazily for the same reason: both are
+  // declared below, and no message can arrive before the user has opened this screen.
+  notify: (text) => toast.show(text),
+  showError: (text) => controls.showError(text),
   // Editing while the game runs is legal (Р3); DELETING it is not — the launcher would be left holding a
   // manifest the file no longer has.
   isBusy: () =>

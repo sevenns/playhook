@@ -186,6 +186,14 @@ export interface GameSettingsScreenDeps {
   isBusy(): boolean;
   /** A game was added AND applied: the launcher's library has it now, so the carousel goes to it. */
   onAdded(id: string): void;
+  /**
+   * The launcher's own two channels, used for everything this screen has to SAY. A confirmation is the
+   * notification plate (top-right, goes by itself); a failure is the error popup, which waits to be
+   * closed — the same split the "Find online" surface makes, and for the same reason: a save that failed
+   * must not scroll away with the form.
+   */
+  notify(text: string): void;
+  showError(text: string): void;
 }
 
 export interface GameSettingsScreen extends NavSurface {
@@ -1351,7 +1359,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       ...(baseFor(id) !== null ? { base: baseFor(id) ?? '' } : {}),
       onDone: (result) => {
         if (!result.ok) {
-          if (!('cancelled' in result)) setStatus(result.message);
+          if (!('cancelled' in result)) failWith(result.message);
           // Cancelled (or refused): the popup is still up, and the focus goes back to it.
           applyMenuFocus();
           return;
@@ -1572,9 +1580,26 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     });
   }
 
+  /**
+   * The line under the columns. It now says only what is HAPPENING (a save in flight) — a result that
+   * lives there is a result the user can scroll away from, so those go to the notification plate and the
+   * error popup instead (see `notify` / `showError` above).
+   */
   function setStatus(next: string | null): void {
     status = next;
     render();
+  }
+
+  /** Said and done: the plate takes it, and the form's own line is cleared of whatever was in flight. */
+  function notifyDone(text: string): void {
+    setStatus(null);
+    deps.notify(text);
+  }
+
+  /** Something went wrong: the popup holds it until the user closes it. */
+  function failWith(text: string): void {
+    setStatus(null);
+    deps.showError(text);
   }
 
   // ── Load / save / delete ───────────────────────────────────────────────────
@@ -1621,7 +1646,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     if (!open || mode !== 'edit' || gameId !== forGame || pendingMove !== null) return;
     const cards = list.filter((candidate) => candidate.kind === 'card');
     if (cards.length === 0) {
-      setStatus(t()('gameSettings.moveNoCards'));
+      failWith(t()('gameSettings.moveNoCards'));
       return;
     }
     pushMenu(
@@ -1654,14 +1679,14 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     // mode, and applying a move target to any of those writes the wrong file.
     if (!open || mode !== 'edit' || gameId !== forGame || token !== adoptToken) return;
     if (!result.ok) {
-      setStatus(result.message);
+      failWith(result.message);
       return;
     }
     const originalPcSavePath = form.pcSavePath;
     const carried = carryFormToCard(form);
     const parsed = slotsWithInsertedGame(result.hasManifest ? result.text : null, carried);
     if (!parsed.ok) {
-      setStatus(parsed.message);
+      failWith(parsed.message);
       return;
     }
     // dest → source, by matching position in the two arrays carryFormToCard read and wrote — see
@@ -1729,7 +1754,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     const card = list.find((candidate) => candidate.kind === 'card' && candidate.isActive);
     const first = card ?? list.find((candidate) => candidate.kind === 'pc') ?? list[0];
     if (first === undefined) {
-      setStatus(t()('errors.driveUnavailable'));
+      failWith(t()('errors.driveUnavailable'));
       return;
     }
     await adoptRoot(first.root);
@@ -1750,7 +1775,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     if (!open || mode !== 'add' || token !== adoptToken) return;
     adoptingRoot = null;
     if (!result.ok) {
-      setStatus(result.message);
+      failWith(result.message);
       return;
     }
     origin = {
@@ -1832,16 +1857,16 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     setStatus(t()('gameSettings.saving'));
     const result = await deps.api.save({ root: at.root, signature: at.signature, text });
     if (!result.saved) {
-      setStatus(result.message);
+      failWith(result.message);
       return;
     }
     baseline = text;
     // A save while the game is RUNNING writes the file but cannot reload the manifest (the launcher
     // refuses mid-play). That is not a failure — the file on disk is already right and the launcher picks
     // it up on the next read — so it is reported as what it is (see the plan, Р3).
-    if (result.applied === 'applied') setStatus(t()('gameSettings.savedApplied'));
-    else if (result.applied === 'deferred') setStatus(t()('gameSettings.savedDeferred'));
-    else setStatus(t()('gameSettings.savedNotApplied'));
+    if (result.applied === 'applied') notifyDone(t()('gameSettings.savedApplied'));
+    else if (result.applied === 'deferred') notifyDone(t()('gameSettings.savedDeferred'));
+    else notifyDone(t()('gameSettings.savedNotApplied'));
     render();
   }
 
@@ -1870,7 +1895,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       toText: text,
     });
     if (!result.moved) {
-      setStatus(result.message);
+      failWith(result.message);
       return;
     }
     close();
@@ -1896,12 +1921,12 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     setStatus(t()('gameSettings.saving'));
     const result = await deps.api.save({ root: at.root, signature: at.signature, text });
     if (!result.saved) {
-      setStatus(result.message);
+      failWith(result.message);
       return;
     }
     baseline = text;
     if (result.applied === 'failed') {
-      setStatus(result.message ?? t()('gameSettings.savedNotApplied'));
+      failWith(result.message ?? t()('gameSettings.savedNotApplied'));
       await resyncAfterWrite(at.root, addedId);
       return;
     }
@@ -1951,7 +1976,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     const text = gamesToText(remaining);
     const result = await deps.api.save({ root: at.root, signature: at.signature, text });
     if (!result.saved) {
-      setStatus(result.message);
+      failWith(result.message);
       return;
     }
     baseline = text;

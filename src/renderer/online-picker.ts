@@ -211,12 +211,16 @@ export function createOnlinePicker(deps: OnlinePickerDeps): OnlinePickerSurface 
     line.textContent = text;
     noteTextEl.append(line);
     noteButtonEl.textContent = t()(busy ? 'metadata.noteStop' : 'metadata.noteOk');
+    // The button is the only thing on the popup, so it holds the focus while the popup is up: on a
+    // gamepad a button that is not drawn as focused reads as a label, and Stop went unnoticed.
+    noteButtonEl.classList.add('is-focused');
     noteEl.classList.add('is-open');
     noteEl.setAttribute('aria-hidden', 'false');
   }
 
   function closeNote(): void {
     note = null;
+    noteButtonEl.classList.remove('is-focused');
     noteEl.classList.remove('is-open');
     noteEl.setAttribute('aria-hidden', 'true');
   }
@@ -681,6 +685,9 @@ export function createOnlinePicker(deps: OnlinePickerDeps): OnlinePickerSurface 
   }
 
   function toggleTrack(track: MusicTrack): void {
+    // Whatever was playing belonged to the previous choice — a track auditioned under one name while
+    // another is ticked is the surest way to apply the wrong file.
+    if (listening) stopListening();
     pickedTrack = pickedTrack === track.key ? null : track.key;
     deps.audio.play('navigate');
     applyPicked();
