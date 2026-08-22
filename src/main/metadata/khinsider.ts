@@ -14,13 +14,18 @@
 import { type MetadataResult, type MusicAlbum } from '../../shared/types';
 import { type MetadataProvider, type MusicTrackOffer } from './provider';
 import { type HttpClient } from './http';
+import { searchableTitle } from './search-title';
 
 const ORIGIN = 'https://downloads.khinsider.com';
 /** How many albums a search offers. The site returns everything it matched; a menu wants a shortlist. */
 const MAX_ALBUMS = 20;
 
+/**
+ * The search URL for a term. The title is cleaned first (see search-title.ts): this site matches on
+ * words, so "Watch_Dogs™" comes back with twenty albums of other games that merely contain "Watch".
+ */
 export function searchUrl(term: string): string {
-  return `${ORIGIN}/search?search=${encodeURIComponent(term)}`;
+  return `${ORIGIN}/search?search=${encodeURIComponent(searchableTitle(term))}`;
 }
 
 export function albumUrl(albumKey: string): string {

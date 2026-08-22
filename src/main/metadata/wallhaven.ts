@@ -25,6 +25,7 @@ import {
   type MetadataProvider,
 } from './provider';
 import { type HttpClient } from './http';
+import { searchableTitle } from './search-title';
 
 const API_ORIGIN = 'https://wallhaven.cc/api/v1';
 /**
@@ -88,9 +89,12 @@ export function searchUrl(term: string, page = 0): string {
  * Deliberately NOT the merge normalization from the candidate merge — that one must never conflate two
  * different games, so it keeps every word. This one exists for the opposite reason: here an extra word
  * is what makes a game's wallpapers invisible.
+ *
+ * Every term is a searchable title (see search-title.ts): "Watch_Dogs™" finds nothing here, and it is
+ * the spelling Steam hands over.
  */
 export function searchTerms(title: string): readonly string[] {
-  const first = title.trim().replace(/\s+/g, ' ');
+  const first = searchableTitle(title);
   if (first === '') return [];
   const terms = [first];
   for (const candidate of [withoutEditionTail(first), beforeSubtitle(first)]) {
