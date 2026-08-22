@@ -6,14 +6,13 @@
 // encoded — the renderer has no network of its own and its CSP admits no other image source — and every
 // tile is addressed by an opaque variant key, which is all that travels back to main.
 //
-// Modelled on file-picker.ts (same panel, same two columns, same "A chooses, B leaves, X ticks"
-// grammar), with a grid of pictures where that one has a list of names: the question here is which
-// picture, and only a picture can answer it.
+// Modelled on file-picker.ts (same panel, same two columns), with a grid of pictures where that one has
+// a list of names: the question here is which picture, and only a picture can answer it.
 //
-// The left column is what keeps that question answerable. Two wallpaper sites and two stores together
-// offer more than anyone will look through, so the sidebar narrows it — by source and by size — and
-// carries the actions a MOUSE has no gesture for: A commits a multi-select, and a tile whose click
-// already means "tick" has no second gesture to spare for it.
+// A tile does ONE thing — it ticks. Everything else is a row in the left column: the two filters that
+// keep four sources' worth of pictures answerable, and then Apply, Clear and Close. That split is why
+// there is no legend under the grid any more: a press that commits, on the same button that also
+// selects, is exactly the kind of thing a legend has to explain.
 import {
   QUALITY_LABEL,
   QUALITY_ORDER,
@@ -76,6 +75,7 @@ type SideAction =
   | { readonly kind: 'source'; readonly group: ArtworkSourceGroup }
   | { readonly kind: 'quality'; readonly quality: ArtworkQuality }
   | { readonly kind: 'apply' }
+  | { readonly kind: 'clear' }
   | { readonly kind: 'close' };
 
 export function createMetadataPicker(deps: MetadataPickerDeps): MetadataPickerSurface {
@@ -84,7 +84,6 @@ export function createMetadataPicker(deps: MetadataPickerDeps): MetadataPickerSu
   const statusEl = req('metadata-picker-status');
   const sideEl = req('metadata-picker-side');
   const gridEl = req('metadata-picker-grid');
-  const legendEl = req('metadata-picker-legend');
 
   const t = (): Translator => deps.getTranslator();
   const scroller = createScroller(gridEl);
@@ -165,15 +164,13 @@ export function createMetadataPicker(deps: MetadataPickerDeps): MetadataPickerSu
         column = 'grid';
         index = position;
         applyFocus();
-        // A mouse has no second button here (the gamepad ticks with X), so in a multi-select gallery a
-        // click TICKS and the sidebar's Apply commits. A single-choice gallery keeps the one-click
-        // gesture: there is nothing to accumulate, so asking for a second press would be ceremony.
-        if (maxPicks() > 1) togglePick(variant);
-        else choose(variant);
+        // A tile only ever TICKS — mouse and gamepad alike. Committing is the sidebar's Apply, so that
+        // one press can never mean both "I want this one" and "and I am done choosing".
+        togglePick(variant);
       });
       return button;
     });
-    if (hasMore) tiles.push(moreTile());
+    if (needsTail()) tiles.push(tailTile());
     gridEl.replaceChildren(...tiles);
     if (tiles.length === 0) {
       const empty = document.createElement('div');
@@ -186,22 +183,23 @@ export function createMetadataPicker(deps: MetadataPickerDeps): MetadataPickerSu
   }
 
   /**
-   * The last tile of the grid, and the only one that is not a picture: the sources hold far more than
-   * fits on a screen, and most of a wallpaper site's answer is not what this user wants. It sits WHERE
-   * the next thumbnail would be, so the gesture that reaches it is the one the user is already making —
-   * and it is absent altogether when there is nothing left to fetch.
+   * The last tile of the grid, and the only one that is not a picture. It has two states and one place:
+   * while a page is on its way it spins and says so, and once the page has landed it becomes the "load
+   * more" tile — the sources hold far more than fits on a screen. Keeping both in the SAME slot is what
+   * makes the wait legible: the thing that is loading is the thing that will hold the next pictures,
+   * and the focus does not have to move for either.
+   *
+   * Absent altogether when nothing is loading and nothing is left to fetch.
    */
-  function moreTile(): HTMLButtonElement {
+  function tailTile(): HTMLButtonElement {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'metadata-tile metadata-tile-more';
     button.dataset['kind'] = request?.kind ?? 'hero';
     const box = document.createElement('span');
     box.className = 'metadata-tile-more-box';
-    box.textContent = '+';
     const caption = document.createElement('span');
     caption.className = 'metadata-tile-caption';
-    caption.textContent = t()('metadata.loadMore');
     button.append(box, caption);
     button.addEventListener('click', () => {
       hover.arm();
@@ -210,12 +208,65 @@ export function createMetadataPicker(deps: MetadataPickerDeps): MetadataPickerSu
       applyFocus();
       loadMore();
     });
+    paintTail(button);
     return button;
   }
 
-  /** Whether the focus is on the "load more" tile — the one position `variants` has no entry for. */
+  /** The tail tile's two faces. Rewritten in place, so a running spinner is not restarted by a repaint. */
+  function paintTail(button: HTMLButtonElement): void {
+    const box = button.querySelector('.metadata-tile-more-box');
+    const caption = button.querySelector('.metadata-tile-caption');
+    button.classList.toggle('is-busy', loading);
+    if (caption !== null)
+      caption.textContent = t()(loading ? 'metadata.searching' : 'metadata.loadMore');
+    if (box === null) return;
+    if (loading) {
+      box.replaceChildren(spinner());
+      return;
+    }
+    box.replaceChildren();
+    box.textContent = '+';
+  }
+
+  function spinner(): HTMLElement {
+    const node = document.createElement('span');
+    node.className = 'metadata-tile-spinner';
+    return node;
+  }
+
+  /** Whether the grid needs a tail tile at all right now. */
+  function needsTail(): boolean {
+    return hasMore || loading;
+  }
+
+  /**
+   * Brings the tail tile in step with the state without rebuilding the grid: a repaint would re-decode
+   * every thumbnail's data: URL, which is the whole gallery for the sake of one tile.
+   */
+  function syncTail(): void {
+    const last = tiles[tiles.length - 1];
+    const present = last !== undefined && last.classList.contains('metadata-tile-more');
+    if (needsTail() && present && last !== undefined) {
+      paintTail(last);
+      return;
+    }
+    if (needsTail() && !present) {
+      const tile = tailTile();
+      tiles.push(tile);
+      gridEl.append(tile);
+      return;
+    }
+    if (!needsTail() && present && last !== undefined) {
+      tiles.pop();
+      last.remove();
+      if (index >= tiles.length) index = Math.max(0, tiles.length - 1);
+      applyFocus();
+    }
+  }
+
+  /** Whether the focus is on the tail tile — the one position `variants` has no entry for. */
   function isOnMore(): boolean {
-    return hasMore && index === variants.length;
+    return needsTail() && index === variants.length;
   }
 
   function loadMore(): void {
@@ -251,7 +302,9 @@ export function createMetadataPicker(deps: MetadataPickerDeps): MetadataPickerSu
     const divider = document.createElement('div');
     divider.className = 'picker-divider';
     nodes.push(divider);
-    if (maxPicks() > 1) nodes.push(sideButton({ kind: 'apply' }, ''));
+    // Apply is here for covers too now: a tile only ticks, so this is the only way to commit either kind.
+    nodes.push(sideButton({ kind: 'apply' }, ''));
+    nodes.push(sideButton({ kind: 'clear' }, ''));
     nodes.push(sideButton({ kind: 'close' }, t()('metadata.actionClose')));
     sideEl.replaceChildren(...nodes);
     sideIndex = Math.min(sideIndex, Math.max(0, sideButtons.length - 1));
@@ -317,6 +370,16 @@ export function createMetadataPicker(deps: MetadataPickerDeps): MetadataPickerSu
       finish(picked.slice(0, maxPicks()));
       return;
     }
+    if (action.kind === 'clear') {
+      if (picked.length === 0) {
+        deps.audio.playLimit();
+        return;
+      }
+      picked = [];
+      deps.audio.play('navigate');
+      applyPicked();
+      return;
+    }
     deps.audio.play('popup-close');
     finish([]);
   }
@@ -375,13 +438,19 @@ export function createMetadataPicker(deps: MetadataPickerDeps): MetadataPickerSu
     paintApply();
   }
 
-  /** The Apply row: present only where there is something to accumulate, inert until there is. */
+  /** The two rows that count what is ticked: shown from the start, inert until there is something. */
   function paintApply(): void {
-    const at = actions.findIndex((action) => action.kind === 'apply');
-    const button = at === -1 ? undefined : sideButtons[at];
-    if (button === undefined) return;
-    button.textContent = t()('metadata.applySelected', { count: String(picked.length) });
-    button.classList.toggle('is-disabled', picked.length === 0);
+    const rows: Readonly<Record<'apply' | 'clear', Parameters<Translator>[0]>> = {
+      apply: 'metadata.applySelected',
+      clear: 'metadata.clearPicked',
+    };
+    for (const [kind, key] of Object.entries(rows)) {
+      const at = actions.findIndex((action) => action.kind === kind);
+      const button = at === -1 ? undefined : sideButtons[at];
+      if (button === undefined) continue;
+      button.textContent = t()(key, { count: String(picked.length) });
+      button.classList.toggle('is-disabled', picked.length === 0);
+    }
   }
 
   function applyFocus(instant = false): void {
@@ -415,7 +484,11 @@ export function createMetadataPicker(deps: MetadataPickerDeps): MetadataPickerSu
     applyFocus();
   }
 
-  /** A ticked variant becomes unticked; a fresh one is added unless the slot count is already full. */
+  /**
+   * A ticked variant becomes unticked; a fresh one is added. Where only ONE may be chosen (a cover), a
+   * fresh tick REPLACES the previous one rather than refusing: with no "choose outright" gesture left, a
+   * refusal would leave the user to work out that they must untick the old one first.
+   */
   function togglePick(variant: ArtworkVariant): void {
     if (picked.includes(variant.key)) {
       picked = picked.filter((key) => key !== variant.key);
@@ -423,20 +496,13 @@ export function createMetadataPicker(deps: MetadataPickerDeps): MetadataPickerSu
       applyPicked();
       return;
     }
-    if (picked.length >= maxPicks()) {
+    if (maxPicks() === 1) picked = [variant.key];
+    else if (picked.length >= maxPicks()) {
       deps.audio.playLimit();
       return;
-    }
-    picked.push(variant.key);
+    } else picked.push(variant.key);
     deps.audio.play('navigate');
     applyPicked();
-  }
-
-  /** A on a tile: the single-choice case picks it outright, the multi one ticks it and finishes. */
-  function choose(variant: ArtworkVariant): void {
-    deps.audio.play('button');
-    const chosen = picked.includes(variant.key) ? picked : [...picked, variant.key];
-    finish(chosen.slice(0, maxPicks()));
   }
 
   function finish(variantKeys: readonly string[]): void {
@@ -478,7 +544,10 @@ export function createMetadataPicker(deps: MetadataPickerDeps): MetadataPickerSu
     const token = attempt;
     const visited = visit;
     const shownBefore = variants.length;
-    statusEl.textContent = t()('metadata.searching');
+    statusEl.textContent = '';
+    // The wait shows up as the tail tile spinning where the next pictures will land.
+    if (nextPage === 0) paint();
+    else syncTail();
     const result = await deps.api.artwork(at.candidateKey, at.kind, nextPage, filter());
     // Closed, reopened, or asked again under another filter while main was fetching.
     if (visited !== visit || token !== attempt) return;
@@ -569,9 +638,6 @@ export function createMetadataPicker(deps: MetadataPickerDeps): MetadataPickerSu
       quality = 'any';
       deps.audio.play('popup-open');
       titleEl.textContent = next.title;
-      legendEl.textContent = t()(
-        next.kind === 'hero' ? 'metadata.pickerLegendMulti' : 'metadata.pickerLegend',
-      );
       paintSide();
       paintFilters();
       gridEl.replaceChildren();
@@ -637,16 +703,16 @@ export function createMetadataPicker(deps: MetadataPickerDeps): MetadataPickerSu
         deps.audio.playLimit();
         return;
       }
-      choose(variant);
+      togglePick(variant);
     },
     navBack: () => {
       deps.audio.play('popup-close');
       finish([]);
     },
-    /** X ticks a background, the one gesture a single-choice gallery has no use for. */
+    /** X ticks too — the gesture the gallery had before A stopped committing, kept for the hands used to it. */
     navSecondary: () => {
       const variant = column === 'grid' ? variants[index] : undefined;
-      if (variant === undefined || maxPicks() === 1) {
+      if (variant === undefined) {
         deps.audio.playLimit();
         return;
       }
@@ -654,20 +720,14 @@ export function createMetadataPicker(deps: MetadataPickerDeps): MetadataPickerSu
     },
     relocalize: () => {
       if (!open) return;
-      legendEl.textContent = t()(
-        request?.kind === 'hero' ? 'metadata.pickerLegendMulti' : 'metadata.pickerLegend',
-      );
       if (variants.length === 0 && statusEl.textContent !== '') {
         statusEl.textContent = t()('metadata.noArtwork');
       }
       paintSide();
       paintFilters();
       applyFocus(true);
-      const more = tiles[variants.length];
-      if (more !== undefined && more.classList.contains('metadata-tile-more')) {
-        const caption = more.querySelector('.metadata-tile-caption');
-        if (caption !== null) caption.textContent = t()('metadata.loadMore');
-      }
+      const tail = tiles[variants.length];
+      if (tail !== undefined && tail.classList.contains('metadata-tile-more')) paintTail(tail);
     },
   };
 }

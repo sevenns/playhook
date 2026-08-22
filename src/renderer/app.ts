@@ -6,20 +6,23 @@
 // info panel, title slide, music gating).
 // IMPORTANT: title/data come from the card (untrusted) — rendered via textContent, never innerHTML.
 import type { AppNotification, AppState, BrowseInfo, LibraryEntry, Stats } from '../shared/types';
-import { createTranslator, type Locale, type Translator, type MessageKey } from '../shared/i18n/index.js';
+import {
+  createTranslator,
+  type Locale,
+  type Translator,
+  type MessageKey,
+} from '../shared/i18n/index.js';
 import { localizeDocument } from './i18n-dom.js';
 import { AUTO_CHAIN_MS, NAV_REPEAT_MS } from './auto-repeat.js';
 import { createAudioController } from './audio.js';
 import { createHeroController } from './hero.js';
 import { createControls } from './controls.js';
 import { createSettingsScreen, type SettingsScreenApi } from './settings-screen.js';
-import {
-  createGameSettingsScreen,
-  type GameSettingsScreenApi,
-} from './game-settings-screen.js';
+import { createGameSettingsScreen, type GameSettingsScreenApi } from './game-settings-screen.js';
 import { createOsk } from './osk.js';
 import { createFilePicker } from './file-picker.js';
 import { createMetadataPicker } from './metadata-picker.js';
+import { createMusicPicker } from './music-picker.js';
 import { createCarousel } from './carousel.js';
 import { createCardArtCache } from './card-art.js';
 import { createLibraryScreen } from './library-screen.js';
@@ -152,9 +155,6 @@ const gameSettingsApi: GameSettingsScreenApi = {
   acceptPath: (request) => window.api.acceptGameConfigPaths(request),
   searchMetadata: (query) => window.api.searchMetadata(query),
   requestSteamCandidate: (appId) => window.api.requestMetadataSteamCandidate(appId),
-  metadataMusicAlbums: (query) => window.api.searchMetadataMusic(query),
-  metadataTracks: (albumKey) => window.api.requestMetadataTracks(albumKey),
-  metadataTrackPreview: (trackKey) => window.api.requestMetadataTrackPreview(trackKey),
   metadataDescriptions: (candidateKey) => window.api.requestMetadataDescriptions(candidateKey),
   applyMetadata: (request) => window.api.applyMetadata(request),
   cancelMetadata: () => window.api.cancelMetadata(),
@@ -179,6 +179,18 @@ const metadataPicker = createMetadataPicker({
   },
 });
 
+// Soundtracks — the gallery's twin, and the second surface the "Find online" flow opens.
+const musicPicker = createMusicPicker({
+  audio,
+  getTranslator,
+  api: {
+    albums: (query) => window.api.searchMetadataMusic(query),
+    tracks: (albumKey) => window.api.requestMetadataTracks(albumKey),
+    preview: (trackKey) => window.api.requestMetadataTrackPreview(trackKey),
+    cancel: () => window.api.cancelMetadata(),
+  },
+});
+
 const gameSettingsScreen = createGameSettingsScreen({
   audio,
   getTranslator,
@@ -186,6 +198,7 @@ const gameSettingsScreen = createGameSettingsScreen({
   keyboard: osk,
   picker: filePicker,
   metadataPicker,
+  musicPicker,
   // Read lazily for the same reason the carousel seam is: `controls` is created just below.
   onClosed: () => {
     controls.settingsClosed();
@@ -495,7 +508,10 @@ function infoItem(label: string, value: string): HTMLElement {
  */
 function buildInfoPanel(stats: Stats): void {
   const rows: readonly (readonly [string, string])[] = [
-    [translator('launcher.info.lastPlayed'), formatDate(stats.lastPlayedAt, translator, currentLocale)],
+    [
+      translator('launcher.info.lastPlayed'),
+      formatDate(stats.lastPlayedAt, translator, currentLocale),
+    ],
     [translator('launcher.info.playtime'), formatPlaytime(stats.totalPlaySeconds, translator)],
     [translator('launcher.info.launches'), String(stats.launchCount)],
   ];
@@ -872,7 +888,8 @@ let heroPayload: 'pending' | 'none' | 'present' = 'pending';
 let wallpaperPainted = false;
 
 function noteBackgroundSettled(): void {
-  if (heroPayload === 'present' || (heroPayload === 'none' && wallpaperPainted)) noteBootSeed('hero');
+  if (heroPayload === 'present' || (heroPayload === 'none' && wallpaperPainted))
+    noteBootSeed('hero');
 }
 
 // ── Wiring ──────────────────────────────────────────────────────────────────
@@ -1029,7 +1046,6 @@ void window.api.requestAmbient().then((url) => {
 // The bundled UI sound set — every sound the app plays, on every screen (chosen in Settings → Audio).
 window.api.onSfxSet((set) => audio.setSounds(set));
 void window.api.requestSfxSet().then((set) => audio.setSounds(set));
-
 
 // Audio volumes are app-wide (set in the settings window): seed them on startup and update live.
 const applyVolumes = (volumes: { music: number; sfx: number }): void => {

@@ -39,8 +39,6 @@ import type {
   MetadataApplyResult,
   MetadataApplySlot,
   MetadataResult,
-  MusicAlbum,
-  MusicTrack,
 } from '../shared/types';
 import type { MessageKey, Translator } from '../shared/i18n/index.js';
 import { MAX_HERO_IMAGES } from '../shared/types';
@@ -53,6 +51,7 @@ import { createScroller, pxUnit } from './screen-scroller.js';
 import { createSidebar, type SidebarEntry } from './screen-sidebar.js';
 import type { NavSurface } from './nav-surface.js';
 import type { MetadataPickerSurface } from './metadata-picker.js';
+import type { MusicPickerSurface } from './music-picker.js';
 import {
   emptyFormModel,
   gamesToText,
@@ -125,11 +124,6 @@ export interface GameSettingsScreenApi {
   searchMetadata(query: string): Promise<MetadataResult<readonly GameCandidate[]>>;
   /** The candidate behind a Steam appid the manifest already names — no search needed. */
   requestSteamCandidate(appId: number): Promise<MetadataResult<GameCandidate>>;
-  /** Soundtrack albums for a title, and one album's tracks. */
-  metadataMusicAlbums(query: string): Promise<MetadataResult<readonly MusicAlbum[]>>;
-  metadataTracks(albumKey: string): Promise<MetadataResult<readonly MusicTrack[]>>;
-  /** One track as an audio data: URL — a full download, hence the status line beside it. */
-  metadataTrackPreview(trackKey: string): Promise<MetadataResult<string>>;
   /** The candidate's descriptions, genres, release date and platforms — carried into the manifest
    * through the form's `rest` (see GameDetails). */
   metadataDescriptions(candidateKey: string): Promise<MetadataResult<GameDetails>>;
@@ -185,6 +179,7 @@ export interface GameSettingsScreenDeps {
   readonly picker: FilePickerSurface;
   /** The online artwork gallery — the surface "Find online" picks a cover or a background in. */
   readonly metadataPicker: MetadataPickerSurface;
+  readonly musicPicker: MusicPickerSurface;
   /** The screen closed itself (B / Esc / veil) — controls.ts restores the bar focus. */
   onClosed(): void;
   /** Asks the shared confirm popup; the answer arrives back through confirmAccepted. */
@@ -1969,9 +1964,6 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   let metadataCandidate: GameCandidate | null = null;
   /** Retires answers belonging to a flow the user has already left (a new search, a closed screen). */
   let metadataToken = 0;
-  /** Whether a track is currently being auditioned through the browse channel (see previewTrack). */
-  let trackPreviewing = false;
-
   /** Whether an answer from main still belongs to the flow that asked for it. */
   function metadataCurrent(token: number): boolean {
     return open && token === metadataToken;
@@ -2103,7 +2095,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       },
       { label: t()('metadata.cover'), sound: 'none', run: () => openArtworkGallery('grid') },
       { label: t()('metadata.backgrounds'), sound: 'none', run: () => openArtworkGallery('hero') },
-      { label: t()('metadata.music'), run: () => void openMusicAlbums(candidate) },
+      { label: t()('metadata.music'), run: () => openMusicPicker(candidate) },
     ];
   }
 
@@ -2240,124 +2232,23 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   }
 
   // ── Music ─────────────────────────────────────────────────────────────────
-  // Two more menu levels (albums, then tracks) rather than a surface of their own: a track is a NAME,
-  // and a list of names is exactly what a menu is for. What the gallery has and this has not is a
-  // picture; what this has and the gallery has not is the ability to listen before choosing.
+  // A surface of its own now (music-picker.ts), the artwork gallery's twin: the albums are its left
+  // column and the chosen album's tracks its right. It used to be two nested menus plus a menu per
+  // track — the same shape the gallery had before it grew a sidebar, and it read the same way: a list
+  // of names where the question is "which of these", with the actions hidden one level deeper.
 
-  async function openMusicAlbums(candidate: GameCandidate): Promise<void> {
-    const token = metadataToken;
-    setStatus(t()('metadata.searching'));
-    const result = await deps.api.metadataMusicAlbums(candidate.title);
-    if (!metadataCurrent(token)) return;
-    if (!result.ok) {
-      setStatus(result.message);
-      return;
-    }
-    setStatus(null);
-    if (result.value.length === 0) {
-      setStatus(t()('metadata.noAlbums'));
-      return;
-    }
-    pushMenu(
-      asMenu({
-        title: t()('metadata.albums'),
-        entries: result.value.map((album) => ({
-          label:
-            album.trackCount === undefined ? album.title : `${album.title} (${album.trackCount})`,
-          run: () => void openMusicTracks(album),
-        })),
-      }),
-    );
+  function openMusicPicker(candidate: GameCandidate): void {
+    deps.musicPicker.open({
+      query: candidate.title,
+      title: candidate.title,
+      onDone: (trackKey) => {
+        if (trackKey === null) return; // backed out — the form keeps what it had
+        void applyTrackKey(trackKey);
+      },
+    });
   }
 
-  async function openMusicTracks(album: MusicAlbum): Promise<void> {
-    const token = metadataToken;
-    setStatus(t()('metadata.searching'));
-    const result = await deps.api.metadataTracks(album.key);
-    if (!metadataCurrent(token)) return;
-    if (!result.ok) {
-      setStatus(result.message);
-      return;
-    }
-    setStatus(null);
-    if (result.value.length === 0) {
-      setStatus(t()('metadata.noTracks'));
-      return;
-    }
-    const tracks = result.value;
-    pushMenu(
-      asMenu({
-        title: album.title,
-        entries: tracks.map((track) => ({
-          label: track.title,
-          sound: 'none', // the sub-menu it opens plays for itself
-          run: () => openTrackMenu(track),
-        })),
-        // X auditions the focused track without opening its menu — a shortcut for the gamepad, where
-        // running down a track list one press at a time is the common case. It is a SHORTCUT, though,
-        // and never the only way in: a menu keyed to a button no label mentions is a menu nobody finds,
-        // which is exactly what this was before the sub-menu below existed.
-        secondary: (index) => {
-          const track = tracks[index];
-          if (track === undefined) {
-            deps.audio.playLimit();
-            return;
-          }
-          void previewTrack(track);
-        },
-      }),
-    );
-  }
-
-  /**
-   * One track's own little menu — the same shape a path row's Browse/Clear uses. Listening and taking are
-   * two different intentions, and a list where pressing a name commits to it offers no way to hear the
-   * thing first; a mouse had no way at all, since the audition lived on a gamepad button.
-   */
-  function openTrackMenu(track: MusicTrack): void {
-    pushMenu(
-      asMenu({
-        title: track.title,
-        entries: [
-          { label: t()('metadata.listen'), sound: 'none', run: () => void previewTrack(track) },
-          {
-            label: t()('metadata.useTrack'),
-            run: () => {
-              popMenu({ keepWork: true }); // the track is chosen; its menu has nothing left to say
-              void applyTrack(track);
-            },
-          },
-        ],
-      }),
-    );
-  }
-
-  /**
-   * Listening means DOWNLOADING the whole track (there is no stream to be had), which on a Deck's Wi-Fi
-   * is tens of seconds — hence the status line, and hence Back aborting it (see stopMetadataWork).
-   */
-  async function previewTrack(track: MusicTrack): Promise<void> {
-    const token = metadataToken;
-    setStatus(t()('metadata.downloading'));
-    const result = await deps.api.metadataTrackPreview(track.key);
-    if (!metadataCurrent(token)) return;
-    if (!result.ok) {
-      setStatus(result.message);
-      return;
-    }
-    setStatus(null);
-    trackPreviewing = true;
-    deps.audio.setBrowseMusic(result.value, false);
-  }
-
-  /** Stops an audition and hands the browse channel back to whatever was playing before it. */
-  function stopTrackPreview(): void {
-    if (!trackPreviewing) return;
-    trackPreviewing = false;
-    deps.audio.setBrowseMusic(null, false);
-  }
-
-  async function applyTrack(track: MusicTrack): Promise<void> {
+  async function applyTrackKey(trackKey: string): Promise<void> {
     const target = metadataTarget();
     if (target === null) {
       setStatus(t()('metadata.needsId'));
@@ -2367,7 +2258,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     setStatus(t()('metadata.applying'));
     const result = await deps.api.applyMetadata({
       ...target,
-      variantKey: track.key,
+      variantKey: trackKey,
       slot: 'music',
     });
     if (!metadataCurrent(token)) return;
@@ -2379,10 +2270,9 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     setStatus(t()('metadata.applied'));
   }
 
-  /** Everything the flow leaves running, ended in one place: an audition, and whatever main is fetching. */
+  /** Everything the flow leaves running, ended in one place: whatever main is still fetching for it. */
   function stopMetadataWork(): void {
     metadataToken += 1;
-    stopTrackPreview();
     deps.api.cancelMetadata();
   }
 
@@ -2394,6 +2284,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     if (deps.keyboard.isOpen()) return deps.keyboard;
     if (deps.picker.isOpen()) return deps.picker;
     if (deps.metadataPicker.isOpen()) return deps.metadataPicker;
+    if (deps.musicPicker.isOpen()) return deps.musicPicker;
     if (menuStack.length > 0) return 'menu';
     return 'form';
   }
@@ -2653,6 +2544,8 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     closeImage({ silent: true });
     closeMenus({ silent: true });
     deps.keyboard.close();
+    // The soundtrack surface holds an audition — real sound, which would outlive the screen otherwise.
+    deps.musicPicker.close();
     entrance.cancel();
     if (previewTimer !== 0) {
       window.clearTimeout(previewTimer);
@@ -2900,6 +2793,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       deps.keyboard.relocalize();
       deps.picker.relocalize();
       deps.metadataPicker.relocalize();
+      deps.musicPicker.relocalize();
       // A menu's labels are built from the model, so it is rebuilt rather than patched.
       if (menuStack.length > 0) paintMenu();
     },

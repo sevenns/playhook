@@ -3058,18 +3058,6 @@ html:not(.mouse-asleep) .metadata-tile:hover,
   opacity: 0.45;
 }
 
-/* The panel's foot: the legend alone now — Apply lives in the sidebar, where a mouse finds it beside
-   the other actions rather than across the panel from what it acts on. */
-.metadata-picker-foot {
-  display: flex;
-  align-items: center;
-  gap: calc(20 * var(--px));
-}
-
-.metadata-picker-foot .picker-legend {
-  flex: 1 1 auto;
-}
-
 /* Ticked (multi-select backgrounds) — the same underline the file browser marks a ticked file with. */
 /* The trailing "load more" tile: the same box a thumbnail occupies, so the grid keeps its rhythm and the
    tile is reached by the same press as the picture before it. A frame rather than a picture, because
@@ -3096,10 +3084,60 @@ html:not(.mouse-asleep) .metadata-tile-more:hover .metadata-tile-more-box,
   border-color: var(--d1);
 }
 
+/* Waiting for a page: the same tile, spinning where the pictures will appear. The border goes solid so
+   the frame reads as "busy" rather than "press me", and the arc reuses the play button's spin. */
+.metadata-tile-more.is-busy .metadata-tile-more-box {
+  border-style: solid;
+  border-color: color-mix(in srgb, var(--d2) 25%, transparent);
+}
+
+.metadata-tile-spinner {
+  width: calc(44 * var(--px));
+  height: calc(44 * var(--px));
+  border: calc(4 * var(--px)) solid color-mix(in srgb, currentColor 30%, transparent);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
 .metadata-tile.is-picked .metadata-tile-caption {
   text-decoration: underline;
   text-underline-offset: calc(6 * var(--px));
   font-weight: 500;
+}
+
+/* ── Soundtrack list ────────────────────────────────────────────────────────
+   The gallery's right column, for tracks: names rather than pictures, so the file browser's rows are the
+   shape it takes. The claimed size sits at the row's end — a track is a download, and how long it will
+   take is the thing a name cannot say. */
+
+.music-row {
+  justify-content: space-between;
+  gap: calc(20 * var(--px));
+}
+
+/* A track's name wraps rather than being cut: an ellipsis here would be the app's font drawing raised
+   dots (see CLAUDE.md), and a name cut short is exactly the part that tells two takes of one theme
+   apart. */
+.music-row-title {
+  overflow-wrap: anywhere;
+}
+
+.music-row-size {
+  flex: 0 0 auto;
+  font-weight: 300;
+  opacity: 0.7;
+}
+
+/* Waiting for albums or for an album's tracks — the gallery's spinning tile, laid out as a row. */
+.music-busy {
+  display: flex;
+  align-items: center;
+  gap: calc(16 * var(--px));
+  padding: calc(20 * var(--px));
+  font-weight: 300;
+  font-size: calc(24 * var(--px));
+  color: color-mix(in srgb, var(--d2) 55%, transparent);
 }
 
 /* ── Artwork lightbox ───────────────────────────────────────────────────────

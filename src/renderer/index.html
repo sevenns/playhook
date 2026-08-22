@@ -317,8 +317,20 @@
               <div class="metadata-side" id="metadata-picker-side"></div>
               <div class="metadata-grid" id="metadata-picker-grid"></div>
             </div>
-            <div class="metadata-picker-foot">
-              <div class="picker-legend" id="metadata-picker-legend"></div>
+          </div>
+        </div>
+
+        <!-- Soundtracks: the gallery's twin for the one thing the sources offer that is not a picture.
+             The albums are the left column (choosing one is the same gesture as choosing a source in the
+             gallery) and the chosen album's tracks fill the right. -->
+        <div class="picker metadata-picker" id="music-picker" aria-hidden="true">
+          <div class="picker-veil"></div>
+          <div class="picker-panel">
+            <div class="picker-title" id="music-picker-title"></div>
+            <div class="picker-path" id="music-picker-status"></div>
+            <div class="picker-body">
+              <div class="metadata-side" id="music-picker-side"></div>
+              <div class="picker-entries music-list" id="music-picker-list"></div>
             </div>
           </div>
         </div>
