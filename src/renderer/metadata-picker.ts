@@ -129,13 +129,13 @@ export function createMetadataPicker(deps: MetadataPickerDeps): MetadataPickerSu
 
   /**
    * What each source is called on a tile. Proper names, so they are not translated — and spelled out per
-   * source rather than "SteamGridDB or else Steam", which is how every RAWG and GOG picture came to be
-   * labelled Steam.
+   * source rather than "SteamGridDB or else Steam", which is how every GOG and wallpaper picture came to
+   * be labelled Steam.
    */
   const PROVIDER_LABEL: Readonly<Record<ArtworkVariant['provider'], string>> = {
     steam: 'Steam',
     steamgriddb: 'SteamGridDB',
-    rawg: 'RAWG',
+    wallhaven: 'Wallhaven',
     gog: 'GOG',
     khinsider: 'Khinsider',
   };

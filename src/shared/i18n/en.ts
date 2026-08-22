@@ -191,10 +191,6 @@ export const en = {
   'settings.steamGridDbKeyEmpty': 'Not set',
   'settings.steamGridDbKeyHint':
     'Optional. With a key, "Find online" also offers covers and backgrounds from SteamGridDB. Get your own at steamgriddb.com, under Preferences → API.',
-  'settings.rawgKey': 'RAWG.io API key',
-  'settings.rawgKeyEmpty': 'Not set',
-  'settings.rawgKeyHint':
-    'Optional. With a key, "Find online" also offers backgrounds for games that are not on Steam. Get your own at rawg.io/apidocs. Game data and images are provided by RAWG (rawg.io).',
   'settings.sectionAudio': 'Audio',
   'settings.soundSet': 'Navigation sounds',
   'settings.soundSetVolume': 'Navigation sounds volume',
@@ -431,7 +427,6 @@ export const en = {
   'metadata.backgrounds': 'Backgrounds',
   'metadata.music': 'Music',
   'metadata.noArtwork': 'No artwork found for this game.',
-  'metadata.noArtworkNeedsRawgKey': 'No backgrounds found. Adding a RAWG.io key in Settings gives this game more sources.',
   'metadata.pickerLegend': 'A - choose, Y - view full size, B - back',
   'metadata.pickerLegendMulti': 'X - tick, A - choose, Y - view full size, B - back',
   'metadata.needsId': 'Give the game an id first — the downloaded files are named after it.',

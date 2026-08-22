@@ -109,7 +109,6 @@ const CHANNELS = {
   settingsSetAmbientTrack: 'settings:set-ambient-track',
   settingsSetOnlyGlobalAmbient: 'settings:set-only-global-ambient',
   settingsSetSteamGridDbKey: 'settings:set-steamgriddb-key',
-  settingsSetRawgKey: 'settings:set-rawg-key',
   settingsSetLanguage: 'settings:set-language',
   appVersionRequest: 'app:version',
   audioOptionsRequest: 'app:audio-options',
@@ -333,9 +332,6 @@ const api: RendererApi = {
   },
   setSteamGridDbKey(key: string): void {
     ipcRenderer.send(CHANNELS.settingsSetSteamGridDbKey, key);
-  },
-  setRawgKey(key: string): void {
-    ipcRenderer.send(CHANNELS.settingsSetRawgKey, key);
   },
   setMusicVolume(volume: number): void {
     ipcRenderer.send(CHANNELS.settingsSetMusicVolume, volume);

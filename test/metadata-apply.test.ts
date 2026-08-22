@@ -179,12 +179,6 @@ describe('metadata search — merging the sources', () => {
     provider: 'gog',
     gogId: id,
   });
-  const rawg = (id: number, title: string): GameCandidate => ({
-    key: `rawg:${id}`,
-    title,
-    provider: 'rawg',
-    rawgId: id,
-  });
 
   it('keeps one entry per Steam appid', () => {
     const merged = mergeCandidates([steam(220, 'Half-Life 2'), steam(220, 'Half-Life 2 (dup)')]);
@@ -192,14 +186,13 @@ describe('metadata search — merging the sources', () => {
   });
 
   it('leads with the source that can also reach the descriptions and the CDN cover', () => {
-    const merged = mergeCandidates([rawg(7, 'Hollow Knight'), steam(367520, 'Hollow Knight')]);
+    const merged = mergeCandidates([gog('1207', 'Hollow Knight'), steam(367520, 'Hollow Knight')]);
     expect(merged.map((c) => c.key)).toEqual(['steam:367520']);
   });
 
-  it('collapses the same game from three sources into one candidate carrying every reference', () => {
+  it('collapses the same game from two sources into one candidate carrying both references', () => {
     const merged = mergeCandidates([
       gog('1207658691', 'The Witcher 3: Wild Hunt'),
-      rawg(41494, 'The Witcher 3: Wild Hunt'),
       steam(292030, 'The Witcher 3: Wild Hunt'),
     ]);
     expect(merged).toHaveLength(1);
@@ -207,7 +200,6 @@ describe('metadata search — merging the sources', () => {
       provider: 'steam',
       steamAppId: 292030,
       gogId: '1207658691',
-      rawgId: 41494,
     });
   });
 
@@ -262,15 +254,14 @@ describe('metadata search — the appid shortcut still reaches the other sources
 
   it("gains the other sources' references while keeping its own key", () => {
     const enriched = withMergedRefs(steamCandidate, [
-      { key: 'rawg:274755', title: 'Hades', provider: 'rawg', rawgId: 274755 },
       { key: 'gog:1', title: 'Hades', provider: 'gog', gogId: '1' },
     ]);
-    expect(enriched).toEqual({ ...steamCandidate, rawgId: 274755, gogId: '1' });
+    expect(enriched).toEqual({ ...steamCandidate, gogId: '1' });
   });
 
   it("ignores the other sources' near misses", () => {
     const enriched = withMergedRefs(steamCandidate, [
-      { key: 'rawg:891238', title: 'Hades II', provider: 'rawg', rawgId: 891238 },
+      { key: 'gog:2', title: 'Hades II', provider: 'gog', gogId: '2' },
     ]);
     expect(enriched).toEqual(steamCandidate);
   });
@@ -289,9 +280,9 @@ describe('metadata artwork — the order sources appear in', () => {
     fullUrl: 'https://cdn.test/f.jpg',
   });
 
-  it('lists Steam first, then GOG, then RAWG — a stable order between visits', () => {
-    const ordered = orderByProvider([offerOf('rawg'), offerOf('gog'), offerOf('steam')]);
-    expect(ordered.map((offer) => offer.provider)).toEqual(['steam', 'gog', 'rawg']);
+  it('lists wallpapers first, then Steam, then GOG — a stable order between visits', () => {
+    const ordered = orderByProvider([offerOf('gog'), offerOf('steam'), offerOf('wallhaven')]);
+    expect(ordered.map((offer) => offer.provider)).toEqual(['wallhaven', 'steam', 'gog']);
   });
 
   it('keeps the relative order inside one source', () => {

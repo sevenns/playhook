@@ -141,6 +141,12 @@ export interface SteamAppArt {
   /** The store page's art backdrop, when the app has one. */
   readonly backdrop?: string;
   readonly screenshots: readonly SteamScreenshot[];
+  /**
+   * The game's name as the ENGLISH store spells it. Only ever filled from an `l=english` answer, because
+   * that is its whole purpose: the wallpaper source searches English words, and a localized name finds
+   * nothing there. Absent when the only answer seen so far came back in another language.
+   */
+  readonly englishName?: string;
 }
 
 /**
@@ -148,7 +154,11 @@ export interface SteamAppArt {
  * the picture the user would end up applying, and half an entry is worse than none. A missing thumbnail
  * falls back to the full size — the gallery then downloads more than it needs, which beats a blank tile.
  */
-export function toAppArt(answer: AppDetailsAnswer, appId: number): SteamAppArt {
+export function toAppArt(
+  answer: AppDetailsAnswer,
+  appId: number,
+  options?: { readonly english?: boolean },
+): SteamAppArt {
   const entry = answer[String(appId)];
   const data = entry?.success === true ? entry.data : undefined;
   const backdrop = data?.background_raw;
@@ -157,9 +167,12 @@ export function toAppArt(answer: AppDetailsAnswer, appId: number): SteamAppArt {
     if (full === undefined || full.length === 0) return [];
     return [{ id: shot.id, thumb: shot.path_thumbnail ?? full, full }];
   });
-  return backdrop !== undefined && backdrop.length > 0
-    ? { backdrop, screenshots }
-    : { screenshots };
+  const name = options?.english === true ? data?.name : undefined;
+  return {
+    ...(backdrop !== undefined && backdrop.length > 0 ? { backdrop } : {}),
+    ...(name !== undefined && name.length > 0 ? { englishName: name } : {}),
+    screenshots,
+  };
 }
 
 /** Turns a validated storesearch answer into candidates, keeping only entries that are actual games. */
@@ -341,12 +354,25 @@ export class SteamProvider implements MetadataProvider {
       signal === undefined ? undefined : { signal },
     );
     if (!details.ok) return undefined; // not cached: a failed call says nothing about the app
-    return this.rememberArt(appId, details.value);
+    return this.rememberArt(appId, details.value, { english: this.deps.locale() === 'en' });
   }
 
-  /** Extracts the art fields from an answer already in hand and caches them, dropping the oldest. */
-  private rememberArt(appId: number, answer: AppDetailsAnswer): SteamAppArt {
-    const art = toAppArt(answer, appId);
+  /**
+   * Extracts the art fields from an answer already in hand and caches them, dropping the oldest. An
+   * entry that already holds an English name keeps it: a later answer in another language knows the
+   * pictures just as well, but its `name` is not the one the wallpaper search needs.
+   */
+  private rememberArt(
+    appId: number,
+    answer: AppDetailsAnswer,
+    options?: { readonly english?: boolean },
+  ): SteamAppArt {
+    const known = this.appArtwork.get(appId)?.englishName;
+    const fresh = toAppArt(answer, appId, options);
+    const art: SteamAppArt =
+      fresh.englishName === undefined && known !== undefined
+        ? { ...fresh, englishName: known }
+        : fresh;
     this.appArtwork.delete(appId);
     this.appArtwork.set(appId, art);
     if (this.appArtwork.size > MAX_CACHED_APPS) {
@@ -354,6 +380,17 @@ export class SteamProvider implements MetadataProvider {
       if (oldest.done !== true) this.appArtwork.delete(oldest.value);
     }
     return art;
+  }
+
+  /**
+   * The game's English name, if an English appdetails answer for it has been seen this session — which
+   * it has as soon as the user picks the candidate, since the descriptions are fetched right then.
+   * Handed to the wallpaper source, whose search only understands English words.
+   */
+  englishTitle(ref: GameCandidateRef): string | undefined {
+    const appId = ref.steamAppId ?? steamAppIdFromKey(ref.key);
+    if (appId === undefined) return undefined;
+    return this.appArtwork.get(appId)?.englishName;
   }
 
   /**
@@ -375,7 +412,7 @@ export class SteamProvider implements MetadataProvider {
     if (!en.ok && !ru.ok) return en;
     // The same answer carries the backdrop and the screenshots; keeping them here spares the gallery a
     // second call for a game the user has just picked (descriptions are fetched on exactly that press).
-    if (en.ok) this.rememberArt(appId, en.value);
+    if (en.ok) this.rememberArt(appId, en.value, { english: true });
     const text: LocalizedText = {
       ...(en.ok ? pickDescription(en.value, appId, 'en') : {}),
       ...(ru.ok ? pickDescription(ru.value, appId, 'ru') : {}),

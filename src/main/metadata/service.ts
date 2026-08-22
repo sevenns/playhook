@@ -68,12 +68,17 @@ const MAX_ARTWORK_PER_PROVIDER = 24;
  * The order sources appear in the gallery, best-suited first. Fixed rather than "whoever answered
  * first": the answers arrive in parallel, and a gallery that reshuffles itself between two visits to the
  * same game is a gallery the user cannot navigate from memory.
+ *
+ * Wallhaven leads for backgrounds because wallpapers are what a full-screen background actually wants —
+ * a picture composed to be looked at, rather than a gameplay frame with a HUD in it. Sorting is by
+ * SOURCE, so Steam's own curated backdrop stays first within Steam's block rather than ahead of
+ * everything: interleaving individual offers would mean a second ranking to keep in step with this one.
  */
 const PROVIDER_ORDER: readonly MetadataProviderId[] = [
+  'wallhaven',
   'steam',
   'steamgriddb',
   'gog',
-  'rawg',
   'khinsider',
 ];
 /** Where a full-size download lands before it is checked and moved into place. */
@@ -275,11 +280,6 @@ export class MetadataService {
     if (offers.length === 0) {
       const failure = answers.find((answer) => !answer.ok);
       if (failure !== undefined && !failure.ok) return failure;
-      // Nothing at all, and one source that could have answered is switched off for want of a key. Say
-      // so: "nothing found" would send the user looking for a different game, not for the setting.
-      if (kind === 'hero' && this.isDisabledForKey('rawg')) {
-        return { ok: false, message: this.t('metadata.noArtworkNeedsRawgKey') };
-      }
       return { ok: true, value: [] };
     }
     const shown = capArtworkPerProvider(orderByProvider(offers), MAX_ARTWORK_PER_PROVIDER);
@@ -583,12 +583,6 @@ export class MetadataService {
     });
   }
 
-  /** Whether a source exists in this build but is turned off because its key has not been entered. */
-  private isDisabledForKey(id: MetadataProviderId): boolean {
-    const provider = this.deps.providers.find((candidate) => candidate.id === id);
-    return provider?.available !== undefined && !provider.available();
-  }
-
   /** Runs one piece of work under a fresh AbortController that `metadata:cancel` can reach. */
   private async run<T>(work: (signal: AbortSignal) => Promise<T>): Promise<T> {
     const controller = new AbortController();
@@ -670,7 +664,6 @@ export function toCandidateRef(candidate: GameCandidate): GameCandidateRef {
     key: candidate.key,
     title: candidate.title,
     ...(candidate.steamAppId === undefined ? {} : { steamAppId: candidate.steamAppId }),
-    ...(candidate.rawgId === undefined ? {} : { rawgId: candidate.rawgId }),
     ...(candidate.gogId === undefined ? {} : { gogId: candidate.gogId }),
   };
 }
@@ -693,8 +686,8 @@ export function normalizeTitle(title: string): string {
  *
  * Two things happen here. Within a source, repeats collapse — the same Steam appid, the same key.
  * Across sources, entries whose normalized titles match become ONE candidate carrying every reference
- * seen (`steamAppId` + `rawgId` + `gogId`), which is what lets a game's gallery combine Steam's
- * screenshots with GOG's and RAWG's. A candidate that matches nothing simply stays on its own: a
+ * seen (`steamAppId` + `gogId`), which is what lets a game's gallery combine Steam's screenshots with
+ * GOG's. A candidate that matches nothing simply stays on its own: a
  * duplicate line in the menu costs the user one glance, whereas a wrong merge shows them another game's
  * pictures under the name of theirs.
  *
@@ -732,9 +725,6 @@ export function mergeCandidates(candidates: readonly GameCandidate[]): readonly 
       ...existing,
       ...(existing.steamAppId === undefined && candidate.steamAppId !== undefined
         ? { steamAppId: candidate.steamAppId }
-        : {}),
-      ...(existing.rawgId === undefined && candidate.rawgId !== undefined
-        ? { rawgId: candidate.rawgId }
         : {}),
       ...(existing.gogId === undefined && candidate.gogId !== undefined
         ? { gogId: candidate.gogId }

@@ -1,8 +1,8 @@
 // GOG — backgrounds for non-Steam games, without a key.
 //
 // It exists to soften a gap this feature would otherwise have: with backgrounds no longer taken from
-// banner-shaped art, a game that Steam does not sell had nothing left unless the user also went and got
-// a RAWG key. GOG's catalogue covers a large part of a typical non-Steam library and needs no key at all.
+// banner-shaped art, a game that Steam does not sell falls back to whatever the wallpaper source found
+// for its title. GOG's catalogue covers a large part of a typical non-Steam library and needs no key.
 //
 // Two conveniences make this the cheapest provider here: the catalogue's search answer ALREADY carries
 // each product's screenshots, so backgrounds cost a single request, and the picture URLs are templates
@@ -21,7 +21,7 @@ import { type ArtworkOffer, type GameCandidateRef, type MetadataProvider } from 
 import { type HttpClient } from './http';
 
 const CATALOG_ORIGIN = 'https://catalog.gog.com/v1';
-/** A shortlist for the candidate menu, in the same spirit as RAWG's page size. */
+/** A shortlist for the candidate menu — a menu wants a handful of names, not a catalogue page. */
 const SEARCH_LIMIT = 10;
 /** The formatter the gallery's thumbnails use, and the one an applied background is downloaded at. */
 const THUMB_FORMATTER = 'ggvgm';

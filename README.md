@@ -930,11 +930,11 @@ CI runs all three, on Windows **and** Linux.
 external sources. Nothing is fetched without an explicit press, and everything applied is downloaded and
 stored next to the game, so a card keeps working offline.
 
-- Titles, covers, backgrounds and descriptions: the [Steam](https://store.steampowered.com/) store.
+- Titles, descriptions, covers and backgrounds: the [Steam](https://store.steampowered.com/) store.
+- Wallpapers, offered first among the backgrounds: [Wallhaven](https://wallhaven.cc/) — no key needed,
+  SFW only.
 - Alternative covers: [SteamGridDB](https://www.steamgriddb.com/) — optional, needs your own API key.
 - Backgrounds for games sold there: [GOG](https://www.gog.com/).
-- Backgrounds for everything else: game data and images provided by [RAWG](https://rawg.io/) — optional,
-  needs your own API key ([get one](https://rawg.io/apidocs)).
 - Soundtracks: [Khinsider](https://downloads.khinsider.com/).
 
 ## License

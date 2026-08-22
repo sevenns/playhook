@@ -241,11 +241,6 @@ export class UpdaterService {
         .patch({ steamGridDbApiKey: key })
         .catch((cause: unknown) => log.error('[updater] failed to persist the SteamGridDB key:', cause));
     });
-    ipcMain.on(IPC.settingsSetRawgKey, (_event, key: string) => {
-      void this.deps.settings
-        .patch({ rawgApiKey: key })
-        .catch((cause: unknown) => log.error('[updater] failed to persist the RAWG key:', cause));
-    });
     // Language mirrors the summon-hotkey path: persist, then hand the mode to the deps callback (main
     // re-resolves the locale, rebuilds tray/titles and pushes the effective locale to every live window).
     ipcMain.on(IPC.settingsSetLanguage, (_event, mode: LanguageMode) => {

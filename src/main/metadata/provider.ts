@@ -28,7 +28,6 @@ export interface GameCandidateRef {
   readonly key: string;
   readonly title: string;
   readonly steamAppId?: number;
-  readonly rawgId?: number;
   readonly gogId?: string;
 }
 
@@ -57,9 +56,8 @@ export interface MusicTrackOffer {
 export interface MetadataProvider {
   readonly id: MetadataProviderId;
   /**
-   * Whether this source can be used at all right now. Only the keyed ones implement it (SteamGridDB,
-   * RAWG): a missing key is not a failure to report, it is a source that quietly does not take part —
-   * but the gallery does want to know, so that "nothing found" can say what would change that.
+   * Whether this source can be used at all right now. Only SteamGridDB implements it: a missing key is
+   * not a failure to report, it is a source that quietly does not take part.
    */
   available?(): boolean;
   search?(query: string, signal?: AbortSignal): Promise<MetadataResult<readonly GameCandidate[]>>;

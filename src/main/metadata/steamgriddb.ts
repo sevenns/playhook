@@ -4,8 +4,8 @@
 // Covers only, deliberately. This database's "heroes" are 1920x620 / 3840x1240 banners built for the
 // strip above a Steam library page (~2.5:1 to 3:1); Playhook paints a full-screen background on a ~16:10
 // display, where such a banner loses half its width to the crop and its centred composition falls apart.
-// Backgrounds come from sources whose pictures are made to be looked at whole — see steam.ts, gog.ts and
-// rawg.ts.
+// Backgrounds come from sources whose pictures are made to be looked at whole — see wallhaven.ts,
+// steam.ts and gog.ts.
 //
 // Unlike the Steam endpoints this one has a documented API v2 and REQUIRES a key. Playhook ships none:
 // an open-source repository cannot carry a secret, so the key is the user's own, typed into Settings.

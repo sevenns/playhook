@@ -155,10 +155,6 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'settings.steamGridDbKeyEmpty': 'Не задан',
   'settings.steamGridDbKeyHint':
     'Необязательно. С ключом «Найти в интернете» дополнительно предлагает обложки и фоны из SteamGridDB. Свой ключ можно получить на steamgriddb.com, в разделе Preferences → API.',
-  'settings.rawgKey': 'API-ключ RAWG.io',
-  'settings.rawgKeyEmpty': 'Не задан',
-  'settings.rawgKeyHint':
-    'Необязательно. С ключом «Найти в интернете» дополнительно предлагает фоны для игр не из Steam. Свой ключ можно получить на rawg.io/apidocs. Данные об играх и изображения предоставлены RAWG (rawg.io).',
   'settings.sectionAudio': 'Звук',
   'settings.soundSet': 'Звуки навигации',
   'settings.soundSetVolume': 'Громкость звуков навигации',
@@ -384,7 +380,6 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'metadata.backgrounds': 'Фоны',
   'metadata.music': 'Музыка',
   'metadata.noArtwork': 'Для этой игры не нашлось изображений.',
-  'metadata.noArtworkNeedsRawgKey': 'Фоны не найдены. Ключ RAWG.io в настройках добавит источники для этой игры.',
   'metadata.pickerLegend': 'A - выбрать, Y - открыть целиком, B - назад',
   'metadata.pickerLegendMulti': 'X - отметить, A - выбрать, Y - открыть целиком, B - назад',
   'metadata.needsId': 'Сначала задайте id игры - скачанные файлы называются по нему.',
