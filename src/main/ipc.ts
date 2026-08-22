@@ -839,7 +839,7 @@ export class GameController {
     const selected = manifests.find((manifest) => manifest.raw.id === this.selectedId) ?? manifests[0];
     if (selected !== undefined) {
       const stats = this.statsById.get(selected.raw.id) ?? (await this.deps.stats.read(selected.raw.id));
-      this.setCardMusic(await this.assets.readMusicDataUrl(selected));
+      this.setCardMusic(await this.cardMusicFor(selected));
       this.setHero(await this.assets.readHeroAssets(selected));
       this.enterReady(await this.buildGameInfo(selected, stats));
       // The card's own game is what you look at on insert (the single-game case is then exactly today's
@@ -889,7 +889,7 @@ export class GameController {
       if (selected !== null) {
         this.selectedId = selected.raw.id;
         this.setHero(await this.assets.readHeroAssets(selected));
-        this.setCardMusic(await this.assets.readMusicDataUrl(selected));
+        this.setCardMusic(await this.cardMusicFor(selected));
         this.enterReady(await this.buildGameInfo(selected, this.statsById.get(selected.raw.id) ?? (await this.deps.stats.read(selected.raw.id))));
         await this.browseToUnlessPinned(selected.raw.id);
       }
@@ -985,7 +985,7 @@ export class GameController {
     this.selectedId = manifest.raw.id;
     const stats = this.statsById.get(manifest.raw.id) ?? (await this.deps.stats.read(manifest.raw.id));
     this.setHero(await this.assets.readHeroAssets(manifest));
-    this.setCardMusic(await this.assets.readMusicDataUrl(manifest));
+    this.setCardMusic(await this.cardMusicFor(manifest));
     this.enterReady(await this.buildGameInfo(manifest, stats));
     await this.browseToUnlessPinned(manifest.raw.id);
   }
@@ -1271,7 +1271,7 @@ export class GameController {
     // (buildGameInfo still re-reads a steam game's .acf); fall back to a fresh read if somehow absent.
     const stats = this.statsById.get(manifest.raw.id) ?? (await this.deps.stats.read(manifest.raw.id));
     this.setHero(await this.assets.readHeroAssets(manifest));
-    this.setCardMusic(await this.assets.readMusicDataUrl(manifest));
+    this.setCardMusic(await this.cardMusicFor(manifest));
     this.enterReady(await this.buildGameInfo(manifest, stats));
     // Keep what's on screen in step with the selection (the renderer reads the title/stats from here).
     await this.browseToUnlessPinned(manifest.raw.id);
@@ -2229,6 +2229,22 @@ export class GameController {
 
   // ── Audio (the card's music + the bundled UI sound set) ──────────────────
 
+  /**
+   * The music that belongs to the CARD channel — the one a game with no music of its own falls back to
+   * (see the fallback chain in audio.ts: browsed game → card → ambience).
+   *
+   * A LOCAL game never fills it, and that is the whole point of this helper. The fallback says "you are
+   * looking at a game with no theme, so keep playing the card's" — which is right for a card, whose
+   * games travel together, and wrong for the PC library, where the selected game is just whichever one
+   * happens to be highlighted: its theme would then play under every other local game, drowning out the
+   * ambience the user chose in Settings. A local game's own music still reaches the ear through the
+   * browse channel, which is what plays the game you are actually looking at.
+   */
+  private async cardMusicFor(manifest: ResolvedManifest | null): Promise<string | null> {
+    if (manifest === null || manifest.source !== 'card') return null;
+    return this.assets.readMusicDataUrl(manifest);
+  }
+
   /** Stores the current card's music and pushes it to the window (null when no card / on error). */
   private setCardMusic(url: string | null): void {
     this.currentCardMusic = url;
@@ -2250,7 +2266,7 @@ export class GameController {
   async refreshAudio(): Promise<void> {
     this.sfxSet = await this.assets.readSfxSet();
     const manifest = this.current();
-    this.setCardMusic(manifest === null ? null : await this.assets.readMusicDataUrl(manifest));
+    this.setCardMusic(await this.cardMusicFor(manifest));
     // The carousel plays the BUNDLED set, and what you hear on screen comes from the browse channel —
     // both have to follow the setting too, or a change only lands after you flip to another card (the
     // browse music outranks the card's own, so a stale value would keep playing over it).
