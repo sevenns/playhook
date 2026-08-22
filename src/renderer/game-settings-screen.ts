@@ -2293,10 +2293,13 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
         title: album.title,
         entries: tracks.map((track) => ({
           label: track.title,
-          run: () => void applyTrack(track),
+          sound: 'none', // the sub-menu it opens plays for itself
+          run: () => openTrackMenu(track),
         })),
-        // X auditions the focused track instead of taking it — the one gesture the picture gallery has
-        // no equivalent of, and the only way to tell two similarly named tracks apart.
+        // X auditions the focused track without opening its menu — a shortcut for the gamepad, where
+        // running down a track list one press at a time is the common case. It is a SHORTCUT, though,
+        // and never the only way in: a menu keyed to a button no label mentions is a menu nobody finds,
+        // which is exactly what this was before the sub-menu below existed.
         secondary: (index) => {
           const track = tracks[index];
           if (track === undefined) {
@@ -2305,6 +2308,29 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
           }
           void previewTrack(track);
         },
+      }),
+    );
+  }
+
+  /**
+   * One track's own little menu — the same shape a path row's Browse/Clear uses. Listening and taking are
+   * two different intentions, and a list where pressing a name commits to it offers no way to hear the
+   * thing first; a mouse had no way at all, since the audition lived on a gamepad button.
+   */
+  function openTrackMenu(track: MusicTrack): void {
+    pushMenu(
+      asMenu({
+        title: track.title,
+        entries: [
+          { label: t()('metadata.listen'), sound: 'none', run: () => void previewTrack(track) },
+          {
+            label: t()('metadata.useTrack'),
+            run: () => {
+              popMenu({ keepWork: true }); // the track is chosen; its menu has nothing left to say
+              void applyTrack(track);
+            },
+          },
+        ],
       }),
     );
   }
