@@ -188,6 +188,11 @@ const onlinePicker = createOnlinePicker({
   applyTitle: (title) => gameSettingsScreen.applyOnlineTitle(title),
   onCandidate: (candidate) => gameSettingsScreen.onOnlineCandidate(candidate),
   heroCount: () => gameSettingsScreen.heroCount(),
+  // The launcher's own two channels, both declared further down and both read lazily for the same reason
+  // the screen is: no message can arrive before the user has opened this surface. A confirmation is a
+  // plate that goes by itself; a failure is the error popup, which the user closes when they have read it.
+  notify: (text) => toast.show(text),
+  showError: (text) => controls.showError(text),
 });
 
 const gameSettingsScreen = createGameSettingsScreen({

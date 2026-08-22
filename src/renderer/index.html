@@ -312,10 +312,21 @@
           <div class="picker-veil"></div>
           <div class="picker-panel">
             <div class="picker-title" id="online-picker-title"></div>
-            <div class="picker-path" id="online-picker-status"></div>
             <div class="picker-body">
               <div class="metadata-side" id="online-picker-side"></div>
               <div class="picker-entries online-content" id="online-picker-content"></div>
+            </div>
+            <!-- Everything the surface has to SAY — a download running, a file written, a source that
+                 refused — is a popup with a button, not a line of text that appears and goes. As a row
+                 it moved the columns underneath it; as a plate on a timer it could be missed entirely,
+                 and "the picture did not arrive" is exactly the message a user must not miss. While
+                 work is running the button reads "Stop", which is also how this screen is left. -->
+            <div class="online-note" id="online-picker-note" aria-hidden="true">
+              <div class="online-note-veil"></div>
+              <div class="online-note-panel">
+                <div class="online-note-text" id="online-picker-note-text"></div>
+                <button type="button" class="picker-item is-action" id="online-picker-note-button"></button>
+              </div>
             </div>
           </div>
         </div>

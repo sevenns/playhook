@@ -90,6 +90,17 @@ export interface OnlinePickerDeps {
   onCandidate(candidate: GameCandidate): void;
   /** How many backgrounds the form already holds, which is what makes "add or replace" a question. */
   heroCount(): number;
+  /**
+   * A confirmation, through the launcher's own notification plate (top-right). Nothing to answer, so it
+   * takes itself away — the channel the rest of the app already speaks through.
+   */
+  notify(text: string): void;
+  /**
+   * A FAILURE, through the launcher's error popup — the column on the right with a Close button. It
+   * waits for the user instead of racing them, which is the difference between "applied" and "the
+   * source refused": one is news, the other is something they have to decide what to do about.
+   */
+  showError(text: string): void;
 }
 
 export interface OnlinePickerSurface extends NavSurface {
@@ -124,7 +135,9 @@ type SideAction =
 export function createOnlinePicker(deps: OnlinePickerDeps): OnlinePickerSurface {
   const root = req('online-picker');
   const titleEl = req('online-picker-title');
-  const statusEl = req('online-picker-status');
+  const noteEl = req('online-picker-note');
+  const noteTextEl = req('online-picker-note-text');
+  const noteButtonEl = req<HTMLButtonElement>('online-picker-note-button');
   const sideEl = req('online-picker-side');
   const contentEl = req('online-picker-content');
 
@@ -167,9 +180,75 @@ export function createOnlinePicker(deps: OnlinePickerDeps): OnlinePickerSurface 
   let actions: SideAction[] = [];
   let sideButtons: HTMLButtonElement[] = [];
   let loading = false;
+  /**
+   * What the popup is saying, if anything. `busy` marks work the user can only wait for or stop — the
+   * download that becomes a file beside the game — and `done` a message they close when they have read
+   * it. Nothing behind the popup takes input while it is up.
+   */
+  let note: { readonly text: string; readonly busy: boolean } | null = null;
+
+  /**
+   * Says something the user has to answer. This is for WORK, not for news: a download that is about to
+   * become a file beside the game, with a Stop that both cancels it and — since the work is what kept
+   * the user here — is how the screen is left mid-apply. Everything that is merely news (applied,
+   * failed, nothing found) goes through `deps.notify` instead, where it does not block anything.
+   */
+  function showNote(text: string, busy = true): void {
+    if (text === '') {
+      closeNote();
+      return;
+    }
+    note = { text, busy };
+    noteTextEl.replaceChildren();
+    // Work in progress spins beside its own words: a popup that only says "Applying" cannot be told
+    // apart from one that has stopped saying anything.
+    if (busy) {
+      const spin = document.createElement('span');
+      spin.className = 'metadata-tile-spinner';
+      noteTextEl.append(spin);
+    }
+    const line = document.createElement('span');
+    line.textContent = text;
+    noteTextEl.append(line);
+    noteButtonEl.textContent = t()(busy ? 'metadata.noteStop' : 'metadata.noteOk');
+    noteEl.classList.add('is-open');
+    noteEl.setAttribute('aria-hidden', 'false');
+  }
+
+  function closeNote(): void {
+    note = null;
+    noteEl.classList.remove('is-open');
+    noteEl.setAttribute('aria-hidden', 'true');
+  }
+
+  /** The popup's only press: it acknowledges a message, or stops the work one is describing. */
+  function dismissNote(): void {
+    const busy = note?.busy === true;
+    deps.audio.play(busy ? 'back' : 'button');
+    closeNote();
+    if (!busy) return;
+    // Stopping means the answer that is still coming has nobody to arrive for.
+    attempt += 1;
+    listenAttempt += 1;
+    loading = false;
+    deps.api.cancel();
+    paintContent();
+    applyFocus(true);
+  }
 
   function maxPicks(): number {
-    return section === 'hero' ? MAX_HERO_IMAGES : 1;
+    if (section !== 'hero') return 1;
+    return heroModeAllowed() === 'append'
+      ? Math.max(0, MAX_HERO_IMAGES - deps.heroCount())
+      : MAX_HERO_IMAGES;
+  }
+
+  /**
+   * The apply mode the game's current backgrounds allow. A full set has nothing to add to, so the choice
+   * disappears and replacing is the only thing left to mean.
+   */
+  function heroModeAllowed(): HeroApplyMode {
+    return deps.heroCount() >= MAX_HERO_IMAGES ? 'replace' : heroMode;
   }
 
   function artworkKind(): ArtworkKind | null {
@@ -234,9 +313,18 @@ export function createOnlinePicker(deps: OnlinePickerDeps): OnlinePickerSurface 
         }
         // Only when the game HAS backgrounds: with none, "add" and "replace" mean the same thing, and a
         // choice between two identical outcomes is a question nobody should be asked.
-        if (deps.heroCount() > 0) {
+        const held = deps.heroCount();
+        if (held > 0) {
           nodes.push(heading(t()('metadata.applyMode')));
-          nodes.push(sideButton({ kind: 'mode', mode: 'append' }, t()('metadata.heroAppend')));
+          // A full set has nothing to add to — the row would name an outcome the game cannot have.
+          if (held < MAX_HERO_IMAGES) {
+            nodes.push(
+              sideButton(
+                { kind: 'mode', mode: 'append' },
+                t()('metadata.heroAppend', { count: String(held) }),
+              ),
+            );
+          }
           nodes.push(sideButton({ kind: 'mode', mode: 'replace' }, t()('metadata.heroReplace')));
         }
       }
@@ -247,7 +335,7 @@ export function createOnlinePicker(deps: OnlinePickerDeps): OnlinePickerSurface 
     for (const album of albums) {
       nodes.push(sideButton({ kind: 'album', album }, albumLabel(album)));
     }
-    if (albums.length === 0 && !loading) nodes.push(note(t()('metadata.noAlbums')));
+    if (albums.length === 0 && !loading) nodes.push(hint(t()('metadata.noAlbums')));
     return nodes;
   }
 
@@ -271,7 +359,7 @@ export function createOnlinePicker(deps: OnlinePickerDeps): OnlinePickerSurface 
     return node;
   }
 
-  function note(text: string): HTMLElement {
+  function hint(text: string): HTMLElement {
     const node = document.createElement('div');
     node.className = 'picker-empty';
     node.textContent = text;
@@ -306,7 +394,7 @@ export function createOnlinePicker(deps: OnlinePickerDeps): OnlinePickerSurface 
         (action.kind === 'section' && action.section === section) ||
         (action.kind === 'source' && action.group.key === sourceKey) ||
         (action.kind === 'quality' && action.quality === quality) ||
-        (action.kind === 'mode' && action.mode === heroMode) ||
+        (action.kind === 'mode' && action.mode === heroModeAllowed()) ||
         (action.kind === 'album' && action.album.key === albumKey) ||
         (action.kind === 'game' && section === 'candidates');
       button.classList.toggle('is-picked', on);
@@ -344,7 +432,7 @@ export function createOnlinePicker(deps: OnlinePickerDeps): OnlinePickerSurface 
     if (section === 'candidates') {
       cells = candidates.map((entry, position) => candidateRow(entry, position));
       contentEl.replaceChildren(
-        ...(cells.length > 0 ? cells : [note(t()('metadata.nothingFound'))]),
+        ...(cells.length > 0 ? cells : [hint(t()('metadata.nothingFound'))]),
       );
       applyFocus(true);
       return;
@@ -354,7 +442,7 @@ export function createOnlinePicker(deps: OnlinePickerDeps): OnlinePickerSurface 
       contentEl.replaceChildren(
         ...(cells.length > 0
           ? cells
-          : [note(t()(albumKey === null ? 'metadata.pickAlbum' : 'metadata.noTracks'))]),
+          : [hint(t()(albumKey === null ? 'metadata.pickAlbum' : 'metadata.noTracks'))]),
       );
       applyPicked();
       applyFocus(true);
@@ -362,7 +450,7 @@ export function createOnlinePicker(deps: OnlinePickerDeps): OnlinePickerSurface 
     }
     cells = variants.map((variant, position) => tile(variant, position));
     if (needsTail()) cells.push(tailTile());
-    contentEl.replaceChildren(...(cells.length > 0 ? cells : [note(t()('metadata.noArtwork'))]));
+    contentEl.replaceChildren(...(cells.length > 0 ? cells : [hint(t()('metadata.noArtwork'))]));
     applyPicked();
     applyFocus(true);
   }
@@ -573,6 +661,10 @@ export function createOnlinePicker(deps: OnlinePickerDeps): OnlinePickerSurface 
   // ── Choosing ──────────────────────────────────────────────────────────────
 
   function togglePick(variant: ArtworkVariant): void {
+    if (maxPicks() === 0) {
+      deps.audio.playLimit();
+      return;
+    }
     if (picked.includes(variant.key)) {
       picked = picked.filter((key) => key !== variant.key);
       deps.audio.play('navigate');
@@ -611,13 +703,16 @@ export function createOnlinePicker(deps: OnlinePickerDeps): OnlinePickerSurface 
   async function showSection(next: OnlineSection): Promise<void> {
     section = next;
     index = 0;
-    statusEl.textContent = '';
+    closeNote();
     if (next === 'candidates') {
       paintSide();
       paintContent();
       return;
     }
     if (next === 'music') {
+      // The right column's "choose an album" only makes sense once there ARE albums on the left, so a
+      // section opened before they arrive shows the wait instead.
+      if (albums.length === 0) loading = true;
       paintSide();
       paintContent();
       if (albums.length === 0) await loadAlbums();
@@ -627,6 +722,9 @@ export function createOnlinePicker(deps: OnlinePickerDeps): OnlinePickerSurface 
     page = 0;
     hasMore = false;
     variants = [];
+    // A game whose backgrounds are already full has nothing to add to, so the remembered mode is not a
+    // choice any more — the sidebar shows only "replace", and this keeps the state saying the same.
+    if (next === 'hero' && deps.heroCount() >= MAX_HERO_IMAGES) heroMode = 'replace';
     paintSide();
     await loadArtwork(0);
   }
@@ -655,7 +753,7 @@ export function createOnlinePicker(deps: OnlinePickerDeps): OnlinePickerSurface 
       }
       deps.audio.play('button');
       deps.applyTitle(named.title);
-      statusEl.textContent = t()('metadata.applied');
+      deps.notify(t()('metadata.applied'));
       return;
     }
     if (action.kind === 'section') {
@@ -685,8 +783,20 @@ export function createOnlinePicker(deps: OnlinePickerDeps): OnlinePickerSurface 
       return;
     }
     if (action.kind === 'mode') {
+      if (action.mode === heroMode) {
+        deps.audio.playLimit();
+        return;
+      }
       heroMode = action.mode;
       deps.audio.play('navigate');
+      // Switching to "add" narrows the room: whatever no longer fits is unticked here rather than
+      // dropped at apply time, and the plate says so — a tick that vanishes without a word reads as a bug.
+      const room = maxPicks();
+      if (picked.length > room) {
+        picked = picked.slice(0, room);
+        deps.notify(t()('metadata.heroRoom', { count: String(room) }));
+      }
+      applyPicked();
       paintSideState();
       return;
     }
@@ -746,18 +856,22 @@ export function createOnlinePicker(deps: OnlinePickerDeps): OnlinePickerSurface 
     deps.audio.play('button');
     const token = ++attempt;
     const visited = visit;
-    statusEl.textContent = t()('metadata.applying');
+    showNote(t()('metadata.applying'), true);
     const kind = artworkKind();
     const outcome =
       kind === null
         ? await deps.applyTrack(pickedTrack ?? '')
-        : await deps.applyArtwork(kind, picked, kind === 'hero' ? heroMode : 'replace');
+        : await deps.applyArtwork(kind, picked, kind === 'hero' ? heroModeAllowed() : 'replace');
     if (visited !== visit || token !== attempt) return;
-    statusEl.textContent = outcome.message;
+    closeNote();
+    if (outcome.ok) deps.notify(outcome.message);
+    else deps.showError(outcome.message);
     if (!outcome.ok) return;
     // The picks are spent. Backgrounds that were APPENDED keep their meaning ("these are on the game
     // now"), so the mode goes back to appending: a second set adds to the first rather than wiping it.
-    if (kind === 'hero') heroMode = 'append';
+    // Backgrounds that were APPENDED keep their meaning ("these are on the game now"), so the mode goes
+    // back to adding — unless the game is now full, where adding is no longer a thing that can happen.
+    if (kind === 'hero') heroMode = deps.heroCount() >= MAX_HERO_IMAGES ? 'replace' : 'append';
     picked = [];
     pickedTrack = null;
     applyPicked();
@@ -772,7 +886,7 @@ export function createOnlinePicker(deps: OnlinePickerDeps): OnlinePickerSurface 
     const token = ++attempt;
     const visited = visit;
     section = 'candidates';
-    statusEl.textContent = '';
+    closeNote();
     titleEl.textContent = term;
     paintSide();
     paintContent();
@@ -781,7 +895,7 @@ export function createOnlinePicker(deps: OnlinePickerDeps): OnlinePickerSurface 
     loading = false;
     if (!result.ok) {
       candidates = [];
-      statusEl.textContent = result.message;
+      deps.showError(result.message);
       paintContent();
       return;
     }
@@ -800,7 +914,7 @@ export function createOnlinePicker(deps: OnlinePickerDeps): OnlinePickerSurface 
     if (visited !== visit || token !== attempt) return;
     loading = false;
     if (!result.ok) {
-      statusEl.textContent = result.message;
+      deps.showError(result.message);
       paintContent();
       return;
     }
@@ -817,14 +931,14 @@ export function createOnlinePicker(deps: OnlinePickerDeps): OnlinePickerSurface 
     const token = ++attempt;
     const visited = visit;
     const shownBefore = variants.length;
-    statusEl.textContent = '';
+    closeNote();
     if (nextPage === 0) paintContent();
     else syncTail();
     const result = await deps.api.artwork(named.key, kind, nextPage, filter());
     if (visited !== visit || token !== attempt) return;
     loading = false;
     if (!result.ok) {
-      statusEl.textContent = result.message;
+      deps.showError(result.message);
       if (nextPage > 0) {
         syncTail();
         return;
@@ -890,7 +1004,7 @@ export function createOnlinePicker(deps: OnlinePickerDeps): OnlinePickerSurface 
     loading = false;
     if (!result.ok) {
       albums = [];
-      statusEl.textContent = result.message;
+      deps.showError(result.message);
       paintSide();
       paintContent();
       return;
@@ -921,7 +1035,7 @@ export function createOnlinePicker(deps: OnlinePickerDeps): OnlinePickerSurface 
     if (visited !== visit || token !== attempt) return;
     loading = false;
     if (!result.ok) {
-      statusEl.textContent = result.message;
+      deps.showError(result.message);
       paintContent();
       return;
     }
@@ -938,14 +1052,14 @@ export function createOnlinePicker(deps: OnlinePickerDeps): OnlinePickerSurface 
   async function listen(track: MusicTrack): Promise<void> {
     const token = ++listenAttempt;
     const visited = visit;
-    statusEl.textContent = t()('metadata.downloading');
+    showNote(t()('metadata.downloading'), true);
     const result = await deps.api.preview(track.key);
     if (visited !== visit || token !== listenAttempt) return;
     if (!result.ok) {
-      statusEl.textContent = result.message;
+      deps.showError(result.message);
       return;
     }
-    statusEl.textContent = '';
+    closeNote();
     listening = true;
     deps.audio.setBrowseMusic(result.value, false);
     paintSideState();
@@ -964,6 +1078,7 @@ export function createOnlinePicker(deps: OnlinePickerDeps): OnlinePickerSurface 
     open = false;
     visit += 1;
     stopListening();
+    closeNote();
     candidates = [];
     candidate = null;
     variants = [];
@@ -1024,8 +1139,17 @@ export function createOnlinePicker(deps: OnlinePickerDeps): OnlinePickerSurface 
   );
 
   root.querySelector<HTMLElement>('.picker-veil')?.addEventListener('click', () => {
+    if (note !== null) return; // the popup is what is being answered, not the surface behind it
     deps.audio.play('popup-close');
     hide();
+  });
+
+  noteEl.querySelector<HTMLElement>('.online-note-veil')?.addEventListener('click', () => {
+    dismissNote();
+  });
+
+  noteButtonEl.addEventListener('click', () => {
+    dismissNote();
   });
 
   window.addEventListener('mousemove', (event) => hover.track(event.clientX, event.clientY), {
@@ -1060,7 +1184,7 @@ export function createOnlinePicker(deps: OnlinePickerDeps): OnlinePickerSurface 
       loading = false;
       deps.audio.play('popup-open');
       titleEl.textContent = request.query;
-      statusEl.textContent = '';
+      closeNote();
       paintSide();
       paintContent();
       root.classList.add('is-open');
@@ -1083,11 +1207,17 @@ export function createOnlinePicker(deps: OnlinePickerDeps): OnlinePickerSurface 
       }
       void search(request.query);
     },
-    navUp: () => move(column === 'side' ? -1 : -columns()),
-    navDown: () => move(column === 'side' ? 1 : columns()),
+    navUp: () =>
+      note === null ? move(column === 'side' ? -1 : -columns()) : deps.audio.playLimit(),
+    navDown: () =>
+      note === null ? move(column === 'side' ? 1 : columns()) : deps.audio.playLimit(),
     /** Left walks the row and then steps into the sidebar — a HELD left stops at that wall. */
     navLeft: (repeat) => {
       hover.arm();
+      if (note !== null) {
+        deps.audio.playLimit();
+        return;
+      }
       if (column === 'side') {
         deps.audio.playLimit();
         return;
@@ -1103,6 +1233,10 @@ export function createOnlinePicker(deps: OnlinePickerDeps): OnlinePickerSurface 
     },
     navRight: () => {
       hover.arm();
+      if (note !== null) {
+        deps.audio.playLimit();
+        return;
+      }
       if (column !== 'side') {
         move(1);
         return;
@@ -1117,6 +1251,10 @@ export function createOnlinePicker(deps: OnlinePickerDeps): OnlinePickerSurface 
     },
     navActivate: () => {
       hover.arm();
+      if (note !== null) {
+        dismissNote();
+        return;
+      }
       if (column === 'side') {
         const action = actions[sideIndex];
         if (action === undefined) {
@@ -1156,11 +1294,19 @@ export function createOnlinePicker(deps: OnlinePickerDeps): OnlinePickerSurface 
       togglePick(variant);
     },
     navBack: () => {
+      if (note !== null) {
+        dismissNote();
+        return;
+      }
       deps.audio.play('popup-close');
       hide();
     },
     /** X ticks a picture, or auditions a track — the shortcut each list had before. */
     navSecondary: () => {
+      if (note !== null) {
+        deps.audio.playLimit();
+        return;
+      }
       if (column !== 'content') {
         deps.audio.playLimit();
         return;
