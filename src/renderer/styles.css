@@ -1070,19 +1070,17 @@ html:not(.mouse-asleep) .rect-button:hover,
 
 .popup-veil {
   position: absolute;
-  /* The same narrowing as .popup-blur, and for the same reason: the mask hid the left third anyway, so a
-     full-width sheet was rastering pixels it never showed. The gradient and the mask keep their SCREEN
-     geometry by starting off-box (screen 0% sits at -54% of a box that begins at 35%, screen 58% at
-     35.4% of it) — the same picture, drawn over two thirds of the tiles. */
-  left: 35%;
-  right: 0;
-  top: 0;
-  bottom: 0;
+  /* NOT narrowed like .popup-blur: that layer's mask reaches full opacity at screen 36%, a hair past
+     its own 35% box edge, so cutting the box there loses nothing visible. This one's mask does not
+     reach full opacity until 58%, and the background tint keeps climbing all the way to 100% — cutting
+     the box at 35% chopped off a third of that still-rising curve, which showed up as a hard seam right
+     through a focused row's highlight instead of the intended smooth fade. Full-width it stays. */
+  inset: 0;
   /* Horizontal gradient: transparent on the left (hero visible) → solid d1 on the right. */
-  background: linear-gradient(to right, transparent -54%, var(--d1) 100%);
+  background: linear-gradient(to right, transparent 0%, var(--d1) 100%);
   /* Mask so the tint only builds up on the right, fading in from the center. */
-  -webkit-mask-image: linear-gradient(to right, transparent -54%, #000 35.4%);
-  mask-image: linear-gradient(to right, transparent -54%, #000 35.4%);
+  -webkit-mask-image: linear-gradient(to right, transparent 0%, #000 58%);
+  mask-image: linear-gradient(to right, transparent 0%, #000 58%);
   opacity: 0;
   transition: opacity 0.35s ease;
   /* Keep this on its own composited layer: promoting it mid-animation is a frame the launcher can't
@@ -2312,14 +2310,12 @@ html:not(.mouse-asleep) .setting-row[data-kind='update-status']:hover {
 
 .settings-options-veil {
   position: absolute;
-  /* Narrowed exactly like .popup-veil — same off-box gradient stops, same picture, fewer tiles. */
-  left: 35%;
-  right: 0;
-  top: 0;
-  bottom: 0;
-  background: linear-gradient(to right, transparent -54%, var(--d1) 100%);
-  -webkit-mask-image: linear-gradient(to right, transparent -54%, #000 35.4%);
-  mask-image: linear-gradient(to right, transparent -54%, #000 35.4%);
+  /* Same as .popup-veil: NOT narrowed. See that rule for why cutting this box at 35% (rather than the
+     ~58% where its own gradient actually saturates) put a visible seam through a focused row. */
+  inset: 0;
+  background: linear-gradient(to right, transparent 0%, var(--d1) 100%);
+  -webkit-mask-image: linear-gradient(to right, transparent 0%, #000 58%);
+  mask-image: linear-gradient(to right, transparent 0%, #000 58%);
   will-change: opacity;
 }
 
