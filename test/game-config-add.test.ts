@@ -4,7 +4,7 @@
 import { describe, expect, it } from 'vitest';
 import { addedGamesOf, rootReadResult } from '../src/main/game-config-add';
 
-const base = { root: 'E:\\', source: 'card', signature: 'a|b', windows: true } as const;
+const base = { root: 'E:\\', source: 'card', signature: 'a|b', platform: 'windows' } as const;
 
 const game = (id: string, title?: string): string =>
   JSON.stringify({ schemaVersion: 1, id, title: title ?? id, executable: 'g.exe' });
@@ -17,7 +17,7 @@ describe('rootReadResult', () => {
     expect(result.hasManifest).toBe(false);
     expect(result.text).toBe('');
     expect(result.root).toBe('E:\\');
-    expect(result.windows).toBe(true);
+    expect(result.platform).toBe('windows');
   });
 
   it('hands the manifest text over as it was read', () => {

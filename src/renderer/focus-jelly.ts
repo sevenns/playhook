@@ -114,7 +114,7 @@ export function outlinePoint(box: JellyBox, t: number): readonly [number, number
  * half-way point. A bell rather than a shrink-then-grow pair of ramps — split into phases the movement
  * reads as three glued steps instead of one gesture.
  */
-export function pinchScale(progress: number, floor = JELLY.pinch): number {
+export function pinchScale(progress: number, floor: number = JELLY.pinch): number {
   const p = Math.min(1, Math.max(0, progress));
   return 1 - (1 - floor) * Math.sin(Math.PI * p);
 }

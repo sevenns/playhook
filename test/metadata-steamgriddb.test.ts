@@ -1,5 +1,5 @@
 // SteamGridDB provider: url building, answer parsing, and the "no key → no source" rule.
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi, type Mock } from 'vitest';
 import { HttpClient, type FetchInit, type FetchResponse } from '../src/main/metadata/http';
 import {
   SteamGridDbProvider,
@@ -67,7 +67,10 @@ function textResponse(text: string, status = 200): FetchResponse {
 function providerOf(
   key: string,
   routes: (url: string, init?: FetchInit) => FetchResponse = () => textResponse('{}'),
-): { provider: SteamGridDbProvider; fetch: ReturnType<typeof vi.fn> } {
+): {
+  provider: SteamGridDbProvider;
+  fetch: Mock<(url: string, init?: FetchInit) => Promise<FetchResponse>>;
+} {
   const fetch = vi.fn(async (url: string, init?: FetchInit) => routes(url, init));
   const http = new HttpClient({ fetch, userAgent: 'Playhook/test' });
   return { provider: new SteamGridDbProvider({ http, apiKey: () => key }), fetch };
