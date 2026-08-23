@@ -136,6 +136,30 @@ build does not self-update. **All OS-specific behaviour lives behind the `Platfo
   was) and test that.
 - Prefer covering the risky, data-touching functions: manifest validation/anti-traversal, stats merge,
   save-sync retry, argument quoting.
+- **DOM tests of the renderer's screen controllers live in `test/renderer/**`** and run under
+  **happy-dom** instead of plain Node (`environmentMatchGlobs` in `vitest.config.ts` — scoped by glob, so
+  every other suite keeps its Node environment and its POSIX path literals). A controller is testable
+  there because it is a factory taking a narrow `…Deps` seam: the fixture is the REAL
+  `src/renderer/index.html` (loaded by `test/renderer/helpers/fixture.ts`, so every id `req()` asks for
+  has to exist), the deps are faked (`helpers/fakes.ts`: audio, the screen APIs, the keyboard / file
+  picker / online picker surfaces), and the translator is the real `createTranslator('en')`. Input is the
+  `NavSurface` primitives called directly — no gamepad polling; the hover/veil branches are reachable
+  through `hoverOver()` (they all sit behind the `mouse-asleep` class the fixture starts with).
+  Four rules that bite:
+  - **The screens that fetch their own data open ASYNCHRONOUSLY** — `filePicker.open()` awaits `listDir`,
+    `gameSettings.open(id)` awaits the manifest read, so assert after `await flushAsync()`. `SettingsScreen`
+    is the exception: its `open()` is synchronous and the snapshot arrives through `applySettings()`.
+  - **rAF must be the harness in `helpers/raf.ts`, with a frame-BOUNDED `flush(n)`** — the marquees
+    reschedule themselves forever while element widths are zero, which they always are without layout.
+  - **Load the fixture per test** (`beforeEach`), and create the controller after it: no controller removes
+    its listeners, so a fixture shared across a file collects one live instance per test on the same nodes.
+  - **`app.ts` stays out** — it touches `window.api` at module scope.
+  Covered so far: `screen-sidebar`, `osk`, `file-picker`, `settings-screen`, `game-settings-screen`. Still
+  uncovered and next in line for the same base: `controls.ts`, `online-picker.ts`, `library-screen.ts`,
+  `carousel.ts`. Anything needing real layout (`scrollHeight`, canvas) is still a manual check on the Deck.
+  Upgrade note: `environmentMatchGlobs` is deprecated in vitest 3 and GONE in vitest 4 — an upgrade must
+  move `test/renderer/**` to `test.projects` (or a per-file `@vitest-environment` docblock) or the suites
+  will quietly run in Node again and fail on `document is not defined`.
 - **The suite runs on Windows, Linux AND macOS in CI, so a green local run proves nothing about path
   handling.**
   A test that asserts a Linux path against a literal (`expect(...).toBe('/home/deck/...')`) is correct and
@@ -145,9 +169,10 @@ build does not self-update. **All OS-specific behaviour lives behind the `Platfo
 
 ## Tooling (all run in CI before build)
 
-- `npm run typecheck` — strict `tsc`, no `any`, no non-null `!`.
+- `npm run typecheck` — strict `tsc`, no `any`, no non-null `!`. Covers `test/` as well as `src/`.
 - `npm run lint` — ESLint with type-aware rules (`no-floating-promises`, `no-misused-promises`,
-  `strict-boolean-expressions`).
+  `strict-boolean-expressions`), over `src` and `test`. Tests switch off `require-await` and
+  `unbound-method` (both only ever fire on test doubles) and allow a `_`-prefixed unused parameter.
 - `npm test` — vitest.
 - `npm run format` / `format:check` — Prettier (available for new code; the existing hand-aligned
   files are intentionally not mass-reformatted).

@@ -102,12 +102,12 @@ describe('buildSettingsModel — composition', () => {
   it('carries the current update status into the status row', () => {
     const model = buildSettingsModel(
       settings(),
-      env({ updateStatus: { kind: 'downloading', percent: 42 } }),
+      env({ updateStatus: { kind: 'downloading', version: '0.9.0', percent: 42 } }),
     );
     const row = model.sections[0]?.rows[0];
     expect(row?.kind).toBe('update-status');
     if (row?.kind === 'update-status')
-      expect(row.status).toEqual({ kind: 'downloading', percent: 42 });
+      expect(row.status).toEqual({ kind: 'downloading', version: '0.9.0', percent: 42 });
   });
 
   it('omits the Steam auto-launch row where the feature does not exist', () => {

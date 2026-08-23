@@ -119,11 +119,19 @@ describe('createLinuxSavePathResolver — a local game vs a local Steam game', (
     userData: path.join(base, 'userData'),
     steamLocator: {
       locateSteam: async (): Promise<string | null> => steamPath,
-      steamExecutable: async (): Promise<string | null> => null,
     },
   });
 
-  const raw: GameManifest = { schemaVersion: 1, id: 'hades', title: 'Hades' };
+  const raw: GameManifest = {
+    schemaVersion: 1,
+    id: 'hades',
+    title: 'Hades',
+    args: [],
+    runAsAdmin: false,
+    launchTimeoutSec: 60,
+    killTimeoutSec: 10,
+    winetricks: [],
+  };
   const manifest = (over: Partial<ResolvedManifest>): ResolvedManifest => ({
     raw,
     root: path.join(base, 'pc-games'),

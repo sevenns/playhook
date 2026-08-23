@@ -67,7 +67,7 @@ describe('metadata http client', () => {
   });
 
   it('sends the User-Agent and merges per-call headers', async () => {
-    const fetch = vi.fn(async () => respond('{}'));
+    const fetch = vi.fn(async (_url: string, _init?: FetchInit) => respond('{}'));
     await clientOf(fetch).json('https://example.test/x', z.object({}), {
       headers: { Authorization: 'Bearer k' },
     });

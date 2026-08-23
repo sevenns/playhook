@@ -234,7 +234,7 @@ describe('wallhaven offers', () => {
 
   it('drops a wallpaper too heavy to apply, rather than offering a tile that would fail', () => {
     const offers = toArtworkOffers(
-      JSON.parse(RESULTS).data as Parameters<typeof toArtworkOffers>[0],
+      (JSON.parse(RESULTS) as { readonly data: Parameters<typeof toArtworkOffers>[0] }).data,
     );
     expect(offers.map((offer) => offer.key)).toEqual(['wallhaven:abc123']);
   });

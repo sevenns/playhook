@@ -63,6 +63,10 @@ function harness(): Harness {
       onA: noop,
       onB: noop,
       onY: noop,
+      onX: noop,
+      onShoulderLeft: noop,
+      onShoulderRight: noop,
+      onTriggerRight: noop,
       onDirectionsReleased: () => {
         releases += 1;
       },
