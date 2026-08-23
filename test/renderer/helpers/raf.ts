@@ -11,6 +11,22 @@ export interface RafHarness {
   readonly now: () => number;
 }
 
+/**
+ * `performance` with only `now` replaced. A plain `{ now }` would drop mark/measure/timeOrigin, and
+ * copying them off the real object breaks them (their `this` must be the genuine Performance), so the
+ * rest is forwarded to it — a future `performance.mark` behaves instead of throwing out of the harness.
+ */
+function fakeClock(now: () => number): Performance {
+  return new Proxy(performance, {
+    get: (target, property, receiver) => {
+      if (property === 'now') return now;
+      const value: unknown = Reflect.get(target, property, receiver);
+      if (typeof value !== 'function') return value;
+      return (value as (this: Performance, ...args: readonly unknown[]) => unknown).bind(target);
+    },
+  });
+}
+
 /** Deterministic rAF + performance clock, removed by `vi.unstubAllGlobals()` in `afterEach`. */
 export function installRafHarness(): RafHarness {
   let queue = new Map<number, FrameRequestCallback>();
@@ -26,7 +42,10 @@ export function installRafHarness(): RafHarness {
   vi.stubGlobal('cancelAnimationFrame', (handle: number) => {
     queue.delete(handle);
   });
-  vi.stubGlobal('performance', { now: () => now });
+  vi.stubGlobal(
+    'performance',
+    fakeClock(() => now),
+  );
 
   return {
     flush: (frames = 1) => {

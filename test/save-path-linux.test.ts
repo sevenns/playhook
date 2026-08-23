@@ -40,12 +40,8 @@ describe('resolveInsideWinePrefix — %PREFIX% → Wine prefix mapping (Р5)', (
   });
 
   it('accepts both separators in the tail (a Windows manifest may use / or \\)', () => {
-    expect(resolveInsideWinePrefix(PFX, '%APPDATA%/Foo/Bar')).toBe(
-      `${HOME}/AppData/Roaming/Foo/Bar`,
-    );
-    expect(resolveInsideWinePrefix(PFX, '%APPDATA%\\Foo\\Bar')).toBe(
-      `${HOME}/AppData/Roaming/Foo/Bar`,
-    );
+    expect(resolveInsideWinePrefix(PFX, '%APPDATA%/Foo/Bar')).toBe(`${HOME}/AppData/Roaming/Foo/Bar`);
+    expect(resolveInsideWinePrefix(PFX, '%APPDATA%\\Foo\\Bar')).toBe(`${HOME}/AppData/Roaming/Foo/Bar`);
   });
 
   it('works with a Steam compatdata prefix root (same steamuser layout)', () => {
@@ -70,9 +66,7 @@ describe('resolveInsideWinePrefix — %PREFIX% → Wine prefix mapping (Р5)', (
 
 describe('winePrefixToManifestPcSavePath — Configure Browse reverse mapping (Р5)', () => {
   it('maps a picked folder inside the prefix back to its %PREFIX% token', () => {
-    expect(winePrefixToManifestPcSavePath(`${HOME}/AppData/Local/Saves`)).toBe(
-      '%LOCALAPPDATA%/Saves',
-    );
+    expect(winePrefixToManifestPcSavePath(`${HOME}/AppData/Local/Saves`)).toBe('%LOCALAPPDATA%/Saves');
     expect(winePrefixToManifestPcSavePath(`${HOME}/AppData/Roaming/My Game/Saves`)).toBe(
       '%APPDATA%/My Game/Saves',
     );
@@ -86,18 +80,16 @@ describe('winePrefixToManifestPcSavePath — Configure Browse reverse mapping (�
   });
 
   it('falls back to %USERPROFILE% only for a folder outside the known bases', () => {
-    expect(winePrefixToManifestPcSavePath(`${HOME}/Saved Games/Game`)).toBe(
-      '%USERPROFILE%/Saved Games/Game',
-    );
+    expect(winePrefixToManifestPcSavePath(`${HOME}/Saved Games/Game`)).toBe('%USERPROFILE%/Saved Games/Game');
     // The steamuser home itself → the bare token.
     expect(winePrefixToManifestPcSavePath(HOME)).toBe('%USERPROFILE%');
   });
 
   it('works for a Steam compatdata prefix too (any prefix — only the part below drive_c matters)', () => {
     const compat = '/home/deck/.local/share/Steam/steamapps/compatdata/814380/pfx';
-    expect(
-      winePrefixToManifestPcSavePath(`${compat}/drive_c/users/steamuser/AppData/LocalLow/Elden`),
-    ).toBe('%LOCALLOW%/Elden');
+    expect(winePrefixToManifestPcSavePath(`${compat}/drive_c/users/steamuser/AppData/LocalLow/Elden`)).toBe(
+      '%LOCALLOW%/Elden',
+    );
   });
 
   it('rejects a folder that lives in no Wine prefix (not a Windows save location)', () => {
@@ -106,11 +98,7 @@ describe('winePrefixToManifestPcSavePath — Configure Browse reverse mapping (�
   });
 
   it('round-trips with resolveInsideWinePrefix (forward → reverse → same string)', () => {
-    for (const manifestPath of [
-      '%APPDATA%/My Game/Saves',
-      '%LOCALLOW%/Unity/Game',
-      '%USERPROFILE%',
-    ]) {
+    for (const manifestPath of ['%APPDATA%/My Game/Saves', '%LOCALLOW%/Unity/Game', '%USERPROFILE%']) {
       const forward = resolveInsideWinePrefix(PFX, manifestPath);
       expect(forward).not.toBeNull();
       expect(winePrefixToManifestPcSavePath(forward as string)).toBe(manifestPath);
@@ -175,9 +163,7 @@ describe('createLinuxSavePathResolver — a local game vs a local Steam game', (
     // compatdata root is a real temp dir whose separators follow the OS the suite runs on (CI runs it on
     // Windows too) — the tail below drive_c is the part this mapping owns.
     expect(location?.path.startsWith(compat)).toBe(true);
-    expect(location?.path.endsWith('drive_c/users/steamuser/AppData/Roaming/Hades/Saves')).toBe(
-      true,
-    );
+    expect(location?.path.endsWith('drive_c/users/steamuser/AppData/Roaming/Hades/Saves')).toBe(true);
     expect(location?.containerExists).toBe(true);
   });
 
@@ -190,10 +176,7 @@ describe('createLinuxSavePathResolver — a local game vs a local Steam game', (
   it('is a no-op while Steam has made no compatdata for the game yet', async () => {
     await fs.rm(path.join(steamPath, 'steamapps'), { recursive: true, force: true });
     const resolver = createLinuxSavePathResolver(deps());
-    const location = await resolver.resolvePcSavePath(
-      manifest({ steam: { appid } }),
-      '%APPDATA%\\Hades',
-    );
+    const location = await resolver.resolvePcSavePath(manifest({ steam: { appid } }), '%APPDATA%\\Hades');
     expect(location).toBeNull();
   });
 });

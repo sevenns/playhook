@@ -1,10 +1,10 @@
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createFilePicker } from '../../src/renderer/file-picker';
 import { req } from '../../src/renderer/dom';
 import { createTranslator } from '../../src/shared/i18n/index';
 import type { FilePickerSurface } from '../../src/renderer/game-settings-screen';
 import type { ConfigPickKind, ConfigPickResult } from '../../src/shared/types';
-import { loadFixture } from './helpers/fixture';
+import { hoverOver, loadFixture } from './helpers/fixture';
 import {
   fakeAudio,
   fakeFilePickerApi,
@@ -74,11 +74,8 @@ function focusRow(label: string): void {
   throw new Error(`could not reach row ${label}`);
 }
 
-beforeAll(() => {
-  loadFixture();
-});
-
 beforeEach(() => {
+  loadFixture();
   installRafHarness();
   audio = fakeAudio();
   api = fakeFilePickerApi(TREE);
@@ -269,6 +266,39 @@ describe('file picker choosing', () => {
     focusRow('Cancel');
 
     picker.navActivate();
+    await flushAsync();
+
+    expect(results).toEqual([{ ok: false, cancelled: true }]);
+    expect(picker.isOpen()).toBe(false);
+  });
+});
+
+describe('file picker mouse', () => {
+  it('takes the focus on hover once the mouse is awake', async () => {
+    await open();
+    const target = [...req('picker-entries').querySelectorAll<HTMLElement>('.picker-item')][2];
+
+    if (target === undefined) throw new Error('the picker drew no entries');
+    hoverOver(target);
+
+    expect(focusedRow()).toBe('game.json');
+  });
+
+  it('ignores hover while the mouse is still asleep', async () => {
+    await open();
+    const target = [...req('picker-entries').querySelectorAll<HTMLElement>('.picker-item')][2];
+
+    target?.dispatchEvent(
+      new MouseEvent('mousemove', { bubbles: true, clientX: 400, clientY: 300 }),
+    );
+
+    expect(focusedRow()).toBe('games');
+  });
+
+  it('cancels on a click into the veil', async () => {
+    await open();
+
+    req('file-picker').querySelector<HTMLElement>('.picker-veil')?.click();
     await flushAsync();
 
     expect(results).toEqual([{ ok: false, cancelled: true }]);

@@ -1,4 +1,4 @@
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   createGameSettingsScreen,
   type GameSettingsConfirm,
@@ -56,7 +56,12 @@ const CARD = {
   isActive: true,
 } as const;
 
+/** A menu paints, then re-measures its marquee on the next frame — two is what a full open takes. */
+const OPEN_FRAMES = 2;
+
 let screen: GameSettingsScreen;
+/** Every instance this test made, so `afterEach` closes what exists rather than a leftover from before. */
+const live: GameSettingsScreen[] = [];
 let audio: FakeAudio;
 let keyboard: FakeKeyboard;
 let picker: FakePicker;
@@ -102,7 +107,7 @@ const status = (): string => req('game-settings-status').textContent ?? '';
 
 function createScreen(overrides: Partial<GameSettingsScreenApi> = {}): void {
   api = fakeGameSettingsApi({ read: vi.fn(() => Promise.resolve(READ_OK)), ...overrides });
-  screen = createGameSettingsScreen({
+  const instance = createGameSettingsScreen({
     audio,
     getTranslator: () => createTranslator('en'),
     api,
@@ -124,6 +129,8 @@ function createScreen(overrides: Partial<GameSettingsScreenApi> = {}): void {
       errors.push(text);
     },
   });
+  live.push(instance);
+  screen = instance;
 }
 
 async function open(overrides: Partial<GameSettingsScreenApi> = {}): Promise<void> {
@@ -168,11 +175,8 @@ function focusMenuEntry(label: string): void {
   throw new Error(`could not reach menu entry ${label}`);
 }
 
-beforeAll(() => {
-  loadFixture();
-});
-
 beforeEach(() => {
+  loadFixture();
   raf = installRafHarness();
   audio = fakeAudio();
   keyboard = fakeKeyboard();
@@ -184,7 +188,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  screen.close();
+  for (const instance of live) instance.close();
+  live.length = 0;
   vi.unstubAllGlobals();
 });
 
@@ -317,7 +322,7 @@ describe('customize screen file picking', () => {
     focusRow('Executable');
 
     screen.navActivate();
-    raf.flush(2);
+    raf.flush(OPEN_FRAMES);
     expect(menuEntries()).toContain('Browse...');
 
     focusMenuEntry('Browse...');
@@ -339,7 +344,7 @@ describe('customize screen file picking', () => {
     enterSection('Launch');
     focusRow('Executable');
     screen.navActivate();
-    raf.flush(2);
+    raf.flush(OPEN_FRAMES);
     focusMenuEntry('Browse...');
     screen.navActivate();
     await flushAsync();
@@ -356,7 +361,7 @@ describe('customize screen file picking', () => {
     enterSection('Launch');
     focusRow('Executable');
     screen.navActivate();
-    raf.flush(2);
+    raf.flush(OPEN_FRAMES);
     focusMenuEntry('Browse...');
     screen.navActivate();
     await flushAsync();
@@ -494,7 +499,7 @@ describe('customize screen closing', () => {
     enterSection('Launch');
     focusRow('Executable');
     screen.navActivate();
-    raf.flush(2);
+    raf.flush(OPEN_FRAMES);
 
     screen.close();
 

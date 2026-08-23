@@ -1,11 +1,11 @@
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createSettingsScreen, type SettingsScreen } from '../../src/renderer/settings-screen';
 import { req } from '../../src/renderer/dom';
 import { createTranslator } from '../../src/shared/i18n/index';
 import { DEFAULT_SETTINGS } from '../../src/main/app-settings';
 import type { AppSettings } from '../../src/shared/types';
 import type { SettingsScreenApi } from '../../src/renderer/settings-screen';
-import { loadFixture } from './helpers/fixture';
+import { hoverOver, loadFixture } from './helpers/fixture';
 import {
   fakeAudio,
   fakeKeyboard,
@@ -14,6 +14,9 @@ import {
   type FakeKeyboard,
 } from './helpers/fakes';
 import { installRafHarness, type RafHarness } from './helpers/raf';
+
+/** The dropdown paints, then re-measures its marquee on the next frame — two is what a full open takes. */
+const OPEN_FRAMES = 2;
 
 const AUDIO_OPTIONS = {
   soundSets: ['playhook-abyss', 'ps5'],
@@ -93,11 +96,8 @@ function focusRow(label: string): void {
   throw new Error(`could not reach row ${label}`);
 }
 
-beforeAll(() => {
-  loadFixture();
-});
-
 beforeEach(() => {
+  loadFixture();
   raf = installRafHarness();
   audio = fakeAudio();
   keyboard = fakeKeyboard();
@@ -244,7 +244,7 @@ describe('settings dropdowns', () => {
     focusRow('Navigation sounds');
 
     screen.navActivate();
-    raf.flush(2);
+    raf.flush(OPEN_FRAMES);
 
     expect(req('settings-options').classList.contains('is-open')).toBe(true);
     expect(options()).toEqual(['Playhook Abyss', 'Ps5']);
@@ -256,11 +256,11 @@ describe('settings dropdowns', () => {
     enterSection('Audio');
     focusRow('Navigation sounds');
     screen.navActivate();
-    raf.flush(2);
+    raf.flush(OPEN_FRAMES);
 
     screen.navUp();
     screen.navActivate();
-    raf.flush(2);
+    raf.flush(OPEN_FRAMES);
 
     expect(api.setSoundSet).toHaveBeenCalledWith('playhook-abyss');
     expect(valueOf('Navigation sounds')).toBe('Playhook Abyss');
@@ -272,10 +272,10 @@ describe('settings dropdowns', () => {
     enterSection('Audio');
     focusRow('Navigation sounds');
     screen.navActivate();
-    raf.flush(2);
+    raf.flush(OPEN_FRAMES);
 
     screen.navBack();
-    raf.flush(2);
+    raf.flush(OPEN_FRAMES);
 
     expect(req('settings-options').classList.contains('is-open')).toBe(false);
     expect(api.setSoundSet).not.toHaveBeenCalled();
@@ -353,6 +353,56 @@ describe('settings text field', () => {
   });
 });
 
+describe('settings mouse', () => {
+  it('takes the row focus on hover once the mouse is awake', () => {
+    openWith();
+    enterSection('Audio');
+    const target = rowOf('Background ambience');
+
+    hoverOver(target);
+
+    expect(focusedRowLabel()).toBe('Background ambience');
+  });
+
+  it('ignores hover while the mouse is still asleep', () => {
+    openWith();
+    enterSection('Audio');
+    const target = rowOf('Background ambience');
+
+    target.dispatchEvent(
+      new MouseEvent('mousemove', { bubbles: true, clientX: 400, clientY: 300 }),
+    );
+
+    expect(focusedRowLabel()).toBe('Navigation sounds');
+  });
+
+  it('moves the option focus on hover inside the expanded list', () => {
+    openWith({ soundSet: 'playhook-abyss' });
+    enterSection('Audio');
+    focusRow('Navigation sounds');
+    screen.navActivate();
+    raf.flush(OPEN_FRAMES);
+    const option = [...req('settings-options-list').querySelectorAll('.settings-option')][1];
+
+    if (option === undefined) throw new Error('the dropdown drew no options');
+    hoverOver(option);
+
+    expect(focusedOption()).toBe('Ps5');
+  });
+
+  it('closes the expanded list on a click into its veil', () => {
+    openWith();
+    enterSection('Audio');
+    focusRow('Navigation sounds');
+    screen.navActivate();
+    raf.flush(OPEN_FRAMES);
+
+    req('settings-options').querySelector<HTMLElement>('.settings-options-veil')?.click();
+
+    expect(req('settings-options').classList.contains('is-open')).toBe(false);
+  });
+});
+
 describe('settings closing', () => {
   it('leaves the screen from the column and reports it', () => {
     openWith();
@@ -370,7 +420,7 @@ describe('settings closing', () => {
     enterSection('Audio');
     focusRow('Navigation sounds');
     screen.navActivate();
-    raf.flush(2);
+    raf.flush(OPEN_FRAMES);
 
     screen.close();
 
