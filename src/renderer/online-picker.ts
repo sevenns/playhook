@@ -187,6 +187,15 @@ export function createOnlinePicker(deps: OnlinePickerDeps): OnlinePickerSurface 
   let loading = false;
   /** Whether a download-and-write is running: the column shows it, and Stop lands back here. */
   let applying = false;
+  /**
+   * Whether the user has moved the focus since the current load began.
+   *
+   * A load ordinarily hands the focus to what it brought — choosing a game lands on its backgrounds,
+   * because looking at them is why the game was chosen. But a load takes seconds, and in those seconds
+   * the user may well walk the sidebar to the next filter. Moving the focus out from under them at the
+   * moment the pictures arrive is how a press meant for "2K" lands on a wallpaper instead.
+   */
+  let focusTouched = false;
 
   /**
    * Stop, from the column's busy popup: whatever main is still fetching has nobody to arrive for, so the
@@ -608,6 +617,7 @@ export function createOnlinePicker(deps: OnlinePickerDeps): OnlinePickerSurface 
 
   function move(delta: number): void {
     hover.arm();
+    focusTouched = true;
     const length = column === 'side' ? sideButtons.length : cells.length;
     const at = column === 'side' ? sideIndex : index;
     if (length === 0) {
@@ -752,7 +762,7 @@ export function createOnlinePicker(deps: OnlinePickerDeps): OnlinePickerSurface 
       loading = false;
       index = 0;
       paintSideState();
-      void loadArtwork(0);
+      void loadArtwork(0, true);
       return;
     }
     if (action.kind === 'mode') {
@@ -858,6 +868,7 @@ export function createOnlinePicker(deps: OnlinePickerDeps): OnlinePickerSurface 
 
   async function search(term: string): Promise<void> {
     loading = true;
+    focusTouched = false;
     const token = ++attempt;
     const visited = visit;
     section = 'candidates';
@@ -875,12 +886,13 @@ export function createOnlinePicker(deps: OnlinePickerDeps): OnlinePickerSurface 
     }
     candidates = result.value;
     paintContent();
-    if (candidates.length > 0) column = 'content';
+    if (candidates.length > 0 && !focusTouched) column = 'content';
     applyFocus(true);
   }
 
   async function byAppId(appId: number): Promise<void> {
     loading = true;
+    focusTouched = false;
     const token = ++attempt;
     const visited = visit;
     paintContent();
@@ -897,11 +909,12 @@ export function createOnlinePicker(deps: OnlinePickerDeps): OnlinePickerSurface 
     chooseCandidate(result.value);
   }
 
-  async function loadArtwork(nextPage: number): Promise<void> {
+  async function loadArtwork(nextPage: number, keepFocus = false): Promise<void> {
     const named = candidate;
     const kind = artworkKind();
     if (named === null || kind === null || loading) return;
     loading = true;
+    focusTouched = false;
     const token = ++attempt;
     const visited = visit;
     const shownBefore = variants.length;
@@ -926,11 +939,13 @@ export function createOnlinePicker(deps: OnlinePickerDeps): OnlinePickerSurface 
     variants = nextPage === 0 ? result.value.variants : [...variants, ...result.value.variants];
     paintContent();
     if (nextPage === 0) {
-      if (variants.length > 0) column = 'content';
+      if (variants.length > 0 && !focusTouched && !keepFocus) column = 'content';
       applyFocus(true);
       return;
     }
-    index = Math.min(shownBefore, Math.max(0, cells.length - 1));
+    if (column === 'content' && !focusTouched) {
+      index = Math.min(shownBefore, Math.max(0, cells.length - 1));
+    }
     applyFocus();
   }
 
@@ -969,6 +984,7 @@ export function createOnlinePicker(deps: OnlinePickerDeps): OnlinePickerSurface 
     const named = candidate;
     if (named === null) return;
     loading = true;
+    focusTouched = false;
     const token = ++attempt;
     const visited = visit;
     paintContent();
@@ -989,14 +1005,19 @@ export function createOnlinePicker(deps: OnlinePickerDeps): OnlinePickerSurface 
     if (only !== undefined) {
       albumKey = only.key;
       paintSideState();
-      await loadTracks(only.key);
+      await loadTracks(only.key, true);
       return;
     }
     paintContent();
   }
 
-  async function loadTracks(key: string): Promise<void> {
+  /**
+   * `keepTouched` for the nested call: opening the only album is a continuation of the album search, not
+   * a fresh action, so a focus the user moved WHILE that search ran is still theirs.
+   */
+  async function loadTracks(key: string, keepTouched = false): Promise<void> {
     loading = true;
+    if (!keepTouched) focusTouched = false;
     const token = ++attempt;
     const visited = visit;
     tracks = [];
@@ -1014,7 +1035,7 @@ export function createOnlinePicker(deps: OnlinePickerDeps): OnlinePickerSurface 
     }
     tracks = result.value;
     paintContent();
-    if (tracks.length > 0) column = 'content';
+    if (tracks.length > 0 && !focusTouched) column = 'content';
     applyFocus(true);
   }
 
@@ -1090,6 +1111,7 @@ export function createOnlinePicker(deps: OnlinePickerDeps): OnlinePickerSurface 
       if (position === -1 || (position === index && column === 'content')) return;
       column = 'content';
       index = position;
+      focusTouched = true;
       applyFocus();
     },
     { passive: true },
@@ -1109,6 +1131,7 @@ export function createOnlinePicker(deps: OnlinePickerDeps): OnlinePickerSurface 
       if (position === -1 || (position === sideIndex && column === 'side')) return;
       column = 'side';
       sideIndex = position;
+      focusTouched = true;
       applyFocus();
     },
     { passive: true },
@@ -1188,6 +1211,7 @@ export function createOnlinePicker(deps: OnlinePickerDeps): OnlinePickerSurface 
       }
       if (repeat === true) return;
       column = 'side';
+      focusTouched = true;
       deps.audio.play('navigate');
       applyFocus();
     },
@@ -1202,6 +1226,7 @@ export function createOnlinePicker(deps: OnlinePickerDeps): OnlinePickerSurface 
         return;
       }
       column = 'content';
+      focusTouched = true;
       deps.audio.play('navigate');
       applyFocus();
     },
