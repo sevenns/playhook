@@ -16,6 +16,7 @@ import type {
 import type { GameProcess } from '../game-launcher';
 import type { PowerAction } from '../power';
 import type { InstallDirResolver } from '../manifest';
+import type { Translator } from '../../shared/i18n/index';
 
 /**
  * An atomic snapshot of the running processes (one OS call). The same snapshot answers BOTH "is a watched
@@ -282,4 +283,10 @@ export interface PlatformDeps {
   /** Absolute path to the bundled umu-run zipapp (extraResources), run via system python3 on linux (Р1).
    * Unused on win32. */
   readonly umuRunPath: string;
+  /**
+   * The live translator, for the few platform refusals that reach the user as text — the darwin bundle
+   * refuses a Windows `*.exe`, install mode and a Gatekeeper-blocked binary in their own words. Read per
+   * call (not captured), so a language change applies to the next message.
+   */
+  readonly getTranslator: () => Translator;
 }

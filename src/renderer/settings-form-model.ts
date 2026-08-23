@@ -93,6 +93,15 @@ export function prettifyName(raw: string): string {
     .join(' ');
 }
 
+/**
+ * Whether self-update can ever happen on this build — i.e. whether the auto-update MODE is a setting worth
+ * offering. False only for `unsupported` with reason `platform` (the unsigned macOS build): a dev run is
+ * `unsupported` too, but the mode it persists is what the installed build will use, so it keeps the rows.
+ */
+function updatesEverPossible(status: UpdateStatus): boolean {
+  return !(status.kind === 'unsupported' && status.reason === 'platform');
+}
+
 const AUTO_UPDATE_OPTIONS: readonly SettingsOption[] = [
   { value: 'download-install', labelKey: 'settings.autoDownloadInstall' },
   { value: 'download', labelKey: 'settings.autoDownloadManual' },
@@ -183,19 +192,28 @@ export function buildSettingsModel(settings: AppSettings, env: SettingsEnv): Set
         titleKey: 'settings.sectionUpdates',
         rows: [
           { kind: 'update-status', status: env.updateStatus },
-          {
-            kind: 'select',
-            id: 'autoUpdate',
-            label: { key: 'settings.sectionAutoUpdate' },
-            value: settings.autoUpdate,
-            options: AUTO_UPDATE_OPTIONS,
-          },
-          {
-            kind: 'toggle',
-            id: 'prerelease',
-            label: { key: 'settings.prerelease' },
-            value: settings.allowPrerelease,
-          },
+          // The mode selector and the pre-release toggle only exist to steer an updater that RUNS. On a
+          // build where self-update is impossible for good (macOS — unsigned bundle), they are controls
+          // that can never do anything, so the section is just the explanation of what to do instead.
+          // A dev run keeps them: it is temporary, and the mode it persists is honoured by the installed
+          // build — which is exactly why this checks the reason rather than the `unsupported` kind.
+          ...(updatesEverPossible(env.updateStatus)
+            ? ([
+                {
+                  kind: 'select',
+                  id: 'autoUpdate',
+                  label: { key: 'settings.sectionAutoUpdate' },
+                  value: settings.autoUpdate,
+                  options: AUTO_UPDATE_OPTIONS,
+                },
+                {
+                  kind: 'toggle',
+                  id: 'prerelease',
+                  label: { key: 'settings.prerelease' },
+                  value: settings.allowPrerelease,
+                },
+              ] as const)
+            : []),
         ],
       },
       {

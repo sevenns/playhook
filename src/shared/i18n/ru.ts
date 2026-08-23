@@ -176,6 +176,8 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'settings.status.downloading': 'Загрузка... {percent}%',
   'settings.status.downloaded': 'Обновление {version} готово к установке.',
   'settings.status.unsupported': 'Обновления доступны только в установленной сборке.',
+  'settings.status.unsupportedPlatform':
+    'На macOS Playhook не обновляется сам - скачайте новый .dmg со страницы Releases и замените приложение. Игры, статистика и сейвы сохранятся.',
   'settings.action.check': 'Проверить обновления',
   'settings.action.checking': 'Проверка...',
   'settings.action.updateTo': 'Обновить до {version}',
@@ -443,10 +445,24 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'errors.powerUnsupported': 'действия питания доступны только в Windows',
   'errors.powerFailed': 'команда питания не выполнена: {cause}',
 
+  // ── Отказы macOS (platform/darwin) ──────────────────────────────────────────
+  'errors.macWindowsGame':
+    'Windows-игры не запускаются на macOS - эта игра стартует *.exe. Нативные mac-игры и режим Steam работают.',
+  'errors.macInstallUnsupported': 'установка игры с карты не поддерживается на macOS',
+  'errors.macAppBundleUnreadable':
+    'не удалось найти исполняемый файл внутри app-бандла: {path} (нет или не читается Contents/MacOS)',
+  'errors.macGameBlocked':
+    'macOS заблокировала игру (Gatekeeper): файл на карантине или без подписи. Разрешите его в «Системных настройках» → «Конфиденциальность и безопасность» либо выполните: xattr -dr com.apple.quarantine "{path}"',
+  'errors.macPowerNotPermitted':
+    'macOS не разрешила Playhook управлять системой. Выдайте доступ в «Системных настройках» → «Конфиденциальность и безопасность» → «Автоматизация» → Playhook → System Events.',
+
   // ── Manifest validation (JSON field names stay latin identifiers) ────────────
   'manifest.idPattern': 'id должен соответствовать [A-Za-z0-9._-]',
   'manifest.idDots': 'id не может быть . или ..',
-  'manifest.watchProcessesName': 'элементы watchProcesses должны быть простым именем *.exe',
+  'manifest.watchProcessesName':
+    'элементы watchProcesses должны быть простым именем файла (буквы, цифры, «. _ -», пробелы) - без разделителей пути',
+  'manifest.watchProcessesBlank': 'элементы watchProcesses не могут быть пустыми',
+  'manifest.watchProcessesDots': 'элементы watchProcesses не могут быть . или ..',
   'manifest.winetricksName':
     'элементы winetricks должны быть именами вербов или настройками key=value (буквы, цифры, _.=-)',
   'manifest.umuGameIdName': 'umuGameId должен быть Steam appid или UMU_ID (буквы, цифры, _-)',

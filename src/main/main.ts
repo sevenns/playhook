@@ -67,7 +67,9 @@ let summonHotkeyEnabled = true;
 function configureAutoLaunch(): void {
   // openAtLogin is reliable for an NSIS install; portable is best-effort.
   // No `--hidden` arg needed: the app always starts hidden and only shows on a valid card.
-  if (process.platform === 'win32') {
+  // setLoginItemSettings is implemented on Windows AND macOS (it writes a Login Item there), so both take
+  // the same route; only Linux needs the hand-written XDG entry below.
+  if (process.platform === 'win32' || process.platform === 'darwin') {
     app.setLoginItemSettings({ openAtLogin: true });
     return;
   }
@@ -137,13 +139,28 @@ function quit(): void {
   app.quit();
 }
 
+/**
+ * The macOS application menu: the App menu (whose Quit item carries Cmd+Q) and an Edit menu holding the
+ * clipboard roles. Roles only — every item is the system's own, so it is localized by macOS and needs no
+ * translator. Deliberately no View/Window/Help: nothing in this launcher answers to them.
+ */
+function macApplicationMenu(): Menu {
+  return Menu.buildFromTemplate([
+    { role: 'appMenu' },
+    { role: 'editMenu' },
+  ]);
+}
+
 async function bootstrap(): Promise<void> {
   // FIRST, before any log line: logger.ts is deliberately electron-free (the Game Mode daemon loads it
   // under ELECTRON_RUN_AS_NODE, where importing electron fails), so it cannot ask app.getPath() itself.
   setLogBaseDir(app.getPath('userData'));
 
-  // No application menu (removes the File/Edit/View… bar entirely).
-  Menu.setApplicationMenu(null);
+  // No application menu (removes the File/Edit/View… bar entirely) — except on macOS, where the menu bar
+  // is also where the standard key equivalents live: with a null menu, Cmd+Q cannot quit the app and
+  // Cmd+C/V/X/A stop working inside the launcher's own text fields. A minimal App + Edit menu restores
+  // exactly those and nothing else, so the chrome stays as bare as it is on Windows and Linux.
+  Menu.setApplicationMenu(process.platform === 'darwin' ? macApplicationMenu() : null);
 
   log.info(`[main] starting v${app.getVersion()} — log file: "${logFilePath()}"`);
 
@@ -237,6 +254,7 @@ async function bootstrap(): Promise<void> {
     getDocuments: () => app.getPath('documents'),
     userData: app.getPath('userData'),
     umuRunPath,
+    getTranslator,
   });
 
   // Game Mode only (Р10), as a safety net: the gamescope session normally mounts an inserted card itself,

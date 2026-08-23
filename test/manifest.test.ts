@@ -229,6 +229,48 @@ describe('validateManifestText', () => {
     expect(validateManifestText(text, t).ok).toBe(false);
   });
 
+  // The `.exe` suffix is optional (Д5): a native macOS process has no such name, and steam mode requires
+  // watchProcesses — so demanding it would make steam mode impossible on macOS. Everything that made the
+  // old pattern safe (no separators, no quotes, no traversal) still holds.
+  it('accepts a watchProcesses name WITHOUT the .exe suffix (a native mac binary)', () => {
+    const text = JSON.stringify({
+      schemaVersion: 1,
+      id: 'x',
+      title: 'X',
+      steam: { appid: 480 },
+      heroImage: 'a/hero.jpg',
+      watchProcesses: ['valheim'],
+    });
+    expect(validateManifestText(text, t).ok).toBe(true);
+  });
+
+  it('still accepts the *.exe spelling a cross-platform card carries', () => {
+    const text = JSON.stringify({
+      schemaVersion: 1,
+      id: 'x',
+      title: 'X',
+      steam: { appid: 480 },
+      heroImage: 'a/hero.jpg',
+      watchProcesses: ['valheim.exe'],
+    });
+    expect(validateManifestText(text, t).ok).toBe(true);
+  });
+
+  it('rejects a watchProcesses name that is a path, a traversal or blank', () => {
+    const bad = ['games/valheim', 'games\\valheim', '..', '.', '   ', '"valheim.exe"', ''];
+    for (const name of bad) {
+      const text = JSON.stringify({
+        schemaVersion: 1,
+        id: 'x',
+        title: 'X',
+        steam: { appid: 480 },
+        heroImage: 'a/hero.jpg',
+        watchProcesses: [name],
+      });
+      expect(validateManifestText(text, t).ok, name).toBe(false);
+    }
+  });
+
   it('rejects a custom installer that is elevated (schema refine)', () => {
     const text = JSON.stringify({
       schemaVersion: 1,

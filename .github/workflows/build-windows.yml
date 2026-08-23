@@ -1,7 +1,7 @@
 name: Build Windows
 
-# Build the Windows distributable in the cloud: the windows runner has MSVC + Python,
-# so the native `drivelist` compiles normally (which is impossible on macOS).
+# Build the Windows distributable in the cloud: the windows runner has MSVC + Python, so the native
+# `drivelist` compiles for the right ABI without a Windows machine of one's own.
 # Triggered manually (workflow_dispatch) or on pushing a v* tag.
 
 on:

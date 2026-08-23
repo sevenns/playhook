@@ -46,6 +46,16 @@ import { ipcMain } from 'electron';
 
 const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000; // re-check every 6h for long-running instances
 
+/**
+ * Whether this build can self-update at all: it must be PACKAGED, and it must not be the macOS one —
+ * Squirrel.Mac only applies an update to a code-signed bundle, and this project ships an unsigned dmg
+ * (Д6). Everywhere that would otherwise touch `autoUpdater` asks this first, so the macOS build cannot
+ * start a check whose install step is guaranteed to fail.
+ */
+function updatesSupported(): boolean {
+  return app.isPackaged && process.platform !== 'darwin';
+}
+
 export interface UpdaterDeps {
   readonly settings: AppSettingsStore;
   /**
@@ -106,8 +116,22 @@ export class UpdaterService {
   async init(): Promise<void> {
     this.registerIpc();
 
+    // macOS FIRST, before the packaged check: Squirrel.Mac refuses to apply an update to an app bundle
+    // that is not code-signed, and this build is not (no Apple Developer account — Д6). Wiring autoUpdater
+    // anyway would mean a check that finds a version, downloads it and then fails at install — so the
+    // Settings screen is told to explain manual updating instead.
+    //
+    // The order matters: on macOS this holds for a DEV run too, so reporting `not-packaged` there would be
+    // the less true of two truths — and it would show a developer on a Mac a screen the user never sees
+    // (the auto-update mode rows), which is exactly the kind of false green this port has to avoid.
+    if (process.platform === 'darwin') {
+      this.status = { kind: 'unsupported', reason: 'platform' };
+      log.info('[updater] disabled on macOS (unsigned build — Squirrel.Mac requires a signed bundle)');
+      return;
+    }
+
     if (!app.isPackaged) {
-      this.status = { kind: 'unsupported' };
+      this.status = { kind: 'unsupported', reason: 'not-packaged' };
       log.info('[updater] disabled (not packaged) — the Settings screen still works (version/mode only)');
       return;
     }
@@ -157,7 +181,7 @@ export class UpdaterService {
         .setAutoUpdate(mode)
         .then(() => {
           // Persist always, but only touch autoUpdater in a packaged build.
-          if (app.isPackaged) this.applyMode(mode);
+          if (updatesSupported()) this.applyMode(mode);
         })
         .catch((cause: unknown) =>
           log.error('[updater] failed to persist auto-update mode:', cause),
@@ -167,7 +191,7 @@ export class UpdaterService {
       void this.deps.settings
         .patch({ allowPrerelease: on })
         .then(() => {
-          if (app.isPackaged) autoUpdater.allowPrerelease = on;
+          if (updatesSupported()) autoUpdater.allowPrerelease = on;
         })
         .catch((cause: unknown) =>
           log.error('[updater] failed to persist prerelease flag:', cause),
@@ -265,7 +289,7 @@ export class UpdaterService {
   // because settings:reset is an invoke.
   private async resetSettings(): Promise<AppSettings> {
     const next = await this.deps.settings.reset();
-    if (app.isPackaged) {
+    if (updatesSupported()) {
       autoUpdater.allowPrerelease = next.allowPrerelease;
       this.applyMode(next.autoUpdate);
     }
@@ -404,14 +428,14 @@ export class UpdaterService {
   }
 
   check(): void {
-    if (!app.isPackaged) return; // unsupported in dev — the IPC is registered but this is a no-op.
+    if (!updatesSupported()) return; // dev / macOS — the IPC is registered but this is a no-op.
     void autoUpdater
       .checkForUpdates()
       .catch((cause: unknown) => log.error('[updater] check failed:', cause));
   }
 
   download(): void {
-    if (!app.isPackaged) return;
+    if (!updatesSupported()) return;
     void autoUpdater
       .downloadUpdate()
       .catch((cause: unknown) => log.error('[updater] download failed:', cause));

@@ -34,6 +34,7 @@ import type {
   GameMoveRequest,
   GameCandidate,
   GameDetails,
+  HostPlatform,
   ManifestSource,
   MetadataApplyRequest,
   MetadataApplyResult,
@@ -321,7 +322,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     readonly source: ManifestSource;
     readonly signature: string;
     /** Read alongside the manifest — main answers it, the renderer never asks the OS itself. */
-    readonly windows: boolean;
+    readonly platform: HostPlatform;
   } | null = null;
   // Every game in the file. Ours is `slots[slotIndex]`; the others are only ever carried through.
   let slots: GameFormState[] = [];
@@ -488,7 +489,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       // While a move is pending the form is edited AS THE TARGET CARD would read it — the whole point of
       // "the form expands" (see the plan, Р2.2/Р2.3): rows, launch modes and pickers all key off this.
       source: move !== null ? 'card' : origin.source,
-      windows: origin.windows,
+      platform: origin.platform,
       root: at,
       loadedId,
       mixed,
@@ -1643,7 +1644,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       root: result.root,
       source: result.source,
       signature: result.signature,
-      windows: result.windows,
+      platform: result.platform,
     };
     adoptText(result.text);
     await runValidate();
@@ -1799,7 +1800,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       root: result.root,
       source: result.source,
       signature: result.signature,
-      windows: result.windows,
+      platform: result.platform,
     };
     const blankMode = defaultLaunchMode(result.source);
     const parsed = slotsWithNewGame(result.hasManifest ? result.text : null, blankMode);
@@ -1972,7 +1973,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       root: result.root,
       source: result.source,
       signature: result.signature,
-      windows: result.windows,
+      platform: result.platform,
     };
     slots = [...others, { model: form, rest, corrupt }];
     slotIndex = others.length;

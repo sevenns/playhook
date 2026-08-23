@@ -180,6 +180,10 @@ export interface GameManifest {
    * When set, liveness is tracked by these names (presence in `tasklist`), not (only) by the spawned
    * launcher's pid. When omitted, behaviour is unchanged — the pid path stays the default for
    * self-contained .exe games.
+   *
+   * The `.exe` suffix is optional: a native macOS process has none, and steam mode requires this field.
+   * Keep `*.exe` names on a card meant to travel (the macOS matcher normalizes the suffix away, so one
+   * spelling works on all three OSes); a bare name is for a mac-only record. See the schema in manifest.ts.
    */
   readonly watchProcesses?: readonly string[];
   /**
@@ -521,8 +525,9 @@ export type AppState =
 /**
  * Update state for the settings window (discriminated union). The UpdaterService owns the current
  * snapshot, returns it on request and pushes it on every change. Maps 1:1 onto electron-updater
- * events (see updater.ts). `unsupported` is set immediately in dev / non-packaged builds, where
- * self-update is a no-op — the settings window then just shows the version and an explanatory note.
+ * events (see updater.ts). `unsupported` is set immediately when this build cannot self-update at all —
+ * in dev / non-packaged, and on macOS (unsigned bundle, see UpdateUnsupportedReason) — and the settings
+ * screen then shows the version plus an explanation instead of the update controls.
  */
 export type UpdateStatus =
   | { readonly kind: 'idle' } // not checked yet
@@ -532,7 +537,18 @@ export type UpdateStatus =
   | { readonly kind: 'downloading'; readonly version: string; readonly percent: number }
   | { readonly kind: 'downloaded'; readonly version: string } // ready → "Restart & install"
   | { readonly kind: 'error'; readonly message: string } // → "Retry"
-  | { readonly kind: 'unsupported' }; // dev / not-packaged: update unavailable
+  | { readonly kind: 'unsupported'; readonly reason: UpdateUnsupportedReason };
+
+/**
+ * WHY a build cannot self-update — the two cases need different words, and the settings screen shows
+ * different controls for them:
+ * - `not-packaged` — a dev run. Temporary and about the build, not the platform: the auto-update MODE is
+ *   still worth showing and persisting there, because the installed build will honour it.
+ * - `platform` — macOS. Permanent for this distribution: Squirrel.Mac only updates a code-signed bundle
+ *   and the mac build is unsigned (no Apple Developer ID), so updating means downloading the new dmg by
+ *   hand. A mode selector would be a control that can never do anything, so the screen omits it.
+ */
+export type UpdateUnsupportedReason = 'not-packaged' | 'platform';
 
 /**
  * Auto-update mode (persisted in settings.json). Maps onto electron-updater flags:
@@ -1055,6 +1071,15 @@ export type ConfigPickResult =
  * `text` is the WHOLE file, not the one game: a card may carry several, and the screen edits its slot in
  * place so the neighbours (including any that failed to resolve) survive the round trip verbatim.
  */
+/**
+ * Which OS the LAUNCHER itself is running on, as the renderer is allowed to know it. The renderer has no
+ * business asking the OS directly, and one screen genuinely needs the answer: a game installed on THIS PC
+ * under Windows or macOS will never be run through Proton, so its Linux/Proton section is not merely empty
+ * there but meaningless. A CARD keeps that section on every OS — the card is the portable half, and its
+ * manifest is read on the Deck too.
+ */
+export type HostPlatform = 'windows' | 'linux' | 'macos';
+
 export type GameConfigReadResult =
   | {
       readonly ok: true;
@@ -1062,13 +1087,8 @@ export type GameConfigReadResult =
       readonly source: ManifestSource;
       readonly signature: string;
       readonly text: string;
-      /**
-       * Whether the launcher is running on Windows. The renderer has no business asking the OS itself, and
-       * the screen needs it for one decision: a game installed on THIS PC under Windows will never be run
-       * through Proton, so its Linux section is not merely empty there but meaningless. A CARD keeps it on
-       * either OS — the card is the portable half, and its manifest is read on the Deck too.
-       */
-      readonly windows: boolean;
+      /** The OS the launcher runs on — see HostPlatform. */
+      readonly platform: HostPlatform;
     }
   | { readonly ok: false; readonly message: string };
 
@@ -1090,8 +1110,8 @@ export type ConfigRootReadResult =
       readonly signature: string;
       readonly hasManifest: boolean;
       readonly text: string;
-      /** Whether the launcher is running on Windows — see GameConfigReadResult.windows. */
-      readonly windows: boolean;
+      /** The OS the launcher runs on — see HostPlatform. */
+      readonly platform: HostPlatform;
     }
   | { readonly ok: false; readonly message: string };
 

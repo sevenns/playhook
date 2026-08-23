@@ -103,15 +103,25 @@ const manifestSchema = z
     // Opt-in elevation: for .exe whose embedded manifest requires administrator (spawn would EACCES).
     runAsAdmin: z.boolean().default(false),
     // Optional game process image names for launcher/wrapper setups (see GameManifest.watchProcesses).
-    // Each name is a bare `*.exe` file: no quotes, no path separators — both a hard constraint against
+    // Each name is a bare FILE NAME: no quotes, no path separators — both a hard constraint against
     // injection into the `tasklist` argv (execFile is shell-less, but we validate strictly anyway) and a
     // guard against accidental generic names. `.min(1)` rejects an empty array (defense in depth vs the
     // `?.length` branch in ipc). Names are compared case-insensitively (lower-cased) at match time.
+    //
+    // The `.exe` suffix is OPTIONAL rather than required (Д5): a native macOS binary is not called
+    // `*.exe`, and steam mode REQUIRES watchProcesses, so demanding the suffix would make steam mode
+    // impossible on macOS. The convention that goes with it: a CROSS-PLATFORM card stores `*.exe` names
+    // (that is what Windows and Proton both run, and the darwin matcher normalizes the suffix away, so
+    // one name matches on all three); a name without the suffix is for a mac-only record. On win32 the
+    // matcher is a substring scan over the tasklist CSV and `taskkill /IM` needs the exact image name, so
+    // a suffix-less name behaves poorly there — deliberately left as is (never change Windows behaviour).
     watchProcesses: z
       .array(
         z
           .string()
-          .regex(/^[A-Za-z0-9._ -]+\.exe$/i, 'manifest.watchProcessesName'),
+          .regex(/^[A-Za-z0-9._ -]+$/, 'manifest.watchProcessesName')
+          .refine((v) => v.trim() !== '', 'manifest.watchProcessesBlank')
+          .refine((v) => v !== '.' && v !== '..', 'manifest.watchProcessesDots'),
       )
       .min(1)
       .max(16)

@@ -3,10 +3,11 @@
   <h1>Playhook</h1>
   <p><strong>Bring console vibes to your PC.</strong></p>
   <p>
-    <a href="#building-from-source-for-developers"><img src="https://img.shields.io/badge/platform-Windows%2010%2F11%20%7C%20Steam%20Deck%20(Linux)-0078D6" alt="Platform"></a>
+    <a href="#building-from-source-for-developers"><img src="https://img.shields.io/badge/platform-Windows%2010%2F11%20%7C%20Steam%20Deck%20(Linux)%20%7C%20macOS%20(Apple%20Silicon)-0078D6" alt="Platform"></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="License: MIT"></a>
     <a href="https://github.com/sevenns/playhook/actions/workflows/build-windows.yml"><img src="https://github.com/sevenns/playhook/actions/workflows/build-windows.yml/badge.svg" alt="Build Windows"></a>
     <a href="https://github.com/sevenns/playhook/actions/workflows/build-linux.yml"><img src="https://github.com/sevenns/playhook/actions/workflows/build-linux.yml/badge.svg" alt="Build Linux"></a>
+    <a href="https://github.com/sevenns/playhook/actions/workflows/build-macos.yml"><img src="https://github.com/sevenns/playhook/actions/workflows/build-macos.yml/badge.svg" alt="Build macOS"></a>
   </p>
 </div>
 
@@ -24,9 +25,11 @@ The card can carry the game itself, an **installer** for heavy games
 `appid` that Playhook installs, launches and uninstalls through your local Steam client
 ([Steam mode](#steam-mode-launch-and-install-steam-games)).
 
-> **Cross-platform.** Playhook runs on Windows and on the Steam Deck / Linux (SteamOS). On Linux the
-> same Windows game cards run through **Proton** (via [umu-launcher](https://github.com/Open-Wine-Components/umu-launcher));
-> native Linux/ELF games are not a target. macOS is not supported. See [Steam Deck](#steam-deck-linux--steamos).
+> **Cross-platform.** Playhook runs on Windows, on the Steam Deck / Linux (SteamOS) and on macOS
+> (Apple Silicon). On Linux the same Windows game cards run through **Proton**
+> (via [umu-launcher](https://github.com/Open-Wine-Components/umu-launcher)); native Linux/ELF games are
+> not a target. macOS is a **narrower** port: native mac games and Steam mode, but no Windows `.exe` and
+> no install mode. See [Steam Deck](#steam-deck-linux--steamos) and [macOS](#macos).
 
 > **Security note.** The card is untrusted input — every path in the manifest is validated
 > against directory traversal and an allowlist before anything is read or written. See
@@ -42,13 +45,15 @@ The card can carry the game itself, an **installer** for heavy games
 ## Download (for users)
 
 Grab the latest build from the [**Releases**](https://github.com/sevenns/playhook/releases/latest)
-page. Three are published:
+page. Four are published:
 
 - **NSIS installer** (`.exe`, recommended on Windows) — installs the app, configures autostart reliably,
   and **updates itself** automatically.
 - **portable** (`.exe`) — runs without installation; no auto-update, autostart is best-effort.
 - **AppImage** — the Steam Deck / Linux build; it self-updates too. See
   [Steam Deck](#steam-deck-linux--steamos) for the setup.
+- **dmg** (`-arm64.dmg`) — the macOS build, **Apple Silicon only**. It does **not** self-update: grab a
+  new dmg from this page when a version comes out. See [macOS](#macos).
 
 A couple of things to expect on first run **on Windows**:
 
@@ -57,6 +62,18 @@ A couple of things to expect on first run **on Windows**:
 - **Visual C++ Redistributable.** If the app fails to start on a clean Windows install, install
   the latest [Visual C++ Redistributable (x64)](https://aka.ms/vs/17/release/vc_redist.x64.exe).
   (`.NET` is **not** required.)
+
+And **on macOS**:
+
+- **Gatekeeper.** The build is not signed with an Apple Developer ID, so the first launch is blocked.
+  On macOS 15+ the old right-click → *Open* trick no longer works for an unsigned app: open the app,
+  let it be refused, then go to *System Settings → Privacy & Security* and press **Open Anyway** next to
+  the message about Playhook. (The command-line equivalent is
+  `xattr -dr com.apple.quarantine /Applications/Playhook.app`.)
+- **Removable-volume access.** The first time Playhook looks at a card, macOS asks for permission to
+  read removable volumes. **Decline it and your cards become invisible** with no other symptom — the only
+  trace is a `permission denied` line in the log. Grant it again in *System Settings → Privacy &
+  Security → Files and Folders*.
 
 ### Quick start
 
@@ -364,16 +381,19 @@ E:\
   elevated via a UAC prompt (`ShellExecuteEx` `runas`) and monitors it by process HANDLE instead of
   `tasklist` (a non-elevated app can't see an elevated process). Opt-in on purpose — Playhook never
   silently escalates an untrusted card's exe. On the Steam Deck / Linux there is no elevation under
-  Proton, so `runAsAdmin: true` is a **no-op** (logged) rather than an error — the same card stays
-  valid on both platforms.
+  Proton, and macOS has no equivalent either, so `runAsAdmin: true` is a **no-op** (logged) rather than an
+  error there — the same card stays valid on all three platforms.
 - `watchProcesses` — for **launcher / wrapper** games, where `executable` spawns a launcher that
   starts the game in a **separate process** and then exits (so watching the spawned pid would wrongly
   report "closed" the instant the launcher quits). List the **game's own** process image names here:
   Playhook still spawns `executable`, but tracks the session by the **presence** of these names in
   `tasklist`. Playtime starts when a watched process appears and ends when all of them are gone. When
   omitted, behaviour is unchanged (the spawned pid is tracked directly — the default for a
-  self-contained `.exe`). Each entry is a bare `*.exe` name (no quotes, no path separators), matched
-  case-insensitively; 1–16 names. **Caveats:**
+  self-contained `.exe`). Each entry is a bare file name (no quotes, no path separators), matched
+  case-insensitively; 1–16 names. The `.exe` suffix is **optional** — a native macOS process has none —
+  but keep it on a card that travels: macOS matches with and without the suffix, so `game.exe` works on
+  all three OSes, whereas a suffix-less name is only reliable on macOS (see [macOS](#macos)).
+  **Caveats:**
   - **anticheat / elevation** — Steam / EAC / BattlEye often launch the game **elevated or as a
     service**, which a non-elevated `tasklist` can't see (R4) → Playhook reports "didn't start" and
     quietly returns without recording a session. This is a **common** case for launcher games, not a
@@ -691,11 +711,63 @@ These are ignored on Windows, so a dual-platform card can carry them safely:
 
 ---
 
+## macOS
+
+Playhook runs on macOS (**Apple Silicon only** — there is no Intel or universal build). It is a narrower
+port than the Linux one on purpose: there is no Wine/CrossOver here, so macOS is about the games your Mac
+can actually run.
+
+**What works**
+
+- **Local mac games** — add them through *More ⋯ → Add game* → *This PC* and point Playhook at either a
+  plain executable or an **`.app` bundle** (the picker shows a bundle as a single item, the way Finder
+  does). Playhook resolves the real binary inside the bundle and tracks it by pid, so exit detection,
+  playtime and save-sync all work as they do on Windows.
+- **[Steam mode](#steam-mode-launch-and-install-steam-games)** — install, play and uninstall through your
+  local Steam client, exactly as on the other two OSes.
+- **Cards** carrying a `steam` block. Save-sync translates the card's Windows dictionary into the mac
+  profile: `%APPDATA%` / `%LOCALAPPDATA%` / `%LOCALLOW%` → `~/Library/Application Support`,
+  `%USERPROFILE%` → `~`, `%DOCUMENTS%` → `~/Documents`.
+- The tray icon, the power menu, autostart (*System Settings → General → Login Items*) and the whole UI.
+
+**What does not**
+
+- **Windows games.** A card whose `executable` is a `*.exe` refuses to launch with a message saying so —
+  running it would need Wine/CrossOver, which is out of scope.
+- **[Install mode](#install-mode-heavy-games-on-slow-media)** (`install.type: nsis | inno | custom | copy`)
+  — the whole block is unavailable; those cards are rejected when the card is read.
+- **Auto-update.** Squirrel.Mac only updates a code-signed app bundle, and this build is unsigned, so
+  *Settings → Updates* reports updates as unavailable. Download a new dmg by hand when one is released.
+- The global **Start+Back** summon chord (it uses XInput, a Windows API). The gamepad itself works
+  normally inside the launcher.
+
+**Things worth knowing**
+
+- **Gatekeeper, for Playhook itself** — see [Download](#download-for-users): first launch goes through
+  *System Settings → Privacy & Security → Open Anyway*.
+- **Gatekeeper, for YOUR game** — a game binary downloaded from the internet carries a quarantine flag,
+  and macOS kills it the moment Playhook starts it, with no dialog at all. Playhook catches that and says
+  so; the fix is the same *Open Anyway* (open the game once from Finder), or
+  `xattr -dr com.apple.quarantine "/path/to/Game.app"`. Games installed by Steam are not affected.
+- **Many Steam games have no mac build**, or ship an x86_64 one that runs under Rosetta 2. When a game has
+  no macOS depot, `steam://install` opens Steam and Steam refuses — Playhook simply stays on **Install**.
+- **`watchProcesses` names.** A native mac process is not called `*.exe`, so the field accepts a bare name
+  too. Keep the `*.exe` spelling on a card you also use on Windows or the Deck — Playhook matches with and
+  without the suffix on macOS, so one spelling covers all three; a suffix-less name is for a mac-only
+  entry. If a Steam game is not detected as running, its mac binary is simply named differently: fix it in
+  *More ⋯ → Customize → watchProcesses*.
+- **Save paths are a best-effort translation** (see above). If a game keeps its saves somewhere else, the
+  sync reports the folder as missing rather than syncing the wrong one — point `pcSavePath` at the real
+  folder through *Customize*.
+
+---
+
 ## Building from source (for developers)
 
 ### Requirements
 
-- **Windows 10/11 x64**, or **Linux / SteamOS** (for the Steam Deck build — see below).
+- **Windows 10/11 x64**, **Linux / SteamOS** (for the Steam Deck build — see below), or **macOS 13+ on
+  Apple Silicon** (for the mac build — see below).
 - **Node.js 20+** and npm (CI builds on **Node 22** — match it if in doubt).
 - **Native module build tools** — required to rebuild `drivelist` for Electron:
   - Visual Studio Build Tools with the "Desktop development with C++" component,
@@ -759,6 +831,28 @@ npm run dist           # build + electron-builder → release/*.AppImage
 for the Electron ABI by `electron-builder install-app-deps` on the Linux runner. `koffi` stays a
 dependency but is never called on Linux (all FFI is behind lazy `win32` guards).
 
+#### macOS build
+
+Build the `.dmg` on an Apple Silicon Mac (or via the [Build macOS](.github/workflows/build-macos.yml) CI
+workflow — `workflow_dispatch` produces an artifact, a `v*` tag publishes to the release):
+
+```bash
+npm ci
+npm run dist           # build + electron-builder → release/*.dmg + *-mac.zip
+```
+
+There is no `build:umu` step (Proton is the Linux path). The `mac` block in
+[`electron-builder.yml`](electron-builder.yml) targets dmg + zip for **arm64 only** — a universal build
+would also need a universal `drivelist`. The app is **ad-hoc signed** (`identity: '-'`) and
+`hardenedRuntime` is off: without the ad-hoc signature an app repacked on Apple Silicon refuses to launch
+at all, and hardened runtime only pays off together with notarization, which needs a Developer ID this
+project does not have. `koffi` stays in the bundle — `gamepad-global.ts` imports it on every OS.
+
+> ⚠️ Build from a real `npm ci` install. If `node_modules` is a **symlink** (e.g. a git worktree sharing
+> the main clone's install), electron-builder cannot resolve transitive dependencies through it and
+> silently packs an app that is missing `graceful-fs`, `js-yaml` and friends — it builds green and then
+> dies on launch with a JavaScript error dialog.
+
 ---
 
 ## Releasing & auto-update
@@ -770,13 +864,14 @@ Release flow:
 
 1. Bump `version` in [`package.json`](package.json) (e.g. `0.1.1` → `0.1.2`).
 2. Commit, then push a matching tag: `git tag v0.1.2 && git push origin v0.1.2`.
-3. The [Build Windows](.github/workflows/build-windows.yml) and [Build Linux](.github/workflows/build-linux.yml)
-   workflows build and upload the Windows installer + `latest.yml` and the Linux `.AppImage` +
-   `latest-linux.yml` to the same **draft** GitHub Release `v0.1.2`.
+3. The [Build Windows](.github/workflows/build-windows.yml), [Build Linux](.github/workflows/build-linux.yml)
+   and [Build macOS](.github/workflows/build-macos.yml) workflows build and upload the Windows installer +
+   `latest.yml`, the Linux `.AppImage` + `latest-linux.yml` and the macOS `.dmg`/`.zip` +
+   `latest-mac.yml` to the same **draft** GitHub Release `v0.1.2`.
 4. **Publish the draft release** on GitHub to make it live (and visible on the Releases page).
 5. Each running app checks on startup and every 6h, downloads the update silently, and installs
    it on the **next quit** (it never interrupts a running game). See `[updater]` lines in the log.
-   The **NSIS** build and the **AppImage** both self-update; the portable `.exe` does not.
+   The **NSIS** build and the **AppImage** both self-update; the portable `.exe` and the **dmg** do not.
 
 That is the default; **Settings → Updates** lets the user pick *download and install automatically*,
 *download automatically, install manually*, or *off (check manually)*, opt into the **pre-release
@@ -788,11 +883,15 @@ Notes:
 - The publish target (`owner` / `repo`) is set in [`electron-builder.yml`](electron-builder.yml) —
   update it if the GitHub repo is renamed.
 - No code signing: the very first install shows a Windows SmartScreen warning, but updates still
-  apply (unlike macOS, Windows auto-update works unsigned).
+  apply (unlike macOS, Windows auto-update works unsigned). That asymmetry is exactly why the macOS
+  target ships without auto-update — Squirrel.Mac refuses to update an unsigned bundle, so the mac build
+  reports updates as unavailable and the user re-downloads the dmg by hand.
 
 ### Autostart
 
-On **Windows** the app registers itself via `app.setLoginItemSettings({ openAtLogin: true })`.
+On **Windows** and **macOS** the app registers itself via
+`app.setLoginItemSettings({ openAtLogin: true })` (on macOS it appears in *System Settings → General →
+Login Items*).
 
 - It always starts hidden in the tray (no flag needed): the window appears only when a valid game
   card is detected — unless *Always show the no-card screen* is enabled in Settings.
@@ -812,7 +911,8 @@ exists while you are in Game Mode; **Remove from Steam** deletes it.
 ## Logs
 
 The main process writes a timestamped log, split **per calendar day** into
-`%APPDATA%\playhook\logs\main-YYYY-MM-DD.log` (`~/.config/playhook/logs/` on Linux); files older than
+`%APPDATA%\playhook\logs\main-YYYY-MM-DD.log` (`~/.config/playhook/logs/` on Linux,
+`~/Library/Application Support/playhook/logs/` on macOS); files older than
 **14 days** are pruned on startup. Open the folder from **Settings → Advanced → Open logs**.
 
 It records card insertions, manifest validation, the stats reconcile / card-copy result, and
@@ -874,7 +974,7 @@ launch/exit — useful when a save or stats copy to the card silently fails.
 ```
 src/
   main/        # all work with the FS/processes/disks (Electron main)
-    platform/  # everything OS-specific (win32 / linux + Proton, umu)
+    platform/  # everything OS-specific (win32 / linux + Proton, umu / darwin)
   preload/     # the typed contextBridge bridge
   renderer/    # UI + gamepad/keyboard input (launcher, settings, customize — no Node)
   shared/      # shared contract of types/IPC channels + the i18n dictionaries
@@ -891,7 +991,7 @@ import graph) live in [`CLAUDE.md`](CLAUDE.md).
 
 PRs welcome. The codebase is **strict TypeScript** (no `any`, no non-null `!`, explicit return types,
 functional style). Please run `npm run typecheck`, `npm run lint` and `npm test` before opening a PR —
-CI runs all three, on Windows **and** Linux.
+CI runs all three, on Windows, Linux **and** macOS.
 
 ---
 
@@ -908,7 +1008,10 @@ CI runs all three, on Windows **and** Linux.
   first run. Choose *More info → Run anyway*. Auto-update still works without signing.
 - **Does it run on the Steam Deck / Linux?** **Yes.** The same Windows game cards launch through Proton
   (via umu-launcher) on SteamOS/Linux — see [Steam Deck](#steam-deck-linux--steamos). Native Linux/ELF
-  games and macOS are not supported.
+  games are not a target.
+- **Does it run on macOS?** **Yes, on Apple Silicon** — for what a Mac can actually run: native mac games
+  (including `.app` bundles) and [Steam mode](#steam-mode-launch-and-install-steam-games). Windows `.exe`
+  games and install mode do not work there, and the dmg does not self-update. See [macOS](#macos).
 - **Does it work without a gamepad?** Yes — mouse and keyboard both work. Keyboard: **WASD / arrow keys**
   to move, **Space / Enter** to activate, **Tab / Backspace** (or **Esc**) to go back. Mouse: click a
   card in the row to select it and click it again to open it, the **wheel** flips through the row, and

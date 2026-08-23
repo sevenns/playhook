@@ -1,0 +1,98 @@
+name: Build macOS
+
+# Build the macOS (Apple Silicon) distributable in the cloud, mirroring build-linux.yml. The runner is
+# macos-14 — an arm64 image — because the build is arm64-only (Д7): Intel Macs get no artifact, and a
+# universal build would additionally need a universal native `drivelist`.
+#
+# The dmg is NOT signed with a Developer ID and NOT notarized (Д6 — no Apple Developer account), so it
+# does NOT self-update: the macOS build reports the updater as unsupported and the user re-downloads by
+# hand. See README (macOS section) for the Gatekeeper steps a first launch needs.
+#
+# Two ways to run it:
+#  - workflow_dispatch (manual): builds the dmg/zip and uploads them as run ARTIFACTS (does NOT publish a
+#    release) — use this to grab a build for testing.
+#  - pushing a v* tag: also PUBLISHES them into the draft GitHub Release for that version, matching
+#    build-windows.yml / build-linux.yml.
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    # macos-14 is the Apple Silicon image — it produces the arm64 build natively, with no cross-compile.
+    runs-on: macos-14
+    # Needed so electron-builder can upload assets to the GitHub Release (tag pushes only).
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      # Node 22.12+ is required by electron@43 and @electron/rebuild@4 (their `engines`).
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      # npm ci runs postinstall (electron-builder install-app-deps) — the macOS runner ships clang and
+      # python, so the native drivelist builds for the right ABI (it does compile on macOS; the claim to
+      # the contrary in the other two workflows was stale).
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Compile TypeScript + assets
+        run: npm run build
+
+      # No `build:umu` step: umu-launcher/Proton is the Linux path, and macOS runs native games only.
+
+      # Only when releasing (a v* tag): draft the release up front so electron-builder uploads into it.
+      # Same rationale/fail-fast as build-windows.yml (avoid split drafts / a silently-empty publish).
+      - name: Ensure draft release exists
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          tag="v$(node -p "require('./package.json').version")"
+          isDraft=$(gh release view "$tag" --json isDraft --jq .isDraft 2>/dev/null || echo missing)
+          case "$isDraft" in
+            missing) gh release create "$tag" --draft --target "$GITHUB_SHA" --title "$tag" --notes "$tag" ;;
+            true)    echo "Draft release $tag already exists — reusing it." ;;
+            false)   echo "::error::Release $tag is already published. electron-builder refuses to upload assets into it. Delete the release (and its tag) and re-run." ; exit 1 ;;
+          esac
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Publish (upload dmg/zip to the draft release) ONLY on a v* tag; a manual run just builds locally
+      # (--publish never) and relies on the artifact upload below.
+      #
+      # CSC_IDENTITY_AUTO_DISCOVERY=false stops electron-builder from hunting the runner's keychain for a
+      # signing certificate. It does not disable signing: `mac.identity: '-'` in electron-builder.yml still
+      # applies the AD-HOC signature the app needs to launch on Apple Silicon at all.
+      - name: Package (dmg + zip)
+        run: npx electron-builder --mac --publish ${{ startsWith(github.ref, 'refs/tags/v') && 'always' || 'never' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      # Always expose the build as a run artifact so a manual build can be downloaded for testing.
+      - name: Upload dmg
+        uses: actions/upload-artifact@v7
+        with:
+          name: playhook-macos
+          path: |
+            release/*.dmg
+          if-no-files-found: error
+          retention-days: 14

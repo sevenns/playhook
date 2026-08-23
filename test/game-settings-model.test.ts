@@ -31,7 +31,7 @@ const baseEnv: GameSettingsEnv = {
   sources: [],
   sourceLabel: null,
   source: 'card',
-  windows: false,
+  platform: 'linux',
   root: 'E:\\',
   loadedId: 'hades',
   mixed: false,
@@ -378,19 +378,26 @@ describe('the Linux section', () => {
   // The Proton fields describe how a game is run under Wine. A card is read on the Deck too, whatever
   // machine it is being edited on, so it keeps them everywhere; a game installed on a Windows PC is only
   // ever launched natively, and there they describe nothing.
-  it('is kept for a card on either platform', () => {
-    expect(ids(model({}, { source: 'card', windows: true }))).toContain('umuGameId');
-    expect(ids(model({}, { source: 'card', windows: false }))).toContain('umuGameId');
+  it('is kept for a card on every platform', () => {
+    expect(ids(model({}, { source: 'card', platform: 'windows' }))).toContain('umuGameId');
+    expect(ids(model({}, { source: 'card', platform: 'linux' }))).toContain('umuGameId');
+    expect(ids(model({}, { source: 'card', platform: 'macos' }))).toContain('umuGameId');
   });
 
   it('is kept for a local game on Linux', () => {
-    const built = model({ launchMode: 'pc' }, { source: 'pc', windows: false });
+    const built = model({ launchMode: 'pc' }, { source: 'pc', platform: 'linux' });
     expect(ids(built)).toContain('umuGameId');
     expect(ids(built)).toContain('winetricks');
   });
 
   it('is dropped for a local game on Windows', () => {
-    const built = model({ launchMode: 'pc' }, { source: 'pc', windows: true });
+    const built = model({ launchMode: 'pc' }, { source: 'pc', platform: 'windows' });
+    expect(ids(built)).not.toContain('umuGameId');
+    expect(ids(built)).not.toContain('winetricks');
+  });
+
+  it('is dropped for a local game on macOS (no Proton there either)', () => {
+    const built = model({ launchMode: 'pc' }, { source: 'pc', platform: 'macos' });
     expect(ids(built)).not.toContain('umuGameId');
     expect(ids(built)).not.toContain('winetricks');
   });

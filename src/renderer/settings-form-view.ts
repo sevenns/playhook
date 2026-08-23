@@ -62,7 +62,13 @@ export function updateStatusText(status: UpdateStatus, t: Translator): string {
       // Already localized in main (or a passthrough technical cause) — render as-is.
       return status.message;
     case 'unsupported':
-      return t('settings.status.unsupported');
+      // Two different situations wear the same status: a dev run (temporary, about the build) and the
+      // macOS build (permanent, and the user has something to DO about it — fetch the new dmg).
+      return t(
+        status.reason === 'platform'
+          ? 'settings.status.unsupportedPlatform'
+          : 'settings.status.unsupported',
+      );
   }
 }
 
