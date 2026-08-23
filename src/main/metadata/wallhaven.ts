@@ -106,7 +106,12 @@ export function searchTerms(title: string): readonly string[] {
   const first = searchableTitle(title);
   if (first === '') return [];
   const terms = [first];
-  for (const candidate of [withoutEditionTail(first), beforeSubtitle(first)]) {
+  for (const candidate of [
+    withoutEditionTail(first),
+    beforeSubtitle(first),
+    withoutOwnerPrefix(first),
+    plainWords(first),
+  ]) {
     if (candidate === '') continue;
     if (terms.some((term) => term.toLowerCase() === candidate.toLowerCase())) continue;
     terms.push(candidate);
@@ -151,6 +156,43 @@ export function withoutEditionTail(title: string): string {
 export function beforeSubtitle(title: string): string {
   const at = title.indexOf(': ');
   return at > 0 ? title.slice(0, at).trim() : '';
+}
+
+/**
+ * A title with the publisher's possessive dropped: "Tom Clancy's Splinter Cell Chaos Theory" without
+ * the "Tom Clancy's". Measured 2026-08-23, and the reason this exists at all: the full title finds
+ * NOTHING on either wallpaper site, while "Splinter Cell Chaos Theory" finds 40 on Wallpaper Cave, and
+ * "Sid Meier's Civilization VI" (54) becomes "Civilization VI" (123).
+ *
+ * Safe because it is a CASCADE step, not a rewrite: a game whose possessive belongs to its own name
+ * ("Assassin's Creed Odyssey") is answered by the full title first and never reaches this one. Empty
+ * when there is no such prefix, which the caller reads as "nothing to add".
+ */
+export function withoutOwnerPrefix(title: string): string {
+  const match = /^[\p{Letter}\p{Number}.\s]{2,24}['’]s\s+(.+)$/u.exec(title);
+  return match?.[1]?.trim() ?? '';
+}
+
+/**
+ * A title stripped to letters, digits and spaces — the LAST resort of the cascade, and only that.
+ *
+ * Punctuation is not noise to these sites: measured 2026-08-22, Wallhaven answers "F.E.A.R." with 12
+ * wallpapers and "F E A R" with none, "Marvel’s Spider-Man" with 24 and "Marvels Spider Man" with none.
+ * So stripping it up front would cost more than it saves. It earns its place at the END, where the
+ * alternative is nothing at all: an apostrophe sends Wallpaper Cave into a redirect loop (it answers 302
+ * to the same URL forever), so "Assassin's Creed Odyssey" finds nothing there until this variant is
+ * tried — and then finds 124.
+ */
+export function plainWords(title: string): string {
+  return (
+    title
+      // An apostrophe binds a word rather than separating one: "Assassin's" is one word, and turning it
+      // into "Assassin s" hands these sites a stray "s" to match on.
+      .replaceAll(/['’`´‛]/gu, '')
+      .replaceAll(/[^\p{Letter}\p{Number}]+/gu, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+  );
 }
 
 /** Whether a title is written in the Latin alphabet — the only case it can stand in for the English one. */

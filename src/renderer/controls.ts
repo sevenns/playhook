@@ -132,7 +132,14 @@ export interface GameSettingsNav extends NavSurface {
   deletesLocalGame(): boolean;
   /** The shared confirm popup said yes to one of the screen's questions. */
   confirmAccepted(
-    kind: 'reset' | 'delete' | 'delete-history' | 'discard' | 'switch-source' | 'cancel-move',
+    kind:
+      | 'reset'
+      | 'delete'
+      | 'delete-history'
+      | 'discard'
+      | 'switch-source'
+      | 'cancel-move'
+      | 'replace-title',
   ): void;
 }
 
@@ -1454,6 +1461,17 @@ export function createControls(deps: ControlsDeps): Controls {
         audio.play('back');
         deps.gameSettings.confirmAccepted('cancel-move');
         break;
+      case 'replace-game-title':
+        audio.play('button');
+        deps.gameSettings.confirmAccepted('replace-title');
+        break;
+      default: {
+        // A mode with no branch here is a Yes that closes the popup and does nothing, which is exactly
+        // how "Update title" came to be a button that asked and then ignored the answer. Now a missing
+        // branch is a compile error.
+        const unhandled: never = mode;
+        return unhandled;
+      }
     }
   }
 

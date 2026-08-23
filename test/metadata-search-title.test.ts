@@ -33,6 +33,7 @@ describe('the sources that match on words use it', () => {
     expect(searchTerms('Watch_Dogs® 2 - Gold Edition')).toEqual([
       'Watch Dogs 2 - Gold Edition',
       'Watch Dogs 2',
+      'Watch Dogs 2 Gold Edition',
     ]);
   });
 

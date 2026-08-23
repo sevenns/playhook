@@ -154,13 +154,37 @@ describe('wallhaven edition tails', () => {
     expect(searchTerms('Disco Elysium - The Final Cut')).toEqual([
       'Disco Elysium - The Final Cut',
       'Disco Elysium',
+      'Disco Elysium The Final Cut',
     ]);
   });
 
-  it('keeps the part before a subtitle as the last resort', () => {
+  it('keeps the part before a subtitle, then the words alone, as the last resorts', () => {
     expect(searchTerms('The Witcher 3: Wild Hunt')).toEqual([
       'The Witcher 3: Wild Hunt',
       'The Witcher 3',
+      'The Witcher 3 Wild Hunt',
+    ]);
+  });
+
+  // Punctuation is not noise to these sites (F.E.A.R. finds 12 wallpapers, "F E A R" none), so the
+  // stripped form is tried LAST — where the alternative is nothing at all, as with the apostrophe that
+  // sends Wallpaper Cave into a redirect loop.
+  it('offers the words alone once everything with punctuation has been tried', () => {
+    expect(searchTerms('F.E.A.R.')).toEqual(['F.E.A.R.', 'F E A R']);
+  });
+
+  // "Assassin's" belongs to the name, "Tom Clancy's" does not — and nothing here has to tell them apart,
+  // because the cascade tries the full title first and only walks on when it finds nothing.
+  it("drops the publisher's possessive, after the full title has had its turn", () => {
+    expect(searchTerms("Tom Clancy's Splinter Cell Chaos Theory")).toEqual([
+      "Tom Clancy's Splinter Cell Chaos Theory",
+      'Splinter Cell Chaos Theory',
+      'Tom Clancys Splinter Cell Chaos Theory',
+    ]);
+    expect(searchTerms("Assassin's Creed Odyssey")).toEqual([
+      "Assassin's Creed Odyssey",
+      'Creed Odyssey',
+      'Assassins Creed Odyssey',
     ]);
   });
 
