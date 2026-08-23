@@ -5,12 +5,35 @@
 // We deliberately do NOT hold alwaysOnTop — a persistent topmost window traps focus and prevents
 // switching back to the game/Steam. A focused fullscreen window already hides the taskbar.
 import path from 'node:path';
-import { BrowserWindow, Menu, clipboard } from 'electron';
+import { app, BrowserWindow, Menu, clipboard } from 'electron';
 import { IPC } from '../shared/types';
 import { type Translator } from '../shared/i18n/index';
 import { installHideOnClose, type HideOnCloseGuard } from './window-hide-guard';
 import { forceForegroundWindow } from './foreground';
 import { log } from './logger';
+
+/**
+ * macOS only: use the "simple" (pre-Lion) fullscreen rather than the native one.
+ *
+ * The native mode moves the window into a SPACE OF ITS OWN. That is right for a document app the user
+ * swipes between, and wrong for a launcher that hides to the tray: `hide()` empties the space but does not
+ * dismiss it, so the user is left staring at a black screen with the launcher apparently gone — and the
+ * window still reports isFullScreen() === true afterwards, because it still owns that space.
+ *
+ * The simple mode just resizes the window over the whole display (menu bar included — measured 1728×1117
+ * at y=0, versus 1728×1084 at y=33 for the native one), which is what a kiosk launcher wants anyway, and
+ * leaves hide()/show() as instant as they are on Windows and Linux.
+ */
+const USES_SIMPLE_FULLSCREEN = process.platform === 'darwin';
+
+/** Puts the window into whichever fullscreen mode this OS uses, if it is not in it already. */
+function enterFullScreen(window: BrowserWindow): void {
+  if (USES_SIMPLE_FULLSCREEN) {
+    if (!window.isSimpleFullScreen()) window.setSimpleFullScreen(true);
+    return;
+  }
+  if (!window.isFullScreen()) window.setFullScreen(true);
+}
 
 export class GameWindow {
   private window: BrowserWindow | null = null;
@@ -38,8 +61,10 @@ export class GameWindow {
       // Frameless: no native title bar / window chrome. Closing is done via the in-app
       // Exit button or gamepad B (hides to tray); full quit is in the tray menu.
       frame: false,
-      // Fullscreen launcher: the window covers the whole screen (incl. taskbar) when shown.
-      fullscreen: true,
+      // Fullscreen launcher: the window covers the whole screen (incl. taskbar) when shown. On macOS
+      // that is the SIMPLE fullscreen — see USES_SIMPLE_FULLSCREEN for why the native one is unusable
+      // for a window that hides to the tray.
+      ...(USES_SIMPLE_FULLSCREEN ? { simpleFullscreen: true } : { fullscreen: true }),
       // Windows takes a multi-res .ico; Linux/mac need a PNG (a .ico renders as an empty icon there).
       icon: path.join(__dirname, process.platform === 'win32' ? '../icon.ico' : '../icon.png'),
       backgroundColor: '#101014',
@@ -121,7 +146,7 @@ export class GameWindow {
     if (window === null) return;
     if (window.isMinimized()) window.restore();
     if (!window.isVisible()) window.show();
-    if (!window.isFullScreen()) window.setFullScreen(true);
+    enterFullScreen(window);
     window.focus();
     if (forceForeground) {
       // The summon came from the gamepad global hook, which Windows doesn't treat as user input to our
@@ -135,8 +160,18 @@ export class GameWindow {
     window.flashFrame(false);
   }
 
+  /**
+   * Puts the launcher away (the "Minimize Playhook" item, and every automatic hide).
+   *
+   * On macOS the window hide is followed by `app.hide()`: hiding the last window does NOT deactivate the
+   * application there, so without it Playhook stays the frontmost app with nothing on screen — the menu
+   * bar still says "Playhook" and keystrokes go nowhere. `app.hide()` is the OS's own "put this app away"
+   * (⌘H), so focus returns to whatever the user had behind us. The way back is unaffected: `show()` clears
+   * the hidden state on its own (verified — no `app.show()` needed).
+   */
   hide(): void {
     this.window?.hide();
+    if (process.platform === 'darwin') app.hide();
   }
 
   /**
