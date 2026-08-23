@@ -32,9 +32,16 @@ import type {
   GameConfigReadResult,
   GameConfigSaveRequest,
   GameMoveRequest,
+  GameCandidate,
+  GameDetails,
   ManifestSource,
+  MetadataApplyRequest,
+  MetadataApplyResult,
+  MetadataApplySlot,
+  MetadataResult,
 } from '../shared/types';
 import type { MessageKey, Translator } from '../shared/i18n/index.js';
+import { MAX_HERO_IMAGES } from '../shared/types';
 import { type AudioController } from './audio.js';
 import { req } from './dom.js';
 import { createEntrance } from './entrance.js';
@@ -43,6 +50,7 @@ import { clampIndex, wrapIndex } from './index-math.js';
 import { createScroller, pxUnit } from './screen-scroller.js';
 import { createSidebar, type SidebarEntry } from './screen-sidebar.js';
 import type { NavSurface } from './nav-surface.js';
+import type { ApplyOutcome, OnlinePickerSurface } from './online-picker.js';
 import {
   emptyFormModel,
   gamesToText,
@@ -109,6 +117,19 @@ export interface GameSettingsScreenApi {
    * outside a Browse to carry an absolute PC-side pcSavePath over as a %PREFIX% string when moving a
    * game onto a card, without making the user re-pick the same folder. */
   acceptPath(request: GameConfigAcceptRequest): Promise<ConfigPickResult>;
+
+  // ── "Find online" (see main/metadata/) ──
+  /** Search every online source for a game by title. */
+  searchMetadata(query: string): Promise<MetadataResult<readonly GameCandidate[]>>;
+  /** The candidate behind a Steam appid the manifest already names — no search needed. */
+  requestSteamCandidate(appId: number): Promise<MetadataResult<GameCandidate>>;
+  /** The candidate's descriptions, genres, release date and platforms — carried into the manifest
+   * through the form's `rest` (see GameDetails). */
+  metadataDescriptions(candidateKey: string): Promise<MetadataResult<GameDetails>>;
+  /** Downloads the chosen variant into the game's root; answers with the manifest-relative path. */
+  applyMetadata(request: MetadataApplyRequest): Promise<MetadataApplyResult>;
+  /** Aborts whatever main is still fetching (the user left the flow). */
+  cancelMetadata(): void;
 }
 
 /**
@@ -117,7 +138,14 @@ export interface GameSettingsScreenApi {
  * the card too. Which one arrives back is the user's answer to the second question — see controls.ts.
  */
 export type GameSettingsConfirm =
-  'reset' | 'delete' | 'delete-history' | 'discard' | 'switch-source' | 'cancel-move';
+  | 'reset'
+  | 'delete'
+  | 'delete-history'
+  | 'discard'
+  | 'switch-source'
+  | 'cancel-move'
+  // Asked by the "Find online" surface, answered here: taking the store's spelling into Title.
+  | 'replace-title';
 
 /** A surface that opens ON TOP of the screen and hands a value back when it is done. */
 export interface TextEntrySurface extends NavSurface {
@@ -127,6 +155,12 @@ export interface TextEntrySurface extends NavSurface {
     readonly title: string;
     readonly onDone: (value: string) => void;
   }): void;
+  /**
+   * Dismisses the keyboard without committing. Called when a SCREEN closes under it: the keyboard is not
+   * inside any screen (see #osk in index.html), so nothing else would take it off the display — it would
+   * stay up over the carousel, still holding the focus of a screen that is gone.
+   */
+  close(): void;
 }
 
 export interface FilePickerSurface extends NavSurface {
@@ -149,14 +183,29 @@ export interface GameSettingsScreenDeps {
   readonly keyboard: TextEntrySurface;
   /** The in-launcher file browser — the native dialog cannot be driven in Game Mode (Р5). */
   readonly picker: FilePickerSurface;
+  /** The online artwork gallery — the surface "Find online" picks a cover or a background in. */
+  readonly onlinePicker: OnlinePickerSurface;
   /** The screen closed itself (B / Esc / veil) — controls.ts restores the bar focus. */
   onClosed(): void;
   /** Asks the shared confirm popup; the answer arrives back through confirmAccepted. */
-  onConfirmRequested(kind: GameSettingsConfirm): void;
+  /**
+   * Opens the launcher's confirm popup for one of this screen's questions. `options.title` is the name
+   * the question QUOTES — the popup builds its other messages from the open game, but "replace the
+   * title with X?" is about a candidate the popup has never heard of.
+   */
+  onConfirmRequested(kind: GameSettingsConfirm, options?: { readonly title?: string }): void;
   /** Whether the game is running / installing / being force-closed — Delete is hidden then (Р3). */
   isBusy(): boolean;
   /** A game was added AND applied: the launcher's library has it now, so the carousel goes to it. */
   onAdded(id: string): void;
+  /**
+   * The launcher's own two channels, used for everything this screen has to SAY. A confirmation is the
+   * notification plate (top-right, goes by itself); a failure is the error popup, which waits to be
+   * closed — the same split the "Find online" surface makes, and for the same reason: a save that failed
+   * must not scroll away with the form.
+   */
+  notify(text: string): void;
+  showError(text: string): void;
 }
 
 export interface GameSettingsScreen extends NavSurface {
@@ -173,6 +222,29 @@ export interface GameSettingsScreen extends NavSurface {
   isDirty(): boolean;
   /** Whether the loaded game is a LOCAL one — its save backups outlive a deletion, and the confirm says so. */
   deletesLocalGame(): boolean;
+
+  // What the "Find online" surface cannot do for itself: this screen owns the form, the files that land
+  // beside the game, and the on-screen keyboard. The surface asks; these answer.
+
+  /** Opens the keyboard for a new search query. */
+  askOnlineQuery(initial: string, onDone: (query: string) => void): void;
+  /**
+   * Asks the launcher's confirm popup whether the store's spelling may replace the Title field. Routed
+   * through this screen because that popup answers to `confirmAccepted`, which is this screen's channel.
+   */
+  askOnlineTitle(title: string, onYes: () => void): void;
+  /** Downloads the chosen pictures into the game and writes their paths into the form. */
+  applyOnlineArtwork(
+    kind: 'grid' | 'hero',
+    variantKeys: readonly string[],
+    mode: 'replace' | 'append',
+  ): Promise<ApplyOutcome>;
+  applyOnlineTrack(trackKey: string): Promise<ApplyOutcome>;
+  applyOnlineTitle(title: string): void;
+  /** The user named the game — its description, genres and dates are fetched from here. */
+  onOnlineCandidate(candidate: GameCandidate): void;
+  /** How many backgrounds the form already holds — what makes "add or replace" a question at all. */
+  heroCount(): number;
 }
 
 /**
@@ -186,6 +258,11 @@ interface MenuLevel {
   readonly title: string;
   readonly entries: readonly MenuEntry[];
   focus: number;
+  /**
+   * What X does on this level, if anything. Only the track list claims it (auditioning the focused
+   * track): everywhere else X still means nothing inside a menu and says so with the dead-end sound.
+   */
+  readonly secondary?: (index: number) => void;
 }
 
 interface MenuEntry {
@@ -916,12 +993,19 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   function asMenu(level: {
     readonly title: string;
     readonly entries: readonly MenuEntry[];
+    readonly secondary?: (index: number) => void;
   }): MenuLevel {
     const entries: MenuEntry[] = [
       ...level.entries,
       { label: t()('launcher.menu.close'), sound: 'none', run: () => popMenu() },
     ];
-    return { kind: 'menu', title: level.title, entries, focus: entries.length - 1 };
+    return {
+      kind: 'menu',
+      title: level.title,
+      entries,
+      focus: entries.length - 1,
+      ...(level.secondary === undefined ? {} : { secondary: level.secondary }),
+    };
   }
 
   function pushMenu(level: MenuLevel): void {
@@ -937,9 +1021,18 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
    * same: stepping out of a deeper level is a step INSIDE the menu and keeps `back`; leaving the last one
    * is the menu going away.
    */
-  function popMenu(): void {
+  /**
+   * `keepWork` is for a level the SCREEN closes because it is done with it — a question that has just
+   * been answered — rather than one the user backed out of. Leaving is normally the signal to abandon
+   * whatever was running, and the answer to a question is immediately followed by acting on it: aborting
+   * there would cancel the very download the answer just asked for.
+   */
+  function popMenu(options?: { readonly keepWork?: boolean }): void {
     if (menuStack.length > 0) deps.audio.play(menuStack.length > 1 ? 'back' : 'popup-close');
     menuStack.pop();
+    // Leaving a level ends whatever it had running: an audition belongs to the track list it was
+    // started from, and a download the user has walked away from has nobody left to arrive for.
+    if (options?.keepWork !== true) stopMetadataWork();
     paintMenu();
   }
 
@@ -947,6 +1040,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     // `silent` for a cascade — the screen closing, or a surface that already played its own close (Р5).
     if (menuStack.length > 0 && options?.silent !== true) deps.audio.play('popup-close');
     menuStack.length = 0;
+    stopMetadataWork();
     paintMenu();
   }
 
@@ -1228,9 +1322,14 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     if (at === null) return;
     const url = await deps.api.imagePreview(at.root, at.relative);
     if (url === null) return; // a preview that could not be read never became a surface — and never sounds
+    openLightbox(url, relative);
+  }
+
+  /** The lightbox itself, shared by a file already on the card and a variant still only online. */
+  function openLightbox(url: string, caption: string): void {
     deps.audio.play('popup-open');
     lightboxImage.src = url;
-    lightboxCaption.textContent = relative;
+    lightboxCaption.textContent = caption;
     lightboxOpen = true;
     lightboxEl.classList.add('is-open');
     lightboxEl.setAttribute('aria-hidden', 'false');
@@ -1277,7 +1376,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       ...(baseFor(id) !== null ? { base: baseFor(id) ?? '' } : {}),
       onDone: (result) => {
         if (!result.ok) {
-          if (!('cancelled' in result)) setStatus(result.message);
+          if (!('cancelled' in result)) failWith(result.message);
           // Cancelled (or refused): the popup is still up, and the focus goes back to it.
           applyMenuFocus();
           return;
@@ -1498,9 +1597,26 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     });
   }
 
+  /**
+   * The line under the columns. It now says only what is HAPPENING (a save in flight) — a result that
+   * lives there is a result the user can scroll away from, so those go to the notification plate and the
+   * error popup instead (see `notify` / `showError` above).
+   */
   function setStatus(next: string | null): void {
     status = next;
     render();
+  }
+
+  /** Said and done: the plate takes it, and the form's own line is cleared of whatever was in flight. */
+  function notifyDone(text: string): void {
+    setStatus(null);
+    deps.notify(text);
+  }
+
+  /** Something went wrong: the popup holds it until the user closes it. */
+  function failWith(text: string): void {
+    setStatus(null);
+    deps.showError(text);
   }
 
   // ── Load / save / delete ───────────────────────────────────────────────────
@@ -1547,7 +1663,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     if (!open || mode !== 'edit' || gameId !== forGame || pendingMove !== null) return;
     const cards = list.filter((candidate) => candidate.kind === 'card');
     if (cards.length === 0) {
-      setStatus(t()('gameSettings.moveNoCards'));
+      failWith(t()('gameSettings.moveNoCards'));
       return;
     }
     pushMenu(
@@ -1580,14 +1696,14 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     // mode, and applying a move target to any of those writes the wrong file.
     if (!open || mode !== 'edit' || gameId !== forGame || token !== adoptToken) return;
     if (!result.ok) {
-      setStatus(result.message);
+      failWith(result.message);
       return;
     }
     const originalPcSavePath = form.pcSavePath;
     const carried = carryFormToCard(form);
     const parsed = slotsWithInsertedGame(result.hasManifest ? result.text : null, carried);
     if (!parsed.ok) {
-      setStatus(parsed.message);
+      failWith(parsed.message);
       return;
     }
     // dest → source, by matching position in the two arrays carryFormToCard read and wrote — see
@@ -1655,7 +1771,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     const card = list.find((candidate) => candidate.kind === 'card' && candidate.isActive);
     const first = card ?? list.find((candidate) => candidate.kind === 'pc') ?? list[0];
     if (first === undefined) {
-      setStatus(t()('errors.driveUnavailable'));
+      failWith(t()('errors.driveUnavailable'));
       return;
     }
     await adoptRoot(first.root);
@@ -1676,7 +1792,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     if (!open || mode !== 'add' || token !== adoptToken) return;
     adoptingRoot = null;
     if (!result.ok) {
-      setStatus(result.message);
+      failWith(result.message);
       return;
     }
     origin = {
@@ -1758,16 +1874,16 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     setStatus(t()('gameSettings.saving'));
     const result = await deps.api.save({ root: at.root, signature: at.signature, text });
     if (!result.saved) {
-      setStatus(result.message);
+      failWith(result.message);
       return;
     }
     baseline = text;
     // A save while the game is RUNNING writes the file but cannot reload the manifest (the launcher
     // refuses mid-play). That is not a failure — the file on disk is already right and the launcher picks
     // it up on the next read — so it is reported as what it is (see the plan, Р3).
-    if (result.applied === 'applied') setStatus(t()('gameSettings.savedApplied'));
-    else if (result.applied === 'deferred') setStatus(t()('gameSettings.savedDeferred'));
-    else setStatus(t()('gameSettings.savedNotApplied'));
+    if (result.applied === 'applied') notifyDone(t()('gameSettings.savedApplied'));
+    else if (result.applied === 'deferred') notifyDone(t()('gameSettings.savedDeferred'));
+    else notifyDone(t()('gameSettings.savedNotApplied'));
     render();
   }
 
@@ -1796,7 +1912,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       toText: text,
     });
     if (!result.moved) {
-      setStatus(result.message);
+      failWith(result.message);
       return;
     }
     close();
@@ -1822,12 +1938,12 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     setStatus(t()('gameSettings.saving'));
     const result = await deps.api.save({ root: at.root, signature: at.signature, text });
     if (!result.saved) {
-      setStatus(result.message);
+      failWith(result.message);
       return;
     }
     baseline = text;
     if (result.applied === 'failed') {
-      setStatus(result.message ?? t()('gameSettings.savedNotApplied'));
+      failWith(result.message ?? t()('gameSettings.savedNotApplied'));
       await resyncAfterWrite(at.root, addedId);
       return;
     }
@@ -1877,7 +1993,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     const text = gamesToText(remaining);
     const result = await deps.api.save({ root: at.root, signature: at.signature, text });
     if (!result.saved) {
-      setStatus(result.message);
+      failWith(result.message);
       return;
     }
     baseline = text;
@@ -1893,6 +2009,142 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     void runValidate();
   }
 
+  // ── "Find online" (the metadata:* flow — see main/metadata/) ───────────────
+  //
+  // The surface itself is online-picker.ts: one screen with the game, the cover, the backgrounds and the
+  // soundtrack as sections. What lives HERE is the half of it that touches this screen — the keyboard
+  // for a query, the downloads that land beside the game, and the form fields their paths go into.
+  // Nothing reaches the manifest until the user saves: an applied file only fills a FORM FIELD, exactly
+  // as a path chosen in the file browser does.
+
+  /** What a "yes" to the title question runs — the surface's own callback, held until the popup answers. */
+  let pendingTitleReplace: (() => void) | null = null;
+  /** Retires answers belonging to a flow the user has already left (a new search, a closed screen). */
+  let metadataToken = 0;
+  /** Whether an answer from main still belongs to the flow that asked for it. */
+  function metadataCurrent(token: number): boolean {
+    return open && token === metadataToken;
+  }
+
+  /**
+   * Where an applied file goes, and under which id it is named. Mirrors browseInto's choice of root: a
+   * pending move is already about the TARGET card, so the assets belong there too.
+   */
+  function metadataTarget(): { readonly root: string; readonly gameId: string } | null {
+    const move = pendingMove;
+    const root = move !== null ? move.target.root : (origin?.root ?? null);
+    if (root === null) return null;
+    const id = form.id.trim();
+    return id === '' ? null : { root, gameId: id };
+  }
+
+  /**
+   * The entry point. Everything the sources offer lives on ONE surface now (online-picker.ts): the game,
+   * its cover, its backgrounds and its soundtrack, each a section of the same screen. What stays here is
+   * what only this screen can do — write into the form, and put the downloaded files beside the game.
+   *
+   * A Steam game whose appid is already filled in skips the search: that number is the very thing a
+   * search exists to find.
+   */
+  function startFindOnline(): void {
+    metadataToken += 1;
+    const appId = Number(form.steam.appid.trim());
+    const steamApp = form.launchMode === 'steam' && Number.isSafeInteger(appId) && appId > 0;
+    deps.onlinePicker.open({
+      query: form.title.trim(),
+      ...(steamApp ? { appId } : {}),
+    });
+  }
+
+  /**
+   * Downloads the chosen variants and writes the resulting manifest paths into the form.
+   *
+   * The slot INDEX matters as much as the order: it names the file on disk
+   * (`assets/<id>-hero-<n>.<ext>`), so appending has to start after the backgrounds already there —
+   * writing from zero would overwrite the very files it is adding to.
+   */
+  async function applyArtwork(
+    kind: 'grid' | 'hero',
+    variantKeys: readonly string[],
+    mode: 'replace' | 'append',
+  ): Promise<ApplyOutcome> {
+    const target = metadataTarget();
+    if (target === null) return { ok: false, message: t()('metadata.needsId') };
+    const existing = mode === 'append' ? form.heroImage : [];
+    const room = kind === 'grid' ? variantKeys.length : MAX_HERO_IMAGES - existing.length;
+    const accepted = variantKeys.slice(0, Math.max(0, room));
+    const token = metadataToken;
+    const paths: string[] = [];
+    for (const [index, variantKey] of accepted.entries()) {
+      const slot: MetadataApplySlot = kind === 'grid' ? 'grid' : { hero: existing.length + index };
+      const result = await deps.api.applyMetadata({ ...target, variantKey, slot });
+      if (!metadataCurrent(token)) return { ok: false, message: '' };
+      if (!result.ok) return { ok: false, message: result.message };
+      paths.push(result.path);
+    }
+    if (kind === 'grid') {
+      setField('gridImage', paths[0] ?? '');
+    } else {
+      setList('heroImage', [...existing, ...paths]);
+    }
+    // A pick that did not fit says so: silently dropping the third of three chosen backgrounds would
+    // read as the download having failed.
+    const dropped = variantKeys.length - accepted.length;
+    return {
+      ok: true,
+      message:
+        dropped > 0
+          ? t()('metadata.appliedPartly', { count: String(dropped) })
+          : t()('metadata.applied'),
+    };
+  }
+
+  /** One variant at full size, in the screen's own lightbox (which sits above the gallery). */
+  /**
+   * Fills the manifest's non-picture facts in the background: the description, and the genres, release
+   * date and platforms a future library view will sort by. main deliberately never writes them itself —
+   * the manifest TEXT belongs to this form while the screen is open, so a write from the other side
+   * would be overwritten by the next Save (see configure-form-model.ts and 4.5 of the plan).
+   */
+  async function fetchMetadataDescriptions(candidate: GameCandidate): Promise<void> {
+    const token = metadataToken;
+    const result = await deps.api.metadataDescriptions(candidate.key);
+    if (!metadataCurrent(token) || !result.ok) return;
+    const { description, genres, releaseDate, platforms } = result.value;
+    const known = {
+      ...(description === undefined ? {} : { description }),
+      ...(genres === undefined ? {} : { genres }),
+      ...(releaseDate === undefined ? {} : { releaseDate }),
+      ...(platforms === undefined ? {} : { platforms }),
+    };
+    if (Object.keys(known).length === 0) return;
+    // `rest` is the screen's own slot for keys the form model has no field for; currentText() folds it
+    // back into the manifest text, so this alone makes the screen dirty and Save carries it through.
+    rest = { ...rest, ...known };
+    updateForm(form);
+  }
+
+  async function applyTrackKey(trackKey: string): Promise<ApplyOutcome> {
+    const target = metadataTarget();
+    if (target === null) return { ok: false, message: t()('metadata.needsId') };
+    const token = metadataToken;
+    const result = await deps.api.applyMetadata({
+      ...target,
+      variantKey: trackKey,
+      slot: 'music',
+    });
+    if (!metadataCurrent(token)) return { ok: false, message: '' };
+    if (!result.ok) return { ok: false, message: result.message };
+    setField('backgroundMusic', result.path);
+    return { ok: true, message: t()('metadata.applied') };
+  }
+
+  /** Everything the flow leaves running, ended in one place: whatever main is still fetching for it. */
+  function stopMetadataWork(): void {
+    metadataToken += 1;
+    deps.api.cancelMetadata();
+  }
+
   // ── The six primitives ─────────────────────────────────────────────────────
 
   /** Which surface the primitives drive right now: the deepest open one wins. */
@@ -1900,6 +2152,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     if (lightboxOpen) return 'lightbox';
     if (deps.keyboard.isOpen()) return deps.keyboard;
     if (deps.picker.isOpen()) return deps.picker;
+    if (deps.onlinePicker.isOpen()) return deps.onlinePicker;
     if (menuStack.length > 0) return 'menu';
     return 'form';
   }
@@ -2037,6 +2290,10 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   /** The screen's actions, now that they live in the column rather than at the end of the form. */
   function runAction(id: GameRowId): void {
     switch (id) {
+      case 'find-online':
+        deps.audio.play('button');
+        startFindOnline();
+        return;
       case 'save':
         deps.audio.play('button');
         if (mode === 'add') void runAdd();
@@ -2151,9 +2408,12 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     adoptToken += 1;
     pendingMove = null;
     deps.audio.play('back');
-    // The lightbox and the menu go WITH the screen — one close, one sound (Р5).
+    // The lightbox, the menu and the keyboard go WITH the screen — one close, one sound (Р5).
     closeImage({ silent: true });
     closeMenus({ silent: true });
+    deps.keyboard.close();
+    // The online surface holds an audition — real sound, which would outlive the screen otherwise.
+    deps.onlinePicker.close();
     entrance.cancel();
     if (previewTimer !== 0) {
       window.clearTimeout(previewTimer);
@@ -2308,6 +2568,37 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     navBack,
     isDirty: dirty,
     deletesLocalGame: () => origin?.source === 'pc',
+    askOnlineQuery: (initial, onDone) => {
+      deps.keyboard.open({
+        value: initial,
+        mode: 'text',
+        title: t()('metadata.searchTitle'),
+        onDone: (value) => {
+          metadataToken += 1;
+          onDone(value);
+        },
+      });
+    },
+    askOnlineTitle: (title, onYes) => {
+      pendingTitleReplace = onYes;
+      deps.onConfirmRequested('replace-title', { title });
+    },
+    applyOnlineArtwork: (kind, variantKeys, mode) => applyArtwork(kind, variantKeys, mode),
+    applyOnlineTrack: (trackKey) => applyTrackKey(trackKey),
+    applyOnlineTitle: (title) => {
+      setField('title', title);
+    },
+    onOnlineCandidate: (candidate) => {
+      // An empty form takes the name at once, without the question "Take the name" asks: there is
+      // nothing to replace. It is also what makes the rest of the screen usable — the id follows the
+      // title (see setField), and the id is what every downloaded file is NAMED by, so a game added
+      // through this flow could otherwise pick a background and be told it has no id to write it under.
+      if (form.title.trim() === '') setField('title', candidate.title);
+      // Only a Steam entry can be asked for facts: the others carry no appid, and the appid is what the
+      // descriptions, genres and dates are addressed by.
+      if (candidate.steamAppId !== undefined) void fetchMetadataDescriptions(candidate);
+    },
+    heroCount: () => form.heroImage.length,
     // The secondary buttons belong to whatever surface is on top, exactly as the six primitives do.
     // controls.ts routes them to the open OVERLAY — that is this screen — so they die here unless they
     // are handed down the stack.
@@ -2315,6 +2606,15 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     // left the method out — one place to say so, the same way controls.ts does it one level up.
     navSecondary: (repeat = false) => {
       const surface = activeSurface();
+      if (surface === 'menu') {
+        const level = menuTop();
+        if (level?.secondary === undefined) {
+          if (!repeat) deps.audio.playLimit();
+          return;
+        }
+        if (!repeat) level.secondary(level.focus);
+        return;
+      }
       if (typeof surface === 'string' || surface.navSecondary === undefined) {
         if (!repeat) deps.audio.playLimit();
         return;
@@ -2368,6 +2668,11 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
         pendingSource = null;
         if (root !== null) void adoptRoot(root);
       } else if (kind === 'cancel-move') cancelMove();
+      else if (kind === 'replace-title') {
+        const run = pendingTitleReplace;
+        pendingTitleReplace = null;
+        run?.();
+      }
     },
     relocalize: () => {
       if (model !== null) {
@@ -2391,6 +2696,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       }
       deps.keyboard.relocalize();
       deps.picker.relocalize();
+      deps.onlinePicker.relocalize();
       // A menu's labels are built from the model, so it is rebuilt rather than patched.
       if (menuStack.length > 0) paintMenu();
     },

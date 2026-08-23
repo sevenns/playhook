@@ -59,8 +59,11 @@ export interface LibraryScreenDeps {
 }
 
 export interface LibraryScreen extends NavSurface {
-  /** A fresh visit: the first section, the first game, the top of the grid. */
-  open(): void;
+  /**
+   * A fresh visit: the first section, the first game, the top of the grid. `focusId` lands on one game
+   * instead — a game just added, which is the one thing the user is looking for the moment they arrive.
+   */
+  open(options?: { readonly focusId?: string }): void;
   /** Back from the detail screen (or from Add game): the screen returns exactly as it was left. */
   restore(): void;
   /** `silent` is a hand-over to another surface, which sounds and re-focuses for itself. */
@@ -103,6 +106,12 @@ export function createLibraryScreen(deps: LibraryScreenDeps): LibraryScreen {
   // fading out under the detail screen, and cards moving during that fade is what read as a twitch.
   // The next open/restore rebuilds it instead.
   let stale = false;
+  /**
+   * A game the screen was opened ON that the list does not hold YET — a game added seconds ago, whose
+   * library push has not landed. Honoured by the next setGames and then forgotten; the same race the
+   * carousel's pendingFocusId exists for.
+   */
+  let pendingFocusId: string | null = null;
   // A held direction walks the column faster than the grid can be rebuilt, so the section the column
   // moved onto is drawn ONCE, when the movement stops — the same debounce the Settings pane uses for the
   // same reason. Short enough that a single press still reads as instant.
@@ -140,6 +149,24 @@ export function createLibraryScreen(deps: LibraryScreenDeps): LibraryScreen {
 
   function selectedGame(): LibraryEntry | undefined {
     return shown[index];
+  }
+
+  /**
+   * Puts the focus on the game the screen was opened for, if the list holds it by now. Naming a game
+   * means the user is here to see it, so the focus leaves the sidebar and lands in the grid.
+   */
+  function focusPending(): void {
+    const wanted = pendingFocusId;
+    if (wanted === null) return;
+    const at = shown.findIndex((game) => game.id === wanted);
+    if (at === -1) return;
+    pendingFocusId = null;
+    index = at;
+    sidebar.setFocused(false);
+    applyLayout(true);
+    const game = shown[at];
+    const node = game === undefined ? undefined : nodeOf(game);
+    if (node !== undefined) scroller.reveal(node, true);
   }
 
   function nodeOf(game: LibraryEntry): HTMLElement | undefined {
@@ -300,7 +327,10 @@ export function createLibraryScreen(deps: LibraryScreenDeps): LibraryScreen {
       const node = nodeOf(game);
       if (node === undefined) return;
       node.classList.toggle('is-selected', active && at === index);
-      node.classList.toggle('shows-dot', (game.active && game.unconfigured !== true) || game.id === busyId);
+      node.classList.toggle(
+        'shows-dot',
+        (game.active && game.unconfigured !== true) || game.id === busyId,
+      );
       node.classList.toggle('is-busy', game.id === busyId);
     });
     placeJelly(instant);
@@ -535,9 +565,11 @@ export function createLibraryScreen(deps: LibraryScreenDeps): LibraryScreen {
   function step(dir: GridDir, repeat: boolean): void {
     const move = gridStep(index, dir, shown.length, cols);
     if (move.result === 'to-sidebar') {
-      // A held left hands over too, unlike the boundaries that leave a SCREEN: the column is the wall on
-      // this side, so running into it has to end in the column rather than against the first card. It
-      // goes no further — left in the column is a dead end.
+      // Leaving the grid takes a press of its OWN. A hold walks the row, and letting it carry on into the
+      // column meant a held left crossed a surface boundary the user was not aiming at — they were
+      // running to the first card, and the focus jumped out of the grid entirely. So the hold stops at
+      // the edge like any other wall, and the next deliberate press hands over.
+      if (repeat) return; // silent while held, exactly as `at-end` below treats the other three walls
       deps.audio.play('navigate');
       leaveGrid();
       return;
@@ -638,18 +670,26 @@ export function createLibraryScreen(deps: LibraryScreenDeps): LibraryScreen {
 
   return {
     isOpen: () => open,
-    open: () => {
+    open: (options) => {
       if (open) return;
       show();
       filter = 'all';
       previewFilter = null;
       index = 0;
+      pendingFocusId = null;
       games = deps.getGames();
       sidebar.render(sidebarEntries());
       sidebar.reset();
       sidebar.setFocused(true);
       sidebar.animateIn();
       renderSection(false);
+      // A named game takes the focus off the sidebar and onto the grid: naming one means the user is
+      // here to see it, not to pick a section. An id the list does not hold leaves the screen as it is —
+      // "All" from the top, which is the honest answer when the game is not there.
+      const wanted = options?.focusId;
+      if (wanted === undefined) return;
+      pendingFocusId = wanted;
+      focusPending();
     },
     restore: () => {
       if (open) return;
@@ -691,6 +731,8 @@ export function createLibraryScreen(deps: LibraryScreenDeps): LibraryScreen {
       if (shown.length === 0) sidebar.setFocused(true);
       measureColumns();
       applyLayout();
+      // …unless this list is the one carrying the game the screen was opened for.
+      focusPending();
     },
     setBusyGame: (id) => {
       if (id === busyId) return;

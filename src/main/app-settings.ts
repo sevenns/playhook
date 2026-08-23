@@ -58,6 +58,9 @@ const settingsObject = z.object({
   // Use only the global ambience, ignoring a card's own background music. `.default(false)` keeps the
   // "a card's music wins" behaviour for an older settings.json without the field.
   onlyGlobalAmbient: z.boolean().default(false),
+  // The user's SteamGridDB key. `.default('')` migrates an older settings.json without the field (no
+  // schemaVersion bump); an empty string is the normal state — the metadata feature just runs Steam-only.
+  steamGridDbApiKey: z.string().default(''),
 });
 
 /**
@@ -100,6 +103,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   soundSet: 'playhook-abyss',
   ambientTrack: 'playhook-abyss.mp3',
   onlyGlobalAmbient: false,
+  steamGridDbApiKey: '',
 };
 
 export class AppSettingsStore {

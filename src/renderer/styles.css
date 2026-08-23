@@ -326,8 +326,21 @@ body {
    hit-testable it swallows every click meant for the bar's own buttons, More included. Nothing is bound to
    the container itself: the card listeners live on the cards (carousel.ts) and the right-click-to-go-back
    on the window. Gated on the screen because a card must NOT re-enable itself through the invisible strip
-   left behind on the detail screen — `pointer-events: none` on a parent is undone by an `auto` child. */
-#app[data-screen='carousel'] .card {
+   left behind on the detail screen — `pointer-events: none` on a parent is undone by an `auto` child.
+
+   Gated on the OVERLAY for the same reason, one level up: a full-screen overlay hides its screen with
+   opacity plus `pointer-events: none` on the section, and an `auto` child punches straight through that
+   too. Without this, cards under an open Customize / Add-game screen still took clicks — the pointer
+   turned into a hand over a game nobody could see, and clicking it selected that game behind the
+   screen. The library's own cards are re-enabled below, for the overlay that does show them. */
+#app[data-screen='carousel']:not([data-overlay]) .card {
+  pointer-events: auto;
+}
+
+/* The library IS an overlay, and its cards are what it exists to be clicked on. Named per overlay rather
+   than "any overlay" so a screen opened ON TOP of the library (Add game is reached from it) keeps the
+   grid underneath inert. */
+#app[data-overlay='library'] #library .library-grid .card {
   pointer-events: auto;
 }
 
@@ -1141,6 +1154,7 @@ html:not(.mouse-asleep) .rect-button:hover,
 }
 #popup[data-view='details'] .popup-info,
 #popup[data-view='confirm'] .popup-confirm,
+#popup[data-view='busy'] .popup-busy,
 #popup[data-view='error'] .popup-error {
   display: flex;
 }
@@ -1353,6 +1367,7 @@ html:not(.mouse-asleep) .rect-button:hover,
 #popup[data-view='notifications'] .actions-group[data-group='notifications'],
 #popup[data-view='power'] .actions-group[data-group='power'],
 #popup[data-view='confirm'] .actions-group[data-group='confirm'],
+#popup[data-view='busy'] .actions-group[data-group='busy'],
 #popup[data-view='error'] .actions-group[data-group='error'] {
   display: flex;
 }
@@ -1601,20 +1616,32 @@ html:not(.mouse-asleep) .notification-item:hover .notification-dot {
   max-width: calc(550 * var(--px));
   z-index: 4;
   pointer-events: none;
-  opacity: 0;
-  transform: translateX(calc(40 * var(--px)));
-  transition: opacity 0.3s ease, transform 0.3s ease;
+  display: flex;
+  flex-direction: column;
+  /* Each plate is as wide as its own text and hangs off the RIGHT edge — the same rule the popup's
+     action stack follows. Stretched (the flex default) they all took the width of the widest one, so
+     when that one left, the rest shrank and their left edges jumped inward. */
+  align-items: flex-end;
+  gap: calc(12 * var(--px));
 }
 
-.toast.is-open {
+/* One message. The NEWEST is prepended, so the ones already up slide down by exactly their own height —
+   the stack moves rather than overlapping, which is what makes two messages in a row readable. The
+   entrance/exit lives here (translateX + opacity) and the pulse on the inner node (scale): one element
+   cannot animate two transforms independently. */
+.toast-plate {
+  opacity: 0;
+  transform: translateX(calc(40 * var(--px)));
+  transition:
+    opacity 0.3s ease,
+    transform 0.3s ease;
+}
+
+.toast-plate.is-open {
   opacity: 1;
   transform: none;
 }
 
-/* The inner node carries the pulse, so the entrance/exit transform above stays its own. The border is
-   there because the palette only guarantees the two colours are APART (dominant-color.ts keeps a
-   distance of 0.18), not that they meet a contrast ratio — a thin outline keeps the plate readable
-   against a hero that happens to sit close to --d1. */
 .toast-pulse {
   background: var(--d1);
   color: var(--d2);
@@ -1626,11 +1653,10 @@ html:not(.mouse-asleep) .notification-item:hover .notification-dot {
 /* TWO beats over the plate's six seconds, and no more — a repeating pulse reads as an alarm and keeps
    pulling the eye back to something already read. The first lands halfway through ("still here"), the
    second just before the plate slides out, so it reads as hopping and then leaving of its own accord.
-   The duration MUST match SHOW_MS in toast.ts: that is what places the beats at 3s and at 5.6s rather
-   than wherever a loop happens to be. Both return to `none` on purpose, and the last one by 100% — the
-   animation stops the moment `is-open` goes (the selector stops matching), and a keyframe left
-   mid-scale would snap back with a visible pop right as the exit begins. */
-.toast.is-open .toast-pulse {
+   The duration MUST match SHOW_MS in toast.ts. Both return to `none` on purpose, and the last one by
+   100% — the animation stops the moment `is-open` goes (the selector stops matching), and a keyframe
+   left mid-scale would snap back with a visible pop right as the exit begins. */
+.toast-plate.is-open .toast-pulse {
   animation: toast-pulse 6s ease-in-out 1;
 }
 
@@ -2629,13 +2655,16 @@ html:not(.mouse-asleep) .setting-row.is-inert:hover {
    only needs its own fade. It is the only way to type on a gamepad: the launcher has no <input> anywhere,
    and the Deck's system keyboard is out of reach outside Steam-launched games. */
 
+/* The keyboard is a surface of its own, not part of a screen: both Customize and Settings open it (see
+   the note on #osk in index.html). Hence z-index 2 — level with `.settings`, and above it by DOM order —
+   while the popup's 3 still paints over everything. */
 .osk {
   position: absolute;
   inset: 0;
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.25s ease;
-  z-index: 1;
+  z-index: 2;
 }
 
 .osk.is-open {
@@ -2942,6 +2971,199 @@ html:not(.mouse-asleep) .picker-item:hover,
 }
 
 .picker-empty {
+  padding: calc(20 * var(--px));
+  font-weight: 300;
+  font-size: calc(24 * var(--px));
+  color: color-mix(in srgb, var(--d2) 55%, transparent);
+}
+
+/* ── Online artwork gallery ─────────────────────────────────────────────────
+   The "Find online" picker: the same panel as the file browser, with a grid of pictures where that one
+   has a list of names. `auto-fill` decides the column count, and the navigation reads it back off the
+   layout rather than computing a second answer (see metadata-picker.ts). */
+
+/* The right column of "Find online". It holds a LIST (candidates, tracks) or a GRID (pictures), so it
+   is a column by default and becomes a grid when the open section is about pictures — one scroller and
+   one focus model either way, which is what lets the sections share a surface. */
+.online-content {
+  padding: calc(4 * var(--px));
+}
+
+.online-content.is-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(calc(200 * var(--px)), 1fr));
+  gap: calc(24 * var(--px));
+  align-content: start;
+}
+
+.metadata-tile {
+  display: flex;
+  flex-direction: column;
+  gap: calc(8 * var(--px));
+  padding: calc(8 * var(--px));
+  border: none;
+  border-radius: calc(12 * var(--px));
+  background: transparent;
+  color: var(--d2);
+  font-family: inherit;
+  cursor: pointer;
+}
+
+html:not(.mouse-asleep) .metadata-tile:hover,
+.metadata-tile.is-focused {
+  background: var(--d2);
+  color: var(--d1);
+}
+
+/* A cover is a portrait 2:3, so its tile is one and CROPS to it: every source serves that exact shape.
+   A background is whatever the source had — a store backdrop, a 1920x1080 screenshot, or a 4:3 shot from
+   an old game — and the tile must not pretend otherwise, so the box keeps a steady 16:9 for the grid's
+   sake while the picture is FITTED inside it. Cropping there would hide exactly the edges the user is
+   choosing between. */
+.metadata-tile-image {
+  width: 100%;
+  aspect-ratio: 2 / 3;
+  object-fit: cover;
+  border-radius: calc(8 * var(--px));
+  background: color-mix(in srgb, var(--d2) 12%, transparent);
+}
+
+.metadata-tile[data-kind='hero'] .metadata-tile-image {
+  aspect-ratio: 16 / 9;
+  object-fit: contain;
+}
+
+.metadata-tile-caption {
+  font-weight: 300;
+  font-size: calc(20 * var(--px));
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+/* The gallery's sidebar — the file browser's roots column in another use: the two filters, then the
+   actions. Same width, so the two pickers line up when one opens over the other. */
+.metadata-side {
+  flex: 0 0 calc(360 * var(--px));
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: none;
+  display: flex;
+  flex-direction: column;
+  gap: calc(4 * var(--px));
+  /* Long enough to scroll — a game can have twenty soundtracks — so it carries the same edge fades the
+     file browser's columns do, driven by the scroller's --fade-top / --fade-bottom. */
+  --fade-top: 0px;
+  --fade-bottom: 0px;
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 var(--fade-top),
+    #000 calc(100% - var(--fade-bottom)),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 var(--fade-top),
+    #000 calc(100% - var(--fade-bottom)),
+    transparent 100%
+  );
+}
+
+.metadata-side::-webkit-scrollbar {
+  display: none;
+}
+
+.metadata-side-heading {
+  flex: 0 0 auto;
+  padding: calc(16 * var(--px)) calc(20 * var(--px)) calc(6 * var(--px));
+  font-weight: 500;
+  font-size: calc(22 * var(--px));
+  color: color-mix(in srgb, var(--d2) 55%, transparent);
+}
+
+/* An action with nothing to act on — Apply before anything is ticked. Still focusable, so the user can
+   see it is there and hear why it refuses. */
+.metadata-side .picker-item.is-disabled {
+  opacity: 0.45;
+}
+
+/* Ticked (multi-select backgrounds) — the same underline the file browser marks a ticked file with. */
+/* The trailing "load more" tile: the same box a thumbnail occupies, so the grid keeps its rhythm and the
+   tile is reached by the same press as the picture before it. A frame rather than a picture, because
+   there is nothing to show yet. */
+.metadata-tile-more-box {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  aspect-ratio: 2 / 3;
+  border: calc(2 * var(--px)) dashed color-mix(in srgb, var(--d2) 45%, transparent);
+  border-radius: calc(8 * var(--px));
+  font-size: calc(48 * var(--px));
+  font-weight: 300;
+  line-height: 1;
+}
+
+.metadata-tile-more[data-kind='hero'] .metadata-tile-more-box {
+  aspect-ratio: 16 / 9;
+}
+
+html:not(.mouse-asleep) .metadata-tile-more:hover .metadata-tile-more-box,
+.metadata-tile-more.is-focused .metadata-tile-more-box {
+  border-color: var(--d1);
+}
+
+/* Waiting for a page: the same tile, spinning where the pictures will appear. The border goes solid so
+   the frame reads as "busy" rather than "press me", and the arc reuses the play button's spin. */
+.metadata-tile-more.is-busy .metadata-tile-more-box {
+  border-style: solid;
+  border-color: color-mix(in srgb, var(--d2) 25%, transparent);
+}
+
+.metadata-tile-spinner {
+  width: calc(44 * var(--px));
+  height: calc(44 * var(--px));
+  border: calc(4 * var(--px)) solid color-mix(in srgb, currentColor 30%, transparent);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+.metadata-tile.is-picked .metadata-tile-caption {
+  text-decoration: underline;
+  text-underline-offset: calc(6 * var(--px));
+  font-weight: 500;
+}
+
+/* ── Soundtrack list ────────────────────────────────────────────────────────
+   The gallery's right column, for tracks: names rather than pictures, so the file browser's rows are the
+   shape it takes. The claimed size sits at the row's end — a track is a download, and how long it will
+   take is the thing a name cannot say. */
+
+.music-row {
+  justify-content: space-between;
+  gap: calc(20 * var(--px));
+}
+
+/* A track's name wraps rather than being cut: an ellipsis here would be the app's font drawing raised
+   dots (see CLAUDE.md), and a name cut short is exactly the part that tells two takes of one theme
+   apart. */
+.music-row-title {
+  overflow-wrap: anywhere;
+}
+
+.music-row-size {
+  flex: 0 0 auto;
+  font-weight: 300;
+  opacity: 0.7;
+}
+
+/* Waiting for albums or for an album's tracks — the gallery's spinning tile, laid out as a row. */
+.music-busy {
+  display: flex;
+  align-items: center;
+  gap: calc(16 * var(--px));
   padding: calc(20 * var(--px));
   font-weight: 300;
   font-size: calc(24 * var(--px));

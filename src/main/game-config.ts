@@ -1087,6 +1087,15 @@ export class GameConfigService {
    * True when `root` is a current removable/non-system mountpoint, or the app's own PC-library root
    * (anti-arbitrary-write check — the closed set of roots this service will ever write to).
    */
+  /**
+   * The public face of `isAllowedRoot`, for the one other service that writes into a game's root:
+   * MetadataService puts a downloaded cover or track there, and it must answer the same question this
+   * service asks before every write rather than a second, slightly different one.
+   */
+  isWritableRoot(root: string): Promise<boolean> {
+    return this.isAllowedRoot(root);
+  }
+
   private async isAllowedRoot(root: string): Promise<boolean> {
     const candidates = await this.candidates();
     return candidates.some((candidate) => candidate.root === root);

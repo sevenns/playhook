@@ -5,6 +5,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   buildSettingsModel,
+  maskApiKey,
   prettifyName,
   volumePercent,
   type SettingsEnv,
@@ -29,6 +30,28 @@ const settings = (overrides: Partial<AppSettings> = {}): AppSettings => ({
 const rowIds = (rows: readonly SettingsRow[]): readonly string[] =>
   rows.map((row) => (row.kind === 'update-status' ? 'update-status' : row.id));
 
+describe('the SteamGridDB key row', () => {
+  it('shows nothing at all for an empty key, so the placeholder speaks instead', () => {
+    expect(maskApiKey('')).toBe('');
+  });
+
+  it('masks a stored key but keeps its last four characters recognizable', () => {
+    expect(maskApiKey('abcdef1234567890')).toBe('••••••••7890');
+  });
+
+  it('hides a short key completely — four of eight characters would be half the secret', () => {
+    expect(maskApiKey('abc123')).toBe('••••••••');
+  });
+
+  it('carries the masked value onto the screen, never the key itself', () => {
+    const model = buildSettingsModel(settings({ steamGridDbApiKey: 'abcdef1234567890' }), env());
+    const row = model.sections
+      .flatMap((section) => section.rows)
+      .find((candidate) => candidate.kind === 'text');
+    expect(row?.kind === 'text' && row.value).toBe('••••••••7890');
+  });
+});
+
 describe('buildSettingsModel — composition', () => {
   it('lays the sections out in screen order', () => {
     const model = buildSettingsModel(settings(), env());
@@ -36,6 +59,7 @@ describe('buildSettingsModel — composition', () => {
       'settings.sectionUpdates',
       'settings.sectionLanguage',
       'settings.sectionGeneral',
+      'settings.sectionMetadata',
       'settings.sectionAudio',
       // The action stack closing the screen carries no title — see buildSettingsModel.
       undefined,

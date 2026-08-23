@@ -168,6 +168,24 @@ describe('field visibility per launch mode', () => {
     expect(built).not.toContain('note.idChanged');
   });
 
+  it('offers "Find online" in the action column, directly above Save', () => {
+    const actions = ids(model({})).filter(
+      (id) => id === 'find-online' || id === 'save' || id === 'close',
+    );
+    // In the trailing column with the screen's other actions — the flow fills fields across three
+    // sections, so it belongs to the game rather than to Basics, where it first lived.
+    expect(actions.slice(0, 2)).toEqual(['find-online', 'save']);
+  });
+
+  it('keeps "Find online" out of Basics, where the title field is', () => {
+    const basics = model({}).sections[0];
+    expect(basics?.rows.map((row) => row.id)).not.toContain('find-online');
+  });
+
+  it('offers it while adding a game too — a new game is exactly what has nothing filled in yet', () => {
+    expect(ids(model({}, { mode: 'add' }))).toContain('find-online');
+  });
+
   it('labels Save as the move action and drops Discard while a move is pending', () => {
     const built = model({}, { source: 'pc', move: true, dirty: true });
     expect(ids(built)).not.toContain('reset');

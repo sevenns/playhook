@@ -32,6 +32,16 @@ import type {
   HeroAssets,
   LanguageMode,
   ListDirResult,
+  ArtworkKind,
+  ArtworkFilter,
+  ArtworkPage,
+  GameCandidate,
+  GameDetails,
+  MetadataApplyRequest,
+  MetadataApplyResult,
+  MetadataResult,
+  MusicAlbum,
+  MusicTrack,
   RendererApi,
   UpdateStatus,
 } from '../shared/types';
@@ -99,6 +109,7 @@ const CHANNELS = {
   settingsSetSoundSet: 'settings:set-sound-set',
   settingsSetAmbientTrack: 'settings:set-ambient-track',
   settingsSetOnlyGlobalAmbient: 'settings:set-only-global-ambient',
+  settingsSetSteamGridDbKey: 'settings:set-steamgriddb-key',
   settingsSetLanguage: 'settings:set-language',
   appVersionRequest: 'app:version',
   audioOptionsRequest: 'app:audio-options',
@@ -113,6 +124,15 @@ const CHANNELS = {
   gameConfigReadRoot: 'gameConfig:read-root',
   gameConfigMoveToCard: 'gameConfig:move-to-card',
   clipboardRead: 'clipboard:read',
+  metadataSearch: 'metadata:search',
+  metadataSteamCandidate: 'metadata:steam-candidate',
+  metadataArtwork: 'metadata:artwork',
+  metadataMusicAlbums: 'metadata:music-albums',
+  metadataMusicTracks: 'metadata:music-tracks',
+  metadataTrackPreview: 'metadata:track-preview',
+  metadataDescriptions: 'metadata:descriptions',
+  metadataApply: 'metadata:apply',
+  metadataCancel: 'metadata:cancel',
   // Notifications — the inbox lives in main; these are its two surfaces in the renderer.
   notificationsUpdate: 'notifications:update',
   notificationsToast: 'notifications:toast',
@@ -196,9 +216,12 @@ const api: RendererApi = {
     return ipcRenderer.invoke(CHANNELS.heroRequest) as Promise<HeroAssets | null>;
   },
   onLibraryUpdate(callback: (library: GameLibrary | null) => void): void {
-    ipcRenderer.on(CHANNELS.libraryUpdate, (_event: IpcRendererEvent, library: GameLibrary | null) => {
-      callback(library);
-    });
+    ipcRenderer.on(
+      CHANNELS.libraryUpdate,
+      (_event: IpcRendererEvent, library: GameLibrary | null) => {
+        callback(library);
+      },
+    );
   },
   requestLibrary(): Promise<GameLibrary | null> {
     return ipcRenderer.invoke(CHANNELS.libraryRequest) as Promise<GameLibrary | null>;
@@ -310,6 +333,9 @@ const api: RendererApi = {
   setOnlyGlobalAmbient(on: boolean): void {
     ipcRenderer.send(CHANNELS.settingsSetOnlyGlobalAmbient, on);
   },
+  setSteamGridDbKey(key: string): void {
+    ipcRenderer.send(CHANNELS.settingsSetSteamGridDbKey, key);
+  },
   setMusicVolume(volume: number): void {
     ipcRenderer.send(CHANNELS.settingsSetMusicVolume, volume);
   },
@@ -323,9 +349,12 @@ const api: RendererApi = {
     return ipcRenderer.invoke(CHANNELS.settingsReset) as Promise<AppSettings>;
   },
   onUpdateStatus(callback: (status: UpdateStatus) => void): void {
-    ipcRenderer.on(CHANNELS.updateStatusUpdate, (_event: IpcRendererEvent, status: UpdateStatus) => {
-      callback(status);
-    });
+    ipcRenderer.on(
+      CHANNELS.updateStatusUpdate,
+      (_event: IpcRendererEvent, status: UpdateStatus) => {
+        callback(status);
+      },
+    );
   },
   requestUpdateStatus(): Promise<UpdateStatus> {
     return ipcRenderer.invoke(CHANNELS.updateStatusRequest) as Promise<UpdateStatus>;
@@ -374,6 +403,55 @@ const api: RendererApi = {
   readClipboard(): Promise<string> {
     return ipcRenderer.invoke(CHANNELS.clipboardRead) as Promise<string>;
   },
+  searchMetadata(query: string): Promise<MetadataResult<readonly GameCandidate[]>> {
+    return ipcRenderer.invoke(CHANNELS.metadataSearch, query) as Promise<
+      MetadataResult<readonly GameCandidate[]>
+    >;
+  },
+  requestMetadataSteamCandidate(appId: number): Promise<MetadataResult<GameCandidate>> {
+    return ipcRenderer.invoke(CHANNELS.metadataSteamCandidate, appId) as Promise<
+      MetadataResult<GameCandidate>
+    >;
+  },
+  requestMetadataArtwork(
+    candidateKey: string,
+    kind: ArtworkKind,
+    page: number,
+    filter: ArtworkFilter,
+  ): Promise<MetadataResult<ArtworkPage>> {
+    return ipcRenderer.invoke(CHANNELS.metadataArtwork, {
+      candidateKey,
+      kind,
+      page,
+      filter,
+    }) as Promise<MetadataResult<ArtworkPage>>;
+  },
+  searchMetadataMusic(query: string): Promise<MetadataResult<readonly MusicAlbum[]>> {
+    return ipcRenderer.invoke(CHANNELS.metadataMusicAlbums, query) as Promise<
+      MetadataResult<readonly MusicAlbum[]>
+    >;
+  },
+  requestMetadataTracks(albumKey: string): Promise<MetadataResult<readonly MusicTrack[]>> {
+    return ipcRenderer.invoke(CHANNELS.metadataMusicTracks, albumKey) as Promise<
+      MetadataResult<readonly MusicTrack[]>
+    >;
+  },
+  requestMetadataTrackPreview(trackKey: string): Promise<MetadataResult<string>> {
+    return ipcRenderer.invoke(CHANNELS.metadataTrackPreview, trackKey) as Promise<
+      MetadataResult<string>
+    >;
+  },
+  requestMetadataDescriptions(candidateKey: string): Promise<MetadataResult<GameDetails>> {
+    return ipcRenderer.invoke(CHANNELS.metadataDescriptions, candidateKey) as Promise<
+      MetadataResult<GameDetails>
+    >;
+  },
+  applyMetadata(request: MetadataApplyRequest): Promise<MetadataApplyResult> {
+    return ipcRenderer.invoke(CHANNELS.metadataApply, request) as Promise<MetadataApplyResult>;
+  },
+  cancelMetadata(): void {
+    ipcRenderer.send(CHANNELS.metadataCancel);
+  },
   onNotifications(callback: (items: readonly AppNotification[]) => void): void {
     ipcRenderer.on(
       CHANNELS.notificationsUpdate,
@@ -383,9 +461,12 @@ const api: RendererApi = {
     );
   },
   onNotificationToast(callback: (toast: NotificationToast) => void): void {
-    ipcRenderer.on(CHANNELS.notificationsToast, (_event: IpcRendererEvent, toast: NotificationToast) => {
-      callback(toast);
-    });
+    ipcRenderer.on(
+      CHANNELS.notificationsToast,
+      (_event: IpcRendererEvent, toast: NotificationToast) => {
+        callback(toast);
+      },
+    );
   },
   requestNotifications(): Promise<readonly AppNotification[]> {
     return ipcRenderer.invoke(CHANNELS.notificationsRequest) as Promise<readonly AppNotification[]>;

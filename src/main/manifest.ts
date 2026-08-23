@@ -80,6 +80,11 @@ const installSchema = z
     path: ['runAsAdmin'],
   });
 
+/** How long a stored description may be, per language. Longer is dropped rather than rejected. */
+const MAX_DESCRIPTION_CHARS = 4000;
+/** How many genres are kept. Stores state a handful; a longer list is a sign of something else. */
+const MAX_GENRES = 20;
+
 const manifestSchema = z
   .object({
     schemaVersion: z.literal(1),
@@ -124,6 +129,27 @@ const manifestSchema = z
     // wait ends early once they're gone). `.default(60)` so an older/partial file stays valid.
     killTimeoutSec: z.number().int().positive().default(60),
     backgroundMusic: z.string().min(1).optional(),
+    // Localized description (en/ru), written by the "Find online" flow and kept for a future UI that
+    // shows it. LENIENT on purpose: `.catch(undefined)` drops a malformed or oversized value instead of
+    // failing the whole manifest — a hand-written card with a wrong `description` must still be a
+    // playable game, exactly as an unknown key is tolerated today. Nothing reads it yet.
+    description: z
+      .object({
+        en: z.string().max(MAX_DESCRIPTION_CHARS).optional(),
+        ru: z.string().max(MAX_DESCRIPTION_CHARS).optional(),
+      })
+      .optional()
+      .catch(undefined),
+    // Stored for a library view that does not exist yet (genres to filter by, a date to sort by, the
+    // platforms a store claims). Lenient for the same reason `description` is: nothing reads them, so a
+    // hand-written oddity here must never be what stops a game from appearing.
+    genres: z.array(z.string().min(1)).max(MAX_GENRES).optional().catch(undefined),
+    releaseDate: z
+      .string()
+      .regex(/^\d{4}(-\d{2}(-\d{2})?)?$/)
+      .optional()
+      .catch(undefined),
+    platforms: z.array(z.enum(['windows', 'mac', 'linux'])).optional().catch(undefined),
     // Linux-only (Р7b): extra winetricks verbs/settings provisioned into the game's Wine prefix BEFORE the
     // game launches, on top of the app's baseline set — a runtime a game needs on a bare Proton prefix
     // (e.g. `d3dx9`) OR a winetricks SETTING like `vd=1920x1080` (virtual desktop — fixes old games that

@@ -62,6 +62,7 @@ export type GameRowId =
   | 'killTimeoutSec'
   | 'winetricks'
   | 'umuGameId'
+  | 'find-online'
   | 'note.mixed'
   | 'note.idChanged'
   | 'note.otherIssues'
@@ -615,6 +616,14 @@ export function buildGameSettingsModel(
       tone: 'error',
     });
   }
+  // Above Save, in the column rather than in Basics: the flow fills the title, the cover, the backgrounds
+  // and the music — four fields across three sections — so it belongs to the GAME, not to the section
+  // whose first field it happens to touch.
+  actions.push({
+    kind: 'action',
+    id: 'find-online',
+    label: { key: 'metadata.findOnline' },
+  });
   actions.push({
     kind: 'action',
     id: 'save',

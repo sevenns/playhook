@@ -6,19 +6,22 @@
 // info panel, title slide, music gating).
 // IMPORTANT: title/data come from the card (untrusted) — rendered via textContent, never innerHTML.
 import type { AppNotification, AppState, BrowseInfo, LibraryEntry, Stats } from '../shared/types';
-import { createTranslator, type Locale, type Translator, type MessageKey } from '../shared/i18n/index.js';
+import {
+  createTranslator,
+  type Locale,
+  type Translator,
+  type MessageKey,
+} from '../shared/i18n/index.js';
 import { localizeDocument } from './i18n-dom.js';
 import { AUTO_CHAIN_MS, NAV_REPEAT_MS } from './auto-repeat.js';
 import { createAudioController } from './audio.js';
 import { createHeroController } from './hero.js';
 import { createControls } from './controls.js';
 import { createSettingsScreen, type SettingsScreenApi } from './settings-screen.js';
-import {
-  createGameSettingsScreen,
-  type GameSettingsScreenApi,
-} from './game-settings-screen.js';
+import { createGameSettingsScreen, type GameSettingsScreenApi } from './game-settings-screen.js';
 import { createOsk } from './osk.js';
 import { createFilePicker } from './file-picker.js';
+import { createOnlinePicker } from './online-picker.js';
 import { createCarousel } from './carousel.js';
 import { createCardArtCache } from './card-art.js';
 import { createLibraryScreen } from './library-screen.js';
@@ -103,6 +106,7 @@ const settingsApi: SettingsScreenApi = {
   setMusicVolume: (volume) => window.api.setMusicVolume(volume),
   setSfxVolume: (volume) => window.api.setSfxVolume(volume),
   setLanguage: (mode) => window.api.setLanguage(mode),
+  setSteamGridDbKey: (key) => window.api.setSteamGridDbKey(key),
   resetSettings: () => {
     void window.api.resetSettings();
   },
@@ -116,23 +120,28 @@ const settingsApi: SettingsScreenApi = {
 // actions they trigger, plus their wiring (clicks, hover, gamepad, Esc). render() drives it via
 // applyGameButtons/clearGameButtons/refresh; main's error goes to showError; the gamepad loop starts
 // with start(). The carousel seam below routes A/B/left/right when the strip is the active surface.
+// The on-screen keyboard is built before the screens that use it: both Settings (the SteamGridDB key)
+// and Customize (every text field) take it as a dependency, and only one of them is ever open.
+const osk = createOsk({
+  audio,
+  getTranslator,
+  readClipboard: () => window.api.readClipboard(),
+});
+
 const settingsScreen = createSettingsScreen({
   audio,
   getTranslator,
   api: settingsApi,
+  keyboard: osk,
   // Read lazily for the same reason the carousel seam is: `controls` is created just below.
   onClosed: () => controls.settingsClosed(),
   onResetRequested: () => controls.confirmResetSettings(),
 });
 
 // ── Customize screen (the fifth surface, see game-settings-screen.ts) ────────
-// Its two sub-surfaces are built first because the screen takes them as dependencies: the keyboard is the
-// only way to type anything here, and the file browser the only way to name a path with a gamepad.
-const osk = createOsk({
-  audio,
-  getTranslator,
-  readClipboard: () => window.api.readClipboard(),
-});
+// Its two sub-surfaces are built first because the screen takes them as dependencies: the keyboard
+// (above) is the only way to type anything here, and the file browser the only way to name a path with a
+// gamepad.
 const gameSettingsApi: GameSettingsScreenApi = {
   read: (id) => window.api.readGameConfig(id),
   validate: (root, text) => window.api.validateGameConfig(root, text),
@@ -143,6 +152,11 @@ const gameSettingsApi: GameSettingsScreenApi = {
   forgetHistory: (id) => window.api.forgetGame(id),
   moveToCard: (request) => window.api.moveGameConfigToCard(request),
   acceptPath: (request) => window.api.acceptGameConfigPaths(request),
+  searchMetadata: (query) => window.api.searchMetadata(query),
+  requestSteamCandidate: (appId) => window.api.requestMetadataSteamCandidate(appId),
+  metadataDescriptions: (candidateKey) => window.api.requestMetadataDescriptions(candidateKey),
+  applyMetadata: (request) => window.api.applyMetadata(request),
+  cancelMetadata: () => window.api.cancelMetadata(),
 };
 const filePicker = createFilePicker({
   audio,
@@ -152,12 +166,45 @@ const filePicker = createFilePicker({
     acceptPaths: (request) => window.api.acceptGameConfigPaths(request),
   },
 });
+// "Find online" — one surface for the game, its cover, its backgrounds and its soundtrack. Its own seam
+// keeps app.ts the only place window.api is touched; what it CANNOT do (write into the form, put files
+// beside the game, open the keyboard) it asks the Customize screen for, which is read lazily below.
+const onlinePicker = createOnlinePicker({
+  audio,
+  getTranslator,
+  api: {
+    searchGames: (query) => window.api.searchMetadata(query),
+    steamCandidate: (appId) => window.api.requestMetadataSteamCandidate(appId),
+    artwork: (candidateKey, kind, page, filter) =>
+      window.api.requestMetadataArtwork(candidateKey, kind, page, filter),
+    albums: (query) => window.api.searchMetadataMusic(query),
+    tracks: (albumKey) => window.api.requestMetadataTracks(albumKey),
+    preview: (trackKey) => window.api.requestMetadataTrackPreview(trackKey),
+    cancel: () => window.api.cancelMetadata(),
+  },
+  editQuery: (initial, onDone) => gameSettingsScreen.askOnlineQuery(initial, onDone),
+  applyArtwork: (kind, keys, mode) => gameSettingsScreen.applyOnlineArtwork(kind, keys, mode),
+  applyTrack: (trackKey) => gameSettingsScreen.applyOnlineTrack(trackKey),
+  applyTitle: (title) => gameSettingsScreen.applyOnlineTitle(title),
+  onCandidate: (candidate) => gameSettingsScreen.onOnlineCandidate(candidate),
+  heroCount: () => gameSettingsScreen.heroCount(),
+  // The launcher's own two channels, both declared further down and both read lazily for the same reason
+  // the screen is: no message can arrive before the user has opened this surface. A confirmation is a
+  // plate that goes by itself; a failure is the error popup, which the user closes when they have read it.
+  notify: (text) => toast.show(text),
+  showError: (text) => controls.showError(text),
+  showBusy: (text, onStop) => controls.showBusy(text, onStop),
+  closeBusy: () => controls.closeBusy(),
+  confirmTitle: (title, onYes) => gameSettingsScreen.askOnlineTitle(title, onYes),
+});
+
 const gameSettingsScreen = createGameSettingsScreen({
   audio,
   getTranslator,
   api: gameSettingsApi,
   keyboard: osk,
   picker: filePicker,
+  onlinePicker,
   // Read lazily for the same reason the carousel seam is: `controls` is created just below.
   onClosed: () => {
     controls.settingsClosed();
@@ -169,8 +216,12 @@ const gameSettingsScreen = createGameSettingsScreen({
     // when the detail screen itself is left (leaveDetail consumes the same flag).
     if (carousel.screen() !== 'detail') restoreOrigin();
   },
-  onConfirmRequested: (kind) => controls.confirmGameSettings(kind),
+  onConfirmRequested: (kind, options) => controls.confirmGameSettings(kind, options),
   onAdded: (id) => showAddedGame(id),
+  // The same two channels the online surface speaks through, read lazily for the same reason: both are
+  // declared below, and no message can arrive before the user has opened this screen.
+  notify: (text) => toast.show(text),
+  showError: (text) => controls.showError(text),
   // Editing while the game runs is legal (Р3); DELETING it is not — the launcher would be left holding a
   // manifest the file no longer has.
   isBusy: () =>
@@ -261,6 +312,7 @@ const controls = createControls({
     screen: () => carousel.screen(),
     move: (delta) => carousel.move(delta),
     activate: () => carousel.activate(),
+    onGame: () => carousel.selected()?.kind === 'game',
     leaveDetail: () => leaveDetail(),
     setUnread: (unread) => carousel.setUnread(unread),
   },
@@ -400,35 +452,30 @@ function openGameDetail(id: string, origin: ReturnTo = 'carousel'): void {
 }
 
 /**
- * A game was just added AND applied: put the user in front of it. Not `openGameDetail` — that one looks
- * the game up in `currentGames`, and the library push that will carry it has not arrived yet, so it would
- * find nothing and silently do nothing.
+ * A game was just added AND applied: put the user in front of it — in the LIBRARY, standing on it.
  *
- * `focusGame` is written for exactly this race: an unknown id is remembered and honoured when the list
- * arrives. Clearing `userChoseDetail` is what lets `applyLibrary` raise the strip once it does — the flag
- * is set by opening a detail screen, and it exists to stop the launcher yanking the user out of one.
- * With a single game there IS no carousel, and staying on that game's detail screen is the right answer.
+ * The carousel used to be the destination, and for a game that fits on it that was fine. But the row is
+ * a shortlist (MAX_STRIP_GAMES) ordered by recency, and a game that does not make it has no card there:
+ * the strip landed on whichever game was first while the background and the music belonged to the new
+ * one, which reads as the launcher having opened the wrong game. The library holds every game by
+ * construction, so it can always show the one that was just made.
  */
 function showAddedGame(id: string): void {
   // The Customize screen reported the new game AFTER announcing it closed, so onClosed has already put
-  // the library back up. A brand-new game belongs on the carousel, in front of the user — and both
-  // happen in one task, so no frame is drawn in between and nothing flickers.
+  // the library back up if that is where the user came from. Either way it is reopened ON the new game,
+  // and both happen in one task, so no frame is drawn in between and nothing flickers.
   returnTo = 'carousel';
-  libraryScreen.close(true);
   delete app.dataset['detailFrom'];
   userChoseDetail = false;
-  carousel.focusGame(id);
-  // focusGame moves the STRIP and nothing else — it does not tell main the browse cursor moved (a real
-  // flip does that through the carousel's own onNavigate). Without this the row lands on the new card
-  // while the title, the background and the info panel still describe whatever was on screen before.
-  // Immediate, like opening a detail screen: committing to a game outranks the flip debounce.
-  requestedBrowseId = id;
-  window.api.browseGame(id, true);
-  // `applied` is main saying it re-read the manifest, so the game is playable NOW — and Play acts on the
-  // CARD's selected game, not on the browse cursor, so it has to move too or Play would launch the game
-  // the user was looking at before.
-  if (gameOf(currentState)?.id !== id) window.api.selectGame(id);
+  libraryScreen.close(true);
   carousel.setScreen('carousel');
+  // The library is a launcher surface: the strip stands on its card and main is told nothing is on
+  // screen, exactly as restoreOrigin does. Without this the new game's wallpaper and music would play
+  // under a screen that is not showing it.
+  carousel.focusSystem();
+  requestedBrowseId = null;
+  window.api.browseGame(null);
+  libraryScreen.open({ focusId: id });
 }
 
 /** Back out of a detail screen to the carousel (B). False when the carousel is already the screen. */
@@ -467,7 +514,10 @@ function infoItem(label: string, value: string): HTMLElement {
  */
 function buildInfoPanel(stats: Stats): void {
   const rows: readonly (readonly [string, string])[] = [
-    [translator('launcher.info.lastPlayed'), formatDate(stats.lastPlayedAt, translator, currentLocale)],
+    [
+      translator('launcher.info.lastPlayed'),
+      formatDate(stats.lastPlayedAt, translator, currentLocale),
+    ],
     [translator('launcher.info.playtime'), formatPlaytime(stats.totalPlaySeconds, translator)],
     [translator('launcher.info.launches'), String(stats.launchCount)],
   ];
@@ -844,7 +894,8 @@ let heroPayload: 'pending' | 'none' | 'present' = 'pending';
 let wallpaperPainted = false;
 
 function noteBackgroundSettled(): void {
-  if (heroPayload === 'present' || (heroPayload === 'none' && wallpaperPainted)) noteBootSeed('hero');
+  if (heroPayload === 'present' || (heroPayload === 'none' && wallpaperPainted))
+    noteBootSeed('hero');
 }
 
 // ── Wiring ──────────────────────────────────────────────────────────────────
@@ -1001,7 +1052,6 @@ void window.api.requestAmbient().then((url) => {
 // The bundled UI sound set — every sound the app plays, on every screen (chosen in Settings → Audio).
 window.api.onSfxSet((set) => audio.setSounds(set));
 void window.api.requestSfxSet().then((set) => audio.setSounds(set));
-
 
 // Audio volumes are app-wide (set in the settings window): seed them on startup and update live.
 const applyVolumes = (volumes: { music: number; sfx: number }): void => {

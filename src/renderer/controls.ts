@@ -25,7 +25,7 @@ import { gameOf, phaseOf, steamBusy } from './state-view.js';
 import { req, reqQuery } from './dom.js';
 
 // The current popup view (mutually exclusive; 'none' = closed). Mirrors the data-view on #popup.
-type PopupView = 'none' | 'details' | 'notifications' | 'power' | 'confirm' | 'error';
+type PopupView = 'none' | 'details' | 'notifications' | 'power' | 'confirm' | 'busy' | 'error';
 // Which action the confirm view is asking about (only meaningful while popupView === 'confirm').
 type ConfirmMode =
   | 'install'
@@ -46,7 +46,10 @@ type ConfirmMode =
   // Leaving the screen (B/veil/Close) while a "Move to card…" is pending — drops the pending move and
   // returns the form to the PC library's baseline, WITHOUT closing the screen (see game-settings-screen.ts
   // PendingMove). Kept apart from 'discard-game-settings', whose "Yes" closes the whole screen.
-  | 'cancel-move-game-settings';
+  | 'cancel-move-game-settings'
+  // Taking the store's spelling into the Customize form's Title — the one thing the "Find online" screen
+  // does that REPLACES something the user may have typed rather than adding a file beside the game.
+  | 'replace-game-title';
 // Gamepad A doesn't trigger :active, so flash a press class to play the scale-down animation.
 const PRESS_MS = 130;
 /** How far the pointer must travel before hover may take the focus again (see armHover). */
@@ -129,7 +132,14 @@ export interface GameSettingsNav extends NavSurface {
   deletesLocalGame(): boolean;
   /** The shared confirm popup said yes to one of the screen's questions. */
   confirmAccepted(
-    kind: 'reset' | 'delete' | 'delete-history' | 'discard' | 'switch-source' | 'cancel-move',
+    kind:
+      | 'reset'
+      | 'delete'
+      | 'delete-history'
+      | 'discard'
+      | 'switch-source'
+      | 'cancel-move'
+      | 'replace-title',
   ): void;
 }
 
@@ -154,6 +164,11 @@ export interface CarouselNav {
   move(delta: number): MoveResult;
   /** Enters the selected card's detail screen. */
   activate(): void;
+  /**
+   * Whether the strip is standing on a GAME rather than one of the launcher's own cards. Down opens a
+   * game and nothing else, so it has to ask before acting (see navDown).
+   */
+  onGame(): boolean;
   /** Steps back from a detail screen to the strip; false when the strip is already the screen. */
   leaveDetail(): boolean;
   /** Whether the inbox holds anything unread — the Notifications CARD wears the dot now. */
@@ -169,8 +184,22 @@ export interface Controls {
   confirmResetSettings(): void;
   /** The Customize screen asked one of its questions — opens the same shared confirm popup. */
   confirmGameSettings(
-    kind: 'reset' | 'delete' | 'delete-history' | 'discard' | 'switch-source' | 'cancel-move',
+    kind:
+      | 'reset'
+      | 'delete'
+      | 'delete-history'
+      | 'discard'
+      | 'switch-source'
+      | 'cancel-move'
+      | 'replace-title',
+    options?: { readonly title?: string },
   ): void;
+  /**
+   * Work in progress, in the same column: a message and a Stop. `closeBusy` takes it away when the work
+   * answers — a progress popup nobody dismissed must not outlive the thing it describes.
+   */
+  showBusy(message: string, onStop: () => void): void;
+  closeBusy(): void;
   /**
    * Opens the surface one of the carousel's launcher cards stands for. The card plays the press sound
    * itself (app.ts), so nothing here does — the surface's own popup-open follows it.
@@ -278,8 +307,13 @@ export function createControls(deps: ControlsDeps): Controls {
   const popup = req('popup');
   const popupVeil = reqQuery<HTMLElement>('#popup .popup-veil');
   const confirmMessage = req('confirm-message');
+  /** The game name the "replace the title?" question quotes — set by whoever asks it. */
+  let confirmTitle = '';
+  /** What the busy view's Stop does, and how the surface that started the work hears about it. */
+  let busyStop: (() => void) | null = null;
   const confirmPath = req('confirm-path');
   const errorMessageEl = req('error-message');
+  const busyMessageEl = req('busy-message');
   const deleteNote = req('delete-note');
 
   // Action-stack buttons (grouped by view in the HTML).
@@ -310,6 +344,7 @@ export function createControls(deps: ControlsDeps): Controls {
   const confirmYes = req<HTMLButtonElement>('confirm-yes');
   const confirmNo = req<HTMLButtonElement>('confirm-no');
   const errorClose = req<HTMLButtonElement>('error-close');
+  const busyStopButton = req<HTMLButtonElement>('busy-stop');
 
   let popupView: PopupView = 'none';
   // The notification entries currently in the DOM. They are recreated on every snapshot, so — unlike
@@ -676,7 +711,8 @@ export function createControls(deps: ControlsDeps): Controls {
       mode === 'delete-game-history' ||
       mode === 'discard-game-settings' ||
       mode === 'switch-game-source' ||
-      mode === 'cancel-move-game-settings'
+      mode === 'cancel-move-game-settings' ||
+      mode === 'replace-game-title'
     ) {
       // The Customize screen's questions. Same shape as the Settings reset: the screen stays open
       // underneath, so "No" simply closes the popup and hands control back to it.
@@ -685,17 +721,19 @@ export function createControls(deps: ControlsDeps): Controls {
       delete popup.dataset['installVia'];
       const browse = deps.getBrowse();
       confirmMessage.textContent =
-        mode === 'reset-game-settings'
-          ? t()('gameSettings.confirmReset')
-          : mode === 'discard-game-settings'
-            ? t()('gameSettings.confirmDiscard')
-            : mode === 'switch-game-source'
-              ? t()('gameSettings.confirmSwitchSource')
-              : mode === 'cancel-move-game-settings'
-                ? t()('gameSettings.confirmCancelMove')
-                : mode === 'delete-game-history'
-                  ? t()('gameSettings.confirmDeleteHistory', { title: browse?.title ?? '' })
-                  : t()('gameSettings.confirmDelete', { title: browse?.title ?? '' });
+        mode === 'replace-game-title'
+          ? t()('metadata.titleConfirm', { title: confirmTitle })
+          : mode === 'reset-game-settings'
+            ? t()('gameSettings.confirmReset')
+            : mode === 'discard-game-settings'
+              ? t()('gameSettings.confirmDiscard')
+              : mode === 'switch-game-source'
+                ? t()('gameSettings.confirmSwitchSource')
+                : mode === 'cancel-move-game-settings'
+                  ? t()('gameSettings.confirmCancelMove')
+                  : mode === 'delete-game-history'
+                    ? t()('gameSettings.confirmDeleteHistory', { title: browse?.title ?? '' })
+                    : t()('gameSettings.confirmDelete', { title: browse?.title ?? '' });
       // The second question's own note: what each of ITS answers costs. It matters more than the first
       // one's, because "No" here does not mean "never mind" — it deletes the game and keeps the card.
       if (mode === 'delete-game-history') {
@@ -736,6 +774,26 @@ export function createControls(deps: ControlsDeps): Controls {
     applyFocus();
   }
 
+  /**
+   * Work in progress — a message and a Stop, in the same column everything else speaks through. Opened
+   * by a surface that started something long (a download that becomes a file beside a game) and closed
+   * by that same surface when the work answers, so nothing is left standing over a finished job.
+   */
+  function openBusy(message: string, onStop: () => void): void {
+    busyMessageEl.textContent = message;
+    busyStop = onStop;
+    setView('busy');
+    focusStackBottom(); // the sole button (Stop)
+    applyFocus();
+  }
+
+  function stopBusy(): void {
+    const stop = busyStop;
+    busyStop = null;
+    closePopup();
+    stop?.();
+  }
+
   // Error popup — opened by main via showError (a failed launch/action). A single Close button.
   function openError(messageText: string): void {
     errorMessageEl.textContent = messageText;
@@ -770,6 +828,10 @@ export function createControls(deps: ControlsDeps): Controls {
         audio.play('back');
         setView(confirmReturnTo);
         focusStackBottom();
+        break;
+      case 'busy':
+        // B on work in progress means Stop: there is nothing else this view can answer.
+        stopBusy();
         break;
       case 'details':
       case 'error':
@@ -1102,6 +1164,7 @@ export function createControls(deps: ControlsDeps): Controls {
     confirmYes,
     confirmNo,
     errorClose,
+    busyStopButton,
   ];
   let stackIndex = 0;
 
@@ -1136,6 +1199,8 @@ export function createControls(deps: ControlsDeps): Controls {
       }
       case 'confirm':
         return [confirmYes, confirmNo];
+      case 'busy':
+        return [busyStopButton];
       case 'error':
         return [errorClose];
       default:
@@ -1271,7 +1336,16 @@ export function createControls(deps: ControlsDeps): Controls {
       // Non-destructive, so no confirm: close the popup and hand control back to the strip.
       closePopup();
       deps.carousel.leaveDetail();
-    } else if (btn === menuClose || btn === errorClose || btn === powerClose || btn === notificationsClose) {
+    } else if (btn === busyStopButton) {
+      // Stop: the surface that started the work is told, and the popup goes with it.
+      audio.play('back');
+      stopBusy();
+    } else if (
+      btn === menuClose ||
+      btn === errorClose ||
+      btn === powerClose ||
+      btn === notificationsClose
+    ) {
       // back() dispatches by the current view: Details/Error → close the popup; Power → step back to
       // the Details menu (so "Close" in the Power submenu returns you one level up, like the B gesture).
       back();
@@ -1387,6 +1461,17 @@ export function createControls(deps: ControlsDeps): Controls {
         audio.play('back');
         deps.gameSettings.confirmAccepted('cancel-move');
         break;
+      case 'replace-game-title':
+        audio.play('button');
+        deps.gameSettings.confirmAccepted('replace-title');
+        break;
+      default: {
+        // A mode with no branch here is a Yes that closes the popup and does nothing, which is exactly
+        // how "Update title" came to be a button that asked and then ignored the answer. Now a missing
+        // branch is a compile error.
+        const unhandled: never = mode;
+        return unhandled;
+      }
     }
   }
 
@@ -1648,11 +1733,20 @@ export function createControls(deps: ControlsDeps): Controls {
       overlay.navDown(repeat);
       return;
     }
-    // The other half of the vertical pair: down opens the selected card (what A does), up on the detail
+    // The other half of the vertical pair: down opens the selected GAME (what A does), up on the detail
     // screen comes back out. The strip only — with the focus on More, down has no card to open, and
     // inside a popup the direction belongs to the menu (handled above). Held presses are dropped, as
     // everywhere a direction crosses a screen boundary.
-    if (!repeat && stripActive()) deps.carousel.activate();
+    //
+    // A launcher card is not opened this way. Down means "go into this game", and the launcher cards are
+    // surfaces rather than games — Settings and the Library have their own way in (A), and opening one by
+    // brushing the stick downwards is how a flip along the row ends up in a screen nobody asked for.
+    if (repeat || !stripActive()) return;
+    if (!deps.carousel.onGame()) {
+      audio.playLimit();
+      return;
+    }
+    deps.carousel.activate();
   }
   function navActivate(): void {
     noteGamepadActivity();
@@ -1781,7 +1875,9 @@ export function createControls(deps: ControlsDeps): Controls {
    * (`#app[data-boot]` is pointer-events:none), and the wheel / right-click, which listen on the window
    * and never touch that rule, check the flag themselves.
    */
-  function whileAwake<A extends readonly unknown[]>(fn: (...args: A) => void): (...args: A) => void {
+  function whileAwake<A extends readonly unknown[]>(
+    fn: (...args: A) => void,
+  ): (...args: A) => void {
     return (...args: A): void => {
       if (deps.isBooting()) return;
       fn(...args);
@@ -1954,7 +2050,8 @@ export function createControls(deps: ControlsDeps): Controls {
     clearGameButtons,
     settingsClosed,
     confirmResetSettings: () => openConfirm('reset-settings'),
-    confirmGameSettings: (kind) =>
+    confirmGameSettings: (kind, options) => {
+      confirmTitle = options?.title ?? '';
       openConfirm(
         kind === 'reset'
           ? 'reset-game-settings'
@@ -1966,8 +2063,17 @@ export function createControls(deps: ControlsDeps): Controls {
                 ? 'switch-game-source'
                 : kind === 'cancel-move'
                   ? 'cancel-move-game-settings'
-                  : 'discard-game-settings',
-      ),
+                  : kind === 'replace-title'
+                    ? 'replace-game-title'
+                    : 'discard-game-settings',
+      );
+    },
+    showBusy: openBusy,
+    closeBusy: () => {
+      if (popupView !== 'busy') return;
+      busyStop = null;
+      closePopup();
+    },
     openSystemCard,
     openAddGame,
     refresh,

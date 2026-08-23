@@ -234,6 +234,14 @@ export function createHeroController(deps: HeroDeps): HeroController {
   // The idle background (no game on screen): the fallback wallpaper, with its dominant colors as the
   // palette. Reuses the main screen's bottom bar layout; the title line is render()'s business.
   function applyIdleBackground(): void {
+    // Nothing is on screen, so the heroes held for whatever WAS are no longer about anything. Dropping
+    // them here is what keeps them from coming back: the browse cursor arrives on the instant channel
+    // and the pictures on the debounced one, so a game reached after an empty screen (the Library, a
+    // launcher card) would be painted with the PREVIOUS game's background for as long as that debounce
+    // lasts — about a second of another game's artwork under this game's name.
+    heroImages = [];
+    heroIndex = 0;
+    stopRotation();
     if (wallpaperUrl === null) {
       requestImage(null, () => applyPalette(null));
       return;
