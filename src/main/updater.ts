@@ -116,19 +116,23 @@ export class UpdaterService {
   async init(): Promise<void> {
     this.registerIpc();
 
-    if (!app.isPackaged) {
-      this.status = { kind: 'unsupported' };
-      log.info('[updater] disabled (not packaged) — the Settings screen still works (version/mode only)');
+    // macOS FIRST, before the packaged check: Squirrel.Mac refuses to apply an update to an app bundle
+    // that is not code-signed, and this build is not (no Apple Developer account — Д6). Wiring autoUpdater
+    // anyway would mean a check that finds a version, downloads it and then fails at install — so the
+    // Settings screen is told to explain manual updating instead.
+    //
+    // The order matters: on macOS this holds for a DEV run too, so reporting `not-packaged` there would be
+    // the less true of two truths — and it would show a developer on a Mac a screen the user never sees
+    // (the auto-update mode rows), which is exactly the kind of false green this port has to avoid.
+    if (process.platform === 'darwin') {
+      this.status = { kind: 'unsupported', reason: 'platform' };
+      log.info('[updater] disabled on macOS (unsigned build — Squirrel.Mac requires a signed bundle)');
       return;
     }
 
-    // macOS: Squirrel.Mac refuses to apply an update to an app bundle that is not code-signed, and this
-    // build is not (no Apple Developer account — Д6). Wiring autoUpdater anyway would mean a check that
-    // finds a version, downloads it and then fails at install — so the honest answer is the one the
-    // Settings screen already knows how to show: unsupported, update by hand from the Releases page.
-    if (process.platform === 'darwin') {
-      this.status = { kind: 'unsupported' };
-      log.info('[updater] disabled on macOS (unsigned build — Squirrel.Mac requires a signed bundle)');
+    if (!app.isPackaged) {
+      this.status = { kind: 'unsupported', reason: 'not-packaged' };
+      log.info('[updater] disabled (not packaged) — the Settings screen still works (version/mode only)');
       return;
     }
 

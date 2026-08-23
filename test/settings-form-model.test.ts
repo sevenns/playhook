@@ -75,6 +75,30 @@ describe('buildSettingsModel — composition', () => {
     ]);
   });
 
+  // macOS: self-update can never work there (unsigned bundle), so the mode selector and the beta toggle
+  // would be controls that do nothing — the section is left as the explanation alone.
+  it('drops the mode and beta rows when the platform can never self-update', () => {
+    const model = buildSettingsModel(
+      settings(),
+      env({ updateStatus: { kind: 'unsupported', reason: 'platform' } }),
+    );
+    expect(rowIds(model.sections[0]?.rows ?? [])).toEqual(['update-status']);
+  });
+
+  // A dev run is `unsupported` too, but temporarily and for a different reason: the mode it persists is
+  // what the INSTALLED build will honour, so those rows must stay.
+  it('keeps the mode and beta rows in a dev build', () => {
+    const model = buildSettingsModel(
+      settings(),
+      env({ updateStatus: { kind: 'unsupported', reason: 'not-packaged' } }),
+    );
+    expect(rowIds(model.sections[0]?.rows ?? [])).toEqual([
+      'update-status',
+      'autoUpdate',
+      'prerelease',
+    ]);
+  });
+
   it('carries the current update status into the status row', () => {
     const model = buildSettingsModel(
       settings(),

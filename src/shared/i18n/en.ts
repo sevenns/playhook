@@ -213,6 +213,10 @@ export const en = {
   'settings.status.downloading': 'Downloading... {percent}%',
   'settings.status.downloaded': 'Update {version} is ready to install.',
   'settings.status.unsupported': 'Updates are available only in the installed build.',
+  // macOS: not a temporary state like the dev one above — the mac build cannot ever self-update
+  // (Squirrel.Mac requires a code-signed bundle), so this says what to do instead.
+  'settings.status.unsupportedPlatform':
+    'On macOS Playhook does not update itself — download the newer .dmg from the Releases page and replace the app. Your games, stats and saves are kept.',
   'settings.action.check': 'Check for updates',
   'settings.action.checking': 'Checking...',
   'settings.action.updateTo': 'Update to {version}',

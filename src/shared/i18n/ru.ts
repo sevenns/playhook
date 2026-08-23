@@ -176,6 +176,8 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'settings.status.downloading': 'Загрузка... {percent}%',
   'settings.status.downloaded': 'Обновление {version} готово к установке.',
   'settings.status.unsupported': 'Обновления доступны только в установленной сборке.',
+  'settings.status.unsupportedPlatform':
+    'На macOS Playhook не обновляется сам - скачайте новый .dmg со страницы Releases и замените приложение. Игры, статистика и сейвы сохранятся.',
   'settings.action.check': 'Проверить обновления',
   'settings.action.checking': 'Проверка...',
   'settings.action.updateTo': 'Обновить до {version}',

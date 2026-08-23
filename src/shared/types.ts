@@ -525,8 +525,9 @@ export type AppState =
 /**
  * Update state for the settings window (discriminated union). The UpdaterService owns the current
  * snapshot, returns it on request and pushes it on every change. Maps 1:1 onto electron-updater
- * events (see updater.ts). `unsupported` is set immediately in dev / non-packaged builds, where
- * self-update is a no-op — the settings window then just shows the version and an explanatory note.
+ * events (see updater.ts). `unsupported` is set immediately when this build cannot self-update at all —
+ * in dev / non-packaged, and on macOS (unsigned bundle, see UpdateUnsupportedReason) — and the settings
+ * screen then shows the version plus an explanation instead of the update controls.
  */
 export type UpdateStatus =
   | { readonly kind: 'idle' } // not checked yet
@@ -536,7 +537,18 @@ export type UpdateStatus =
   | { readonly kind: 'downloading'; readonly version: string; readonly percent: number }
   | { readonly kind: 'downloaded'; readonly version: string } // ready → "Restart & install"
   | { readonly kind: 'error'; readonly message: string } // → "Retry"
-  | { readonly kind: 'unsupported' }; // dev / not-packaged: update unavailable
+  | { readonly kind: 'unsupported'; readonly reason: UpdateUnsupportedReason };
+
+/**
+ * WHY a build cannot self-update — the two cases need different words, and the settings screen shows
+ * different controls for them:
+ * - `not-packaged` — a dev run. Temporary and about the build, not the platform: the auto-update MODE is
+ *   still worth showing and persisting there, because the installed build will honour it.
+ * - `platform` — macOS. Permanent for this distribution: Squirrel.Mac only updates a code-signed bundle
+ *   and the mac build is unsigned (no Apple Developer ID), so updating means downloading the new dmg by
+ *   hand. A mode selector would be a control that can never do anything, so the screen omits it.
+ */
+export type UpdateUnsupportedReason = 'not-packaged' | 'platform';
 
 /**
  * Auto-update mode (persisted in settings.json). Maps onto electron-updater flags:
