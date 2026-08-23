@@ -489,13 +489,29 @@ export const en = {
   'errors.powerUnsupported': 'power actions are only available on Windows',
   'errors.powerFailed': 'power command failed: {cause}',
 
+  // ── macOS refusals (platform/darwin) ────────────────────────────────────────
+  // What the mac build cannot do, said in the words of the thing the user tried: a Windows executable, a
+  // card installer, an unreadable .app, a Gatekeeper-blocked binary, a denied Apple-Events prompt.
+  'errors.macWindowsGame':
+    'Windows games do not run on macOS — this game launches a *.exe. Native mac games and Steam mode work.',
+  'errors.macInstallUnsupported': 'installing a game from a card is not supported on macOS',
+  'errors.macAppBundleUnreadable':
+    'cannot find the executable inside the app bundle: {path} (Contents/MacOS is missing or unreadable)',
+  'errors.macGameBlocked':
+    'macOS blocked the game (Gatekeeper): the file is quarantined or unsigned. Allow it in System Settings → Privacy & Security, or run: xattr -dr com.apple.quarantine "{path}"',
+  'errors.macPowerNotPermitted':
+    'macOS did not allow Playhook to control the system. Grant it in System Settings → Privacy & Security → Automation → Playhook → System Events.',
+
   // ── Manifest validation (manifest.ts) ───────────────────────────────────────
   // Schema-level custom messages: stored in the schema AS THESE KEYS; translated at the issue-mapping
   // points via translateIssueMessage (a message that is a key of `en` gets translated, a structural zod
   // message passes through). JSON field names inside the text stay as latin identifiers.
   'manifest.idPattern': 'id must match [A-Za-z0-9._-]',
   'manifest.idDots': 'id must not be . or ..',
-  'manifest.watchProcessesName': 'watchProcesses entries must be a bare *.exe name',
+  'manifest.watchProcessesName':
+    'watchProcesses entries must be a bare file name (letters, digits, ". _ -", spaces) — no path separators',
+  'manifest.watchProcessesBlank': 'watchProcesses entries must not be blank',
+  'manifest.watchProcessesDots': 'watchProcesses entries must not be . or ..',
   'manifest.winetricksName':
     'winetricks entries must be verb names or key=value settings (letters, digits, _.=-)',
   'manifest.umuGameIdName': 'umuGameId must be a Steam appid or a UMU_ID (letters, digits, _-)',

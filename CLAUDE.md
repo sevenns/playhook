@@ -84,32 +84,48 @@ happened once already, via `logger.ts` and `steam.ts`.
 
 ## Platform layer (OS-specific code)
 
-Playhook runs on Windows and on the Steam Deck / Linux (Windows games via Proton/umu-launcher). **All
-OS-specific behaviour lives behind the `Platform` bundle in `src/main/platform/`**, not scattered
-`process.platform` checks. When you add code that differs per OS:
+Playhook runs on **three** OSes: Windows, the Steam Deck / Linux (Windows games via Proton/umu-launcher)
+and macOS. macOS is a deliberately narrower port — NATIVE mac games (a bare binary or a `.app` bundle) plus
+Steam mode; a Windows `*.exe` does not run there (no Wine/CrossOver), install mode is unsupported, and the
+build does not self-update. **All OS-specific behaviour lives behind the `Platform` bundle in
+`src/main/platform/`**, not scattered `process.platform` checks. When you add code that differs per OS:
 
 - Add the capability to an interface in `platform/types.ts` (the bundle is `ProcessMonitor`,
-  `SteamLocator`, `GameProcessLauncher`, `SavePathResolver`, `PowerBackend`, `resolveInstallDir`).
-- Implement it in **both** `platform/win32.ts` and `platform/linux.ts` (linux Proton helpers live in
-  `platform/*.linux.ts` / `umu.ts`). `createPlatform(process.platform)` selects the bundle once at
-  bootstrap; the rest of the code is platform-agnostic and receives it via DI (`ControllerDeps.platform`).
-- **Never change Windows behaviour** when adding the Linux side — the win32 implementation must stay 1:1
-  (the port's guiding invariant). Keep the OS-neutral fs/parse code (manifest, save-sync, `.acf`/VDF,
-  drive-watcher) shared — don't fork it.
-- Card format is a **Windows dictionary** on both OSes (`%APPDATA%`, `*.exe`, `install.type`); on Linux it
-  is interpreted relative to the game's Wine prefix. A `game.json` must work unchanged on both platforms —
-  Linux-only manifest fields (`winetricks`, `umuGameId`) are ignored on Windows, never rejected.
-- Extract the pure bits (path/env/argv construction, `/proc` parsing, prefix mapping) into electron-free
-  helpers and unit-test them (see `umu.ts`, `proc.ts`, `save-path.linux.ts`).
-- **Build Linux paths with `path.posix`, never bare `path.join`.** `path.join` follows the OS the code
-  RUNS on, and CI runs the test suite on Windows too — so a Linux path built with `path.join` comes out as
-  `\home\deck\...` there and fails a test that (correctly) expects `/home/deck/...`. This has broken the
-  Windows job repeatedly. In any `*.linux.ts` module — and in any Linux-only feature elsewhere — use
-  `path.posix.join` / `path.posix.dirname` / `path.posix.basename`. Reference: `umu.ts` `prefixDir`,
-  `steam-userdata.linux.ts`. The win32 side keeps plain `path.join` (there it is right).
+  `SteamLocator`, `SteamShortcuts`, `GameProcessLauncher`, `SavePathResolver`, `PowerBackend`,
+  `RemovableMounter`, `resolveInstallDir`).
+- Implement it in **all three** of `platform/win32.ts`, `platform/linux.ts` and `platform/darwin.ts`
+  (linux Proton helpers live in `platform/*.linux.ts` / `umu.ts`; the macOS ones in `platform/*.darwin.ts`).
+  `createPlatform(process.platform)` selects the bundle once at bootstrap in an explicit three-way branch
+  (win32 / darwin / everything-else = linux); the rest of the code is platform-agnostic and receives it via
+  DI (`ControllerDeps.platform`).
+- **Never change the behaviour of an OS you are not porting.** Adding the Linux side must leave win32 1:1;
+  adding macOS must leave BOTH win32 and linux 1:1 (the port's guiding invariant, and the one most easily
+  broken by accident — a visibility rule phrased as "only on Linux" silently takes a section away from
+  Windows too; phrase it as "not on the OS being added"). Keep the OS-neutral fs/parse code (manifest,
+  save-sync, `.acf`/VDF, drive-watcher) shared — don't fork it.
+- Card format is a **Windows dictionary** on every OS (`%APPDATA%`, `*.exe`, `install.type`), interpreted
+  per platform: on Linux relative to the game's Wine prefix; on macOS translated into the mac profile
+  (`%APPDATA%`/`%LOCALAPPDATA%`/`%LOCALLOW%` → `~/Library/Application Support`, `%USERPROFILE%` → `~`,
+  `%DOCUMENTS%` → `~/Documents`) while a card whose `executable` is a `*.exe` simply refuses to launch
+  there. A `game.json` must work unchanged wherever it CAN work — Linux-only manifest fields (`winetricks`,
+  `umuGameId`) are ignored elsewhere, never rejected. `watchProcesses` names may omit the `.exe` suffix
+  (a native mac process has none); keep the `*.exe` spelling on a card meant to travel — the macOS matcher
+  normalizes the suffix away, so one spelling matches on all three.
+- Extract the pure bits (path/env/argv construction, `/proc` and `ps` parsing, prefix mapping) into
+  electron-free helpers and unit-test them (see `umu.ts`, `proc.ts`, `save-path.linux.ts`,
+  `process-monitor.darwin.ts`, `save-path.darwin.ts`).
+- **Build Linux AND macOS paths with `path.posix`, never bare `path.join`.** `path.join` follows the OS the
+  code RUNS on, and CI runs the test suite on Windows too — so a Linux path built with `path.join` comes
+  out as `\home\deck\...` there and fails a test that (correctly) expects `/home/deck/...`. This has broken
+  the Windows job repeatedly. The rule applies verbatim to macOS: `path.join('~/Library/Application
+  Support', …)` in a darwin module yields `\Library\…` on the Windows runner. In any `*.linux.ts` or
+  `*.darwin.ts` module — and in any OS-specific feature elsewhere — use `path.posix.join` /
+  `path.posix.dirname` / `path.posix.basename`. Reference: `umu.ts` `prefixDir`, `steam-userdata.linux.ts`,
+  `steam-locator.darwin.ts`. The win32 side keeps plain `path.join` (there it is right).
   Beware the silent variant: when a value is *derived* from a path (the Steam shortcut appid is a CRC32 of
   it), a wrong separator does not fail loudly — it produces a wrong value.
-  Quick check before pushing: `grep -rn "path\.\(join\|dirname\|basename\|resolve\)(" src/main/platform/*.linux.ts`
+  Quick check before pushing:
+  `grep -rn "path\.\(join\|dirname\|basename\|resolve\)(" src/main/platform/*.{linux,darwin}.ts`
 
 ## Tests
 
@@ -120,7 +136,8 @@ OS-specific behaviour lives behind the `Platform` bundle in `src/main/platform/`
   was) and test that.
 - Prefer covering the risky, data-touching functions: manifest validation/anti-traversal, stats merge,
   save-sync retry, argument quoting.
-- **The suite runs on Windows AND Linux in CI, so a green local run proves nothing about path handling.**
+- **The suite runs on Windows, Linux AND macOS in CI, so a green local run proves nothing about path
+  handling.**
   A test that asserts a Linux path against a literal (`expect(...).toBe('/home/deck/...')`) is correct and
   should stay — it is the *source* that must use `path.posix` (see the platform-layer rule above). Never
   "fix" such a failure by rewriting the expectation with `path.join`: that makes the test assert whatever

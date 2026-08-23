@@ -58,6 +58,49 @@ linux:
     - from: resources/umu
       to: umu
 
+# macOS build (arm64 only — Д7: the runner and the developer machine are both Apple Silicon, and a
+# universal build would additionally require a universal `drivelist`). The dmg is what a user downloads;
+# the zip is there because electron-updater's macOS channel expects one, and it is the easier artifact to
+# script around.
+#
+# NOT signed with a Developer ID and NOT notarized: there is no Apple Developer account (Д6). `identity: -`
+# asks for an AD-HOC signature, which is not the same as skipping signing: on Apple Silicon an app whose
+# signature is broken (which repacking a signed Electron binary does) refuses to launch at all, so the
+# ad-hoc one is what makes the build runnable once the user clears Gatekeeper. Without a Developer ID the
+# first launch still goes through System Settings → Privacy & Security → "Open Anyway" (Р3), and the app
+# does not auto-update (Squirrel.Mac requires a real signature — see updater.ts).
+#
+# `extendInfo` is NOT optional: the default Electron Info.plist declares neither key, and macOS silently
+# denies the capability when its usage string is missing — Apple Events would fail with -1743 in the
+# PACKAGED build only (in dev the responsible process is the terminal, which already has consent, so
+# leaving these out yields a false green). NSAppleEvents backs the power menu (Д4); NSRemovableVolumes
+# backs reading a card under /Volumes (Р7).
+#
+# koffi stays in the mac bundle on purpose: `gamepad-global.ts` does a top-level `import koffi` on every
+# OS, so dropping it would break the app at startup. The `asarUnpack` above already covers it — do not
+# "optimize" it out of the macOS build.
+mac:
+  icon: assets/icon.icns
+  category: public.app-category.games
+  identity: '-'
+  # Hardened runtime is electron-builder's default, and it is wrong for this build: it only buys anything
+  # together with notarization (which needs a Developer ID we do not have), while its library validation
+  # refuses to load the ad-hoc-signed native modules unpacked from the asar (drivelist, koffi) — the app
+  # would build cleanly and then fail at startup.
+  hardenedRuntime: false
+  target:
+    - target: dmg
+      arch:
+        - arm64
+    - target: zip
+      arch:
+        - arm64
+  extendInfo:
+    NSAppleEventsUsageDescription: >-
+      Playhook uses System Events to shut down or restart this Mac from its power menu.
+    NSRemovableVolumesUsageDescription: >-
+      Playhook reads game cards from removable drives to find the games on them.
+
 # Auto-update channel (electron-updater): the app reads `latest.yml` + the installer from this repo's
 # GitHub Releases. Public repo → no token on the client. Update `owner`/`repo` if the GitHub repo is
 # renamed. Only the `nsis` target self-updates; the `portable` exe does not.

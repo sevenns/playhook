@@ -8,6 +8,7 @@ import fse from 'fs-extra';
 import { list } from 'drivelist';
 import { MANIFEST_FILENAME, type DriveCandidate } from '../shared/types';
 import { type Translator } from '../shared/i18n/index';
+import { log } from './logger';
 
 const DEFAULT_INTERVAL_MS = 1000;
 
@@ -184,6 +185,8 @@ export class DriveWatcher {
   private activeRoot: string | null = null;
   private scanning = false;
   private lastAutomountAt = 0;
+  /** Mountpoints already reported as permission-denied, so the breadcrumb is logged once, not per tick. */
+  private readonly deniedMounts = new Set<string>();
 
   private insertHandler: ((root: string) => void) | null = null;
   private removeHandler: ((root: string) => void) | null = null;
@@ -284,13 +287,35 @@ export class DriveWatcher {
       // A disk may have several partitions/mountpoints — we iterate over all of them.
       for (const mount of drive.mountpoints) {
         if (typeof mount.path !== 'string' || mount.path.length === 0) continue;
-        const manifestPath = path.join(mount.path, MANIFEST_FILENAME);
-        if (await fse.pathExists(manifestPath)) {
+        if (await this.carriesManifest(mount.path)) {
           if (mount.path === this.activeRoot) return mount.path; // keep the active card
           firstFound ??= mount.path;
         }
       }
     }
     return firstFound;
+  }
+
+  /**
+   * Whether this mountpoint carries a `game.json`. A PERMISSION error is not treated like an absent file:
+   * on macOS the first look inside a removable volume raises the "Removable Volumes" privacy prompt, and a
+   * user who declines it makes every card silently invisible — with `pathExists` swallowing the EPERM,
+   * this log line is the only trace of why. Logged once per mountpoint (the scan runs on a timer).
+   */
+  private async carriesManifest(mount: string): Promise<boolean> {
+    try {
+      await fse.access(path.join(mount, MANIFEST_FILENAME));
+      this.deniedMounts.delete(mount); // access was granted (or the prompt was answered) — arm it again
+      return true;
+    } catch (cause) {
+      const code = (cause as NodeJS.ErrnoException).code;
+      if ((code === 'EPERM' || code === 'EACCES') && !this.deniedMounts.has(mount)) {
+        this.deniedMounts.add(mount);
+        log.warn(
+          `[drive-watcher] permission denied reading "${mount}" (${code}) — on macOS, allow removable volumes in System Settings → Privacy & Security → Files and Folders`,
+        );
+      }
+      return false;
+    }
   }
 }

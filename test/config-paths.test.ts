@@ -11,6 +11,8 @@ import { describe, expect, it } from 'vitest';
 import {
   acceptsExtensions,
   checkPickedType,
+  hostPlatform,
+  listsAsFile,
   picksDirectory,
   startDirFor,
   toCardRelative,
@@ -84,6 +86,54 @@ describe('checkPickedType', () => {
 
   it('accepts any extension when the kind has no list', () => {
     expect(checkPickedType('/x/hades', 'pc-executable', file, null)).toBeNull();
+  });
+
+  // A macOS `.app` is a DIRECTORY that means one executable — accepted for a local game there, and only
+  // there: a card stays a Windows dictionary, and on Windows/Linux a `.app` folder is just a folder.
+  it('accepts a .app bundle as a local executable on macOS', () => {
+    expect(checkPickedType('/Applications/Hades.app', 'pc-executable', dir, null, 'darwin')).toBeNull();
+    expect(checkPickedType('/Applications/Hades.APP', 'pc-executable', dir, null, 'darwin')).toBeNull();
+  });
+
+  it('does not accept a .app bundle on Windows or Linux, nor for a card field', () => {
+    expect(checkPickedType('/Applications/Hades.app', 'pc-executable', dir, null, 'win32')).toBe(
+      'needs-file',
+    );
+    expect(checkPickedType('/Applications/Hades.app', 'pc-executable', dir, null, 'linux')).toBe(
+      'needs-file',
+    );
+    expect(checkPickedType('/Applications/Hades.app', 'executable', dir, ['exe'], 'darwin')).toBe(
+      'needs-file',
+    );
+  });
+
+  it('still refuses an ordinary folder as a local executable on macOS', () => {
+    expect(checkPickedType('/Applications/Hades', 'pc-executable', dir, null, 'darwin')).toBe(
+      'needs-file',
+    );
+  });
+});
+
+describe('listsAsFile (the picker shows a .app bundle as one entry)', () => {
+  it('collapses a .app directory to a file while browsing for a local executable on macOS', () => {
+    expect(listsAsFile('/Applications/Hades.app', true, 'pc-executable', 'darwin')).toBe(true);
+  });
+
+  it('leaves it a directory for any other field, OS or entry type', () => {
+    expect(listsAsFile('/Applications/Hades.app', true, 'image', 'darwin')).toBe(false);
+    expect(listsAsFile('/Applications/Hades.app', true, undefined, 'darwin')).toBe(false);
+    expect(listsAsFile('/Applications/Hades.app', true, 'pc-executable', 'win32')).toBe(false);
+    expect(listsAsFile('/Applications/Hades.app', false, 'pc-executable', 'darwin')).toBe(false);
+    expect(listsAsFile('/Applications/Hades', true, 'pc-executable', 'darwin')).toBe(false);
+  });
+});
+
+describe('hostPlatform (what the renderer is told about the running OS)', () => {
+  it('names the three ports and folds everything else into linux', () => {
+    expect(hostPlatform('win32')).toBe('windows');
+    expect(hostPlatform('darwin')).toBe('macos');
+    expect(hostPlatform('linux')).toBe('linux');
+    expect(hostPlatform('freebsd')).toBe('linux');
   });
 });
 

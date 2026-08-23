@@ -55,6 +55,8 @@ import { AUDIO_EXTENSIONS, IMAGE_EXTENSIONS, readImageDataUrl } from './asset-re
 import {
   acceptsExtensions,
   checkPickedType,
+  hostPlatform,
+  listsAsFile,
   startDirFor,
   toCardRelative,
   type PickRejection,
@@ -335,7 +337,7 @@ export class GameConfigService {
       source: found.source,
       signature: await this.signatureOf(found.root),
       text: read.text,
-      windows: process.platform === 'win32',
+      platform: hostPlatform(),
     };
   }
 
@@ -354,7 +356,7 @@ export class GameConfigService {
       root,
       source: this.sourceOf(root),
       signature: await this.signatureOf(root),
-      windows: process.platform === 'win32',
+      platform: hostPlatform(),
     };
     const manifestPath = path.join(root, MANIFEST_FILENAME);
     if (!(await fse.pathExists(manifestPath))) return rootReadResult(base, null);
@@ -1032,8 +1034,11 @@ export class GameConfigService {
       try {
         // stat, not lstat: a symlinked folder is a folder to browse. Accepting what is INSIDE it is a
         // separate decision, made by acceptPickedPaths, which refuses symlinks on its own.
-        const stats = await fs.stat(path.join(target, name));
-        entries.push({ name, kind: stats.isDirectory() ? 'dir' : 'file' });
+        const full = path.join(target, name);
+        const stats = await fs.stat(full);
+        // A macOS `.app` bundle is a directory the user means as one file — see listsAsFile.
+        const isDir = stats.isDirectory() && !listsAsFile(full, true, request.kind);
+        entries.push({ name, kind: isDir ? 'dir' : 'file' });
       } catch {
         continue; // a dangling link or an unreadable entry — simply not offered
       }

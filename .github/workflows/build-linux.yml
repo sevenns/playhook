@@ -1,8 +1,8 @@
 name: Build Linux
 
 # Build the Linux (SteamOS / Steam Deck) distributable in the cloud: the ubuntu runner has the
-# toolchain to compile the native `drivelist` for the right ABI (impossible on macOS), and
-# electron-builder produces a self-contained AppImage.
+# toolchain to compile the native `drivelist` for the right ABI, and electron-builder produces a
+# self-contained AppImage.
 #
 # Two ways to run it:
 #  - workflow_dispatch (manual): builds the AppImage and uploads it as a downloadable run ARTIFACT

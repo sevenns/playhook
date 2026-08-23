@@ -2,14 +2,18 @@
 // root, and which games a write actually ADDED to one. Both are pure so they can be unit-tested — the
 // service around them cannot be imported in vitest (ipcMain), which is the same reason launch-args.ts
 // was carved out of game-launcher.ts.
-import { type ConfigRootReadResult, type ManifestSource } from '../shared/types';
+import {
+  type ConfigRootReadResult,
+  type HostPlatform,
+  type ManifestSource,
+} from '../shared/types';
 
 /** The fixed half of a root read — everything that does not depend on whether a game.json is there. */
 export interface RootReadBase {
   readonly root: string;
   readonly source: ManifestSource;
   readonly signature: string;
-  readonly windows: boolean;
+  readonly platform: HostPlatform;
 }
 
 /**

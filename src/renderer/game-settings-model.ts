@@ -7,7 +7,12 @@
 // The form state itself is NOT redefined here: it is `ManifestFormModel` from configure-form-model.ts,
 // the same pure text ⇄ model bridge the Configure window used, with its `rest` / `corrupt` escape hatches
 // intact. This module only decides how that state is PRESENTED.
-import { MAX_HERO_IMAGES, type ConfigPickKind, type ManifestSource } from '../shared/types';
+import {
+  MAX_HERO_IMAGES,
+  type ConfigPickKind,
+  type HostPlatform,
+  type ManifestSource,
+} from '../shared/types';
 import type { MessageKey } from '../shared/i18n/index';
 import {
   movedGridAssetPath,
@@ -123,8 +128,8 @@ export interface GameSettingsEnv {
   readonly sourceLabel: string | null;
   /** Which dialect this manifest speaks — it decides the launch modes on offer. */
   readonly source: ManifestSource;
-  /** Whether the launcher runs on Windows — see the Linux section below, and GameConfigReadResult. */
-  readonly windows: boolean;
+  /** Which OS the launcher runs on — see the Linux section below, and HostPlatform. */
+  readonly platform: HostPlatform;
   /** The root the manifest was read from, shown as the game's origin (a mountpoint, or "This PC"). */
   readonly root: string;
   /**
@@ -561,7 +566,7 @@ export function buildGameSettingsModel(
   ];
 
   // The Proton fields, in a section of their own rather than mixed into Advanced: they are a different
-  // subject, and on a Windows PC-library game they are not even a subject — see `windows` in the env.
+  // subject, and on a PC-library game outside Linux they are not even a subject — see `platform` in the env.
   const linux: GameSettingsRow[] = [
     {
       kind: 'list',
@@ -594,8 +599,14 @@ export function buildGameSettingsModel(
     hint: { key: 'gameSettings.umuGameIdHint' },
     ...error('umuGameId'),
   });
-  /** A game installed on a Windows PC is never run through Proton, so it has no Linux side at all. */
-  const showsLinux = !(isPcSource && env.windows);
+  /**
+   * A game installed on THIS PC is run through Proton only when this PC is the Deck, so outside Linux a
+   * local game has no Linux side at all. A CARD keeps the section on every OS — its fields describe a
+   * future launch on the Deck, which is exactly why they are editable from a Windows (and now a macOS)
+   * desktop. Phrased as "hide it only for a non-Linux pc-source" so adding macOS could not quietly take
+   * the section away from Windows cards.
+   */
+  const showsLinux = !(isPcSource && env.platform !== 'linux');
 
   const actions: GameSettingsRow[] = [];
   // A multi-game file's OTHER games are named but not editable from here — the user still has to know
