@@ -312,6 +312,7 @@ const controls = createControls({
     screen: () => carousel.screen(),
     move: (delta) => carousel.move(delta),
     activate: () => carousel.activate(),
+    onGame: () => carousel.selected()?.kind === 'game',
     leaveDetail: () => leaveDetail(),
     setUnread: (unread) => carousel.setUnread(unread),
   },
@@ -451,35 +452,30 @@ function openGameDetail(id: string, origin: ReturnTo = 'carousel'): void {
 }
 
 /**
- * A game was just added AND applied: put the user in front of it. Not `openGameDetail` — that one looks
- * the game up in `currentGames`, and the library push that will carry it has not arrived yet, so it would
- * find nothing and silently do nothing.
+ * A game was just added AND applied: put the user in front of it — in the LIBRARY, standing on it.
  *
- * `focusGame` is written for exactly this race: an unknown id is remembered and honoured when the list
- * arrives. Clearing `userChoseDetail` is what lets `applyLibrary` raise the strip once it does — the flag
- * is set by opening a detail screen, and it exists to stop the launcher yanking the user out of one.
- * With a single game there IS no carousel, and staying on that game's detail screen is the right answer.
+ * The carousel used to be the destination, and for a game that fits on it that was fine. But the row is
+ * a shortlist (MAX_STRIP_GAMES) ordered by recency, and a game that does not make it has no card there:
+ * the strip landed on whichever game was first while the background and the music belonged to the new
+ * one, which reads as the launcher having opened the wrong game. The library holds every game by
+ * construction, so it can always show the one that was just made.
  */
 function showAddedGame(id: string): void {
   // The Customize screen reported the new game AFTER announcing it closed, so onClosed has already put
-  // the library back up. A brand-new game belongs on the carousel, in front of the user — and both
-  // happen in one task, so no frame is drawn in between and nothing flickers.
+  // the library back up if that is where the user came from. Either way it is reopened ON the new game,
+  // and both happen in one task, so no frame is drawn in between and nothing flickers.
   returnTo = 'carousel';
-  libraryScreen.close(true);
   delete app.dataset['detailFrom'];
   userChoseDetail = false;
-  carousel.focusGame(id);
-  // focusGame moves the STRIP and nothing else — it does not tell main the browse cursor moved (a real
-  // flip does that through the carousel's own onNavigate). Without this the row lands on the new card
-  // while the title, the background and the info panel still describe whatever was on screen before.
-  // Immediate, like opening a detail screen: committing to a game outranks the flip debounce.
-  requestedBrowseId = id;
-  window.api.browseGame(id, true);
-  // `applied` is main saying it re-read the manifest, so the game is playable NOW — and Play acts on the
-  // CARD's selected game, not on the browse cursor, so it has to move too or Play would launch the game
-  // the user was looking at before.
-  if (gameOf(currentState)?.id !== id) window.api.selectGame(id);
+  libraryScreen.close(true);
   carousel.setScreen('carousel');
+  // The library is a launcher surface: the strip stands on its card and main is told nothing is on
+  // screen, exactly as restoreOrigin does. Without this the new game's wallpaper and music would play
+  // under a screen that is not showing it.
+  carousel.focusSystem();
+  requestedBrowseId = null;
+  window.api.browseGame(null);
+  libraryScreen.open({ focusId: id });
 }
 
 /** Back out of a detail screen to the carousel (B). False when the carousel is already the screen. */

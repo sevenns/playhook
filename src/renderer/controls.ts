@@ -157,6 +157,11 @@ export interface CarouselNav {
   move(delta: number): MoveResult;
   /** Enters the selected card's detail screen. */
   activate(): void;
+  /**
+   * Whether the strip is standing on a GAME rather than one of the launcher's own cards. Down opens a
+   * game and nothing else, so it has to ask before acting (see navDown).
+   */
+  onGame(): boolean;
   /** Steps back from a detail screen to the strip; false when the strip is already the screen. */
   leaveDetail(): boolean;
   /** Whether the inbox holds anything unread — the Notifications CARD wears the dot now. */
@@ -1710,11 +1715,20 @@ export function createControls(deps: ControlsDeps): Controls {
       overlay.navDown(repeat);
       return;
     }
-    // The other half of the vertical pair: down opens the selected card (what A does), up on the detail
+    // The other half of the vertical pair: down opens the selected GAME (what A does), up on the detail
     // screen comes back out. The strip only — with the focus on More, down has no card to open, and
     // inside a popup the direction belongs to the menu (handled above). Held presses are dropped, as
     // everywhere a direction crosses a screen boundary.
-    if (!repeat && stripActive()) deps.carousel.activate();
+    //
+    // A launcher card is not opened this way. Down means "go into this game", and the launcher cards are
+    // surfaces rather than games — Settings and the Library have their own way in (A), and opening one by
+    // brushing the stick downwards is how a flip along the row ends up in a screen nobody asked for.
+    if (repeat || !stripActive()) return;
+    if (!deps.carousel.onGame()) {
+      audio.playLimit();
+      return;
+    }
+    deps.carousel.activate();
   }
   function navActivate(): void {
     noteGamepadActivity();
