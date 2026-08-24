@@ -123,6 +123,8 @@ export interface SettingsNav extends NavSurface {
  */
 export interface GameSettingsNav extends NavSurface {
   open(id: string): void;
+  /** Opens the same screen for a game whose card is not in — see GameSettingsScreen.openFromHistory. */
+  openFromHistory(id: string): void;
   /** Opens the same screen to CREATE a game — the "Add game" item of the Details menu. */
   openNew(): void;
   close(): void;
@@ -867,8 +869,12 @@ export function createControls(deps: ControlsDeps): Controls {
 
   function openCustomize(): void {
     const browse = deps.getBrowse();
-    if (browse === null || !browse.active) return; // the item's own rule, re-checked at the press
-    deps.gameSettings.open(browse.id);
+    if (browse === null) return;
+    // The item's own rule, re-checked at the press — and it decides WHICH screen opens: an available
+    // game is edited on its card, a history one through the stored snapshot.
+    if (browse.active) deps.gameSettings.open(browse.id);
+    else if (browse.configurable === true) deps.gameSettings.openFromHistory(browse.id);
+    else return;
     applyFocus();
   }
 

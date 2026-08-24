@@ -144,9 +144,12 @@ const settingsScreen = createSettingsScreen({
 // gamepad.
 const gameSettingsApi: GameSettingsScreenApi = {
   read: (id) => window.api.readGameConfig(id),
-  validate: (root, text) => window.api.validateGameConfig(root, text),
+  validate: (root, text, source) => window.api.validateGameConfig(root, text, source),
   save: (request) => window.api.saveGameConfig(request),
   imagePreview: (root, path) => window.api.getGameConfigImage(root, path),
+  readHistory: (id) => window.api.readHistoryGameConfig(id),
+  saveHistory: (request) => window.api.saveHistoryGameConfig(request),
+  historyAssetPreview: (id, ref) => window.api.getHistoryGameConfigImage(id, ref),
   sources: () => window.api.listGameConfigSources(),
   readRoot: (root) => window.api.readGameConfigRoot(root),
   forgetHistory: (id) => window.api.forgetGame(id),
@@ -164,6 +167,7 @@ const filePicker = createFilePicker({
   api: {
     listDir: (request) => window.api.listGameConfigDir(request),
     acceptPaths: (request) => window.api.acceptGameConfigPaths(request),
+    acceptHistoryPaths: (request) => window.api.acceptHistoryGameConfigPaths(request),
   },
 });
 // "Find online" — one surface for the game, its cover, its backgrounds and its soundtrack. Its own seam

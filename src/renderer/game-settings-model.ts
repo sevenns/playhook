@@ -161,6 +161,48 @@ export interface GameSettingsEnv {
    * about PendingMove.
    */
   readonly canMove: boolean;
+  /**
+   * The game is being configured FROM THE HISTORY: its card is not in, and what is edited here reaches
+   * that card on its next insertion (see history-config.ts). Every field that names a file on the card
+   * is shown with its value but inert — there is nothing to browse, and a path typed blind would only
+   * break the card the edits are meant for. Named `historyMode` rather than folded into `mode`, which
+   * already discriminates edit/add.
+   */
+  readonly historyMode: boolean;
+}
+
+/**
+ * What a history game may NOT change, for want of the card the values describe. Two groups: paths that
+ * name a file ON the card (nothing to browse, and a blind guess breaks the game's launch), and the whole
+ * shape of the launch — mode, install block, save wiring — which is the part of a manifest that has to
+ * be verified against real files, not typed. `id` is locked for a different reason: it is the key this
+ * PC files the game's stats, saves and history record under, so changing it here would orphan the very
+ * record holding these edits.
+ *
+ * Everything else — the artwork, the music, the title, and the launch PARAMETERS (args, timeouts,
+ * winetricks, appid) — is filesystem-independent, and stays editable.
+ */
+const HISTORY_LOCKED_ROWS: ReadonlySet<GameRowId> = new Set<GameRowId>([
+  'id',
+  'launchMode',
+  'executable',
+  'pc.executable',
+  'copyToPc',
+  'copyInstall.installer',
+  'install.installer',
+  'install.type',
+  'install.runAsAdmin',
+  'install.args',
+  'install.winetricks',
+  'saveOnCard',
+  'pcSavePath',
+]);
+
+/** The same rows, with the ones a history game cannot touch marked inert (see HISTORY_LOCKED_ROWS). */
+function lockedForHistory(rows: readonly GameSettingsRow[]): readonly GameSettingsRow[] {
+  return rows.map((row) =>
+    row.kind !== 'note' && HISTORY_LOCKED_ROWS.has(row.id) ? { ...row, disabled: true } : row,
+  );
 }
 
 /**
@@ -608,6 +650,9 @@ export function buildGameSettingsModel(
    */
   const showsLinux = !(isPcSource && env.platform !== 'linux');
 
+  const lock = (rows: readonly GameSettingsRow[]): readonly GameSettingsRow[] =>
+    env.historyMode ? lockedForHistory(rows) : rows;
+
   const actions: GameSettingsRow[] = [];
   // A multi-game file's OTHER games are named but not editable from here — the user still has to know
   // the file is not clean, because that is what a red status after Save would otherwise be about.
@@ -685,10 +730,10 @@ export function buildGameSettingsModel(
           ? { key: 'gameConfig.thisPc' }
           : { text: env.root },
     sections: [
-      { titleKey: 'gameSettings.sectionBasics', rows: basics },
-      { titleKey: 'gameSettings.sectionLaunch', rows: launch },
-      { titleKey: 'gameSettings.sectionImages', rows: images },
-      { titleKey: 'gameSettings.sectionSaves', rows: saves },
+      { titleKey: 'gameSettings.sectionBasics', rows: lock(basics) },
+      { titleKey: 'gameSettings.sectionLaunch', rows: lock(launch) },
+      { titleKey: 'gameSettings.sectionImages', rows: lock(images) },
+      { titleKey: 'gameSettings.sectionSaves', rows: lock(saves) },
       {
         titleKey: 'gameSettings.sectionAudio',
         rows: [
@@ -702,8 +747,8 @@ export function buildGameSettingsModel(
           },
         ],
       },
-      { titleKey: 'gameSettings.sectionAdvanced', rows: advanced },
-      ...(showsLinux ? [{ titleKey: 'gameSettings.sectionLinux' as const, rows: linux }] : []),
+      { titleKey: 'gameSettings.sectionAdvanced', rows: lock(advanced) },
+      ...(showsLinux ? [{ titleKey: 'gameSettings.sectionLinux' as const, rows: lock(linux) }] : []),
       // No title: the last section is the screen's action stack, like the Settings screen's.
       { rows: actions },
     ],
