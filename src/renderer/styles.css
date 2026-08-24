@@ -197,7 +197,13 @@ body {
   background-size: cover;
   background-position: center;
   opacity: 0;
-  transition: opacity 0.7s ease;
+  /* Visibility rides along with the fade — flipped only when the cross-fade is over, so the outgoing
+     picture is never cut off mid-dissolve. What it buys is the idle layer: transparent but still
+     composited, it was a full-screen sheet of tiles the compositor kept rastering for nothing. */
+  visibility: hidden;
+  transition:
+    opacity 0.7s ease,
+    visibility 0.7s ease;
   transform-origin: center;
   will-change: transform, opacity;
   animation: bg-pan 30s ease-in-out infinite alternate;
@@ -205,6 +211,7 @@ body {
 
 .hero-layer.is-active {
   opacity: 1;
+  visibility: visible;
 }
 
 /* Ping-pong drift + a gentle zoom in/out, synced over the cycle (Ken Burns). The min scale (1.06)
@@ -1063,6 +1070,11 @@ html:not(.mouse-asleep) .rect-button:hover,
 
 .popup-veil {
   position: absolute;
+  /* NOT narrowed like .popup-blur: that layer's mask reaches full opacity at screen 36%, a hair past
+     its own 35% box edge, so cutting the box there loses nothing visible. This one's mask does not
+     reach full opacity until 58%, and the background tint keeps climbing all the way to 100% — cutting
+     the box at 35% chopped off a third of that still-rising curve, which showed up as a hard seam right
+     through a focused row's highlight instead of the intended smooth fade. Full-width it stays. */
   inset: 0;
   /* Horizontal gradient: transparent on the left (hero visible) → solid d1 on the right. */
   background: linear-gradient(to right, transparent 0%, var(--d1) 100%);
@@ -1691,9 +1703,9 @@ html:not(.mouse-asleep) .notification-item:hover .notification-dot {
 
 /* ── Full-screen overlays: Settings, and Customize ──────────────────────────
    Not carousel screens: the strip keeps its layout underneath, so returning lands exactly where the user
-   left. Openness is #app[data-overlay=<name>]; the hidden state is opacity + pointer-events, never
-   display:none — that keeps everything animatable, keeps the bar's own mouse handlers from firing through
-   a hidden bar, and never collapses the carousel's measured layout.
+   left. Openness is #app[data-overlay=<name>]; the hidden state is opacity + pointer-events + visibility
+   + content-visibility, never display:none — that keeps everything animatable, keeps the bar's own mouse
+   handlers from firing through a hidden bar, and never collapses the carousel's measured layout.
 
    TWO kinds of rule live below, and mixing them up is how the second screen would have broken the first:
     • what happens to the launcher UNDERNEATH an overlay (the hero fades, the bar leaves, the strip goes)
@@ -1710,7 +1722,17 @@ html:not(.mouse-asleep) .notification-item:hover .notification-dot {
   z-index: 2;
   opacity: 0;
   pointer-events: none;
-  transition: opacity 0.35s ease;
+  /* A closed screen is not merely transparent, it is OUT of the frame: `opacity: 0` alone leaves every
+     layer inside it (veil, frosted dropdown, grid of covers) composited and rastered, and on a 2× display
+     that is where the tile budget goes — the compositor then runs out and drops tiles of what IS on
+     screen, which is how the power menu came back with half its items missing. Both properties are
+     transitioned so the fade OUT still plays: they flip back at the end of it, never at its start. */
+  visibility: hidden;
+  content-visibility: hidden;
+  transition:
+    opacity 0.35s ease,
+    visibility 0.35s ease,
+    content-visibility 0.35s allow-discrete;
 }
 
 #app[data-overlay='settings'] #settings,
@@ -1718,6 +1740,8 @@ html:not(.mouse-asleep) .notification-item:hover .notification-dot {
 #app[data-overlay='library'] #library {
   opacity: 1;
   pointer-events: auto;
+  visibility: visible;
+  content-visibility: visible;
 }
 
 /* Veil in the popup's own language, but full-width: this screen is not a right-hand column.
@@ -1738,6 +1762,7 @@ html:not(.mouse-asleep) .notification-item:hover .notification-dot {
    Any overlay, hence the bare attribute. */
 #app[data-overlay] #hero {
   opacity: 0;
+  visibility: hidden;
 }
 
 #app[data-overlay] .hero-layer {
@@ -1745,7 +1770,7 @@ html:not(.mouse-asleep) .notification-item:hover .notification-dot {
 }
 
 #hero {
-  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.35s ease;
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.35s ease, visibility 0.35s ease;
 }
 
 #app[data-overlay='settings'] #settings .settings-veil,
@@ -2285,6 +2310,8 @@ html:not(.mouse-asleep) .setting-row[data-kind='update-status']:hover {
 
 .settings-options-veil {
   position: absolute;
+  /* Same as .popup-veil: NOT narrowed. See that rule for why cutting this box at 35% (rather than the
+     ~58% where its own gradient actually saturates) put a visible seam through a focused row. */
   inset: 0;
   background: linear-gradient(to right, transparent 0%, var(--d1) 100%);
   -webkit-mask-image: linear-gradient(to right, transparent 0%, #000 58%);
@@ -2837,13 +2864,23 @@ html:not(.mouse-asleep) .osk-key:hover,
   inset: 0;
   opacity: 0;
   pointer-events: none;
-  transition: opacity 0.25s ease;
+  /* Same reason as `.settings`: a closed picker must cost no tiles. This one matters most — the online
+     picker holds a grid of downloaded artwork, and left composited it kept that grid rastered long after
+     the user walked away from it. */
+  visibility: hidden;
+  content-visibility: hidden;
+  transition:
+    opacity 0.25s ease,
+    visibility 0.25s ease,
+    content-visibility 0.25s allow-discrete;
   z-index: 1;
 }
 
 .picker.is-open {
   opacity: 1;
   pointer-events: auto;
+  visibility: visible;
+  content-visibility: visible;
 }
 
 .picker-veil {
