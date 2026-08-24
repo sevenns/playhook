@@ -94,6 +94,10 @@ export const en = {
   'library.emptyPc': 'No games from this PC yet - add one to get started.',
   'library.emptyExternal': 'No games from a card yet - insert one to see it here.',
   // Confirmation popup copy (controls.ts). The Yes/No buttons use the shared common.* keys.
+  // Asked once when the same game turns up on the inserted card AND in this PC's own library.
+  'launcher.confirm.collision': 'Put your version of {title} on the card?',
+  'launcher.confirm.collisionNote':
+    'The card carries a game with the same id, so it hides your local one while it is inserted. Yes copies your name, cover, backgrounds and music onto the card. No leaves both as they are - and neither answer is asked again.',
   'launcher.confirm.install': 'Do you want to install game?',
   'launcher.confirm.uninstall': 'Do you want to uninstall game from your PC?',
   'launcher.confirm.uninstallPrefix': 'Clear the Proton prefix?',

@@ -389,6 +389,27 @@ export interface LibraryEntry {
   readonly source: ManifestSource;
 }
 
+/**
+ * One game that is on the inserted card AND in the PC library. Carries the card's content signature so
+ * the answer can be refused if the card is pulled — or swapped for another one with the same id —
+ * while the question is on screen.
+ */
+export interface GameCollision {
+  readonly id: string;
+  /** The name to put in the question: the local game's, since that is the one about to change. */
+  readonly title: string;
+  readonly root: string;
+  readonly signature: string;
+}
+
+/** What the user answered: take the local game's look onto the card, or leave both as they are. */
+export interface GameCollisionAnswer {
+  readonly id: string;
+  readonly choice: 'merge' | 'ignore';
+  readonly root: string;
+  readonly signature: string;
+}
+
 /** The carousel list, already in display order — the renderer never sorts it (see orderForCarousel). */
 export interface GameLibrary {
   readonly games: readonly LibraryEntry[];
@@ -819,6 +840,14 @@ export const IPC = {
    * renderer's half of the same rule. Saves and playtime survive: this forgets the catalogue entry, not
    * the game. */
   libraryForget: 'library:forget',
+  /** main → renderer: this game exists BOTH on the inserted card and in the PC library, and the user has
+   * not said what should happen. The card shadows the local copy, so the local game's artwork and name
+   * seem to vanish whenever that card is in — the launcher asks once rather than flipping silently.
+   * Payload GameCollision. */
+  gameCollision: 'game:collision',
+  /** renderer → main (invoke): the answer to that question — merge the local game's presentation onto
+   * the card, or leave things as they are. Either way it is remembered. Payload GameCollisionAnswer. */
+  gameCollisionResolve: 'game:collision-resolve',
   /** main → renderer: what is on screen (title/stats/active/GameInfo) — see BrowseInfo. */
   browseUpdate: 'browse:update',
   /** renderer → main (invoke): the current BrowseInfo (seed on window startup, like state:request). */
@@ -1501,6 +1530,10 @@ export interface RendererApi {
   forgetGame(id: string): void;
   /** Live updates of what is on screen (title/stats/active/GameInfo). */
   onBrowseUpdate(callback: (browse: BrowseInfo | null) => void): void;
+  /** A game turned up on the card AND on this PC — the launcher asks what to do about it once. */
+  onGameCollision(callback: (collision: GameCollision) => void): void;
+  /** The user's answer. `saved` false with a message when the card refused it (pulled, swapped, …). */
+  resolveGameCollision(answer: GameCollisionAnswer): Promise<ConfigSaveResult>;
   /** What is on screen right now (on window startup). */
   requestBrowse(): Promise<BrowseInfo | null>;
   /** Hero backgrounds of the browsed game (independent of the inserted card's hero:update). */

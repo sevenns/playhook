@@ -1307,15 +1307,19 @@ html:not(.mouse-asleep) .rect-button:hover,
 /* Deleting a game from its manifest: the detail carries the one thing the question does not — the game's
    files (and, for a local game, its save backups) are not going anywhere. */
 #popup[data-view='confirm'][data-mode='delete-game'] .popup-confirm .popup-detail,
-#popup[data-view='confirm'][data-mode='delete-game-history'] .popup-confirm .popup-detail {
+#popup[data-view='confirm'][data-mode='delete-game-history'] .popup-confirm .popup-detail,
+/* The same slot carries the collision question's note: what "No" costs is the whole point there too. */
+#popup[data-view='confirm'][data-mode='game-collision'] .popup-confirm .popup-detail {
   display: block;
 }
 #popup[data-mode='delete-game'] .note-installer,
-#popup[data-mode='delete-game-history'] .note-installer {
+#popup[data-mode='delete-game-history'] .note-installer,
+#popup[data-mode='game-collision'] .note-installer {
   display: none;
 }
 #popup[data-mode='delete-game'] .note-delete,
-#popup[data-mode='delete-game-history'] .note-delete {
+#popup[data-mode='delete-game-history'] .note-delete,
+#popup[data-mode='game-collision'] .note-delete {
   display: inline;
 }
 #popup[data-install-via='copy'] .note-installer {

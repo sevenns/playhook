@@ -356,6 +356,7 @@ async function bootstrap(): Promise<void> {
     findGameSource: (id) => controller.findGameSource(id),
     notify: (input) => notifications.notify(input),
     resolveManifest: (id) => controller.findManifest(id),
+    findPcManifest: (id) => controller.findPcManifest(id),
     isBusy: () => controller.isBusy(),
     library,
     isCardLoading: () => controller.isCardLoading(),
@@ -364,6 +365,9 @@ async function bootstrap(): Promise<void> {
     savePathResolver: platform.savePathResolver,
   });
   gameConfig.init();
+  // Both ways round: the service is built FROM the controller, and the controller's collision answer
+  // (a game on the card and on this PC at once) is carried out BY the service.
+  controller.setCollisionResolver(gameConfig);
 
   // Online metadata ("Find online" on the Add/Customize screen). Bootstrapped HERE and nowhere else: the
   // whole subtree talks HTTP and must stay off the Game Mode daemon's import graph (see CLAUDE.md).

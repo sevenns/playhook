@@ -200,6 +200,7 @@ async function buildHarness(toText: string): Promise<Harness> {
     findGameSource: () => ({ root: pcRoot, source: 'pc' as const }),
     notify: (input) => notifications.push(input),
     resolveManifest: (id) => (id === 'hades' ? manifest : null),
+    findPcManifest: () => null,
     isBusy: () => false,
     // The move never reaches the history — the two history-only deps are stubs of the narrowest kind.
     library: new LibraryStore({

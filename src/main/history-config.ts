@@ -105,6 +105,36 @@ export function remapSlotAssets(slot: GameSlot, remap: ReadonlyMap<string, strin
   return Object.fromEntries(entries);
 }
 
+/**
+ * What a local game contributes when its artwork is merged onto a card carrying the same id: its NAME
+ * and its look, nothing else. Paths are already card-relative — main copies the files over first.
+ */
+export interface GamePresentation {
+  readonly title?: string;
+  readonly gridImage?: string;
+  readonly heroImage?: readonly string[];
+  readonly backgroundMusic?: string;
+}
+
+/**
+ * The card's slot wearing the local game's presentation. Everything about LAUNCHING stays the card's:
+ * it already has an executable that works there, an install block written for it and save paths that
+ * resolve — none of which a PC-library game's manifest can describe (see manifest.ts, the `pc` dialect).
+ * A field the local game does not fill is left as the card had it, so a merge only ever adds.
+ */
+export function mergePresentation(slot: GameSlot, presentation: GamePresentation): GameSlot {
+  const merged: Record<string, unknown> = { ...slot };
+  if (presentation.title !== undefined) merged['title'] = presentation.title;
+  if (presentation.gridImage !== undefined) merged['gridImage'] = presentation.gridImage;
+  if (presentation.heroImage !== undefined && presentation.heroImage.length > 0) {
+    merged['heroImage'] = [...presentation.heroImage];
+  }
+  if (presentation.backgroundMusic !== undefined) {
+    merged['backgroundMusic'] = presentation.backgroundMusic;
+  }
+  return merged;
+}
+
 /** The manifest keys whose values name asset files (see manifest.ts). */
 const ASSET_KEYS: ReadonlySet<string> = new Set(['gridImage', 'heroImage', 'backgroundMusic']);
 

@@ -44,6 +44,7 @@ import {
   type GameConfigListDirRequest,
   type GameConfigReadResult,
   type GameConfigSaveRequest,
+  type GameCollisionAnswer,
   type GameMoveRequest,
   type HistoryConfigAcceptRequest,
   type HistoryConfigReadResult,
@@ -77,7 +78,18 @@ import {
 import { type PcLibraryStore } from './pc-library';
 import { type LibraryStore } from './library-store';
 import { type LibraryEntryRecord } from './library-index';
-import { extractGameSlot, issuesIntroducedBy, type GameSlot } from './history-config';
+import {
+  extractGameSlot,
+  issuesIntroducedBy,
+  mergePresentation,
+  replaceGameSlot,
+  type GameSlot,
+} from './history-config';
+import {
+  movedGridAssetPath,
+  movedHeroAssetPath,
+  movedMusicAssetPath,
+} from '../shared/asset-move-names';
 import { type PcStore } from './pc-store';
 import { type SavePathResolver } from './platform/types';
 import { resolveInside, validateManifestText } from './manifest';
@@ -94,7 +106,16 @@ const HISTORY_ASSETS_DIRNAME = 'assets';
 
 /** The editor's verdict on a manifest text as a list of issues ([] when it is happy with it). */
 function issuesOfText(text: string, t: Translator): readonly ManifestValidationIssue[] {
-  const result = validateManifestText(text, t, 'card');
+  return issuesOfSource(text, t, 'card');
+}
+
+/** The same, in a named dialect — the PC library validates by different rules than a card. */
+function issuesOfSource(
+  text: string,
+  t: Translator,
+  source: ManifestSource,
+): readonly ManifestValidationIssue[] {
+  const result = validateManifestText(text, t, source);
   return result.ok ? [] : result.issues;
 }
 
@@ -261,6 +282,12 @@ export interface GameConfigDeps {
    * configurable, and the card catches up on the next insertion.
    */
   readonly library: LibraryStore;
+  /**
+   * The RESOLVED manifest of a game as the PC LIBRARY has it, by id — even while an inserted card
+   * shadows it (GameController.findPcManifest). `resolveManifest` cannot answer this: it returns
+   * whichever copy the launcher currently shows, which for a collision is the card's.
+   */
+  readonly findPcManifest: (id: string) => ResolvedManifest | null;
   /** True while a card is being read (GameController.loadCard) — save-from-history refuses then, since
    * the game is about to become available and an "applied on the next insertion" edit would sit there. */
   readonly isCardLoading: () => boolean;
@@ -609,6 +636,17 @@ export class GameConfigService {
     return signature;
   }
 
+  /** The card's content signature right now, or null when the media is gone (see CollisionResolver). */
+  async signatureFor(root: string): Promise<string | null> {
+    if (!(await this.isAllowedRoot(root))) return null;
+    try {
+      return await this.signatureOf(root);
+    } catch (cause) {
+      log.warn(`[game-config] cannot read the signature of "${root}":`, describe(cause));
+      return null;
+    }
+  }
+
   /** Save with the swap guard in front of it — everything else is the shared save() path. */
   private async saveChecked(request: GameConfigSaveRequest): Promise<ConfigSaveResult> {
     const t = this.deps.getTranslator();
@@ -650,6 +688,15 @@ export class GameConfigService {
     root: string,
     text: string,
     signatureBefore: string,
+    options?: {
+      /**
+       * The file as it stood BEFORE this write. When given, only the problems the write INTRODUCES are
+       * refused — the ones the text already had are not this write's to fix, and a card that fails the
+       * editor's stricter gates on its own would otherwise be frozen forever (see issuesIntroducedBy).
+       * Internal: no renderer-facing save passes it, they are all judged whole.
+       */
+      readonly baselineText: string;
+    },
   ): Promise<ConfigSaveResult> {
     const t = this.deps.getTranslator();
     // 1. main never trusts the renderer's path — it must be a live removable candidate (or the PC library).
@@ -660,12 +707,12 @@ export class GameConfigService {
     // 2. re-validate server-side (guards against a UI race that enabled Save with a stale verdict).
     const validation = validateManifestText(text, t, source);
     if (!validation.ok) {
-      const first = validation.issues[0];
-      return {
-        saved: false,
-        message:
-          first !== undefined ? `${first.path}: ${first.message}` : t('errors.configInvalid'),
-      };
+      const baseline =
+        options === undefined ? [] : issuesOfSource(options.baselineText, t, source);
+      const first = issuesIntroducedBy(validation.issues, baseline)[0];
+      if (first !== undefined) {
+        return { saved: false, message: `${first.path}: ${first.message}` };
+      }
     }
     if (source === 'pc') return this.savePcLibrary(text, t);
     // 3. atomic write — reuse the card-hardened writer (temp→move, EBUSY/EPERM retry, drive-root nuance).
@@ -729,6 +776,89 @@ export class GameConfigService {
     return applied.ok
       ? { saved: true, applied: 'applied' }
       : { saved: true, applied: 'failed', message: applied.message };
+  }
+
+  // ── One game, two places: the card and this PC ────────────────────────────
+  //
+  // An inserted card SHADOWS a local game of the same id (see GameController), so a draft the user
+  // dressed up on this PC appears to lose its name and artwork every time that card goes in — and get
+  // them back every time it comes out. The launcher asks once what should happen; this is the "put my
+  // version on the card" answer.
+  //
+  // Only the PRESENTATION travels. The card already has a launch that works there, and a local game's
+  // manifest speaks a dialect (absolute executables, no `saveOnCard`) that would make the card
+  // unreadable if it were copied over wholesale.
+
+  /**
+   * Merges a local game's name and artwork into the card's slot for the same id, then writes the card
+   * through the ordinary save path (validate → atomic write → reload). Answers exactly as a save does.
+   *
+   * Two things are deliberately NOT here: the guard against the card having been pulled or swapped
+   * (the caller captured its signature when it asked the question — checked below), and removing the
+   * local draft afterwards, which follows the WRITE and belongs to the caller's own bookkeeping.
+   */
+  async mergeCollision(answer: GameCollisionAnswer): Promise<ConfigSaveResult> {
+    const t = this.deps.getTranslator();
+    const { id, root } = answer;
+    if (!(await this.isAllowedRoot(root))) {
+      return { saved: false, message: t('errors.driveUnavailable') };
+    }
+    if ((await this.signatureOf(root)) !== answer.signature) {
+      return { saved: false, message: t('errors.mediaChanged') };
+    }
+    const local = this.deps.findPcManifest(id);
+    if (local === null) return { saved: false, message: t('errors.configInvalid') };
+    const read = await this.readConfig(root);
+    if (!read.ok) return { saved: false, message: read.message };
+    const slot = extractGameSlot(read.text, id);
+    if (!slot.ok) return { saved: false, message: t('errors.configInvalid') };
+
+    // The names are derived from the id, so the only file a copy can overwrite is an earlier copy of
+    // THIS game's own artwork — the same guarantee moveToCard relies on.
+    const copies = planAssetCopies(local, id, root);
+    try {
+      for (const copy of copies) {
+        await fse.ensureDir(path.dirname(copy.to));
+        await fse.copy(copy.from, copy.to, { overwrite: true, dereference: true });
+      }
+    } catch (cause) {
+      log.warn(`[collision] copying the local artwork of id=${id} onto the card failed:`, describe(cause));
+      return { saved: false, message: t('gameConfig.pickImportFailed') };
+    }
+
+    const merged = mergePresentation(slot.slot, {
+      title: local.raw.title,
+      ...(local.gridImagePath !== undefined
+        ? { gridImage: movedGridAssetPath(id, local.gridImagePath) }
+        : {}),
+      ...(local.heroImagePaths !== undefined && local.heroImagePaths.length > 0
+        ? {
+            heroImage: local.heroImagePaths.map((source: string, index: number) =>
+              movedHeroAssetPath(id, index, source),
+            ),
+          }
+        : {}),
+      ...(local.backgroundMusicPath !== undefined
+        ? { backgroundMusic: movedMusicAssetPath(id, local.backgroundMusicPath) }
+        : {}),
+    });
+    const replaced = replaceGameSlot(read.text, id, merged);
+    if (!replaced.ok) return { saved: false, message: t('errors.configInvalid') };
+    // Judged against the card's own text: a card written by hand years ago can fail the editor's
+    // stricter gates all by itself, and refusing the merge over a problem it did not introduce would
+    // lock such a card out of the answer entirely (the same rule save-from-history follows).
+    return this.save(root, replaced.text, answer.signature, { baselineText: read.text });
+  }
+
+  /** Drops a local game from the PC library — the draft whose look has just moved onto the card. */
+  async removeLocalGame(id: string): Promise<ConfigSaveResult> {
+    const t = this.deps.getTranslator();
+    const root = this.deps.pcLibrary.root;
+    const read = await this.readConfig(root);
+    if (!read.ok) return { saved: false, message: read.message };
+    const without = removeGameFromManifestText(id, read.text);
+    if (without === null) return { saved: false, message: t('errors.configInvalid') };
+    return this.savePcLibrary(without, t);
   }
 
   // ── Move to card (Р2.5): a local game leaves the PC library and lands on a card, in one transaction ──

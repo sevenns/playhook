@@ -996,6 +996,8 @@ window.api.onBrowseMusic((url) => {
 
 // A failed launch returns to 'ready' and sends the reason here to open the error popup.
 window.api.onError((messageText) => controls.showError(messageText));
+// The same game on the card and on this PC — the launcher asks once what should happen to it.
+window.api.onGameCollision((collision) => controls.askGameCollision(collision));
 
 // Settings screen data. Subscribe BEFORE the seeds (the pattern every channel here follows) so a push
 // arriving in between isn't lost. The push is the ONLY source of values — a reset lands here too, so

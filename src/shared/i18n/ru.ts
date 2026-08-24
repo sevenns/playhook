@@ -71,6 +71,9 @@ export const ru: Partial<Record<MessageKey, string>> = {
     'Нет игр, готовых к запуску - вставьте карту или добавьте игру с ПК.',
   'library.emptyPc': 'Игр с этого ПК пока нет - добавьте первую.',
   'library.emptyExternal': 'Игр с карт пока нет - вставьте карту, и они появятся здесь.',
+  'launcher.confirm.collision': 'Перенести вашу версию {title} на карту?',
+  'launcher.confirm.collisionNote':
+    'На карте есть игра с тем же id, и пока карта вставлена, она перекрывает локальную. «Да» перенесёт на карту ваши название, обложку, фоны и музыку. «Нет» оставит всё как есть - и больше об этой игре не спросим.',
   'launcher.confirm.install': 'Установить игру?',
   'launcher.confirm.uninstall': 'Удалить игру с компьютера?',
   'launcher.confirm.uninstallPrefix': 'Очистить Proton-префикс?',

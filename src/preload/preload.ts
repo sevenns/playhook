@@ -28,6 +28,8 @@ import type {
   GameConfigReadResult,
   GameConfigSaveRequest,
   GameLibrary,
+  GameCollision,
+  GameCollisionAnswer,
   GameMoveRequest,
   HistoryConfigAcceptRequest,
   HistoryConfigReadResult,
@@ -79,6 +81,8 @@ const CHANNELS = {
   libraryBrowse: 'library:browse',
   libraryForget: 'library:forget',
   browseUpdate: 'browse:update',
+  gameCollision: 'game:collision',
+  gameCollisionResolve: 'game:collision-resolve',
   browseRequest: 'browse:request',
   browseHero: 'browse:hero',
   browseMusic: 'browse:music',
@@ -247,6 +251,14 @@ const api: RendererApi = {
     ipcRenderer.on(CHANNELS.browseUpdate, (_event: IpcRendererEvent, browse: BrowseInfo | null) => {
       callback(browse);
     });
+  },
+  onGameCollision(callback: (collision: GameCollision) => void): void {
+    ipcRenderer.on(CHANNELS.gameCollision, (_event: IpcRendererEvent, collision: GameCollision) => {
+      callback(collision);
+    });
+  },
+  resolveGameCollision(answer: GameCollisionAnswer): Promise<ConfigSaveResult> {
+    return ipcRenderer.invoke(CHANNELS.gameCollisionResolve, answer) as Promise<ConfigSaveResult>;
   },
   requestBrowse(): Promise<BrowseInfo | null> {
     return ipcRenderer.invoke(CHANNELS.browseRequest) as Promise<BrowseInfo | null>;

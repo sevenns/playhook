@@ -77,6 +77,7 @@ beforeEach(async () => {
     findGameSource: () => available,
     notify: () => undefined,
     resolveManifest: () => null,
+    findPcManifest: () => null,
     isBusy: () => false,
     library,
     isCardLoading: () => cardLoading,

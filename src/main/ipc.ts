@@ -10,6 +10,9 @@ import {
   type AppState,
   type SfxSet,
   type BrowseInfo,
+  type ConfigSaveResult,
+  type GameCollision,
+  type GameCollisionAnswer,
   type GameInfo,
   type GameLibrary,
   type HeroAssets,
@@ -60,6 +63,19 @@ import { normalizeImageNames } from './image-names';
 import { SteamInstallWatch } from './steam-install-watch';
 import { describe, delay } from './util';
 import { log } from './logger';
+
+/**
+ * What the collision answer needs from the Customize backend (GameConfigService). Attached after
+ * construction — the service is built from this controller, so it cannot also be one of its deps.
+ */
+export interface CollisionResolver {
+  /** The card's content signature right now, or null when it cannot be read. */
+  signatureFor(root: string): Promise<string | null>;
+  /** Puts a local game's name and artwork onto the card that carries the same id. */
+  mergeCollision(answer: GameCollisionAnswer): Promise<ConfigSaveResult>;
+  /** Drops a local game from the PC library (the draft whose look has just moved onto the card). */
+  removeLocalGame(id: string): Promise<ConfigSaveResult>;
+}
 
 export interface ControllerDeps {
   readonly state: StateManager;
@@ -325,6 +341,9 @@ export class GameController {
   // available, so save-from-history must refuse: an invoke that slipped in after the sync step and before
   // the manifests landed would be stored as "pending" and sit there until the NEXT insertion.
   private cardLoadInFlight = false;
+  // True while a collision answer is being carried out. The merge writes the card and reloads it, which
+  // re-enters loadCard — and the detection at the end of it would ask the very question being answered.
+  private collisionInFlight = false;
   // The id of the game with a Steam download/removal in flight, or null. Steam operations are the one
   // kind of activity that leaves the state `ready`, so this is what stops a SECOND game from being
   // launched or installed underneath them (see onLaunchRequested).
@@ -639,6 +658,11 @@ export class GameController {
       (_event, id: unknown, immediate: unknown) => void this.onBrowseRequested(id, immediate),
     );
     ipcMain.on(IPC.libraryForget, (_event, id: unknown) => void this.onForgetRequested(id));
+    ipcMain.handle(
+      IPC.gameCollisionResolve,
+      (_event, answer: GameCollisionAnswer): Promise<ConfigSaveResult> =>
+        this.resolveCollision(answer),
+    );
     ipcMain.handle(IPC.wallpaperRequest, (): Promise<string | null> => this.assets.readWallpaperDataUrl());
     ipcMain.handle(
       IPC.startupSoundRequest,
@@ -893,6 +917,9 @@ export class GameController {
       .saveFromCard(manifests, sync.slots)
       .then(() => this.refreshLibrary())
       .catch((cause: unknown) => log.warn('[library] copying the card assets failed:', describe(cause)));
+    // Last, and only now: a game that lives on this card AND on this PC needs an answer from the user,
+    // and asking for one is not allowed to hold the card up (see askAboutCollisions).
+    this.askAboutCollisions(root);
     return { ok: true };
   }
 
@@ -912,6 +939,13 @@ export class GameController {
     this.pcGames = [...read.manifests];
     log.info(`[pc-library] ${read.manifests.length} local game(s) ids=[${read.manifests.map((m) => m.raw.id).join(',')}]`);
     this.warnShadowedLocalGames();
+    // A local game that is gone takes its collision answer with it: there is nothing left to collide,
+    // and a draft recreated under the same id later deserves the question afresh.
+    void this.deps.library
+      .clearCollisionAnswers(read.manifests.map((manifest) => manifest.raw.id))
+      .catch((cause: unknown) =>
+        log.warn('[collision] clearing the answers of removed local games failed:', describe(cause)),
+      );
     for (const manifest of read.manifests) {
       this.statsById.set(manifest.raw.id, await this.deps.stats.read(manifest.raw.id));
     }
@@ -1065,6 +1099,97 @@ export class GameController {
   }
 
   /** Logs the local games the inserted card currently shadows (same id — the card wins, see `games`). */
+  /**
+   * The Customize backend, attached after construction — it needs this controller to exist first (see
+   * main.ts), and the collision answer needs it back. A narrow view of the service, not the service.
+   */
+  private collisionResolver: CollisionResolver | null = null;
+
+  setCollisionResolver(resolver: CollisionResolver): void {
+    this.collisionResolver = resolver;
+  }
+
+  /** The PC library's own manifest for `id`, even while a card of the same id shadows it (Р10). */
+  findPcManifest(id: string): ResolvedManifest | null {
+    return this.pcGames.find((manifest) => manifest.raw.id === id) ?? null;
+  }
+
+  /**
+   * Asks — once per game — what should happen when the same id turns up on the card AND on this PC.
+   *
+   * Today the card simply wins, and the local game's name and artwork appear to vanish whenever it is
+   * inserted (`warnShadowedLocalGames` says so in the log and nowhere else). A silent reconciliation is
+   * not an option: the two manifests are independent, not a copy and its original, so there is no
+   * baseline and no "which is newer" to decide by — hence a question rather than a rule.
+   *
+   * Raised at the END of loadCard: the card is already on screen, so nothing about it is held up by the
+   * answer. One game at a time; an answer is remembered per id (collisionResolvedAt).
+   */
+  private askAboutCollisions(root: string): void {
+    if (this.collisionInFlight) return;
+    const cardIds = new Set(this.cardGames.map((manifest) => manifest.raw.id));
+    const local = this.pcGames.find(
+      (manifest) =>
+        cardIds.has(manifest.raw.id) &&
+        (this.deps.library.entry(manifest.raw.id)?.collisionResolvedAt ?? null) === null,
+    );
+    if (local === undefined) return;
+    void this.pushCollision(root, local);
+  }
+
+  private async pushCollision(root: string, local: ResolvedManifest): Promise<void> {
+    // The signature is captured WITH the question: the answer may arrive after the card has been pulled,
+    // or swapped for a different one carrying the same id, and neither may be written to.
+    const signature = await this.collisionResolver?.signatureFor(root);
+    if (signature === undefined || signature === null) return;
+    const collision: GameCollision = {
+      id: local.raw.id,
+      title: local.raw.title,
+      root,
+      signature,
+    };
+    const browserWindow = this.deps.window.browserWindow;
+    if (browserWindow !== null && !browserWindow.isDestroyed()) {
+      browserWindow.webContents.send(IPC.gameCollision, collision);
+    }
+  }
+
+  /**
+   * The answer. "Merge" puts the local game's look on the card and — for a DRAFT, which has nothing else
+   * to offer — removes it from the PC library, so the collision is gone for good. A fully configured
+   * local game stays: it has its own launch and its own saves, and after the merge the flip between the
+   * two sources is invisible anyway.
+   *
+   * The answer is remembered only once it has actually happened: a merge that failed leaves nothing
+   * written and no decision recorded, so the question honestly comes back.
+   */
+  private async resolveCollision(answer: GameCollisionAnswer): Promise<ConfigSaveResult> {
+    if (answer.choice === 'ignore') {
+      await this.deps.library.markCollisionResolved(answer.id);
+      return { saved: true, applied: 'deferred' };
+    }
+    const resolver = this.collisionResolver;
+    if (resolver === null) return { saved: false, message: this.t('errors.configInvalid') };
+    const local = this.findPcManifest(answer.id);
+    this.collisionInFlight = true;
+    try {
+      const result = await resolver.mergeCollision(answer);
+      // `saved`, not `applied`: the card holds the merged file either way, and a reload the launcher
+      // refused (a game running) is not a reason to keep a draft that now duplicates it.
+      if (!result.saved) return result;
+      if (local?.unconfigured === true) {
+        const removed = await resolver.removeLocalGame(answer.id);
+        if (!removed.saved) {
+          log.warn(`[collision] the card took id=${answer.id}, but the local draft could not be removed: ${removed.message}`);
+        }
+      }
+      await this.deps.library.markCollisionResolved(answer.id);
+      return result;
+    } finally {
+      this.collisionInFlight = false;
+    }
+  }
+
   private warnShadowedLocalGames(): void {
     const cardIds = new Set(this.cardGames.map((manifest) => manifest.raw.id));
     for (const manifest of this.pcGames) {
