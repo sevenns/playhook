@@ -7,6 +7,9 @@
 //   library/<id>/grid-thumb.*   — the downscaled card, produced LAZILY on the first grid request
 //   library/<id>/hero-<n>.<ext> — hero backgrounds, manifest order preserved
 //   library/<id>/music.<ext>
+//   library/<id>/card-slot.json  — pristine snapshot of the game's slot as the CARD had it
+//   library/<id>/game.json       — the user's edits to that slot, made with no card in (absent until then)
+//   library/<id>/staged/         — the originals of assets picked for those edits, awaiting the card
 //
 // Two deliberate performance rules (they are the reason the copy is safe to do on card insert):
 //  • copying is a byte copy under a size cap and does NOT decode — `nativeImage` is synchronous and would
@@ -24,9 +27,11 @@ import { z } from 'zod';
 import type { HeroAssets, ResolvedManifest, Stats } from '../shared/types';
 import { readAudioDataUrl, readImageDataUrl } from './asset-reader';
 import { readJsonValidated, writeJsonAtomic } from './json-store';
+import { uniqueAssetFileName } from './asset-file-names';
+import { assertImportableAsset, type ImportKind } from './asset-import';
+import { slotHash, type GameSlot } from './history-config';
 import {
   EMPTY_LIBRARY_INDEX,
-  evictBeyond,
   orderForCarousel,
   removeEntry,
   upsertEntry,
@@ -36,8 +41,6 @@ import {
 import { log } from './logger';
 import { describe } from './util';
 
-/** How many games the history keeps. Beyond it the weakest records are evicted (see evictBeyond). */
-export const MAX_LIBRARY_ENTRIES = 40;
 /** Target height of the carousel card thumbnail: 2x the 204 design px, so it stays crisp on a 4K screen. */
 const GRID_TARGET_HEIGHT = 408;
 const JPEG_QUALITY = 85;
@@ -66,6 +69,17 @@ const GRID_COMPRESS_STEPS: readonly CompressStep[] = [
   { height: 600, quality: 70 },
 ];
 
+/** The pristine card slot, the user's edits to it, and the originals staged for those edits. */
+const CARD_SLOT_FILENAME = 'card-slot.json';
+const EDITED_MANIFEST_FILENAME = 'game.json';
+const STAGED_DIRNAME = 'staged';
+/** What a re-copy of the artwork must NOT sweep away (see clearCopies). */
+const KEPT_ON_RECOPY: ReadonlySet<string> = new Set([
+  CARD_SLOT_FILENAME,
+  EDITED_MANIFEST_FILENAME,
+  STAGED_DIRNAME,
+]);
+
 
 const entrySchema = z.object({
   id: z.string().min(1),
@@ -79,6 +93,12 @@ const entrySchema = z.object({
   sourceSig: z.string().optional(),
   launchCount: z.number().int().nonnegative().default(0),
   lastPlayedAt: z.string().nullable().default(null),
+  // New fields migrate by zod default, exactly as `lastSeenAt` did — a record written by an older build
+  // simply reads as "no snapshot, no pending edits, no answered dialog".
+  sourceKind: z.enum(['card', 'pc']).optional(),
+  cardSlotHash: z.string().optional(),
+  configuredAt: z.string().nullable().default(null),
+  collisionResolvedAt: z.string().nullable().default(null),
 });
 
 const indexSchema = z.object({
@@ -102,6 +122,7 @@ export interface BrowseAssets {
 
 export class LibraryStore {
   private index: LibraryIndex = EMPTY_LIBRARY_INDEX;
+  private queue: Promise<void> = Promise.resolve();
   private readonly dir: string;
 
   constructor(private readonly deps: LibraryStoreDeps) {
@@ -109,9 +130,9 @@ export class LibraryStore {
   }
 
   /**
-   * Loads the index, re-syncs the cached stats against their authority (`stats/<id>.json`) and runs the
-   * GC. The re-sync matters because stats can change without us: another PC's card copy is merged into
-   * the PC mirror on insert, and a user can wipe the stats folder.
+   * Loads the index and re-syncs the cached stats against their authority (`stats/<id>.json`). The
+   * re-sync matters because stats can change without us: another PC's card copy is merged into the PC
+   * mirror on insert, and a user can wipe the stats folder.
    */
   async init(): Promise<void> {
     await fse.ensureDir(this.dir);
@@ -135,7 +156,6 @@ export class LibraryStore {
       this.index = { schemaVersion: 1, entries };
       await this.writeIndex();
     }
-    await this.gc();
   }
 
   /** The carousel order for the given card ids: the card's games first, then the played history (Р1). */
@@ -160,54 +180,69 @@ export class LibraryStore {
    */
   async saveFromCard(
     manifests: readonly ResolvedManifest[],
-    protectedIds?: readonly string[],
+    cardSlots?: ReadonlyMap<string, GameSlot>,
   ): Promise<void> {
     for (const manifest of manifests) {
       try {
-        await this.saveOne(manifest);
+        await this.saveOne(manifest, cardSlots?.get(manifest.raw.id));
       } catch (cause) {
         log.warn(`[library] failed to copy assets for id=${manifest.raw.id}:`, describe(cause));
       }
     }
-    // The eviction must spare every game that is available RIGHT NOW, not just the ones copied here:
-    // with two sources (the inserted card and the PC library) each call would otherwise leave the other
-    // source's games unprotected, and a full history could evict the very game on screen.
-    await this.gc(protectedIds ?? manifests.map((m) => m.raw.id));
   }
 
-  private async saveOne(manifest: ResolvedManifest): Promise<void> {
+  private async saveOne(manifest: ResolvedManifest, cardSlot?: GameSlot): Promise<void> {
     const id = manifest.raw.id;
     const gridSource = manifest.gridImagePath ?? manifest.heroImagePaths?.[0];
     const sourceSig = await assetsSignature(manifest);
-    const previous = this.entry(id);
     const stats = await this.deps.readStats(id);
     // "This game was available at this moment" — the carousel orders the history by it, so it is stamped
     // on EVERY insert, including the one below that copies nothing.
     const lastSeenAt = new Date().toISOString();
+    // The title the CARD last had, read before the snapshot is overwritten. `record.title` is editable
+    // from the history now, so comparing against it would read a not-yet-applied rename as a foreign card
+    // (a false warning, and a full re-copy of every asset on every insert).
+    const pristineTitle = (await this.readCardSlot(id))?.['title'];
+    // The snapshot belongs to the CARD path alone: a PC-library game's slot speaks the `pc` dialect and
+    // would make a card unreadable if it were ever applied to one (see the plan, Р1).
+    const cardSlotHash =
+      manifest.source === 'card' && cardSlot !== undefined
+        ? await this.takeCardSlot(id, cardSlot)
+        : undefined;
+    const sourceKind = manifest.source;
+    const previous = this.entry(id);
+    const titleUnchanged =
+      (typeof pristineTitle === 'string' ? pristineTitle : previous?.title) === manifest.raw.title;
 
-    // Same card, same assets → nothing to re-copy. Only the cached stats are refreshed. The signature
-    // covers EVERY source file, not just the cover: editing any of them in Configure (and applying it to
-    // the running launcher) must land in the history without a restart.
-    if (
-      previous !== null &&
-      sourceSig !== undefined &&
-      previous.sourceSig === sourceSig &&
-      previous.title === manifest.raw.title
-    ) {
-      await this.replace({
-        ...previous,
-        lastSeenAt,
-        launchCount: stats.launchCount,
-        lastPlayedAt: stats.lastPlayedAt,
+    // Same card, same assets → nothing to re-copy. Only the cached stats (and the snapshot fields, which
+    // can move while the asset bytes do not) are refreshed. The signature covers EVERY source file, not
+    // just the cover: editing any of them in Configure (and applying it to the running launcher) must
+    // land in the history without a restart.
+    if (previous !== null && sourceSig !== undefined && previous.sourceSig === sourceSig && titleUnchanged) {
+      await this.mutate((index) => {
+        const current = index.entries.find((entry) => entry.id === id) ?? previous;
+        return upsertEntry(
+          index,
+          {
+            ...current,
+            lastSeenAt,
+            launchCount: stats.launchCount,
+            lastPlayedAt: stats.lastPlayedAt,
+            sourceKind,
+            ...(cardSlotHash !== undefined ? { cardSlotHash } : {}),
+          },
+          typeof pristineTitle === 'string' ? pristineTitle : undefined,
+        ).index;
       });
       return;
     }
 
     const gameDir = this.gameDir(id);
-    // A real re-copy replaces the WHOLE set, so wipe the directory first: a renamed asset (grid.png →
+    // A real re-copy replaces the WHOLE set, so clear the copies first: a renamed asset (grid.png →
     // grid.jpg), one hero image fewer, or a dropped music track would otherwise leave an orphan behind,
-    // and the lazily-built thumbnail would keep serving the previous cover.
-    if (previous !== null) await fse.remove(gameDir);
+    // and the lazily-built thumbnail would keep serving the previous cover. Selectively, though — the
+    // snapshot, the user's pending edits and their staged originals are NOT this path's to destroy.
+    if (previous !== null) await this.clearCopies(gameDir);
     await fse.ensureDir(gameDir);
 
     const grid =
@@ -234,19 +269,46 @@ export class LibraryStore {
         ? undefined
         : await copyCapped(manifest.backgroundMusicPath, gameDir, 'music', MAX_MUSIC_BYTES);
 
-    const record: LibraryEntryRecord = {
-      id,
-      title: manifest.raw.title,
-      ...(grid !== undefined ? { grid } : {}),
-      hero,
-      ...(music !== undefined ? { music } : {}),
-      savedAt: lastSeenAt,
-      lastSeenAt,
-      ...(sourceSig !== undefined ? { sourceSig } : {}),
-      launchCount: stats.launchCount,
-      lastPlayedAt: stats.lastPlayedAt,
-    };
-    const { index, replacedForeign } = upsertEntry(this.index, record);
+    let replacedForeign = false;
+    await this.mutate((index) => {
+      // Re-read the record AFTER the file work: a collision answer or a save from the history may have
+      // written this entry while the copying awaited, and building from the stale read would clobber it.
+      // Every field this path does not own has to be carried over BY HAND — the record is built fresh,
+      // and an optional field forgotten here is silently dropped rather than caught by the types.
+      const current = index.entries.find((entry) => entry.id === id) ?? previous;
+      const record: LibraryEntryRecord = {
+        id,
+        // A rename saved from the history but not yet applied to the card outlives this re-copy: the
+        // carousel must keep showing what the user typed until their edits reach the card or lose to it.
+        title:
+          current !== null && current !== undefined && current.configuredAt !== null
+            ? current.title
+            : manifest.raw.title,
+        ...(grid !== undefined ? { grid } : {}),
+        hero,
+        ...(music !== undefined ? { music } : {}),
+        savedAt: lastSeenAt,
+        lastSeenAt,
+        ...(sourceSig !== undefined ? { sourceSig } : {}),
+        launchCount: stats.launchCount,
+        lastPlayedAt: stats.lastPlayedAt,
+        sourceKind,
+        ...(cardSlotHash !== undefined
+          ? { cardSlotHash }
+          : current?.cardSlotHash !== undefined
+            ? { cardSlotHash: current.cardSlotHash }
+            : {}),
+        configuredAt: current?.configuredAt ?? null,
+        collisionResolvedAt: current?.collisionResolvedAt ?? null,
+      };
+      const result = upsertEntry(
+        index,
+        record,
+        typeof pristineTitle === 'string' ? pristineTitle : undefined,
+      );
+      replacedForeign = result.replacedForeign;
+      return result.index;
+    });
     if (replacedForeign) {
       // Two cards sharing a manifest id now overwrite each other's COVER AND NAME, not just their stats
       // numbers — a new, visible class of mistake, so it gets a breadcrumb (Р3).
@@ -254,8 +316,6 @@ export class LibraryStore {
         `[library] id="${id}" already existed with a different title/source — the history entry was overwritten (colliding manifest ids across cards)`,
       );
     }
-    this.index = index;
-    await this.writeIndex();
   }
 
   /**
@@ -363,27 +423,203 @@ export class LibraryStore {
     return true;
   }
 
-  /** Trims the history to MAX_LIBRARY_ENTRIES, deleting the evicted games' directories. */
-  async gc(protectedIds: readonly string[] = []): Promise<void> {
-    const { index, evicted } = evictBeyond(this.index, MAX_LIBRARY_ENTRIES, protectedIds);
-    if (evicted.length === 0) return;
-    this.index = index;
-    await this.writeIndex();
-    for (const id of evicted) {
-      try {
-        await fse.remove(this.gameDir(id));
-        log.info(`[library] evicted id=${id} (history limit ${MAX_LIBRARY_ENTRIES})`);
-      } catch (cause) {
-        // The record is already gone from the index; a leftover directory is cosmetic, not a corruption.
-        log.warn(`[library] failed to remove the directory of evicted id=${id}:`, describe(cause));
-        this.index = removeEntry(this.index, id);
+  // ── Configuring a game from the history ───────────────────────────────────────────────────────────
+  //
+  // Two files per game, and which one may be written by whom is the whole safety of the feature:
+  //
+  //   card-slot.json — the PRISTINE slot as the card had it. Written only by the insertion path, which
+  //                    owns it; it is the baseline for "did the card move?", for the title guard, and
+  //                    for mapping a slot's asset paths onto the library's copies.
+  //   game.json      — the user's edits. Written only by save-from-history; the insertion path never
+  //                    touches it, so a failed apply (read-only card, a copy that broke off) cannot cost
+  //                    the user their work. It is deleted when the edits reach the card, or lose to it.
+
+  /** Snapshots the slot the card currently has and returns its hash (the change-detection baseline). */
+  async takeCardSlot(id: string, slot: GameSlot): Promise<string> {
+    const gameDir = this.gameDir(id);
+    await fse.ensureDir(gameDir);
+    await fse.writeFile(this.cardSlotPath(id), `${JSON.stringify(slot, null, 2)}\n`);
+    return slotHash(slot);
+  }
+
+  /** The pristine card slot, or null when this game has never been snapshotted. */
+  async readCardSlot(id: string): Promise<GameSlot | null> {
+    return readSlotFile(this.cardSlotPath(id));
+  }
+
+  /**
+   * What the settings screen must show for a history game: the user's edits when there are any, the
+   * pristine snapshot otherwise. Without the fallback the very first Customize from the history would
+   * open onto nothing.
+   */
+  async storedManifestText(id: string): Promise<string | null> {
+    const edited = await readTextFile(this.editedManifestPath(id));
+    if (edited !== null) return edited;
+    return readTextFile(this.cardSlotPath(id));
+  }
+
+  /** The user's pending edits, or null when they have none. */
+  async readEditedSlot(id: string): Promise<GameSlot | null> {
+    return readSlotFile(this.editedManifestPath(id));
+  }
+
+  /**
+   * Stores edits made with no card in and stamps `configuredAt` — the flag the next insertion reads as
+   * "there is something to apply". The record's title follows the edit so the carousel shows the new
+   * name at once, before any card is back.
+   */
+  async saveEdits(id: string, text: string, title: string): Promise<void> {
+    const gameDir = this.gameDir(id);
+    await fse.ensureDir(gameDir);
+    await fse.writeFile(this.editedManifestPath(id), text.endsWith('\n') ? text : `${text}\n`);
+    const configuredAt = new Date().toISOString();
+    await this.mutate((index) => {
+      const current = index.entries.find((entry) => entry.id === id);
+      if (current === undefined) return index;
+      return upsertEntry(index, { ...current, title, configuredAt }, current.title).index;
+    });
+  }
+
+  /**
+   * Drops the pending edits and everything staged for them — after they reached the card, and after they
+   * lost a conflict to it. The snapshot stays: it is the baseline, and it is now the only truth again.
+   */
+  async dropEdits(id: string): Promise<void> {
+    await this.removeQuietly(this.editedManifestPath(id));
+    await this.clearStaged(id);
+    await this.mutate((index) => {
+      const current = index.entries.find((entry) => entry.id === id);
+      if (current === undefined || current.configuredAt === null) return index;
+      return upsertEntry(index, { ...current, configuredAt: null }, current.title).index;
+    });
+  }
+
+  /** Remembers that the user answered the "on the card AND on this PC" dialog for this id. */
+  async markCollisionResolved(id: string): Promise<void> {
+    const collisionResolvedAt = new Date().toISOString();
+    await this.mutate((index) => {
+      const current = index.entries.find((entry) => entry.id === id);
+      const record: LibraryEntryRecord =
+        current ??
+        {
+          id,
+          title: id,
+          hero: [],
+          savedAt: collisionResolvedAt,
+          lastSeenAt: collisionResolvedAt,
+          launchCount: 0,
+          lastPlayedAt: null,
+          configuredAt: null,
+          collisionResolvedAt: null,
+        };
+      return upsertEntry(index, { ...record, collisionResolvedAt }, record.title).index;
+    });
+  }
+
+  /** Forgets that answer for every id that is no longer on both sides — the collision is over. */
+  async clearCollisionAnswers(keepIds: readonly string[]): Promise<void> {
+    const keep = new Set(keepIds);
+    await this.mutate((index) => ({
+      schemaVersion: 1,
+      entries: index.entries.map((entry) =>
+        entry.collisionResolvedAt !== null && !keep.has(entry.id)
+          ? { ...entry, collisionResolvedAt: null }
+          : entry,
+      ),
+    }));
+  }
+
+  /**
+   * Copies an asset picked from anywhere on this PC into `library/<id>/staged/`, under the very name it
+   * will take on the card, and returns that name. The originals wait here because the card the edits are
+   * for is not in — the file the slot points at has to exist somewhere until it can be copied over.
+   */
+  async importStagedAsset(
+    id: string,
+    absolutePath: string,
+    kind: ImportKind,
+    allowedExtensions: readonly string[],
+  ): Promise<string> {
+    await assertImportableAsset(absolutePath, kind, allowedExtensions);
+    const dir = this.stagedDir(id);
+    await fse.ensureDir(dir);
+    const name = await uniqueAssetFileName(dir, path.basename(absolutePath));
+    await fse.copy(absolutePath, path.join(dir, name), { overwrite: false, errorOnExist: true });
+    return name;
+  }
+
+  /** The names of everything staged for this game (empty when nothing is). */
+  async stagedFiles(id: string): Promise<readonly string[]> {
+    try {
+      return await fse.readdir(this.stagedDir(id));
+    } catch (cause) {
+      if (!isNotFound(cause)) {
+        log.warn(`[library] cannot list the staged assets of id=${id}:`, describe(cause));
       }
+      return [];
     }
   }
 
+  /** Absolute path of one staged file — the apply step copies from it, the preview reads it. */
+  stagedFilePath(id: string, name: string): string {
+    return path.join(this.stagedDir(id), path.basename(name));
+  }
+
+  /** Absolute path of one copied asset inside `library/<id>/` (a preview source, never written to). */
+  copiedAssetPath(id: string, name: string): string {
+    return path.join(this.gameDir(id), path.basename(name));
+  }
+
+  async clearStaged(id: string): Promise<void> {
+    await this.removeQuietly(this.stagedDir(id));
+  }
+
   private async replace(record: LibraryEntryRecord): Promise<void> {
-    this.index = upsertEntry(this.index, record).index;
-    await this.writeIndex();
+    await this.mutate((index) => upsertEntry(index, record).index);
+  }
+
+  /**
+   * Serializes every mutation of `index.json` through one chain. Two writers now race for it — the
+   * background copy after an insert and the user's own actions (a save from the history, an answer to the
+   * collision dialog) — and both read-modify-write the same file, so an interleaving would silently drop
+   * whichever field was written first.
+   */
+  private mutate(mutator: (index: LibraryIndex) => LibraryIndex): Promise<void> {
+    const run = this.queue.then(async () => {
+      this.index = mutator(this.index);
+      await this.writeIndex();
+    });
+    this.queue = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
+  /**
+   * Removes the COPIES of a game's assets, keeping the snapshot, the pending edits and their staged
+   * originals — those belong to the history-config paths, not to the insert that re-copies artwork.
+   */
+  private async clearCopies(gameDir: string): Promise<void> {
+    let names: readonly string[];
+    try {
+      names = await fse.readdir(gameDir);
+    } catch (cause) {
+      if (!isNotFound(cause)) log.warn(`[library] cannot list "${gameDir}":`, describe(cause));
+      return;
+    }
+    for (const name of names) {
+      if (KEPT_ON_RECOPY.has(name)) continue;
+      await this.removeQuietly(path.join(gameDir, name));
+    }
+  }
+
+  private async removeQuietly(target: string): Promise<void> {
+    try {
+      await fse.remove(target);
+    } catch (cause) {
+      log.warn(`[library] failed to remove "${target}":`, describe(cause));
+    }
   }
 
   private async writeIndex(): Promise<void> {
@@ -403,6 +639,47 @@ export class LibraryStore {
     // `id` is validated by the manifest schema as a single safe path segment (no separators, no dots).
     return path.join(this.dir, id);
   }
+
+  private cardSlotPath(id: string): string {
+    return path.join(this.gameDir(id), CARD_SLOT_FILENAME);
+  }
+
+  private editedManifestPath(id: string): string {
+    return path.join(this.gameDir(id), EDITED_MANIFEST_FILENAME);
+  }
+
+  private stagedDir(id: string): string {
+    return path.join(this.gameDir(id), STAGED_DIRNAME);
+  }
+}
+
+/** Reads a JSON file as a slot object, or null when it is absent or not one. */
+async function readSlotFile(filePath: string): Promise<GameSlot | null> {
+  const text = await readTextFile(filePath);
+  if (text === null) return null;
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null;
+    return parsed as GameSlot;
+  } catch (cause) {
+    log.warn(`[library] "${filePath}" is not readable JSON:`, describe(cause));
+    return null;
+  }
+}
+
+/** File contents, or null when the file is not there (a normal state for both history files). */
+async function readTextFile(filePath: string): Promise<string | null> {
+  try {
+    return await fse.readFile(filePath, 'utf8');
+  } catch (cause) {
+    if (!isNotFound(cause)) log.warn(`[library] cannot read "${filePath}":`, describe(cause));
+    return null;
+  }
+}
+
+/** True for an "it isn't there" fs error — an absent history file is a normal state, not a failure. */
+function isNotFound(cause: unknown): boolean {
+  return typeof cause === 'object' && cause !== null && (cause as { code?: unknown }).code === 'ENOENT';
 }
 
 /**

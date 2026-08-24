@@ -468,15 +468,6 @@ export class GameController {
   }
 
   /**
-   * Ids that must survive a history eviction: everything on the card AND everything in the PC library —
-   * including a local game currently shadowed by the card (its record is the same one). Passing only one
-   * source's ids would let a full history evict the other source's games (see LibraryStore.gc).
-   */
-  private protectedIds(): readonly string[] {
-    return [...this.cardGames, ...this.pcGames].map((manifest) => manifest.raw.id);
-  }
-
-  /**
    * The single "active" manifest — the selected game — that every existing consumer reads
    * (launch/kill/uninstall/save-sync/stats). Read-only: the games live in `cardGames`/`pcGames`, the
    * choice in `selectedId`. Falls back to the first available game when the selection is gone (the card
@@ -854,7 +845,7 @@ export class GameController {
     // is already on screen. One sequential task for the whole card (index.json is a single file — see
     // LibraryStore.saveFromCard), then a list refresh so the freshly-copied games get their artwork.
     void this.deps.library
-      .saveFromCard(manifests, this.protectedIds())
+      .saveFromCard(manifests)
       .then(() => this.refreshLibrary())
       .catch((cause: unknown) => log.warn('[library] copying the card assets failed:', describe(cause)));
     return { ok: true };
@@ -911,7 +902,7 @@ export class GameController {
     // the same history record, and re-inserting the card would then flip its artwork back and forth.
     const visibleLocal = this.games.filter((manifest) => manifest.source === 'pc');
     void this.deps.library
-      .saveFromCard(visibleLocal, this.protectedIds())
+      .saveFromCard(visibleLocal)
       .then(() => this.refreshLibrary())
       .catch((cause: unknown) => log.warn('[library] copying the local games\' assets failed:', describe(cause)));
 
@@ -1706,10 +1697,8 @@ export class GameController {
       const updatedStats = await stats.recordPlay(manifest.raw.id, playSeconds);
       const updatedInfo = await this.buildGameInfo(manifest, updatedStats);
       // The history's cached stats follow the authority, and the game may have just EARNED its place in
-      // the carousel (an inserted-but-never-played game is not listed until now). The GC runs here too:
-      // recordPlay is the one moment the ordering that decides eviction actually changes.
+      // the carousel (an inserted-but-never-played game is not listed until now).
       await this.deps.library.noteLaunch(manifest.raw.id, updatedStats);
-      await this.deps.library.gc(this.protectedIds());
       // Before the refresh, not after: the card's own games are ordered by these very dates, and this
       // game has just become the most recently played one.
       this.statsById.set(manifest.raw.id, updatedStats);

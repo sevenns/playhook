@@ -58,6 +58,7 @@ function manifest(id: string, overrides: Partial<ResolvedManifest> = {}): Resolv
 async function readIndex(): Promise<{
   entries: Array<{
     id: string;
+    title: string;
     hero: string[];
     grid?: string;
     music?: string;
@@ -65,6 +66,10 @@ async function readIndex(): Promise<{
     savedAt: string;
     lastSeenAt: string | null;
     launchCount: number;
+    sourceKind?: 'card' | 'pc';
+    cardSlotHash?: string;
+    configuredAt: string | null;
+    collisionResolvedAt: string | null;
   }>;
 }> {
   const raw = await fs.readFile(path.join(baseDir, 'library', 'index.json'), 'utf8');
@@ -431,5 +436,171 @@ describe('forget (the user removing a game from the history)', () => {
     // forget() never touches stats/<id>.json — the store reads the same authority again on re-insert.
     await library.saveFromCard([manifest('a', { gridImagePath: await card('a.jpg') })]);
     expect(library.entry('a')?.launchCount).toBe(7);
+  });
+});
+
+// ── Configuring a game from the history ─────────────────────────────────────────────────────────────
+// The two-file split is what the whole feature rests on: the insertion path owns `card-slot.json` and may
+// never touch `game.json` / `staged/`, so a failed apply cannot cost the user their edits.
+
+const SLOT = { id: 'a', title: 'A', executable: 'g.exe', description: 'kept' };
+
+async function libraryFile(id: string, ...rest: readonly string[]): Promise<string> {
+  return fs.readFile(path.join(baseDir, 'library', id, ...rest), 'utf8');
+}
+
+function exists(id: string, ...rest: readonly string[]): Promise<boolean> {
+  return fs
+    .access(path.join(baseDir, 'library', id, ...rest))
+    .then(() => true)
+    .catch(() => false);
+}
+
+describe('the card snapshot', () => {
+  it('is written on a fresh copy and hashed into the record', async () => {
+    await card('art/grid.png');
+    const library = store();
+    await library.init();
+    await library.saveFromCard(
+      [manifest('a', { gridImagePath: path.join(cardRoot, 'art/grid.png') })],
+      new Map([['a', SLOT]]),
+    );
+    expect(JSON.parse(await libraryFile('a', 'card-slot.json')) as unknown).toEqual(SLOT);
+    const [entry] = (await readIndex()).entries;
+    expect(entry?.cardSlotHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(entry?.sourceKind).toBe('card');
+    expect(entry?.configuredAt).toBeNull();
+  });
+
+  it('is refreshed by the shortcut branch too — a slot can move while the artwork does not', async () => {
+    const grid = await card('art/grid.png');
+    const library = store();
+    await library.init();
+    const games = [manifest('a', { gridImagePath: grid })];
+    await library.saveFromCard(games, new Map([['a', SLOT]]));
+    const first = (await readIndex()).entries[0]?.cardSlotHash;
+
+    const moved = { ...SLOT, args: ['-windowed'] };
+    await library.saveFromCard(games, new Map([['a', moved]]));
+    expect(JSON.parse(await libraryFile('a', 'card-slot.json')) as unknown).toEqual(moved);
+    expect((await readIndex()).entries[0]?.cardSlotHash).not.toBe(first);
+  });
+
+  it('is NOT written for a PC-library game — its slot speaks another dialect', async () => {
+    const grid = await card('art/grid.png');
+    const library = store();
+    await library.init();
+    await library.saveFromCard(
+      [manifest('a', { source: 'pc', gridImagePath: grid })],
+      new Map([['a', SLOT]]),
+    );
+    expect(await exists('a', 'card-slot.json')).toBe(false);
+    const [entry] = (await readIndex()).entries;
+    expect(entry?.cardSlotHash).toBeUndefined();
+    expect(entry?.sourceKind).toBe('pc');
+  });
+
+  it('survives a re-copy of the artwork, together with the edits and everything staged', async () => {
+    const grid = await card('art/grid.png');
+    const library = store();
+    await library.init();
+    await library.saveFromCard([manifest('a', { gridImagePath: grid })], new Map([['a', SLOT]]));
+    await library.saveEdits('a', JSON.stringify({ ...SLOT, title: 'Mine' }), 'Mine');
+    const picked = await card('picked/обложка.png');
+    await library.importStagedAsset('a', picked, 'image', ['png']);
+
+    await card('art/grid.png', 'IMG 900x1300');
+    await library.saveFromCard([manifest('a', { gridImagePath: grid })], new Map([['a', SLOT]]));
+
+    expect(await exists('a', 'game.json')).toBe(true);
+    expect(await library.stagedFiles('a')).toEqual(['asset.png']);
+    const [entry] = (await readIndex()).entries;
+    expect(entry?.configuredAt).not.toBeNull();
+    expect(entry?.title).toBe('Mine');
+  });
+});
+
+describe('edits made with no card in', () => {
+  async function seeded(): Promise<LibraryStore> {
+    const grid = await card('art/grid.png');
+    const library = store();
+    await library.init();
+    await library.saveFromCard([manifest('a', { gridImagePath: grid })], new Map([['a', SLOT]]));
+    return library;
+  }
+
+  it('reads back the snapshot until the first save, then the edits', async () => {
+    const library = await seeded();
+    expect(JSON.parse((await library.storedManifestText('a')) ?? '') as unknown).toEqual(SLOT);
+
+    const edited = { ...SLOT, title: 'Mine' };
+    await library.saveEdits('a', JSON.stringify(edited), 'Mine');
+    expect(JSON.parse((await library.storedManifestText('a')) ?? '') as unknown).toEqual(edited);
+    expect(JSON.parse(await libraryFile('a', 'card-slot.json')) as unknown).toEqual(SLOT);
+  });
+
+  it('stamps configuredAt and the new title on the record', async () => {
+    const library = await seeded();
+    await library.saveEdits('a', JSON.stringify({ ...SLOT, title: 'Mine' }), 'Mine');
+    const [entry] = (await readIndex()).entries;
+    expect(entry?.configuredAt).not.toBeNull();
+    expect(entry?.title).toBe('Mine');
+  });
+
+  it('drops the edits and the staged originals, keeping the snapshot', async () => {
+    const library = await seeded();
+    await library.saveEdits('a', JSON.stringify({ ...SLOT, title: 'Mine' }), 'Mine');
+    await library.importStagedAsset('a', await card('picked/hero.png'), 'image', ['png']);
+
+    await library.dropEdits('a');
+    expect(await exists('a', 'game.json')).toBe(false);
+    expect(await library.stagedFiles('a')).toEqual([]);
+    expect(await exists('a', 'card-slot.json')).toBe(true);
+    expect((await readIndex()).entries[0]?.configuredAt).toBeNull();
+  });
+
+  it('is wiped entirely by forget, snapshot included', async () => {
+    const library = await seeded();
+    await library.saveEdits('a', JSON.stringify({ ...SLOT, title: 'Mine' }), 'Mine');
+    await library.importStagedAsset('a', await card('picked/hero.png'), 'image', ['png']);
+
+    expect(await library.forget('a')).toBe(true);
+    expect(await exists('a')).toBe(false);
+  });
+});
+
+describe('staging an asset for a card that is not in', () => {
+  async function seeded(): Promise<LibraryStore> {
+    const library = store();
+    await library.init();
+    await library.saveFromCard([manifest('a')], new Map([['a', SLOT]]));
+    return library;
+  }
+
+  it('keeps the extension of a non-Latin name and de-duplicates collisions', async () => {
+    const library = await seeded();
+    expect(await library.importStagedAsset('a', await card('p1/обложка.png'), 'image', ['png'])).toBe(
+      'asset.png',
+    );
+    expect(await library.importStagedAsset('a', await card('p2/обложка.png'), 'image', ['png'])).toBe(
+      'asset-2.png',
+    );
+  });
+
+  it('refuses a wrong extension, a symlink and anything past the cap', async () => {
+    const library = await seeded();
+    const wrong = await card('p/key.pem');
+    await expect(library.importStagedAsset('a', wrong, 'image', ['png'])).rejects.toThrow(
+      /not a image extension/,
+    );
+    const link = path.join(cardRoot, 'link.png');
+    await fs.symlink(await card('p/real.png'), link);
+    await expect(library.importStagedAsset('a', link, 'image', ['png'])).rejects.toThrow(
+      /symbolic link/,
+    );
+    const huge = await card('p/huge.png', 'IMG', 33 * 1024 * 1024);
+    await expect(library.importStagedAsset('a', huge, 'image', ['png'])).rejects.toThrow(
+      /larger than/,
+    );
   });
 });
