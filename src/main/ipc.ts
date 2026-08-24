@@ -37,6 +37,7 @@ import {
   syncHistoryConfig,
   type HistorySyncResult,
 } from './history-sync';
+import { localGameGoesAfterMerge } from './history-config';
 import { type DriveWatcher } from './drive-watcher';
 import { readManifests, findCaseInsensitiveName, type ManifestEnv } from './manifest';
 import { syncDir, syncByChange, snapshotTree } from './save-sync';
@@ -1174,10 +1175,8 @@ export class GameController {
     this.collisionInFlight = true;
     try {
       const result = await resolver.mergeCollision(answer);
-      // `saved`, not `applied`: the card holds the merged file either way, and a reload the launcher
-      // refused (a game running) is not a reason to keep a draft that now duplicates it.
       if (!result.saved) return result;
-      if (local?.unconfigured === true) {
+      if (localGameGoesAfterMerge(result, local)) {
         const removed = await resolver.removeLocalGame(answer.id);
         if (!removed.saved) {
           log.warn(`[collision] the card took id=${answer.id}, but the local draft could not be removed: ${removed.message}`);

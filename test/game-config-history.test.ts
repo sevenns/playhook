@@ -220,4 +220,42 @@ describe('thumbnails for a history game', () => {
     await seed();
     expect(await preview('art/never-copied.png')).toBeNull();
   });
+
+  it('maps a SPARSE copy set by position, not by order — a skipped image shifts nothing', async () => {
+    await fs.mkdir(path.join(cardRoot, 'art'), { recursive: true });
+    // The middle background is a format the copy cannot re-encode, so it leaves no file behind. The
+    // third one must still map to its own copy, not to the second's.
+    await fs.writeFile(path.join(cardRoot, 'art', 'one.png'), 'IMG 4x4');
+    await fs.writeFile(path.join(cardRoot, 'art', 'two.webp'), 'NOT DECODABLE'.padEnd(5 * 1024 * 1024, '.'));
+    await fs.writeFile(path.join(cardRoot, 'art', 'three.png'), 'IMG 6x6');
+    const cardSlot = slot({ heroImage: ['art/one.png', 'art/two.webp', 'art/three.png'] });
+    await library.saveFromCard(
+      [
+        manifest({
+          heroImagePaths: ['one.png', 'two.webp', 'three.png'].map((name) =>
+            path.join(cardRoot, 'art', name),
+          ),
+        }),
+      ],
+      new Map([['a', cardSlot]]),
+    );
+
+    expect(library.entry('a')?.hero).toEqual(['hero-0.png', 'hero-2.png']);
+    expect(await preview('art/one.png')).toMatch(/^data:image\/png;base64,/);
+    expect(await preview('art/two.webp')).toBeNull();
+    expect(await preview('art/three.png')).toMatch(/^data:image\/png;base64,/);
+  });
+
+  it('serves the cover from the first background when the card has no cover of its own', async () => {
+    await fs.mkdir(path.join(cardRoot, 'art'), { recursive: true });
+    await fs.writeFile(path.join(cardRoot, 'art', 'bg.png'), 'IMG 4x4');
+    const cardSlot = slot({ heroImage: ['art/bg.png'] });
+    await library.saveFromCard(
+      [manifest({ heroImagePaths: [path.join(cardRoot, 'art', 'bg.png')] })],
+      new Map([['a', cardSlot]]),
+    );
+
+    expect(library.entry('a')?.grid).toBe('grid.png');
+    expect(await preview('art/bg.png')).toMatch(/^data:image\/png;base64,/);
+  });
 });

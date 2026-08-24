@@ -135,6 +135,21 @@ export function mergePresentation(slot: GameSlot, presentation: GamePresentation
   return merged;
 }
 
+/**
+ * Whether the local game should leave the PC library once its look has been merged onto the card.
+ *
+ * Two traps live in this one line. It goes by `saved`, NOT by `applied`: the card holds the merged file
+ * either way, and a reload the launcher refused (a game was running) is no reason to keep a draft that
+ * now duplicates it. And only a DRAFT goes — a fully configured local game has its own launch and its
+ * own saves, and after the merge the flip between the two sources is invisible anyway.
+ */
+export function localGameGoesAfterMerge(
+  result: { readonly saved: boolean; readonly applied?: string },
+  local: { readonly unconfigured?: boolean } | null,
+): boolean {
+  return result.saved && local?.unconfigured === true;
+}
+
 /** The manifest keys whose values name asset files (see manifest.ts). */
 const ASSET_KEYS: ReadonlySet<string> = new Set(['gridImage', 'heroImage', 'backgroundMusic']);
 

@@ -604,3 +604,58 @@ describe('staging an asset for a card that is not in', () => {
     );
   });
 });
+
+describe('the fields the insert path does not own', () => {
+  async function seeded(): Promise<{ library: LibraryStore; grid: string }> {
+    const grid = await card('art/grid.png');
+    const library = store();
+    await library.init();
+    await library.saveFromCard([manifest('a', { gridImagePath: grid })], new Map([['a', SLOT]]));
+    return { library, grid };
+  }
+
+  it('carries an answered collision dialog and the source through a full re-copy', async () => {
+    const { library, grid } = await seeded();
+    await library.markCollisionResolved('a');
+
+    // New artwork bytes → the shortcut misses and the record is rebuilt from scratch, which is exactly
+    // where an optional field goes missing without the types noticing.
+    await card('art/grid.png', 'IMG 900x1300');
+    await library.saveFromCard([manifest('a', { gridImagePath: grid })], new Map([['a', SLOT]]));
+
+    const [entry] = (await readIndex()).entries;
+    expect(entry?.collisionResolvedAt).not.toBeNull();
+    expect(entry?.sourceKind).toBe('card');
+  });
+
+  it('forgets an answer once the local side of the collision is gone', async () => {
+    const { library } = await seeded();
+    await library.markCollisionResolved('a');
+
+    await library.clearCollisionAnswers(['something-else']);
+    expect((await readIndex()).entries[0]?.collisionResolvedAt).toBeNull();
+  });
+
+  it('keeps the answer while the local game is still there', async () => {
+    const { library } = await seeded();
+    await library.markCollisionResolved('a');
+
+    await library.clearCollisionAnswers(['a']);
+    expect((await readIndex()).entries[0]?.collisionResolvedAt).not.toBeNull();
+  });
+
+  it('takes a rename made from the history without re-copying the artwork', async () => {
+    const { library, grid } = await seeded();
+    const savedAt = (await readIndex()).entries[0]?.savedAt;
+    await library.saveEdits('a', JSON.stringify({ ...SLOT, title: 'Mine' }), 'Mine');
+
+    // The card is unchanged; only the record's title differs, because the rename has not reached the
+    // card yet. Judged against the record it would read as a foreign card — a warning plus a full,
+    // pointless re-copy on every single insert.
+    await library.saveFromCard([manifest('a', { gridImagePath: grid })], new Map([['a', SLOT]]));
+
+    const [entry] = (await readIndex()).entries;
+    expect(entry?.savedAt).toBe(savedAt);
+    expect(entry?.title).toBe('Mine');
+  });
+});

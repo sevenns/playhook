@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   CONFIG_SYNC_TOLERANCE_MS,
   decideConfigSync,
+  localGameGoesAfterMerge,
   extractGameSlot,
   replaceGameSlot,
   slotHash,
@@ -154,5 +155,23 @@ describe('decideConfigSync', () => {
     expect(
       decideConfigSync({ historyDirty: true, cardChanged: true, cardMtimeMs: 1, configuredAtMs: null }),
     ).toBe('take-card');
+  });
+});
+
+describe('localGameGoesAfterMerge', () => {
+  it('removes a DRAFT once the card holds the merged file', () => {
+    expect(localGameGoesAfterMerge({ saved: true }, { unconfigured: true })).toBe(true);
+  });
+
+  it('goes by the WRITE, not by the reload — a busy launcher still leaves the card written', () => {
+    expect(
+      localGameGoesAfterMerge({ saved: true, applied: 'failed' }, { unconfigured: true }),
+    ).toBe(true);
+    expect(localGameGoesAfterMerge({ saved: false }, { unconfigured: true })).toBe(false);
+  });
+
+  it('keeps a fully configured local game — it has a launch and saves of its own', () => {
+    expect(localGameGoesAfterMerge({ saved: true }, {})).toBe(false);
+    expect(localGameGoesAfterMerge({ saved: true }, null)).toBe(false);
   });
 });

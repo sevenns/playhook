@@ -206,6 +206,19 @@ describe('assets staged while the card was away', () => {
     expect(await fs.readdir(path.join(cardRoot, 'assets'))).toEqual(['asset.png']);
   });
 
+  it('leave the card untouched when a copy fails, and keep the edits for next time', async () => {
+    await seed();
+    await stageCover();
+    // The card cannot take the file: `assets` is a FILE there, so nothing can be written inside it.
+    await fs.writeFile(path.join(cardRoot, 'assets'), 'NOT A DIRECTORY');
+
+    const result = await sync();
+    expect(result.applied).toEqual([]);
+    expect(result.discarded).toEqual([]);
+    expect(await readCard()).toEqual(slot());
+    expect(library.entry('a')?.configuredAt).not.toBeNull();
+  });
+
   it('step aside for a DIFFERENT file already on the card under that name', async () => {
     await seed();
     await stageCover();
