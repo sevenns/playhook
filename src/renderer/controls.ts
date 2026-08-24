@@ -948,16 +948,18 @@ export function createControls(deps: ControlsDeps): Controls {
   // ── Menu item: Remove from history (history-only games) ──────────────────────
   // Offered ONLY for a game that is not available right now — `active` is main's word for "on the card or
   // in the PC library". Those games are rebuilt from their manifests on every insert, so removing one
-  // would be a lie the next refresh undoes; what CAN be removed is the record of a game you no longer have.
+  // would be a lie the next refresh undoes; what CAN be removed is the record of a game you no longer
+  // have. Since the history-config feature it can share the menu with Customize (see below).
   // ── Menu item: Customize (the per-game manifest editor) ──────────────────────
-  // The MIRROR of "Remove from history": that one is for a game we no longer have, this one for a game we
-  // do — `active` is main's word for "on the card or in the PC library", and it is exactly the condition
-  // under which a game.json to edit exists at all. The two are mutually exclusive by construction, so
-  // they never appear together.
+  // Offered for an AVAILABLE game — `active` is main's word for "on the card or in the PC library", and
+  // it is the condition under which a game.json to edit exists right now — and, since the history-config
+  // feature, for a history game main has a card snapshot of (`configurable`): those are edited with no
+  // card in, and the edits reach the card on its next insertion. So this and "Remove from history" now
+  // SHARE the menu for a history game — they used to be mutually exclusive by construction.
   function applyMenuCustomize(): void {
     if (menuFrozen()) return;
     const browse = deps.getBrowse();
-    const show = onGameScreen() && browse !== null && browse.active;
+    const show = onGameScreen() && browse !== null && (browse.active || browse.configurable === true);
     menuCustomize.classList.toggle('is-hidden', !show);
     if (show) menuCustomize.textContent = t()('launcher.menu.customize');
   }

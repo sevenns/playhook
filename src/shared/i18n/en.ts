@@ -87,9 +87,12 @@ export const en = {
   // The Library overlay: its two sidebar sections and the copy shown when a section has nothing in it.
   'library.all': 'All',
   'library.playable': 'Ready to play',
+  'library.external': 'External',
   'library.empty': 'No games here yet.',
   'library.emptyPlayable':
     'Nothing is ready to play - insert a card or add a game from your PC.',
+  'library.emptyPc': 'No games from this PC yet - add one to get started.',
+  'library.emptyExternal': 'No games from a card yet - insert one to see it here.',
   // Confirmation popup copy (controls.ts). The Yes/No buttons use the shared common.* keys.
   'launcher.confirm.install': 'Do you want to install game?',
   'launcher.confirm.uninstall': 'Do you want to uninstall game from your PC?',

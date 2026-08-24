@@ -344,8 +344,21 @@ export function createLibraryScreen(deps: LibraryScreenDeps): LibraryScreen {
     loadWindowArt();
   }
 
+  /** Whether a sidebar entry names one of the sections (the rest are actions — Add game, Close). */
+  function isFilterId(id: string): id is LibraryFilter {
+    return id === 'all' || id === 'playable' || id === 'pc' || id === 'external';
+  }
+
+  /** What an empty section says. Each one has its own line: "nothing here" alone explains nothing. */
+  const EMPTY_KEY: Readonly<Record<LibraryFilter, MessageKey>> = {
+    all: 'library.empty',
+    playable: 'library.emptyPlayable',
+    pc: 'library.emptyPc',
+    external: 'library.emptyExternal',
+  };
+
   function applyEmpty(): void {
-    const key: MessageKey = filter === 'all' ? 'library.empty' : 'library.emptyPlayable';
+    const key: MessageKey = EMPTY_KEY[filter];
     emptyEl.textContent = t()(key);
     emptyEl.setAttribute('aria-hidden', shown.length === 0 ? 'false' : 'true');
   }
@@ -512,7 +525,7 @@ export function createLibraryScreen(deps: LibraryScreenDeps): LibraryScreen {
   }
 
   function selectSection(id: string, entered: boolean): void {
-    previewFilter = id === 'playable' ? 'playable' : 'all';
+    previewFilter = isFilterId(id) ? id : 'all';
     if (entered) {
       // Stepping INTO a section is a commitment — it must be on screen before the focus lands in it.
       flushPreview();
@@ -588,6 +601,8 @@ export function createLibraryScreen(deps: LibraryScreenDeps): LibraryScreen {
     return [
       { id: 'all', label: translate('library.all'), kind: 'section' },
       { id: 'playable', label: translate('library.playable'), kind: 'section' },
+      { id: 'pc', label: translate('gameConfig.thisPc'), kind: 'section' },
+      { id: 'external', label: translate('library.external'), kind: 'section' },
       { id: 'add', label: translate('launcher.menu.addGame'), kind: 'action' },
       { id: 'close', label: translate('launcher.menu.close'), kind: 'action' },
     ];

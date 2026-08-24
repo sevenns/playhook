@@ -65,9 +65,12 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'launcher.card.system': 'Система',
   'library.all': 'Все',
   'library.playable': 'Готовые к запуску',
+  'library.external': 'Внешние',
   'library.empty': 'Здесь пока нет игр.',
   'library.emptyPlayable':
     'Нет игр, готовых к запуску - вставьте карту или добавьте игру с ПК.',
+  'library.emptyPc': 'Игр с этого ПК пока нет - добавьте первую.',
+  'library.emptyExternal': 'Игр с карт пока нет - вставьте карту, и они появятся здесь.',
   'launcher.confirm.install': 'Установить игру?',
   'launcher.confirm.uninstall': 'Удалить игру с компьютера?',
   'launcher.confirm.uninstallPrefix': 'Очистить Proton-префикс?',

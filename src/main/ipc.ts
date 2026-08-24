@@ -2406,6 +2406,7 @@ export class GameController {
           id: game.id,
           title: game.title,
           active: true,
+          source: game.source,
           ...(stored !== null ? { artRev: stored.savedAt } : {}),
           ...(game.unconfigured === true ? { unconfigured: true as const } : {}),
         };
@@ -2417,6 +2418,9 @@ export class GameController {
           id: entry.id,
           title: entry.title,
           active: false,
+          // A record written before `sourceKind` existed is a card's: the history was cards only until
+          // the PC library came along, and the field fills in the next time the game shows up.
+          source: entry.sourceKind ?? ('card' as const),
           artRev: entry.savedAt,
         })),
     ];
@@ -2424,13 +2428,17 @@ export class GameController {
   }
 
   /** One source's games, most recently played first — the per-group ordering refreshLibrary applies. */
-  private orderedForCarousel(
-    manifests: readonly ResolvedManifest[],
-  ): readonly { readonly id: string; readonly title: string; readonly unconfigured?: true }[] {
+  private orderedForCarousel(manifests: readonly ResolvedManifest[]): readonly {
+    readonly id: string;
+    readonly title: string;
+    readonly source: ManifestSource;
+    readonly unconfigured?: true;
+  }[] {
     return byRecentlyPlayed(
       manifests.map((manifest) => ({
         id: manifest.raw.id,
         title: manifest.raw.title,
+        source: manifest.source,
         lastPlayedAt:
           this.statsById.get(manifest.raw.id)?.lastPlayedAt ??
           this.deps.library.entry(manifest.raw.id)?.lastPlayedAt ??

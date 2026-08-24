@@ -380,6 +380,13 @@ export interface LibraryEntry {
    * dot, the "Ready to play" section, Play itself) must check this flag too, not `active` alone.
    */
   readonly unconfigured?: true;
+  /**
+   * Where the game comes from — a card, or this PC. For an available game it is its manifest's source;
+   * for one in the history it is whichever source wrote its record last. The library screen filters by
+   * it ("External" / "This PC"); a record written before the field existed reads as `'card'`, which is
+   * what nearly all history is.
+   */
+  readonly source: ManifestSource;
 }
 
 /** The carousel list, already in display order — the renderer never sorts it (see orderForCarousel). */
