@@ -903,7 +903,8 @@ export const IPC = {
    * from and the manifest's content signature (the swap guard for Save). Payload the game id. */
   gameConfigRead: 'gameConfig:read',
   /** game-renderer → main (invoke): static validation of manifest text against a root's source.
-   * Payload {root, text}. */
+   * Payload {root, text, source?} — `source` is what the history screen names instead of a root, which
+   * it does not have (the card the edits are for may be anywhere). */
   gameConfigValidate: 'gameConfig:validate',
   /** game-renderer → main (invoke): write game.json + try to apply it without a restart. Payload
    * {root, signature, text}; a signature mismatch means the media was swapped and the write is refused. */
@@ -930,6 +931,20 @@ export const IPC = {
    * gameConfig:save calls without a window where the game exists twice or nowhere (see the plan, Р2.5).
    * Payload GameMoveRequest; answers with ConfigMoveResult. */
   gameConfigMoveToCard: 'gameConfig:move-to-card',
+  /** game-renderer → main (invoke): the stored manifest text of a game from the HISTORY — the user's
+   * pending edits when there are any, the pristine card snapshot otherwise. Payload the game id;
+   * answers with HistoryConfigReadResult. */
+  gameConfigReadHistory: 'gameConfig:read-history',
+  /** game-renderer → main (invoke): store edits for a game from the history, to be applied to its card
+   * on the next insertion. Payload HistoryConfigSaveRequest; refused while the game is available (it
+   * must be configured through the ordinary path then). */
+  gameConfigSaveHistory: 'gameConfig:save-history',
+  /** game-renderer → main (invoke): copy path(s) the picker chose into the history's staging directory
+   * and answer with the card-relative paths the slot must name. Payload HistoryConfigAcceptRequest. */
+  gameConfigAcceptPathHistory: 'gameConfig:accept-path-history',
+  /** game-renderer → main (invoke): a thumbnail for one asset path of a history game — read from what is
+   * staged, else from the copy the history keeps. Payload {id, ref}; null when there is nothing to show. */
+  gameConfigHistoryAssetPreview: 'gameConfig:history-asset-preview',
   /** game-renderer → main (invoke): the system clipboard as text, for the on-screen keyboard's Paste.
    * Reading it belongs to main like every other environment fact; the renderer is sandboxed and its own
    * clipboard API would need a permission prompt that Game Mode has nowhere to show. No payload. */
@@ -1130,6 +1145,34 @@ export type ConfigRootReadResult =
       readonly platform: HostPlatform;
     }
   | { readonly ok: false; readonly message: string };
+
+/**
+ * What `gameConfig:read-history` answers with: the stored slot text for a game whose card is not in.
+ * There is no root and no signature — the card the edits are for may be anywhere, or nowhere — so the
+ * screen addresses everything by id instead (see the plan, Р6).
+ */
+export type HistoryConfigReadResult =
+  | {
+      readonly ok: true;
+      readonly id: string;
+      readonly text: string;
+      /** The OS the launcher runs on — see HostPlatform. */
+      readonly platform: HostPlatform;
+    }
+  | { readonly ok: false; readonly message: string };
+
+/** Payload for gameConfig:save-history — the game's id and its edited one-game manifest text. */
+export interface HistoryConfigSaveRequest {
+  readonly id: string;
+  readonly text: string;
+}
+
+/** Payload for gameConfig:accept-path-history — the same question as accept-path, addressed by id. */
+export interface HistoryConfigAcceptRequest {
+  readonly id: string;
+  readonly kind: ConfigPickKind;
+  readonly paths: readonly string[];
+}
 
 /** Payload for gameConfig:save — the manifest text plus the media signature read alongside it. */
 export interface GameConfigSaveRequest {
@@ -1520,8 +1563,13 @@ export interface RendererApi {
   // ── Customize screen (per-game game.json editing; see the gameConfig:* channels) ──
   /** The manifest text of one game by id, with the root/source/signature it was read against. */
   readGameConfig(id: string): Promise<GameConfigReadResult>;
-  /** Static (fs-free) validation of the edited text — the Save verdict, debounced by the screen. */
-  validateGameConfig(root: string, text: string): Promise<ConfigValidationResult>;
+  /** Static (fs-free) validation of the edited text — the Save verdict, debounced by the screen.
+   * `source` overrides the dialect the root would imply — the history screen has no root to imply one. */
+  validateGameConfig(
+    root: string,
+    text: string,
+    source?: ManifestSource,
+  ): Promise<ConfigValidationResult>;
   /** Write game.json and try to apply it without a restart; refused when the media signature moved on. */
   saveGameConfig(request: GameConfigSaveRequest): Promise<ConfigSaveResult>;
   /** A root-relative image as a data URL for a row's thumbnail (null when unreadable). */
@@ -1536,6 +1584,14 @@ export interface RendererApi {
   readGameConfigRoot(root: string): Promise<ConfigRootReadResult>;
   /** Moves a local (PC-library) game onto a card in one transaction (see GameMoveRequest). */
   moveGameConfigToCard(request: GameMoveRequest): Promise<ConfigMoveResult>;
+  /** The stored manifest text of a game from the history (its edits, else the card snapshot). */
+  readHistoryGameConfig(id: string): Promise<HistoryConfigReadResult>;
+  /** Store edits for a history game; they reach its card on the next insertion. */
+  saveHistoryGameConfig(request: HistoryConfigSaveRequest): Promise<ConfigSaveResult>;
+  /** Stage path(s) the picker chose for a history game, answering with card-relative paths. */
+  acceptHistoryGameConfigPaths(request: HistoryConfigAcceptRequest): Promise<ConfigPickResult>;
+  /** A thumbnail for one asset path of a history game (staged file, else the history's copy). */
+  getHistoryGameConfigImage(id: string, ref: string): Promise<string | null>;
   /** The clipboard as text, for the on-screen keyboard's Paste key. Empty when there is nothing to paste. */
   readClipboard(): Promise<string>;
 

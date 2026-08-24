@@ -48,6 +48,7 @@ vi.mock('../src/main/drive-watcher', async (importOriginal) => {
 
 const { GameConfigService } = await import('../src/main/game-config');
 const { PcLibraryStore } = await import('../src/main/pc-library');
+const { LibraryStore } = await import('../src/main/library-store');
 const { describeManifestContent } = await import('../src/main/drive-watcher');
 const { readManifests } = await import('../src/main/manifest');
 
@@ -200,6 +201,19 @@ async function buildHarness(toText: string): Promise<Harness> {
     notify: (input) => notifications.push(input),
     resolveManifest: (id) => (id === 'hades' ? manifest : null),
     isBusy: () => false,
+    // The move never reaches the history — the two history-only deps are stubs of the narrowest kind.
+    library: new LibraryStore({
+      baseDir: dir,
+      readStats: () =>
+        Promise.resolve({
+          schemaVersion: 1 as const,
+          totalPlaySeconds: 0,
+          lastPlayedAt: null,
+          launchCount: 0,
+        }),
+    }),
+    isCardLoading: () => false,
+    refreshLibrary: () => undefined,
     pcStore: {
       removeSyncState: (id: string) => {
         removedSyncStates.push(id);

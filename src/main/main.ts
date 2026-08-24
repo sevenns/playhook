@@ -357,6 +357,9 @@ async function bootstrap(): Promise<void> {
     notify: (input) => notifications.notify(input),
     resolveManifest: (id) => controller.findManifest(id),
     isBusy: () => controller.isBusy(),
+    library,
+    isCardLoading: () => controller.isCardLoading(),
+    refreshLibrary: () => controller.refreshLibraryRow(),
     pcStore: store,
     savePathResolver: platform.savePathResolver,
   });

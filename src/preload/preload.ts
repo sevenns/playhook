@@ -29,6 +29,10 @@ import type {
   GameConfigSaveRequest,
   GameLibrary,
   GameMoveRequest,
+  HistoryConfigAcceptRequest,
+  HistoryConfigReadResult,
+  HistoryConfigSaveRequest,
+  ManifestSource,
   HeroAssets,
   LanguageMode,
   ListDirResult,
@@ -123,6 +127,10 @@ const CHANNELS = {
   gameConfigSources: 'gameConfig:sources',
   gameConfigReadRoot: 'gameConfig:read-root',
   gameConfigMoveToCard: 'gameConfig:move-to-card',
+  gameConfigReadHistory: 'gameConfig:read-history',
+  gameConfigSaveHistory: 'gameConfig:save-history',
+  gameConfigAcceptPathHistory: 'gameConfig:accept-path-history',
+  gameConfigHistoryAssetPreview: 'gameConfig:history-asset-preview',
   clipboardRead: 'clipboard:read',
   metadataSearch: 'metadata:search',
   metadataSteamCandidate: 'metadata:steam-candidate',
@@ -371,10 +379,15 @@ const api: RendererApi = {
   readGameConfig(id: string): Promise<GameConfigReadResult> {
     return ipcRenderer.invoke(CHANNELS.gameConfigRead, id) as Promise<GameConfigReadResult>;
   },
-  validateGameConfig(root: string, text: string): Promise<ConfigValidationResult> {
+  validateGameConfig(
+    root: string,
+    text: string,
+    source?: ManifestSource,
+  ): Promise<ConfigValidationResult> {
     return ipcRenderer.invoke(CHANNELS.gameConfigValidate, {
       root,
       text,
+      ...(source !== undefined ? { source } : {}),
     }) as Promise<ConfigValidationResult>;
   },
   saveGameConfig(request: GameConfigSaveRequest): Promise<ConfigSaveResult> {
@@ -399,6 +412,26 @@ const api: RendererApi = {
   },
   moveGameConfigToCard(request: GameMoveRequest): Promise<ConfigMoveResult> {
     return ipcRenderer.invoke(CHANNELS.gameConfigMoveToCard, request) as Promise<ConfigMoveResult>;
+  },
+  readHistoryGameConfig(id: string): Promise<HistoryConfigReadResult> {
+    return ipcRenderer.invoke(
+      CHANNELS.gameConfigReadHistory,
+      id,
+    ) as Promise<HistoryConfigReadResult>;
+  },
+  saveHistoryGameConfig(request: HistoryConfigSaveRequest): Promise<ConfigSaveResult> {
+    return ipcRenderer.invoke(CHANNELS.gameConfigSaveHistory, request) as Promise<ConfigSaveResult>;
+  },
+  acceptHistoryGameConfigPaths(request: HistoryConfigAcceptRequest): Promise<ConfigPickResult> {
+    return ipcRenderer.invoke(
+      CHANNELS.gameConfigAcceptPathHistory,
+      request,
+    ) as Promise<ConfigPickResult>;
+  },
+  getHistoryGameConfigImage(id: string, ref: string): Promise<string | null> {
+    return ipcRenderer.invoke(CHANNELS.gameConfigHistoryAssetPreview, { id, ref }) as Promise<
+      string | null
+    >;
   },
   readClipboard(): Promise<string> {
     return ipcRenderer.invoke(CHANNELS.clipboardRead) as Promise<string>;

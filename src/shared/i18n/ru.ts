@@ -193,6 +193,9 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'gameConfig.pickPcSaveOutside':
     'Эта папка не находится в известном месте сохранений (%DOCUMENTS%, %APPDATA%, %LOCALAPPDATA%, %LOCALLOW% или %USERPROFILE%). Выберите папку внутри одного из них.',
   'gameConfig.pickImportFailed': 'Не удалось скопировать выбранный файл в локальную библиотеку.',
+  'gameConfig.gameNowAvailable':
+    'Игра снова доступна - теперь она настраивается напрямую. Закройте этот экран и откройте настройки игры.',
+  'gameConfig.noStoredConfig': 'У Playhook нет сохранённых настроек для этой игры.',
   'gameConfig.pickMissing': 'Этого файла больше нет.',
   'gameConfig.pickSymlink': 'Это ссылка на другое место - выберите сам файл.',
   'gameConfig.pickNeedsFolder': 'Для этого поля нужна папка.',

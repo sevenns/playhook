@@ -2368,6 +2368,16 @@ export class GameController {
    * A card game is listed even when the library has no record for it yet — the asset copy runs in the
    * background after the window is already up, and the carousel must not wait for it.
    */
+  /** True while a card is being read — see cardLoadInFlight (the Customize-from-history guard). */
+  isCardLoading(): boolean {
+    return this.cardLoadInFlight;
+  }
+
+  /** Re-pushes the carousel row (GameConfigService calls it after a save from the history). */
+  refreshLibraryRow(): void {
+    this.refreshLibrary();
+  }
+
   private refreshLibrary(): void {
     this.setLibrary(this.buildLibrary());
   }

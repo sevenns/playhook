@@ -235,6 +235,10 @@ export const en = {
   'gameConfig.pickPcSaveOutside':
     'That folder is not under a known save location (%DOCUMENTS%, %APPDATA%, %LOCALAPPDATA%, %LOCALLOW% or %USERPROFILE%). Pick a folder inside one of those.',
   'gameConfig.pickImportFailed': 'Could not copy the selected file into the local library.',
+  // Customize opened for a game from the history — see the gameConfig:*-history channels.
+  'gameConfig.gameNowAvailable':
+    'This game is available again, so it is configured directly. Close this screen and open Customize for it.',
+  'gameConfig.noStoredConfig': 'Playhook has no stored settings for this game.',
   'gameConfig.pickMissing': 'That file is no longer there.',
   'gameConfig.pickSymlink': 'That is a shortcut to somewhere else — pick the file itself.',
   'gameConfig.pickNeedsFolder': 'Pick a folder for this field.',

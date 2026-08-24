@@ -45,7 +45,11 @@ import {
   type GameConfigReadResult,
   type GameConfigSaveRequest,
   type GameMoveRequest,
+  type HistoryConfigAcceptRequest,
+  type HistoryConfigReadResult,
+  type HistoryConfigSaveRequest,
   type ListDirResult,
+  type ManifestValidationIssue,
   type ManifestSource,
   type NotificationInput,
   type ResolvedManifest,
@@ -71,12 +75,58 @@ import {
   removeGameFromManifestText,
 } from './game-move';
 import { type PcLibraryStore } from './pc-library';
+import { type LibraryStore } from './library-store';
+import { type LibraryEntryRecord } from './library-index';
+import { extractGameSlot, issuesIntroducedBy, type GameSlot } from './history-config';
 import { type PcStore } from './pc-store';
 import { type SavePathResolver } from './platform/types';
 import { resolveInside, validateManifestText } from './manifest';
 import { writeFileAtomicEnsuringDir } from './json-store';
 import { describe } from './util';
 import { log } from './logger';
+
+/**
+ * Where a staged asset is referenced from in a history game's slot. It is the very path the file will
+ * have ON THE CARD once the insertion carries it over, so the slot needs no rewriting on apply — and the
+ * AssetReader, resolveInside and the validator all treat it as the ordinary card-relative path it is.
+ */
+const HISTORY_ASSETS_DIRNAME = 'assets';
+
+/** The editor's verdict on a manifest text as a list of issues ([] when it is happy with it). */
+function issuesOfText(text: string, t: Translator): readonly ManifestValidationIssue[] {
+  const result = validateManifestText(text, t, 'card');
+  return result.ok ? [] : result.issues;
+}
+
+/**
+ * Which file inside `library/<id>/` holds the copy of the asset `ref` names, or null when there is none.
+ *
+ * The mapping runs through the PRISTINE slot and the copies' POSITIONAL names (`hero-<n>`) rather than
+ * through `entry.hero`'s order: that array is sparse (an image the copy skipped leaves no element), its
+ * extensions change when an oversized image is re-encoded to JPEG, and the edited slot's order need not
+ * match the card's at all. `entry.grid` doubles as the copy of the FIRST hero on a card with no cover of
+ * its own, which is the one case where two references share a file.
+ */
+function copiedAssetNameFor(
+  pristine: GameSlot,
+  entry: LibraryEntryRecord,
+  ref: string,
+): string | null {
+  const gridImage = pristine['gridImage'];
+  const heroImage = pristine['heroImage'];
+  const heroes = Array.isArray(heroImage) ? heroImage : heroImage === undefined ? [] : [heroImage];
+  if (typeof gridImage === 'string' && gridImage === ref) return entry.grid ?? null;
+  const index = heroes.indexOf(ref);
+  if (index >= 0) {
+    const copy = entry.hero.find((name: string) => name.startsWith(`hero-${index}.`));
+    if (copy !== undefined) return copy;
+    // No cover of its own → the history cropped its card from the first background.
+    if (index === 0 && gridImage === undefined) return entry.grid ?? null;
+    return null;
+  }
+  if (pristine['backgroundMusic'] === ref) return entry.music ?? null;
+  return null;
+}
 
 /**
  * Whether the editor's text is an EMPTY game list — the PC library's way of saying "the last local game
@@ -204,6 +254,18 @@ export interface GameConfigDeps {
   /** Drops a game's sync-state baseline (PcStore.removeSyncState) — moveToCard clears the "pc" slot once
    * a game leaves the library (Р2.5/Р2.7): the local backup ↔ save-folder pairing it described is gone. */
   readonly pcStore: Pick<PcStore, 'removeSyncState'>;
+  /**
+   * The game HISTORY — where a game with no card in gets its stored manifest, its pending edits and its
+   * staged assets (see history-config.ts). The Customize screen reaches it through the `*-history`
+   * channels, which is the whole point of the feature: a game the launcher cannot see right now is still
+   * configurable, and the card catches up on the next insertion.
+   */
+  readonly library: LibraryStore;
+  /** True while a card is being read (GameController.loadCard) — save-from-history refuses then, since
+   * the game is about to become available and an "applied on the next insertion" edit would sit there. */
+  readonly isCardLoading: () => boolean;
+  /** Re-pushes the carousel row after an edit changed a history record (GameController.refreshLibrary). */
+  readonly refreshLibrary: () => void;
   /** Resolves a manifest's `pcSavePath` to the LIVE save folder on this machine (platform.savePathResolver)
    * — moveToCard copies from there, not from the PC-library backup, so a stale backup can never
    * overwrite a fresher save (see the plan, Р2.5 step 3). */
@@ -220,8 +282,19 @@ export class GameConfigService {
     );
     ipcMain.handle(
       IPC.gameConfigValidate,
-      (_event, payload: { readonly root: string; readonly text: string }): ConfigValidationResult =>
-        validateManifestText(payload.text, this.deps.getTranslator(), this.sourceOf(payload.root)),
+      (
+        _event,
+        payload: {
+          readonly root: string;
+          readonly text: string;
+          readonly source?: ManifestSource;
+        },
+      ): ConfigValidationResult =>
+        validateManifestText(
+          payload.text,
+          this.deps.getTranslator(),
+          payload.source ?? this.sourceOf(payload.root),
+        ),
     );
     ipcMain.handle(
       IPC.gameConfigSave,
@@ -252,6 +325,152 @@ export class GameConfigService {
       IPC.gameConfigMoveToCard,
       (_event, payload: GameMoveRequest): Promise<ConfigMoveResult> => this.moveToCard(payload),
     );
+    ipcMain.handle(
+      IPC.gameConfigReadHistory,
+      (_event, id: unknown): Promise<HistoryConfigReadResult> =>
+        this.readHistoryGame(typeof id === 'string' ? id : ''),
+    );
+    ipcMain.handle(
+      IPC.gameConfigSaveHistory,
+      (_event, payload: HistoryConfigSaveRequest): Promise<ConfigSaveResult> =>
+        this.saveHistoryGame(payload),
+    );
+    ipcMain.handle(
+      IPC.gameConfigAcceptPathHistory,
+      (_event, payload: HistoryConfigAcceptRequest): Promise<ConfigPickResult> =>
+        this.acceptHistoryPaths(payload),
+    );
+    ipcMain.handle(
+      IPC.gameConfigHistoryAssetPreview,
+      (_event, payload: { readonly id: string; readonly ref: string }): Promise<string | null> =>
+        this.historyAssetPreview(payload.id, payload.ref),
+    );
+  }
+
+  // ── The same screen, for a game whose card is not in ───────────────────────
+
+  /**
+   * The stored manifest of a history game. Answers with the user's pending edits when there are any and
+   * the pristine card snapshot otherwise — without that fallback the very first Customize from the
+   * history would open onto nothing.
+   *
+   * A game that IS available is refused: it must be configured through the ordinary path, which writes
+   * the card directly instead of queueing an edit for it.
+   */
+  async readHistoryGame(id: string): Promise<HistoryConfigReadResult> {
+    const t = this.deps.getTranslator();
+    if (this.deps.findGameSource(id) !== null) {
+      return { ok: false, message: t('gameConfig.gameNowAvailable') };
+    }
+    const text = await this.deps.library.storedManifestText(id);
+    if (text === null) return { ok: false, message: t('gameConfig.noStoredConfig') };
+    return { ok: true, id, text, platform: hostPlatform() };
+  }
+
+  /**
+   * Stores edits for a history game. They are NOT written to any card here — the card is not in; the next
+   * insertion of it reconciles them (see history-sync.ts).
+   *
+   * The validation is relative to the card's own snapshot: the editor's gates are stricter than what the
+   * launcher needs to run a game, so a hand-written legacy card can be perfectly playable and still fail
+   * them. Judging the edit by the raw verdict would lock such a card out of the feature over a problem
+   * the user neither made nor can fix from a form whose fields are disabled here.
+   */
+  async saveHistoryGame(request: HistoryConfigSaveRequest): Promise<ConfigSaveResult> {
+    const t = this.deps.getTranslator();
+    const { id, text } = request;
+    if (this.deps.findGameSource(id) !== null || this.deps.isCardLoading()) {
+      return { saved: false, message: t('gameConfig.gameNowAvailable') };
+    }
+    const baseline = await this.deps.library.readCardSlot(id);
+    if (baseline === null) return { saved: false, message: t('gameConfig.noStoredConfig') };
+    const introduced = issuesIntroducedBy(
+      issuesOfText(text, t),
+      issuesOfText(JSON.stringify(baseline), t),
+    );
+    const first = introduced[0];
+    if (first !== undefined) {
+      return { saved: false, message: `${first.path}: ${first.message}` };
+    }
+    const slot = extractGameSlot(text, id);
+    if (!slot.ok) return { saved: false, message: t('errors.configInvalid') };
+    const title = slot.slot['title'];
+    await this.deps.library.saveEdits(id, text, typeof title === 'string' ? title : id);
+    this.deps.refreshLibrary();
+    // "deferred" in the same sense a write to a non-active card is: the file is stored, and the launcher
+    // has nothing to apply it to until that card comes back.
+    return { saved: true, applied: 'deferred' };
+  }
+
+  /**
+   * Stages art/music picked for a history game and answers with the card-relative paths its slot must
+   * name. The originals are copied into the history because the card they are meant for is not here: the
+   * file a slot points at has to exist somewhere until the insertion can carry it over.
+   */
+  async acceptHistoryPaths(
+    request: HistoryConfigAcceptRequest,
+  ): Promise<ConfigPickResult> {
+    const t = this.deps.getTranslator();
+    const { id, kind, paths } = request;
+    if (this.deps.findGameSource(id) !== null) {
+      return { ok: false, message: t('gameConfig.gameNowAvailable') };
+    }
+    if (kind !== 'image' && kind !== 'audio') {
+      // Everything else names a file ON the card, and there is no card to measure it against.
+      return { ok: false, message: t('gameConfig.pickOutsideCard') };
+    }
+    if (paths.length === 0) return { ok: false, cancelled: true };
+    for (const absolute of paths) {
+      const rejection = await this.checkPickedType(absolute, kind);
+      if (rejection !== null) return { ok: false, message: rejection };
+    }
+    const extensions = kind === 'image' ? IMAGE_EXTENSIONS : AUDIO_EXTENSIONS;
+    const relatives: string[] = [];
+    for (const absolute of paths) {
+      try {
+        const name = await this.deps.library.importStagedAsset(id, absolute, kind, extensions);
+        relatives.push(`${HISTORY_ASSETS_DIRNAME}/${name}`);
+      } catch (cause) {
+        log.warn('[game-config] staging an asset for a history game failed:', describe(cause));
+        return { ok: false, message: t('gameConfig.pickImportFailed') };
+      }
+    }
+    return { ok: true, paths: relatives };
+  }
+
+  /**
+   * A thumbnail for one asset path of a history game. Two sources, because the game's files live in two
+   * places while its card is away: what the user has just picked sits in `staged/`, and everything else
+   * is only present as the low-resolution copy the history keeps.
+   *
+   * The copy is found through the PRISTINE snapshot, never through the edited slot: the copies are named
+   * by POSITION as the card listed them (`hero-<n>`), and an edit that reorders or replaces a background
+   * would otherwise hand the row another image's thumbnail. A missing copy (music over the cap, a webp
+   * the re-encoder could not read) is a normal answer of null — the row stays editable.
+   */
+  async historyAssetPreview(id: string, ref: string): Promise<string | null> {
+    const staged = this.stagedNameOf(ref);
+    if (staged !== null) {
+      const stagedPath = this.deps.library.stagedFilePath(id, staged);
+      if (await fse.pathExists(stagedPath)) {
+        return (await readImageDataUrl(stagedPath)) ?? null;
+      }
+    }
+    const entry = this.deps.library.entry(id);
+    if (entry === null) return null;
+    const pristine = await this.deps.library.readCardSlot(id);
+    if (pristine === null) return null;
+    const copy = copiedAssetNameFor(pristine, entry, ref);
+    if (copy === null) return null;
+    return (await readImageDataUrl(this.deps.library.copiedAssetPath(id, copy))) ?? null;
+  }
+
+  /** The staged file name a `staged/<name>`-shaped reference points at, or null for anything else. */
+  private stagedNameOf(ref: string): string | null {
+    const prefix = `${HISTORY_ASSETS_DIRNAME}/`;
+    if (!ref.startsWith(prefix)) return null;
+    const name = ref.slice(prefix.length);
+    return name.length > 0 && !name.includes('/') ? name : null;
   }
 
   // ── Drive + PC-library candidates ──────────────────────────────────────────
