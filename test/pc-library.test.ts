@@ -102,6 +102,12 @@ describe('PcLibraryStore.importAsset', () => {
     expect(await fs.readFile(path.join(library.root, 'assets', 'hero-image-2.jpg'), 'utf8')).toBe('OTHER');
   });
 
+  it('keeps the extension of a non-Latin name, so the AssetReader can still name its type', async () => {
+    const cyrillic = path.join(baseDir, 'обложка.png');
+    await fs.writeFile(cyrillic, 'IMG');
+    expect(await importImage(cyrillic)).toBe('assets/asset.png');
+  });
+
   it('sanitizes a name that would escape or hide (traversal, leading dots)', async () => {
     const nasty = path.join(baseDir, '..hidden .jpg');
     await fs.writeFile(nasty, 'IMG');
