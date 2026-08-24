@@ -112,6 +112,8 @@ interface PickerRequest {
   readonly current: string;
   readonly multi: boolean;
   readonly base?: string;
+  /** Set when the screen is editing a game from the history — see FilePickerSurface.open. */
+  readonly historyId?: string;
   readonly onDone: (result: ConfigPickResult) => void;
 }
 

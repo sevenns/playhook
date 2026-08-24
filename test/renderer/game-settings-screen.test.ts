@@ -597,10 +597,9 @@ describe('customize screen for a game from the history', () => {
     screen.navActivate();
     await flushAsync();
 
-    expect(api.saveHistory).toHaveBeenCalledWith({
-      id: 'hades',
-      text: expect.stringContaining('Hades (mine)') as unknown as string,
-    });
+    const saved = vi.mocked(api.saveHistory).mock.calls[0]?.[0];
+    expect(saved?.id).toBe('hades');
+    expect(saved?.text).toContain('Hades (mine)');
     expect(api.save).not.toHaveBeenCalled();
     expect(screen.isDirty()).toBe(false);
   });
