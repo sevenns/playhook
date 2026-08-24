@@ -71,9 +71,75 @@ export function replaceGameSlot(text: string, id: string, slot: GameSlot): SlotT
   return { ok: true, text: `${JSON.stringify(value, null, 2)}\n` };
 }
 
+/**
+ * Every slot of a manifest text, keyed by id. An id the file carries TWICE is left out rather than
+ * guessed at, exactly as extractGameSlot refuses it.
+ */
+export function slotsById(text: string): ReadonlyMap<string, GameSlot> {
+  const items = parseSlots(text);
+  if (!items.ok) return new Map();
+  const byId = new Map<string, GameSlot>();
+  const duplicated = new Set<string>();
+  for (const slot of items.slots) {
+    const id = slot['id'];
+    if (typeof id !== 'string' || id.length === 0) continue;
+    if (byId.has(id)) duplicated.add(id);
+    byId.set(id, slot);
+  }
+  for (const id of duplicated) byId.delete(id);
+  return byId;
+}
+
+/**
+ * The slot with every asset path in `remap` rewritten — the staging copy renames a file when the card
+ * already holds a different one under that name, and the slot has to follow before it is written.
+ */
+export function remapSlotAssets(slot: GameSlot, remap: ReadonlyMap<string, string>): GameSlot {
+  if (remap.size === 0) return slot;
+  const mapped = (value: unknown): unknown =>
+    typeof value === 'string' ? (remap.get(value) ?? value) : value;
+  const entries = Object.entries(slot).map(([key, value]) => {
+    if (!ASSET_KEYS.has(key)) return [key, value] as const;
+    return [key, Array.isArray(value) ? value.map(mapped) : mapped(value)] as const;
+  });
+  return Object.fromEntries(entries);
+}
+
+/** The manifest keys whose values name asset files (see manifest.ts). */
+const ASSET_KEYS: ReadonlySet<string> = new Set(['gridImage', 'heroImage', 'backgroundMusic']);
+
 /** sha256 of the slot in canonical form — key order and formatting cannot move the hash. */
 export function slotHash(slot: GameSlot): string {
   return createHash('sha256').update(canonicalJson(slot)).digest('hex');
+}
+
+/** The shape of one validation issue, as `validateManifestText` reports it. */
+export interface ManifestIssueLike {
+  readonly path: string;
+  readonly message: string;
+}
+
+/**
+ * The issues `candidate` has and `baseline` does not — the ones this edit actually introduced.
+ *
+ * The editor's gates are STRICTER than what the launcher needs to run a game (a hero image is required
+ * of a new manifest, `saveOnCard`/`pcSavePath` must come in pairs — deliberately editor-only, see
+ * manifest.ts). A card written by hand years ago can therefore be perfectly launchable and still fail
+ * that validation, and judging an edit by the raw verdict would lock such a card out of the feature
+ * forever: every save, and every apply, would be refused over a problem the user never made and cannot
+ * fix from a form whose fields are disabled. So the baseline is the card's own text, and only what the
+ * edit ADDS counts against it.
+ */
+export function issuesIntroducedBy(
+  candidate: readonly ManifestIssueLike[],
+  baseline: readonly ManifestIssueLike[],
+): readonly ManifestIssueLike[] {
+  const known = new Set(baseline.map(issueKey));
+  return candidate.filter((issue) => !known.has(issueKey(issue)));
+}
+
+function issueKey(issue: ManifestIssueLike): string {
+  return `${issue.path}\u0000${issue.message}`;
 }
 
 export interface ConfigSyncInput {

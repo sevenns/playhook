@@ -270,6 +270,10 @@ export const en = {
     'Your settings could not be saved and will be back as they were on the next start. Playhook has no write access to its settings file.',
   'notifications.gameMoveDuplicate':
     '{title} was written to the card, but could not be removed from the PC library — it now exists in both places. Remove the local copy through Customize.',
+  'notifications.historyConfigApplied':
+    'Your changes to {title} have been written to its card.',
+  'notifications.historyConfigDiscarded':
+    'Your changes to {title} were dropped — the version on the card is the newer one.',
   'notifications.empty': 'No notifications',
   'notifications.clearAll': 'Clear all',
   // Timestamp of a list entry: today shows the time alone, yesterday is named, older gets a date.

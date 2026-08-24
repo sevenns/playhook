@@ -597,6 +597,8 @@ export function createControls(deps: ControlsDeps): Controls {
       item.kind === 'game-moved-deferred' ||
       item.kind === 'game-move-save-skipped' ||
       item.kind === 'game-move-duplicate' ||
+      item.kind === 'history-config-applied' ||
+      item.kind === 'history-config-discarded' ||
       item.kind === 'settings-write-failed'
     )
       return;

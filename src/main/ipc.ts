@@ -29,6 +29,11 @@ import { type StatsService } from './stats';
 import { type LibraryStore } from './library-store';
 import { type PcLibraryStore } from './pc-library';
 import { byRecentlyPlayed } from './library-index';
+import {
+  rollbackHistorySync,
+  syncHistoryConfig,
+  type HistorySyncResult,
+} from './history-sync';
 import { type DriveWatcher } from './drive-watcher';
 import { readManifests, findCaseInsensitiveName, type ManifestEnv } from './manifest';
 import { syncDir, syncByChange, snapshotTree } from './save-sync';
@@ -316,6 +321,10 @@ export class GameController {
   // the carousel cannot enter another game's detail as actionable (its guard is `kind==='ready'`).
   private locked = false;
   private cardPresent = false;
+  // True for the whole body of loadCard. A game on the card being read right now is about to become
+  // available, so save-from-history must refuse: an invoke that slipped in after the sync step and before
+  // the manifests landed would be stored as "pending" and sit there until the NEXT insertion.
+  private cardLoadInFlight = false;
   // The id of the game with a Steam download/removal in flight, or null. Steam operations are the one
   // kind of activity that leaves the state `ready`, so this is what stops a SECOND game from being
   // launched or installed underneath them (see onLaunchRequested).
@@ -465,6 +474,16 @@ export class GameController {
   private get games(): readonly ResolvedManifest[] {
     const cardIds = new Set(this.cardGames.map((manifest) => manifest.raw.id));
     return [...this.cardGames, ...this.pcGames.filter((m) => !cardIds.has(m.raw.id))];
+  }
+
+  /** Tells the user what the sync step did with their pending edits — one entry per game. */
+  private notifyHistorySync(sync: HistorySyncResult): void {
+    for (const gameTitle of sync.applied) {
+      this.deps.notifications.notify({ kind: 'history-config-applied', gameTitle });
+    }
+    for (const gameTitle of sync.discarded) {
+      this.deps.notifications.notify({ kind: 'history-config-discarded', gameTitle });
+    }
   }
 
   /**
@@ -750,13 +769,39 @@ export class GameController {
     root: string,
     opts: { readonly focus: boolean },
   ): Promise<{ ok: true } | { ok: false; message: string }> {
+    this.cardLoadInFlight = true;
+    try {
+      return await this.loadCardBody(root, opts);
+    } finally {
+      this.cardLoadInFlight = false;
+    }
+  }
+
+  private async loadCardBody(
+    root: string,
+    opts: { readonly focus: boolean },
+  ): Promise<{ ok: true } | { ok: false; message: string }> {
     this.cardPresent = true;
     log.info(`[insert] card detected at root="${root}"`);
     // Documents is resolved via the system Known Folder API (the same one the game uses),
     // so %DOCUMENTS% in the manifest maps to the real save folder regardless of UI
     // language or OneDrive redirection. Safe to read here — app is ready by now.
     const env: ManifestEnv = { documents: app.getPath('documents'), t: this.t };
-    const result = await readManifests(root, env, this.deps.platform.resolveInstallDir);
+    // BEFORE the manifests are read: edits the user made from the history are written onto the card here,
+    // so everything downstream — validation, the resolved manifests, the history copy — sees one already
+    // reconciled file. It also runs on a plain reload (a Save from Customize), where it is a no-op: an
+    // available game cannot have pending edits, since save-from-history refuses one.
+    const sync = await syncHistoryConfig(root, { library: this.deps.library, t: this.t });
+    let result = await readManifests(root, env, this.deps.platform.resolveInstallDir);
+    if (!result.ok && sync.textBefore !== null) {
+      // We rewrote the file and the card stopped reading. Put the author's own text back and try again
+      // rather than leave a card that the launcher itself bricked.
+      if (await rollbackHistorySync(root, sync.textBefore)) {
+        result = await readManifests(root, env, this.deps.platform.resolveInstallDir);
+      }
+    } else {
+      this.notifyHistorySync(sync);
+    }
     if (!result.ok) {
       // No valid game determined → keep the window hidden (the reason is in the log). We still set
       // the error state so a manually-summoned window can show it, but we never auto-surface it.
@@ -845,7 +890,7 @@ export class GameController {
     // is already on screen. One sequential task for the whole card (index.json is a single file — see
     // LibraryStore.saveFromCard), then a list refresh so the freshly-copied games get their artwork.
     void this.deps.library
-      .saveFromCard(manifests)
+      .saveFromCard(manifests, sync.slots)
       .then(() => this.refreshLibrary())
       .catch((cause: unknown) => log.warn('[library] copying the card assets failed:', describe(cause)));
     return { ok: true };
@@ -2483,7 +2528,16 @@ export class GameController {
       return;
     }
     const stats = await this.deps.stats.read(id);
-    this.pushBrowse({ id, title: entry.title, active: false, stats });
+    // Read off the in-memory record, never off the disk: browseTo runs on EVERY step through the
+    // carousel, with no debounce in front of it.
+    const configurable = entry.cardSlotHash !== undefined && entry.sourceKind !== 'pc';
+    this.pushBrowse({
+      id,
+      title: entry.title,
+      active: false,
+      stats,
+      ...(configurable ? { configurable: true as const } : {}),
+    });
     this.scheduleBrowseAssets(id, immediate);
   }
 

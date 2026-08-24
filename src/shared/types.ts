@@ -402,6 +402,12 @@ export interface BrowseInfo {
   /** The browsed game is on the inserted card (so Play/Install apply to it). */
   readonly active: boolean;
   readonly stats: Stats;
+  /**
+   * True for a HISTORY game the launcher has a card snapshot of: Customize can be opened for it with no
+   * card in, and the edits wait for the card to come back (see history-config.ts). Absent for an active
+   * game, which is configurable through the ordinary path anyway.
+   */
+  readonly configurable?: true;
   /** Only for an active game: everything the ready screen needs (requiresInstall, canUninstall, …). */
   readonly game?: GameInfo;
 }
@@ -708,6 +714,16 @@ export type AppNotification =
    * told, because the screen reports the move as done and closes.
    */
   | (NotificationBase & { readonly kind: 'game-move-duplicate'; readonly gameTitle: string })
+  /**
+   * Edits made to a game from the HISTORY (with no card in) reached their card on this insertion — the
+   * card now carries them. No `gameId`: the game is on screen already, and the entry only reports.
+   */
+  | (NotificationBase & { readonly kind: 'history-config-applied'; readonly gameTitle: string })
+  /**
+   * The same edits were dropped instead: the card's own version turned out to be the newer one, or the
+   * card refused the write (a foreign game under the same id, an executable that no longer resolves).
+   */
+  | (NotificationBase & { readonly kind: 'history-config-discarded'; readonly gameTitle: string })
   /**
    * A settings change could not be written to disk, so it did not stick. Carries no detail: the cause is
    * in the log, and the only thing the user can act on is that their setting did not save.

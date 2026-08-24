@@ -225,6 +225,9 @@ export const ru: Partial<Record<MessageKey, string>> = {
     'Настройки не сохранились и после перезапуска вернутся как были: у Playhook нет доступа на запись к своему файлу настроек.',
   'notifications.gameMoveDuplicate':
     '{title} записана на карту, но её не удалось убрать из PC-библиотеки - теперь она есть в обоих местах. Удалите локальную копию через настройки игры.',
+  'notifications.historyConfigApplied': 'Ваши правки для {title} записаны на карту.',
+  'notifications.historyConfigDiscarded':
+    'Ваши правки для {title} отброшены - на карте более свежая версия.',
   'notifications.empty': 'Уведомлений нет',
   'notifications.clearAll': 'Очистить всё',
   'notifications.yesterday': 'вчера, {time}',
