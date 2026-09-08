@@ -37,6 +37,7 @@ import {
   type MetadataProvider,
 } from './provider';
 import { type HttpClient } from './http';
+import { BoundedMap } from './bounded-map';
 import { searchableTitle } from './search-title';
 
 const CATALOG_ORIGIN = 'https://catalog.gog.com/v1';
@@ -80,8 +81,15 @@ export function searchUrl(term: string): string {
 export function titleMatches(title: string, query: string): boolean {
   const words = queryWords(query);
   if (words.length === 0) return true;
-  const normalized = normalizeForMatch(title);
-  return words.every((word) => normalized.includes(word));
+  // By WORD, not by substring. `includes` let a query word match inside a longer one — "hades" found
+  // "Shades of…", "ark" found "Dark Souls", "rust" found "Trust" — which is exactly the other-game-under-
+  // your-game's-name this filter exists to stop.
+  const titleWords = new Set(
+    normalizeForMatch(title)
+      .split(' ')
+      .filter((word) => word.length > 0),
+  );
+  return words.every((word) => titleWords.has(word));
 }
 
 /** The words a title has to carry. Articles are dropped: stores put them in and leave them out freely. */
@@ -185,15 +193,18 @@ export interface GogDeps {
   readonly http: HttpClient;
 }
 
+/** How many candidates this provider remembers an answer for — see BoundedMap. */
+const CACHE_LIMIT = 100;
+
 export class GogProvider implements MetadataProvider {
   readonly id = 'gog' as const;
   /**
    * The screenshots a search already returned, by product id. Without this the gallery would repeat the
    * search purely to reach pictures the provider has held in memory since the candidate was chosen.
    */
-  private readonly screenshots = new Map<string, readonly ArtworkOffer[]>();
+  private readonly screenshots = new BoundedMap<readonly ArtworkOffer[]>(CACHE_LIMIT);
   /** The genres/date/platforms the same search answer carried, by product id — see GameDetails. */
-  private readonly detailsById = new Map<string, GameDetails>();
+  private readonly detailsById = new BoundedMap<GameDetails>(CACHE_LIMIT);
 
   constructor(private readonly deps: GogDeps) {}
 

@@ -85,6 +85,24 @@ const MAX_DESCRIPTION_CHARS = 4000;
 /** How many genres are kept. Stores state a handful; a longer list is a sign of something else. */
 const MAX_GENRES = 20;
 
+/** The shape an `id` must have: one safe path segment, because that is what it becomes on disk. */
+const GAME_ID_PATTERN = /^[A-Za-z0-9._-]+$/;
+
+/**
+ * The same rule as a standalone guard, for an id that arrives from the RENDERER rather than from a
+ * manifest the schema has already validated. The history channels address a game purely by id, and that
+ * id is joined into a filesystem path — so a value the schema would have rejected must be refused at the
+ * IPC boundary instead of reaching `path.join`.
+ */
+export function isSafeGameId(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    GAME_ID_PATTERN.test(value) &&
+    value !== '.' &&
+    value !== '..'
+  );
+}
+
 const manifestSchema = z
   .object({
     schemaVersion: z.literal(1),
@@ -93,7 +111,7 @@ const manifestSchema = z
       .min(1)
       // id is used as a folder name on the PC (stats/pending-flush) — we forbid
       // separators and traversal so the card can't control paths outside its own folder.
-      .regex(/^[A-Za-z0-9._-]+$/, 'manifest.idPattern')
+      .regex(GAME_ID_PATTERN, 'manifest.idPattern')
       .refine((v) => v !== '.' && v !== '..', 'manifest.idDots'),
     title: z.string().min(1),
     // Optional: present for a normal/install-mode game, absent in Steam mode (the superRefine below
@@ -1073,9 +1091,19 @@ export function validateManifestText(
 }
 
 /**
- * The manifest's JSON Schema, handed to the Configure editor for field-name completion and hover docs.
+ * The manifest's JSON Schema.
+ *
+ * NOT dead code, despite having no in-app consumer since the Configure window (a CodeMirror editor that
+ * used it for completion and hover docs) became a form: this is the PUBLISHED contract the sibling
+ * repository `playhook-collection` dumps its `schema/game.schema.json` from, and its CI validates every
+ * card in the catalogue against that dump. Changing the manifest schema means re-dumping there; deleting
+ * this function means the collection has no schema at all. The docblock below still describes it in the
+ * editor's terms because those are the terms the dump inherits.
+ *
  * `superRefine`/`refine` rules (mode exclusivity, traversal, pcSavePath prefixes) are unrepresentable in
  * JSON Schema and are silently dropped here — the authoritative verdict stays with validateManifestText.
+ * Note for the collection's side: a field with `.catch(undefined)` dumps as a plain, strict field, so a
+ * re-dump can start REJECTING what the launcher itself merely ignores.
  * `unrepresentable: 'any'` keeps the conversion from throwing on anything else it can't express.
  *
  * `io: 'input'` is critical: the editor validates what the USER TYPES (before defaults), so fields with a

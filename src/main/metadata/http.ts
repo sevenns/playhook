@@ -32,6 +32,56 @@ const BODY_IDLE_TIMEOUT_MS = 30_000;
 const MAX_TEXT_BYTES = 4 * 1024 * 1024;
 
 /**
+ * Every URL this client will touch has to be `https:`. All seven sources are https origins, so nothing
+ * legitimate is lost — and the URLs that are NOT ours matter more than the ones that are: a download
+ * address is taken out of somebody else's HTML (Khinsider takes the first `…mp3` link on a track page,
+ * Wallpaper Cave any `src` in the markup), so an ad or an injected tag decides where the launcher goes
+ * next. https-only, plus the host check below, keeps that from being an address on the user's own LAN.
+ */
+const ALLOWED_PROTOCOL = 'https:';
+
+/**
+ * Hosts a scraped URL must never send the launcher to: loopback, the link-local range, and the three
+ * private IPv4 blocks, plus their IPv6 equivalents. Only LITERAL addresses are judged — resolving names
+ * to check them would be a DNS round trip per download and still lose to a rebind, and this is a filter
+ * on what a page can point at, not a security boundary against the network itself.
+ */
+function isPrivateHost(hostname: string): boolean {
+  const host = hostname.replace(/^\[|\]$/g, '').toLowerCase();
+  if (host === 'localhost' || host.endsWith('.localhost')) return true;
+  if (
+    host === '::1' ||
+    host === '::' ||
+    host.startsWith('fe80:') ||
+    host.startsWith('fc') ||
+    host.startsWith('fd')
+  ) {
+    return true;
+  }
+  const octets = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+  if (octets === null) return false;
+  const [a, b] = [Number(octets[1]), Number(octets[2])];
+  if (a === 127 || a === 0 || a === 10) return true;
+  if (a === 169 && b === 254) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 192 && b === 168) return true;
+  return false;
+}
+
+/** Why this URL may not be fetched, or null when it may. */
+export function urlRefusal(url: string): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return 'not a URL';
+  }
+  if (parsed.protocol !== ALLOWED_PROTOCOL) return `refused scheme "${parsed.protocol}"`;
+  if (isPrivateHost(parsed.hostname)) return `refused host "${parsed.hostname}"`;
+  return null;
+}
+
+/**
  * The subset of `fetch` this module uses, declared structurally rather than imported: the main-process
  * tsconfig has no DOM lib (its `Response` comes from undici's types) while the shared program does, and
  * a hand-written shape is assignable from both — and trivially faked in a test.
@@ -121,6 +171,8 @@ export class HttpClient {
     maxBytes: number,
     options?: HttpOptions,
   ): Promise<MetadataResult<HttpBytes>> {
+    const refusal = urlRefusal(url);
+    if (refusal !== null) return { ok: false, message: `${url}: ${refusal}` };
     const controller = new AbortController();
     const unlink = linkAbort(options?.signal, controller);
     let headerTimer: ReturnType<typeof setTimeout> | undefined = setTimeout(
@@ -137,6 +189,17 @@ export class HttpClient {
       if (!response.ok) return { ok: false, message: `${url}: HTTP ${response.status}` };
       const body = response.body;
       if (body === null) return { ok: false, message: `${url}: empty response body` };
+      // A declared size proves nothing, which is why readCapped counts the bytes itself — but a host that
+      // ANNOUNCES more than the cap has already told us the download is pointless, and refusing here saves
+      // pulling the whole cap's worth (64 MB for audio) before finding that out.
+      const declared = Number(response.headers.get('content-length') ?? Number.NaN);
+      if (Number.isFinite(declared) && declared > maxBytes) {
+        await body.getReader().cancel();
+        return {
+          ok: false,
+          message: `${url}: declared ${declared} bytes, larger than ${maxBytes}`,
+        };
+      }
       const collected = await readCapped(body, maxBytes, controller);
       if (!collected.ok) return { ok: false, message: `${url}: ${collected.message}` };
       const contentType = normalizeContentType(response.headers.get('content-type'));
@@ -160,6 +223,7 @@ export class HttpClient {
    * art an old game never had, and a gallery must not offer a variant whose apply would then fail.
    */
   async exists(url: string, options?: HttpOptions): Promise<boolean> {
+    if (urlRefusal(url) !== null) return false;
     const controller = new AbortController();
     const unlink = linkAbort(options?.signal, controller);
     const timer = setTimeout(() => controller.abort(), HEADER_TIMEOUT_MS);

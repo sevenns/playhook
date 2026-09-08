@@ -245,7 +245,7 @@ export class AssetReader {
   /**
    * The chosen set's UI sounds — every sound the app plays, on every screen (the card cannot supply its
    * own). A slot whose file is missing within the set simply stays silent, except for the one slot that
-   * borrows the default set's file (see SLOT_FALLS_BACK_TO_DEFAULT_SET).
+   * borrows the default set's file (see SLOTS_FALLING_BACK_TO_DEFAULT_SET).
    */
   async readSfxSet(): Promise<SfxSet> {
     const set = await this.effectiveSoundSet();

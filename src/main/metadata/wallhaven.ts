@@ -26,6 +26,7 @@ import {
   type MetadataProvider,
 } from './provider';
 import { type HttpClient } from './http';
+import { BoundedMap } from './bounded-map';
 import { type SizeFloor } from '../../shared/artwork-filter';
 import { searchableTitle } from './search-title';
 
@@ -267,10 +268,13 @@ export interface WallhavenDeps {
   readonly englishTitle: (ref: GameCandidateRef) => string | undefined;
 }
 
+/** How many candidates this provider remembers an answer for — see BoundedMap. */
+const CACHE_LIMIT = 100;
+
 export class WallhavenProvider implements MetadataProvider {
   readonly id = 'wallhaven' as const;
   /** The query that answered for a candidate, so "load more" pages through THAT search, not another. */
-  private readonly answeredTerm = new Map<string, string>();
+  private readonly answeredTerm = new BoundedMap<string>(CACHE_LIMIT);
 
   constructor(private readonly deps: WallhavenDeps) {}
 

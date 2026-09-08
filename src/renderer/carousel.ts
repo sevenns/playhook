@@ -512,7 +512,13 @@ export function createCarousel(deps: CarouselDeps): Carousel {
       // is inserted or a session ends, and a positional cursor would silently land on a different game.
       // A launcher card survives every update by construction — it is in every list this builds.
       // A pending focus request wins over the current selection — it is the newer instruction of the two.
-      const currentKey = pendingFocusId !== null ? `g:${pendingFocusId}` : (selected() === undefined ? undefined : itemKey(selected() as CarouselItem));
+      const current = selected();
+      const currentKey =
+        pendingFocusId !== null
+          ? `g:${pendingFocusId}`
+          : current === undefined
+            ? undefined
+            : itemKey(current);
       items = [...list.map((game): CarouselItem => ({ kind: 'game', game })), ...systemItems];
       // Cleared against the FULL list: once main has sent the game, the request has been answered one
       // way or the other. A game past the cap simply has no card here to put the selection on, and

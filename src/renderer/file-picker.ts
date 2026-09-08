@@ -74,6 +74,15 @@ export function createFilePicker(deps: FilePickerDeps): FilePickerSurface {
   const hover = createHoverGuard();
 
   let open = false;
+  /**
+   * Bumped by every open and every close, and captured by anything that awaits main. A listing or an
+   * accept that comes back for a visit that is no longer current belongs to a picker the user has already
+   * left — painting it would drop the previous root's directory over the one they are standing in now
+   * (the same token the online picker keeps for the same reason).
+   */
+  let visit = 0;
+  /** An accept is in flight. A second A would import the picked file a SECOND time — see accept(). */
+  let accepting = false;
   let request: {
     readonly root: string;
     readonly kind: ConfigPickKind;
@@ -247,6 +256,7 @@ export function createFilePicker(deps: FilePickerDeps): FilePickerSurface {
   async function go(path: string | undefined): Promise<void> {
     const at = request;
     if (at === null) return;
+    const token = visit;
     const remembered = lastVisited.get(at.kind);
     const result = await deps.api.listDir(
       path === undefined
@@ -258,6 +268,7 @@ export function createFilePicker(deps: FilePickerDeps): FilePickerSurface {
           }
         : { path, root: at.root, kind: at.kind },
     );
+    if (token !== visit) return; // the picker was closed, or reopened for another field, while main answered
     roots = result.roots;
     paintRoots();
     if (!result.ok) {
@@ -325,16 +336,27 @@ export function createFilePicker(deps: FilePickerDeps): FilePickerSurface {
   /** Hands the absolute path(s) to main, which turns them into what the manifest field stores. */
   async function accept(paths: readonly string[]): Promise<void> {
     const at = request;
-    if (at === null) return;
-    const result =
-      at.historyId !== undefined
-        ? await deps.api.acceptHistoryPaths({ id: at.historyId, kind: at.kind, paths })
-        : await deps.api.acceptPaths({
-            root: at.root,
-            kind: at.kind,
-            paths,
-            ...(at.base !== undefined ? { base: at.base } : {}),
-          });
+    // One at a time. Main IMPORTS what is accepted — it copies the file into the game's staging directory
+    // — so a second A while the first import is still running lands a second copy of the same picture and
+    // calls `onDone` twice, the second time for a picker that is already closed.
+    if (at === null || accepting) return;
+    const token = visit;
+    accepting = true;
+    let result: ConfigPickResult;
+    try {
+      result =
+        at.historyId !== undefined
+          ? await deps.api.acceptHistoryPaths({ id: at.historyId, kind: at.kind, paths })
+          : await deps.api.acceptPaths({
+              root: at.root,
+              kind: at.kind,
+              paths,
+              ...(at.base !== undefined ? { base: at.base } : {}),
+            });
+    } finally {
+      accepting = false;
+    }
+    if (token !== visit) return; // cancelled (or reopened elsewhere) while main was importing
     if (!result.ok && !('cancelled' in result)) {
       // A rejection is not an exit: the user is standing in the folder they picked from, and the message
       // tells them what to pick instead.
@@ -350,6 +372,7 @@ export function createFilePicker(deps: FilePickerDeps): FilePickerSurface {
     if (!open) return;
     deps.audio.play('popup-close');
     open = false;
+    visit += 1;
     root.classList.remove('is-open');
     root.setAttribute('aria-hidden', 'true');
   }
@@ -432,10 +455,15 @@ export function createFilePicker(deps: FilePickerDeps): FilePickerSurface {
         kind: next.kind,
         multi: next.multi,
         ...(next.base !== undefined ? { base: next.base } : {}),
+        // Carried through, or a history game's pick would be measured against a root it has not got:
+        // `acceptPaths` with an empty root instead of `acceptHistoryPaths` with the game's id.
+        ...(next.historyId !== undefined ? { historyId: next.historyId } : {}),
         onDone: next.onDone,
       };
       picked = [];
       open = true;
+      visit += 1;
+      accepting = false;
       deps.audio.play('popup-open');
       titleEl.textContent = t()('picker.title');
       updateChrome();

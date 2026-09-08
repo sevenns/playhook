@@ -41,6 +41,19 @@ export function searchUrl(term: string): string {
   return `${ORIGIN}/search?search=${encodeURIComponent(searchableTitle(term))}`;
 }
 
+/**
+ * The shape `parseAlbums` reads out of the markup — and so the only shape an album key may ever have.
+ * The key is pasted straight into a URL path (it arrives already percent-encoded, so it must not be
+ * encoded again), and it reaches this module from the RENDERER, which every other provider checks its
+ * key against a pattern before trusting.
+ */
+const ALBUM_KEY_PATTERN = /^[^"/?#\s]+$/;
+
+/** Whether an album key is one the scraper could have produced. */
+export function isAlbumKey(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0 && ALBUM_KEY_PATTERN.test(value);
+}
+
 export function albumUrl(albumKey: string): string {
   return `${ORIGIN}/game-soundtracks/album/${albumKey}`;
 }
@@ -75,7 +88,10 @@ function stripTags(html: string): string {
 export function parseAlbums(html: string): readonly MusicAlbum[] {
   const albums: MusicAlbum[] = [];
   const seen = new Set<string>();
-  const pattern = /<a\s+href="\/game-soundtracks\/album\/([^"/?#]+)"[^>]*>([\s\S]*?)<\/a>/g;
+  // The title is length-capped rather than open-ended: on a page whose anchors are never closed the lazy
+  // `[\s\S]*?` re-scans to the end of the document for EVERY album link, and the cap for a scraped page
+  // here is 24 MB. No album title is anywhere near 500 characters.
+  const pattern = /<a\s+href="\/game-soundtracks\/album\/([^"/?#]+)"[^>]*>([\s\S]{0,500}?)<\/a>/g;
   for (const match of html.matchAll(pattern)) {
     const key = match[1];
     const title = stripTags(match[2] ?? '');
@@ -141,7 +157,10 @@ export function parseTracks(html: string, albumKey: string): readonly MusicTrack
  * and the inline player — and only the audio extensions this app can actually play are taken.
  */
 export function parseAudioUrl(html: string): string | undefined {
-  const pattern = /(?:href|src)="(https?:\/\/[^"]+\.(?:mp3|flac|ogg|m4a))"/gi;
+  // https only. The pattern used to accept http as well, and this URL comes out of a page whose ads and
+  // embeds are matched by the same regex — HttpClient refuses non-https anyway, so taking one here would
+  // only mean an ad's link shadowing the real track link that follows it.
+  const pattern = /(?:href|src)="(https:\/\/[^"]+\.(?:mp3|flac|ogg|m4a))"/gi;
   for (const match of html.matchAll(pattern)) {
     const url = match[1];
     if (url !== undefined) return decodeEntities(url);
@@ -189,6 +208,9 @@ export class KhinsiderProvider implements MetadataProvider {
     albumKey: string,
     signal?: AbortSignal,
   ): Promise<MetadataResult<readonly MusicTrackOffer[]>> {
+    // The key comes from the renderer, and it goes into a URL PATH — the same check wallhaven and
+    // steamgriddb run on their own keys before building a request out of one.
+    if (!isAlbumKey(albumKey)) return { ok: false, message: 'not a khinsider album key' };
     const page = await this.deps.http.text(albumUrl(albumKey), this.pageOptions(signal));
     if (!page.ok) return page;
     return { ok: true, value: parseTracks(page.value, albumKey) };

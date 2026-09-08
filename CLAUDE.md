@@ -6,14 +6,18 @@ mandate to rewrite what already works.
 
 ## UI text
 
-- **Never type a literal `...` or `…` in user-facing text** (i18n strings, HTML fallback text, anything
-  rendered through the app's own font). The bundled font (M PLUS Rounded 1c) draws periods and the
-  ellipsis glyph CENTERED vertically — the CJK convention, not the Latin one — so they sit above the
-  baseline and read as a row of raised dots instead of trailing punctuation. `styles.css` carves those
-  two code points out of the font (see the `@font-face … unicode-range: U+002E, U+2026` overrides right
-  after the four real ones) so the fallback stack draws them properly wherever they DO appear — including
-  text this app does not author, like a game's own title — but that is a safety net, not a licence: new
-  copy should still be worded so nothing trails off, rather than leaning on the override.
+- **Never type the `…` glyph in user-facing text rendered through the app's own font**, and prefer copy
+  that does not trail off at all. The bundled font (M PLUS Rounded 1c) draws periods and the ellipsis
+  glyph CENTERED vertically — the CJK convention, not the Latin one — so they sit above the baseline and
+  read as a row of raised dots instead of trailing punctuation. `styles.css` carves those two code points
+  out of the font (see the `@font-face … unicode-range: U+002E, U+2026` overrides right after the four
+  real ones) so the fallback stack draws them properly wherever they DO appear — including text this app
+  does not author, like a game's own title.
+- **Where a label genuinely continues** — a progress state ("Installing..."), a control that opens
+  something else ("Find online...") — write three PERIODS, never the glyph. That is the existing
+  convention and it is deliberate: see the comments at `en.ts` "Status labels" and `state-view.ts`
+  `statusOf`. The override above is what makes it render correctly, so this is the one place it is leant
+  on by design. Text rendered by the OS rather than by the app's font — the tray menu — uses `…` normally.
 
 ## Layers (do not blur)
 
@@ -47,20 +51,23 @@ Pick per situation, matching the existing patterns:
 Follow the **interface-DI** shape of `StatsService` / `UpdaterService` (dependencies passed via a
 typed `…Deps` interface), not the bare-primitive-constructor or free-function styles that predate it.
 Interface-DI is the most testable: it lets a unit test inject fakes without electron/fs. Bootstrap the
-service in `main.ts`; wire IPC through `GameController`/`SettingsWindow` as appropriate.
+service in `main.ts`; wire IPC through `GameController` (or the service's own `init()`, the way
+`GameConfigService` and `MetadataService` register their channels).
 
 ## Adding a new IPC channel
 
 The channel literal lives in **one** source of truth and is bridged with compile-time checks:
 
 1. Add the channel to the `IPC` const map in `shared/types.ts` (with a doc comment on direction).
-2. Add the method to the matching `RendererApi` / `SettingsApi` interface.
-3. Add the literal to the preload's `CHANNELS` map (`preload.ts` for game, `settings-preload.ts` for
-   settings). The `satisfies Partial<typeof IPC>` catches a wrong value or typo'd key at compile time.
+2. Add the method to the `RendererApi` interface.
+3. Add the literal to `src/preload/preload.ts`'s `CHANNELS` map. It is `satisfies typeof IPC`, so a
+   wrong value, a typo'd key AND a forgotten channel are all compile errors — there is one window and one
+   preload, so the map has to be complete.
 4. Wire the handler in `ipc.ts` (main) and consume it in the renderer.
 
-The `test/ipc-channels.test.ts` suite guards **completeness**: every `IPC` channel must be exposed by
-exactly one preload. `satisfies Partial<>` cannot catch a *forgotten* channel — that test can.
+The `test/ipc-channels.test.ts` suite guards the same invariant from the outside (it reads the preload
+sources as text) and would still catch it if a second window — and a second preload, back to
+`satisfies Partial<typeof IPC>` — ever returns.
 
 ## Two entry points: GUI and daemon
 
@@ -169,8 +176,9 @@ build does not self-update. **All OS-specific behaviour lives behind the `Platfo
 
 ## Tooling (all run in CI before build)
 
-- `npm run typecheck` — strict `tsc`, no `any`, no non-null `!`. Covers `test/` as well as `src/`.
-- `npm run lint` — ESLint with type-aware rules (`no-floating-promises`, `no-misused-promises`,
+- `npm run typecheck` — strict `tsc`, no `any`. Covers `test/` as well as `src/`.
+- `npm run lint` — ESLint with type-aware rules (`no-non-null-assertion` — the "no `!`" rule, which
+  `tsc` cannot express — plus `no-floating-promises`, `no-misused-promises`,
   `strict-boolean-expressions`), over `src` and `test`. Tests switch off `require-await` and
   `unbound-method` (both only ever fire on test doubles) and allow a `_`-prefixed unused parameter.
 - `npm test` — vitest.

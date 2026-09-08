@@ -94,5 +94,6 @@ jobs:
           name: playhook-macos
           path: |
             release/*.dmg
+            release/*.zip
           if-no-files-found: error
           retention-days: 14

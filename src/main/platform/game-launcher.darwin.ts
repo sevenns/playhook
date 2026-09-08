@@ -68,11 +68,12 @@ function spawnGameProcess(
       });
       child.unref();
       void delay(GATEKEEPER_PROBE_MS).then(() => {
-        // A quarantined/unsigned binary is killed by syspolicyd within milliseconds and always by signal —
-        // an ordinary early exit (a game that crashed on its own) reports a code instead and is left to the
-        // normal "did not start" path, which is the honest description of it.
-        if (exit !== null && exit.signal !== null) {
-          log.warn(`[launch] "${file}" was killed on start by signal ${exit.signal} — Gatekeeper?`);
+        // A quarantined/unsigned binary is killed by syspolicyd within milliseconds, and specifically with
+        // SIGKILL. SIGKILL alone, not "any signal": a game that crashes on its own dies by SIGSEGV/SIGBUS
+        // /SIGABRT, and blaming Gatekeeper for that sends the user off to fix a security setting that was
+        // never in the way. Anything else is left to the normal "did not start" path.
+        if (exit !== null && exit.signal === 'SIGKILL') {
+          log.warn(`[launch] "${file}" was SIGKILLed on start — Gatekeeper?`);
           reject(new Error(deps.getTranslator()('errors.macGameBlocked', { path: file })));
           return;
         }

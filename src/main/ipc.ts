@@ -33,13 +33,15 @@ import { type LibraryStore } from './library-store';
 import { type PcLibraryStore } from './pc-library';
 import { byRecentlyPlayed } from './library-index';
 import {
+  commitHistorySync,
   rollbackHistorySync,
   syncHistoryConfig,
   type HistorySyncResult,
 } from './history-sync';
 import { localGameGoesAfterMerge } from './history-config';
+import { sweepAtomicTemps } from './json-store';
 import { type DriveWatcher } from './drive-watcher';
-import { readManifests, findCaseInsensitiveName, type ManifestEnv } from './manifest';
+import { readManifests, findCaseInsensitiveName, isSafeGameId, type ManifestEnv } from './manifest';
 import { syncDir, syncByChange, snapshotTree } from './save-sync';
 import {
   waitForExit,
@@ -808,6 +810,12 @@ export class GameController {
   ): Promise<{ ok: true } | { ok: false; message: string }> {
     this.cardPresent = true;
     log.info(`[insert] card detected at root="${root}"`);
+    // A card that was pulled mid-write leaves the temp file of that write behind, under a name unique to
+    // it that nothing will ever reuse. The card root is where the user SEES it, so it is swept here — in
+    // the background, because an insertion waits for nothing that is merely tidy.
+    void sweepAtomicTemps(root).catch((cause: unknown) =>
+      log.warn('[insert] sweeping the card temp files failed:', describe(cause)),
+    );
     // Documents is resolved via the system Known Folder API (the same one the game uses),
     // so %DOCUMENTS% in the manifest maps to the real save folder regardless of UI
     // language or OneDrive redirection. Safe to read here — app is ready by now.
@@ -816,17 +824,23 @@ export class GameController {
     // so everything downstream — validation, the resolved manifests, the history copy — sees one already
     // reconciled file. It also runs on a plain reload (a Save from Customize), where it is a no-op: an
     // available game cannot have pending edits, since save-from-history refuses one.
-    const sync = await syncHistoryConfig(root, { library: this.deps.library, t: this.t });
+    let sync = await syncHistoryConfig(root, { library: this.deps.library, t: this.t });
     let result = await readManifests(root, env, this.deps.platform.resolveInstallDir);
     if (!result.ok && sync.textBefore !== null) {
       // We rewrote the file and the card stopped reading. Put the author's own text back and try again
-      // rather than leave a card that the launcher itself bricked.
-      if (await rollbackHistorySync(root, sync.textBefore)) {
+      // rather than leave a card that the launcher itself bricked. `sync` becomes the undone version of
+      // itself, so the commit below leaves the edits pending and the user is told they were NOT applied.
+      const reverted = await rollbackHistorySync(root, sync);
+      if (reverted !== null) {
+        sync = reverted;
         result = await readManifests(root, env, this.deps.platform.resolveInstallDir);
       }
-    } else {
-      this.notifyHistorySync(sync);
     }
+    // Only now, and on EVERY path: the card has had its final say, so the history may record it and the
+    // user may be told. Both used to sit inside the sync itself, which meant a rollback erased the edits
+    // it claims to preserve and said nothing about it.
+    await commitHistorySync(sync, this.deps.library);
+    this.notifyHistorySync(sync);
     if (!result.ok) {
       // No valid game determined → keep the window hidden (the reason is in the log). We still set
       // the error state so a manually-summoned window can show it, but we never auto-surface it.
@@ -1091,12 +1105,12 @@ export class GameController {
    */
   isBusy(): boolean {
     const kind = this.deps.state.get().kind;
-    return (
-      kind === 'running' ||
-      kind === 'installing' ||
-      kind === 'uninstalling' ||
-      this.steamBusyId !== null
-    );
+    // Stated as the SETTLED states rather than the busy ones (the shape UpdaterService.isBusy uses): the
+    // list of things a game can be in the middle of grew — launching, either save sync, the Proton prefix
+    // — and an allow-list that has to be extended for each of them is the reason those four were missing
+    // from the deny-list this replaced, JSDoc promise of mid-launch cover notwithstanding.
+    const settled = kind === 'idle' || kind === 'ready' || kind === 'error';
+    return !settled || this.steamBusyId !== null;
   }
 
   /** Logs the local games the inserted card currently shadows (same id — the card wins, see `games`). */
@@ -1165,6 +1179,11 @@ export class GameController {
    * written and no decision recorded, so the question honestly comes back.
    */
   private async resolveCollision(answer: GameCollisionAnswer): Promise<ConfigSaveResult> {
+    // The only renderer argument on this channel that used to be taken on trust. An id nothing knows
+    // about would still be recorded as "answered", which writes a phantom entry the carousel then shows.
+    if (!isSafeGameId(answer.id) || this.findPcManifest(answer.id) === null) {
+      return { saved: false, message: this.t('errors.configInvalid') };
+    }
     if (answer.choice === 'ignore') {
       await this.deps.library.markCollisionResolved(answer.id);
       return { saved: true, applied: 'deferred' };

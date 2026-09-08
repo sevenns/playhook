@@ -69,6 +69,11 @@ function configureAutoLaunch(): void {
   // No `--hidden` arg needed: the app always starts hidden and only shows on a valid card.
   // setLoginItemSettings is implemented on Windows AND macOS (it writes a Login Item there), so both take
   // the same route; only Linux needs the hand-written XDG entry below.
+  //
+  // Packaged only, the same gate the Linux branch has: in a dev run the executable is the Electron binary
+  // inside node_modules, and registering THAT to start at login leaves the developer with a login item
+  // pointing at a working copy (and one they did not ask for).
+  if (!app.isPackaged) return;
   if (process.platform === 'win32' || process.platform === 'darwin') {
     app.setLoginItemSettings({ openAtLogin: true });
     return;
@@ -543,7 +548,7 @@ async function bootstrap(): Promise<void> {
   ipcMain.on(IPC.actionQuit, () => quit());
 
   // Applies a language change everywhere: re-resolve the locale, rebuild the tray menu, re-title the
-  // and push the effective locale to the launcher.
+  // window and push the effective locale to the launcher.
   // Called from the settings set-language handler and from resetSettings (both via UpdaterService deps).
   function applyLanguage(mode: typeof initialSettings.language): void {
     localeService.setMode(mode);
@@ -579,6 +584,14 @@ if (!gotSingleInstanceLock) {
   // A second instance just brings the current one's window forward. argv is mangled on
   // Windows Chromium (#20322) — we don't rely on it; if needed, data would go via additionalData.
   app.on('second-instance', () => {
+    windowRef?.showAndFocus();
+  });
+
+  // macOS only, and the counterpart of GameWindow.hide()'s `app.hide()`: clicking the Dock icon
+  // re-activates the application but does NOT un-hide its windows, so without this the launcher comes
+  // back as a menu bar with nothing under it — the very "in the menu bar, not on the screen" symptom the
+  // hide() call was added to prevent. Never fires on Windows or Linux.
+  app.on('activate', () => {
     windowRef?.showAndFocus();
   });
 

@@ -26,7 +26,7 @@ import { nativeImage } from 'electron';
 import { z } from 'zod';
 import type { HeroAssets, ResolvedManifest, Stats } from '../shared/types';
 import { readAudioDataUrl, readImageDataUrl } from './asset-reader';
-import { readJsonValidated, writeJsonAtomic } from './json-store';
+import { readJsonValidated, writeFileAtomicEnsuringDir, writeJsonAtomic } from './json-store';
 import { uniqueAssetFileName } from './asset-file-names';
 import { assertImportableAsset, type ImportKind } from './asset-import';
 import { slotHash, type GameSlot } from './history-config';
@@ -410,8 +410,10 @@ export class LibraryStore {
    */
   async forget(id: string): Promise<boolean> {
     if (this.entry(id) === null) return false;
-    this.index = removeEntry(this.index, id);
-    await this.writeIndex();
+    // Through the queue like every other index write: a bare read-modify-write here would race the
+    // background copy after an insert, whose `current ?? previous` fallback would then put the record
+    // this just deleted straight back.
+    await this.mutate((index) => removeEntry(index, id));
     try {
       await fse.remove(this.gameDir(id));
       log.info(`[library] forgot id=${id} (removed from the history by the user)`);
@@ -436,9 +438,9 @@ export class LibraryStore {
 
   /** Snapshots the slot the card currently has and returns its hash (the change-detection baseline). */
   async takeCardSlot(id: string, slot: GameSlot): Promise<string> {
-    const gameDir = this.gameDir(id);
-    await fse.ensureDir(gameDir);
-    await fse.writeFile(this.cardSlotPath(id), `${JSON.stringify(slot, null, 2)}\n`);
+    // Atomically, like every other store here: a torn snapshot reads back as a slot that does not match
+    // the card, which the sync treats as a foreign card — and a foreign card means the edits are dropped.
+    await writeFileAtomicEnsuringDir(this.cardSlotPath(id), `${JSON.stringify(slot, null, 2)}\n`);
     return slotHash(slot);
   }
 
@@ -469,9 +471,12 @@ export class LibraryStore {
    * name at once, before any card is back.
    */
   async saveEdits(id: string, text: string, title: string): Promise<void> {
-    const gameDir = this.gameDir(id);
-    await fse.ensureDir(gameDir);
-    await fse.writeFile(this.editedManifestPath(id), text.endsWith('\n') ? text : `${text}\n`);
+    // Atomic for the same reason the snapshot is: this file IS the user's unapplied work, and half of it
+    // parses as nothing, which the apply step reports as "no stored edits" and drops.
+    await writeFileAtomicEnsuringDir(
+      this.editedManifestPath(id),
+      text.endsWith('\n') ? text : `${text}\n`,
+    );
     const configuredAt = new Date().toISOString();
     await this.mutate((index) => {
       const current = index.entries.find((entry) => entry.id === id);
@@ -636,7 +641,9 @@ export class LibraryStore {
   }
 
   private gameDir(id: string): string {
-    // `id` is validated by the manifest schema as a single safe path segment (no separators, no dots).
+    // `id` is a single safe path segment (no separators, no bare dots) — enforced by the manifest schema
+    // for an id that came off a card, and by `isSafeGameId` at the IPC boundary for one that came from
+    // the renderer, which addresses a history game by id alone (see GameConfigService.init).
     return path.join(this.dir, id);
   }
 

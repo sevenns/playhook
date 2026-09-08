@@ -16,24 +16,14 @@
     "types": []
   },
   "include": ["src/renderer/**/*.ts", "src/shared/**/*.ts"],
-  // The whole app.ts graph is bundled by esbuild (build:app), not emitted by tsc — so it is excluded
-  // here. The game renderer moved
-  // to esbuild because a runtime dictionary import from a tsc-emitted app.js would break (dist/shared is
-  // overwritten as CJS by build:main). All of these are still type-checked via the root tsconfig.json's
-  // `npm run typecheck` (audit N5).
-  "exclude": [
-    "src/renderer/app.ts",
-    "src/renderer/settings-screen.ts",
-    "src/renderer/settings-form-model.ts",
-    "src/renderer/settings-form-view.ts",
-    "src/renderer/audio.ts",
-    "src/renderer/hero.ts",
-    "src/renderer/controls.ts",
-    "src/renderer/format.ts",
-    "src/renderer/state-view.ts",
-    "src/renderer/dom.ts",
-    "src/renderer/gamepad.ts",
-    "src/renderer/dominant-color.ts",
-    "src/renderer/i18n-dom.ts"
-  ]
+  // The renderer is not emitted by tsc at all: index.html loads exactly one module, and esbuild bundles
+  // the whole app.ts graph into it (build:app). Every file here was already excluded one by one, which
+  // only meant the ones nobody remembered to add — game-settings-screen, osk, file-picker, library-screen
+  // — were still emitted as ESM copies nothing loads, and shipped into the asar that way. The whole
+  // directory goes, so a new renderer module cannot re-add itself to that pile by being forgotten.
+  //
+  // What this config still does is emit `src/shared` (build:main then overwrites dist/shared as CJS — a
+  // runtime dictionary import from a tsc-emitted app.js would break otherwise). Everything here is
+  // type-checked by the root tsconfig.json's `npm run typecheck` (audit N5).
+  "exclude": ["src/renderer/**"]
 }

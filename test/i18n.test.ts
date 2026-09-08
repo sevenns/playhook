@@ -153,10 +153,10 @@ describe('HTML data-i18n ↔ en dictionary', () => {
       const name = path.basename(file);
       // data-i18n="key" ...> text < (text is pure — data-i18n is only placed on leaf text elements).
       for (const m of source.matchAll(/data-i18n="([^"]+)"[^>]*>([\s\S]*?)</g)) {
-        const key = m[1]!;
+        const key = m[1] ?? '';
         expect(isKey(key), `${name}: data-i18n="${key}" is not an en key`).toBe(true);
         if (isKey(key)) {
-          expect(normalize(m[2]!), `${name}: fallback for "${key}" must equal en value`).toBe(
+          expect(normalize(m[2] ?? ''), `${name}: fallback for "${key}" must equal en value`).toBe(
             normalize(en[key]),
           );
         }
@@ -169,7 +169,7 @@ describe('HTML data-i18n ↔ en dictionary', () => {
       const source = fs.readFileSync(file, 'utf8');
       const name = path.basename(file);
       for (const m of source.matchAll(/data-i18n-aria-label="([^"]+)"/g)) {
-        const key = m[1]!;
+        const key = m[1] ?? '';
         expect(isKey(key), `${name}: data-i18n-aria-label="${key}" is not an en key`).toBe(true);
       }
     }

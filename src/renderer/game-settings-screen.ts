@@ -57,13 +57,13 @@ import type { ApplyOutcome, OnlinePickerSurface } from './online-picker.js';
 import {
   emptyFormModel,
   gamesToText,
+  isInstallType,
+  isLaunchMode,
   isRawSlot,
   slotsWithInsertedGame,
   slotsWithNewGame,
   textToGames,
   type GameFormState,
-  type InstallType,
-  type LaunchMode,
   type ManifestFormModel,
 } from './configure-form-model.js';
 import {
@@ -407,6 +407,12 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   let loadedId = '';
   /** The text as it was read. Dirty is "what we would write differs from this". */
   let baseline = '';
+  /**
+   * A write of this screen's (Save, Add, Move) is in flight. It gates `canSave`, which every one of the
+   * three checks first and which the Save row's own enabled state is drawn from — so the second press is
+   * refused both as a gesture and as a button.
+   */
+  let writing = false;
   /** Set when OUR slot cannot be represented at all — the screen shows the reason and two ways out. */
   let unreadable: string | null = null;
 
@@ -453,17 +459,17 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
    * which is the whole point: they used to sit under six sections of form, so committing an edit meant
    * scrolling past every field you had just finished with.
    */
-  const sidebar = createSidebar(navEl, {
+  const sidebar = createSidebar<MessageKey, GameRowId>(navEl, {
     audio: deps.audio,
     onSection: (id, entered) => {
-      sectionKey = id as MessageKey;
+      sectionKey = id;
       if (entered) {
         enterPane();
         return;
       }
       schedulePreview();
     },
-    onAction: (id) => runAction(id as GameRowId),
+    onAction: (id) => runAction(id),
   });
 
   // ── Form state ─────────────────────────────────────────────────────────────
@@ -517,6 +523,10 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   }
 
   function canSave(): boolean {
+    // A write of this screen's is in flight. Nothing here is idempotent — main's swap guard rejects the
+    // second Save of the same signature AFTER the first has already landed, so the user is shown an error
+    // for a save that worked — and Add/Move remove things the retry then cannot find.
+    if (writing) return false;
     const move = pendingMove;
     if (move !== null) {
       if (unreadable !== null) return false;
@@ -708,7 +718,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     }
   }
 
-  function columnEntries(from: GameSettingsModel): readonly SidebarEntry[] {
+  function columnEntries(from: GameSettingsModel): readonly SidebarEntry<MessageKey, GameRowId>[] {
     return [
       ...titledSections(from).map((section) => ({
         id: section.titleKey,
@@ -1228,11 +1238,13 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       requestSource(value);
       return;
     }
+    // Guarded, not cast: `value` is a DOM select's, and a cast would let a stale option (a select painted
+    // for another mode, an option removed by a re-render) enter the form as a launch mode that is not one.
     if (id === 'launchMode') {
-      updateForm(withLaunchMode(form, value as LaunchMode));
+      if (isLaunchMode(value)) updateForm(withLaunchMode(form, value));
       return;
     }
-    if (id === 'install.type') updateForm(withInstallType(form, value as InstallType));
+    if (id === 'install.type' && isInstallType(value)) updateForm(withInstallType(form, value));
   }
 
   /**
@@ -2003,6 +2015,17 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     render();
   }
 
+  /** Runs one write with `writing` held for its whole duration — see the flag. */
+  async function writingWith<T>(write: () => Promise<T>): Promise<T> {
+    writing = true;
+    render(); // the Save row is drawn from canSave(), so it greys out for as long as the write runs
+    try {
+      return await write();
+    } finally {
+      writing = false;
+    }
+  }
+
   async function runSave(): Promise<void> {
     const at = origin;
     if (at === null || !canSave()) return;
@@ -2010,10 +2033,11 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     setStatus(t()('gameSettings.saving'));
     // Nothing is written to any card here when the game came from the history: the edits are stored on
     // this PC and the card picks them up the next time it is inserted (see history-config.ts).
-    const result =
+    const result = await writingWith(() =>
       at.kind === 'history'
-        ? await deps.api.saveHistory({ id: at.id, text })
-        : await deps.api.save({ root: at.root, signature: at.signature, text });
+        ? deps.api.saveHistory({ id: at.id, text })
+        : deps.api.save({ root: at.root, signature: at.signature, text }),
+    );
     if (!result.saved) {
       failWith(result.message);
       return;
@@ -2042,17 +2066,19 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     const text = currentText();
     const movedId = form.id;
     setStatus(t()('gameSettings.saving'));
-    const result = await deps.api.moveToCard({
-      id: movedId,
-      // The id the manifest was READ with — what main addresses the PC-library side by. `form.id` is an
-      // editable field and must never be what decides which local game gets removed.
-      fromId: loadedId,
-      fromRoot: media.root,
-      fromSignature: media.signature,
-      toRoot: move.target.root,
-      toSignature: move.targetSignature,
-      toText: text,
-    });
+    const result = await writingWith(() =>
+      deps.api.moveToCard({
+        id: movedId,
+        // The id the manifest was READ with — what main addresses the PC-library side by. `form.id` is an
+        // editable field and must never be what decides which local game gets removed.
+        fromId: loadedId,
+        fromRoot: media.root,
+        fromSignature: media.signature,
+        toRoot: move.target.root,
+        toSignature: move.targetSignature,
+        toText: text,
+      }),
+    );
     if (!result.moved) {
       failWith(result.message);
       return;
@@ -2078,7 +2104,9 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     const text = currentText();
     const addedId = form.id;
     setStatus(t()('gameSettings.saving'));
-    const result = await deps.api.save({ root: at.root, signature: at.signature, text });
+    const result = await writingWith(() =>
+      deps.api.save({ root: at.root, signature: at.signature, text }),
+    );
     if (!result.saved) {
       failWith(result.message);
       return;

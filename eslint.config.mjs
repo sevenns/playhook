@@ -23,6 +23,10 @@ export default tseslint.config(
       },
     },
     rules: {
+      // CLAUDE.md's "no non-null `!`" rule, actually enforced. tsc cannot express it and
+      // recommendedTypeChecked does not carry it, so until now the rule lived on discipline alone — and
+      // `src/` kept it while `test/` quietly grew a dozen of them.
+      '@typescript-eslint/no-non-null-assertion': 'error',
       '@typescript-eslint/no-floating-promises': 'error',
       '@typescript-eslint/no-misused-promises': 'error',
       '@typescript-eslint/strict-boolean-expressions': [

@@ -23,6 +23,7 @@ import type { Translator } from '../shared/i18n';
 import { validateManifestText } from './manifest';
 import type { ManifestValidationIssue } from '../shared/types';
 import { writeFileAtomicEnsuringDir } from './json-store';
+import { expectedGameFilePath } from './game-move';
 import {
   decideConfigSync,
   issuesIntroducedBy,
@@ -54,6 +55,15 @@ export interface HistorySyncResult {
   readonly slots: ReadonlyMap<string, GameSlot>;
   /** The manifest text as it was BEFORE the sync, when (and only when) the sync rewrote the file. */
   readonly textBefore: string | null;
+  /**
+   * The slots written onto the card, awaiting the HISTORY side of the same change (a new snapshot, and
+   * the edits dropped). Held back until the card has been read BACK, because the rollback path undoes the
+   * write — dropping the edits before then would restore the card's text over work that no longer exists
+   * anywhere. See commitHistorySync / rollbackHistorySync.
+   */
+  readonly uncommitted: ReadonlyMap<string, GameSlot>;
+  /** The card's slots as they were BEFORE the rewrite — what a rollback puts the result back to. */
+  readonly slotsBefore: ReadonlyMap<string, GameSlot>;
 }
 
 const NOTHING: HistorySyncResult = {
@@ -61,11 +71,18 @@ const NOTHING: HistorySyncResult = {
   discarded: [],
   slots: new Map(),
   textBefore: null,
+  uncommitted: new Map(),
+  slotsBefore: new Map(),
 };
 
 /**
  * Runs the whole matrix for one card and writes the result ONCE. Returns what happened; it never throws
  * — an insertion must proceed whatever the card thinks of being written to.
+ *
+ * The card is the only thing written here. What the HISTORY has to record about the same change — the new
+ * snapshot, the edits that are now redundant — is left to `commitHistorySync`, which the caller runs once
+ * the card has been read back: a card that stopped reading is rolled back, and edits dropped before that
+ * verdict would be gone from both sides at once.
  */
 export async function syncHistoryConfig(
   root: string,
@@ -86,6 +103,7 @@ export async function syncHistoryConfig(
   const applied: string[] = [];
   const discarded: string[] = [];
   const nextSlots = new Map(slots);
+  const written = new Map<string, GameSlot>();
   let nextText = text;
   let rewrote = false;
 
@@ -117,11 +135,12 @@ export async function syncHistoryConfig(
     }
     nextText = outcome.text;
     nextSlots.set(id, outcome.slot);
+    written.set(id, outcome.slot);
     rewrote = true;
     applied.push(titleOf(outcome.slot) ?? entry.title);
   }
 
-  if (!rewrote) return { ...NOTHING, applied, discarded, slots: nextSlots };
+  if (!rewrote) return { ...NOTHING, applied, discarded, slots: nextSlots, slotsBefore: slots };
 
   try {
     await writeFileAtomicEnsuringDir(manifestPath, nextText);
@@ -129,28 +148,65 @@ export async function syncHistoryConfig(
     // A card that cannot be written to is not an error the user has to act on: the edits stay pending and
     // ride along to the next insertion, exactly as they would have if the card had never shown up.
     log.warn(`[history-sync] cannot write the card manifest — the edits stay pending:`, describe(cause));
-    return { ...NOTHING, discarded, slots };
+    return { ...NOTHING, discarded, slots, slotsBefore: slots };
   }
-  for (const [id, slot] of nextSlots) {
-    if (slotHash(slot) === slotHash(slots.get(id) ?? {})) continue;
-    await deps.library.takeCardSlot(id, slot);
-    await deps.library.dropEdits(id);
-  }
-  return { applied, discarded, slots: nextSlots, textBefore: text };
+  return {
+    applied,
+    discarded,
+    slots: nextSlots,
+    textBefore: text,
+    uncommitted: written,
+    slotsBefore: slots,
+  };
 }
 
 /**
- * Puts the card's own text back after the sync rewrote it and the card then failed to read. The edits are
- * deliberately NOT dropped: they are still the user's, and the next insertion may fare better.
+ * Records on the HISTORY side what the card write achieved: the applied slot becomes the new pristine
+ * snapshot, and the edits that produced it are dropped.
+ *
+ * Every APPLIED slot is committed, including one that turned out to be byte-identical to what the card
+ * already had — the flag that says "there is something to apply" lives on the edits, so leaving them
+ * would make the same no-op apply run again on every single insertion.
  */
-export async function rollbackHistorySync(root: string, textBefore: string): Promise<boolean> {
+export async function commitHistorySync(
+  sync: HistorySyncResult,
+  library: LibraryStore,
+): Promise<void> {
+  for (const [id, slot] of sync.uncommitted) {
+    await library.takeCardSlot(id, slot);
+    await library.dropEdits(id);
+  }
+}
+
+/**
+ * Puts the card's own text back after the sync rewrote it and the card then failed to read, and answers
+ * with the result as it stands AFTER the undo — nothing applied, and the card's own slots again.
+ *
+ * The edits are deliberately NOT dropped: they are still the user's, and the next insertion may fare
+ * better. That only holds because the commit is deferred (see commitHistorySync) — the caller must not
+ * have run it yet. Null when the card refused the restore: the rewrite is then what is on the card, so
+ * the original result stands and MUST still be committed.
+ */
+export async function rollbackHistorySync(
+  root: string,
+  sync: HistorySyncResult,
+): Promise<HistorySyncResult | null> {
+  const textBefore = sync.textBefore;
+  if (textBefore === null) return null;
   try {
     await writeFileAtomicEnsuringDir(path.join(root, MANIFEST_FILENAME), textBefore);
     log.warn('[history-sync] the rewritten manifest did not read back — restored the card\'s own text');
-    return true;
+    return {
+      applied: [],
+      discarded: sync.discarded,
+      slots: sync.slotsBefore,
+      textBefore: null,
+      uncommitted: new Map(),
+      slotsBefore: sync.slotsBefore,
+    };
   } catch (cause) {
     log.error('[history-sync] could not restore the card manifest:', describe(cause));
-    return false;
+    return null;
   }
 }
 
@@ -277,16 +333,16 @@ async function sha256(filePath: string): Promise<string> {
 
 /**
  * The first file the slot names that is NOT on the card, or null when they all are. Assets are checked
- * as well as the executable: a slot pointing at artwork that never made it over would load, but with a
- * blank screen where the user's cover should be.
+ * as well as the game's own file: a slot pointing at artwork that never made it over would load, but with
+ * a blank screen where the user's cover should be.
+ *
+ * WHICH field names the game's file is `expectedGameFilePath`'s question, not one answered again here:
+ * in install mode `executable` is a path INSIDE the installed game and resolves against the install
+ * directory on the PC, so checking it against the card root would refuse every install-mode slot — and a
+ * refusal here destroys the user's edits.
  */
 async function missingSlotFile(slot: GameSlot, root: string): Promise<string | null> {
-  const install = slot['install'];
-  const installer =
-    typeof install === 'object' && install !== null
-      ? (install as Record<string, unknown>)['installer']
-      : undefined;
-  const candidates = [slot['executable'], installer, slot['gridImage'], slot['backgroundMusic']]
+  const candidates = [expectedGameFilePath(slot), slot['gridImage'], slot['backgroundMusic']]
     .concat(Array.isArray(slot['heroImage']) ? slot['heroImage'] : [slot['heroImage']])
     .filter((value): value is string => typeof value === 'string' && value.length > 0);
   for (const relative of candidates) {

@@ -34,7 +34,8 @@ const settingsObject = z.object({
   // reasons to be up without a card (the library, the local PC games, the settings), so vanishing to the
   // tray the moment a card is pulled hides a UI that still has something to show. A file written under
   // the old name (alwaysShowEmptyScreen) is carried over by the preprocess below; a file that already has
-  // the key keeps whatever the user chose, so this only changes what a FRESH install does.
+  // either key keeps whatever the user chose. A settings.json predating BOTH names does flip to on — the
+  // default is the default — which is the intended migration, not an accident.
   keepOpenWithoutCard: z.boolean().default(true),
   // Disable trying silent mode for install-mode installers (they show their wizard instead). `.default(false)`
   // keeps the original silent behaviour for an older settings.json without the field.

@@ -53,8 +53,8 @@ function textResponse(text: string, status = 200): FetchResponse {
     body: {
       getReader: () => ({
         read: async () => {
-          if (index >= chunks.length) return { done: true };
-          const value = chunks[index]!;
+          const value = chunks[index];
+          if (value === undefined) return { done: true };
           index += 1;
           return { done: false, value };
         },
@@ -86,13 +86,13 @@ describe('steamgriddb metadata provider', () => {
 
     it("asks for covers in the launcher's own geometry", () => {
       expect(coversUrl({ kind: 'game', id: 5250 })).toBe(
-        'https://www.steamgriddb.com/api/v2/grids/game/5250?dimensions=600x900',
+        'https://www.steamgriddb.com/api/v2/grids/game/5250?dimensions=600x900&nsfw=false&humor=false',
       );
     });
 
     it('addresses a Steam candidate by its appid, with no extra lookup', () => {
       expect(coversUrl({ kind: 'steam', id: 220 })).toBe(
-        'https://www.steamgriddb.com/api/v2/grids/steam/220?dimensions=600x900',
+        'https://www.steamgriddb.com/api/v2/grids/steam/220?dimensions=600x900&nsfw=false&humor=false',
       );
     });
 

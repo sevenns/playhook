@@ -70,7 +70,7 @@ export class NotificationsService {
    * has anything to do with a failed disk write.
    */
   notify(input: NotificationInput): void {
-    const item: AppNotification = { id: randomUUID(), at: Date.now(), read: false, ...input };
+    const item: AppNotification = { ...input, id: randomUUID(), at: Date.now(), read: false };
     const delivery = deliveryFor(this.deps.presence());
     this.items = addNotification(this.items, item);
     this.persist();

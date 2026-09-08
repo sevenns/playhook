@@ -131,7 +131,8 @@ If a launch fails, the reason appears there and you can simply retry.
 ### Launch history
 
 Every game inserted into this device leaves a copy of its art and music in
-`%APPDATA%/playhook/library/` (`~/.config/playhook/` on Linux), so the carousel still shows the games you
+`%APPDATA%/playhook/library/` (`~/.config/playhook/` on Linux, `~/Library/Application Support/playhook/`
+on macOS), so the carousel still shows the games you
 have had once the card is out — pick one and you get its screen (title, stats, background and music),
 with no Play button: there is nothing to launch without the card.
 
@@ -162,7 +163,8 @@ music, stats, save sync and Play button — with or without a card inserted. **M
 one from the launcher itself (pick "This PC" as the source); an existing one is edited the same way a
 card game's is, through **More ⋯ → Customize**.
 
-Local games are stored in `%APPDATA%/playhook/pc-games/` (`~/.config/playhook/pc-games/` on Linux),
+Local games are stored in `%APPDATA%/playhook/pc-games/` (`~/.config/playhook/pc-games/` on Linux,
+`~/Library/Application Support/playhook/pc-games/` on macOS),
 which is laid out exactly like a card: a `game.json`, an `assets/` folder for the art and music you
 pick (they are **copied in**, so moving or deleting the originals doesn't break anything), and a
 `saves/` folder for the save backups. The manifest is the same format, with one extra block and one
@@ -279,7 +281,8 @@ the Steam Deck they work in **Game Mode** as well as on the desktop.
 - **Advanced** — *Open logs*, *Open games folder* (the install-mode directory), *Reset to defaults*.
 
 Settings live in `settings.json` next to the rest of the app state (`%APPDATA%\playhook\` on Windows,
-`~/.config/playhook/` on Linux); a missing or corrupted file falls back to the defaults.
+`~/.config/playhook/` on Linux, `~/Library/Application Support/playhook/` on macOS); a missing or
+corrupted file falls back to the defaults.
 
 ### Customize (the manifest editor)
 
@@ -768,7 +771,7 @@ can actually run.
 
 - **Windows 10/11 x64**, **Linux / SteamOS** (for the Steam Deck build — see below), or **macOS 13+ on
   Apple Silicon** (for the mac build — see below).
-- **Node.js 20+** and npm (CI builds on **Node 22** — match it if in doubt).
+- **Node.js 22.12+** and npm (required by electron 43 and @electron/rebuild 4; CI builds on **Node 22**).
 - **Native module build tools** — required to rebuild `drivelist` for Electron:
   - Visual Studio Build Tools with the "Desktop development with C++" component,
   - Python 3.x in `PATH`.

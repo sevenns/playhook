@@ -56,8 +56,8 @@ function textResponse(text: string, status = 200): FetchResponse {
     body: {
       getReader: () => ({
         read: async () => {
-          if (index >= chunks.length) return { done: true };
-          const value = chunks[index]!;
+          const value = chunks[index];
+          if (value === undefined) return { done: true };
           index += 1;
           return { done: false, value };
         },

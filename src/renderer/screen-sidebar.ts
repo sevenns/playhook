@@ -15,9 +15,15 @@ import { createEntrance } from './entrance.js';
 import { createScroller } from './screen-scroller.js';
 import { wrapIndex } from './index-math.js';
 
-/** One entry of the column: a section of the screen, or an action that ends it. */
-export interface SidebarEntry {
-  readonly id: string;
+/**
+ * One entry of the column: a section of the screen, or an action that ends it.
+ *
+ * The two id types are parameters because the SCREEN owns both vocabularies — its sections are message
+ * keys, its actions are row ids — and it is the screen that reads them back. Stated as bare `string`,
+ * every handler had to cast the id back to what it had just put in.
+ */
+export interface SidebarEntry<Section extends string = string, Action extends string = string> {
+  readonly id: Section | Action;
   readonly label: string;
   /** A section opens the pane beside it; an action runs and is done. */
   readonly kind: 'section' | 'action';
@@ -27,23 +33,23 @@ export interface SidebarEntry {
   readonly disabled?: boolean;
 }
 
-export interface SidebarDeps {
+export interface SidebarDeps<Section extends string = string, Action extends string = string> {
   readonly audio: AudioController;
   /** A section was selected (moved onto, or activated) — the pane shows it. */
-  onSection(id: string, entered: boolean): void;
+  onSection(id: Section, entered: boolean): void;
   /** An action entry was activated. */
-  onAction(id: string): void;
+  onAction(id: Action): void;
 }
 
-export interface Sidebar {
+export interface Sidebar<Section extends string = string, Action extends string = string> {
   /** Rebuilds the column. Keeps the current selection when that entry still exists. */
-  render(entries: readonly SidebarEntry[]): void;
+  render(entries: readonly SidebarEntry<Section, Action>[]): void;
   /** Moves the selection, wrapping at both ends. */
   move(delta: number): void;
   /** Activates the selected entry (A / click). */
   activate(): void;
   /** The selected entry, or undefined for an empty column. */
-  selected(): SidebarEntry | undefined;
+  selected(): SidebarEntry<Section, Action> | undefined;
   /** Whether the COLUMN holds the focus (as opposed to the pane beside it). */
   hasFocus(): boolean;
   setFocused(focused: boolean): void;
@@ -52,7 +58,7 @@ export interface Sidebar {
    * deep-link a screen straight to one section. Returns whether the id was there at all: silently doing
    * nothing is how a deep link to a renamed section would go unnoticed.
    */
-  select(id: string): boolean;
+  select(id: Section | Action): boolean;
   /**
    * Puts the selection back on the first entry. A re-opened screen must not resume where the last visit
    * left the column while the pane falls back to section one — the two would then disagree about what is
@@ -67,9 +73,12 @@ export interface Sidebar {
 /** How long the staggered entrance runs before the class that drives it is dropped. */
 const ENTRANCE_MS = 700;
 
-export function createSidebar(box: HTMLElement, deps: SidebarDeps): Sidebar {
+export function createSidebar<Section extends string = string, Action extends string = string>(
+  box: HTMLElement,
+  deps: SidebarDeps<Section, Action>,
+): Sidebar<Section, Action> {
   const scroller = createScroller(box);
-  let entries: readonly SidebarEntry[] = [];
+  let entries: readonly SidebarEntry<Section, Action>[] = [];
   let buttons: readonly HTMLButtonElement[] = [];
   let index = 0;
   let focused = true;
@@ -98,11 +107,11 @@ export function createSidebar(box: HTMLElement, deps: SidebarDeps): Sidebar {
 
   function announce(entered: boolean): void {
     const entry = entries[index];
-    if (entry?.kind === 'section') deps.onSection(entry.id, entered);
+    if (entry?.kind === 'section') deps.onSection(entry.id as Section, entered);
   }
 
   /** The button for one entry, created on first sight of its id and kept for as long as it is offered. */
-  function nodeFor(entry: SidebarEntry): HTMLButtonElement {
+  function nodeFor(entry: SidebarEntry<Section, Action>): HTMLButtonElement {
     const existing = nodes.get(entry.id);
     if (existing !== undefined) return existing;
     const button = document.createElement('button');
@@ -192,6 +201,6 @@ export function createSidebar(box: HTMLElement, deps: SidebarDeps): Sidebar {
       return;
     }
     if (entry.disabled === true) return;
-    deps.onAction(entry.id);
+    deps.onAction(entry.id as Action);
   }
 }

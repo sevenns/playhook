@@ -257,10 +257,10 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
    * which is the only way in — so B is always "back to the column", and the way out of the screen is
    * from the column alone.
    */
-  const sidebar = createSidebar(navEl, {
+  const sidebar = createSidebar<MessageKey, 'reset' | 'close'>(navEl, {
     audio: deps.audio,
     onSection: (id, entered) => {
-      sectionKey = id as MessageKey;
+      sectionKey = id;
       if (entered) {
         enterPane();
         return;

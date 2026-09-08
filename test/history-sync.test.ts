@@ -7,7 +7,12 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createTranslator } from '../src/shared/i18n';
 import { LibraryStore } from '../src/main/library-store';
-import { syncHistoryConfig } from '../src/main/history-sync';
+import {
+  commitHistorySync,
+  rollbackHistorySync,
+  syncHistoryConfig,
+} from '../src/main/history-sync';
+import type { HistorySyncResult } from '../src/main/history-sync';
 import type { ResolvedManifest, Stats } from '../src/shared/types';
 
 const NO_STATS: Stats = { schemaVersion: 1, totalPlaySeconds: 0, lastPlayedAt: null, launchCount: 0 };
@@ -61,7 +66,16 @@ async function seed(cardSlot: Record<string, unknown> = slot()): Promise<void> {
   await library.saveFromCard([manifest('a')], new Map([['a', cardSlot]]));
 }
 
-const sync = (): ReturnType<typeof syncHistoryConfig> => syncHistoryConfig(cardRoot, { library, t });
+/**
+ * One insertion's worth of the sync: the card write, then the history-side commit the caller runs once the
+ * card has read back (see ipc.ts loadCardBody). Split in the source, so it is split here too — the tests
+ * that care about the SPLIT call the two halves themselves.
+ */
+const sync = async (): Promise<HistorySyncResult> => {
+  const result = await syncHistoryConfig(cardRoot, { library, t });
+  await commitHistorySync(result, library);
+  return result;
+};
 
 beforeEach(async () => {
   baseDir = await fs.mkdtemp(path.join(os.tmpdir(), 'playhook-hs-lib-'));
@@ -173,6 +187,65 @@ describe('edits waiting for their card', () => {
     const result = await sync();
     expect(result.discarded).toEqual(['Alpha']);
     expect(await readCard()).toEqual(slot());
+  });
+
+  it('are NOT judged by `executable` in install mode — it names a file on the PC, not on the card', async () => {
+    // install.type other than `copy` resolves `executable` against the install directory (manifest.ts
+    // resolveInstall). Measuring it against the card root refuses every such slot — and a refusal here
+    // deletes the user's edits, so a single retitled installer game would lose them on every insertion.
+    const installer = slot({ install: { type: 'inno', installer: 'setup.exe' }, executable: 'bin/game.exe' });
+    await seed(installer);
+    await fs.writeFile(path.join(cardRoot, 'setup.exe'), 'EXE');
+    await library.saveEdits('a', JSON.stringify({ ...installer, title: 'Mine' }), 'Mine');
+
+    const result = await sync();
+    expect(result.applied).toEqual(['Mine']);
+    expect(result.discarded).toEqual([]);
+    expect(library.entry('a')?.configuredAt).toBeNull();
+  });
+
+  it('stop asking to be applied when the edit turns out to match the card already', async () => {
+    // The write happens (the text is identical, which is not the same as "nothing was applied"), and the
+    // edits MUST still be dropped: `configuredAt` is what says "there is something pending", and leaving
+    // it set replays the same no-op apply on every future insertion of this card.
+    await seed();
+    await library.saveEdits('a', JSON.stringify(slot()), 'Alpha');
+
+    const result = await sync();
+    expect(result.applied).toEqual(['Alpha']);
+    expect(library.entry('a')?.configuredAt).toBeNull();
+    expect(await library.readEditedSlot('a')).toBeNull();
+  });
+});
+
+describe('a card that stops reading after the sync rewrote it', () => {
+  it('gets its own text back, and the edits stay pending', async () => {
+    await seed();
+    await library.saveEdits('a', JSON.stringify(slot({ title: 'Mine' })), 'Mine');
+
+    const written = await syncHistoryConfig(cardRoot, { library, t });
+    expect(written.textBefore).not.toBeNull();
+
+    // …the caller's readManifests then fails, so it undoes the write instead of committing it.
+    const reverted = await rollbackHistorySync(cardRoot, written);
+    expect(reverted).not.toBeNull();
+    await commitHistorySync(reverted ?? written, library);
+
+    expect(await readCard()).toEqual(slot());
+    // The whole point: the user's work is still here, and still flagged for the next insertion.
+    expect(await library.readEditedSlot('a')).toEqual(slot({ title: 'Mine' }));
+    expect(library.entry('a')?.configuredAt).not.toBeNull();
+  });
+
+  it('reports nothing as applied, so the user is not told about a write that was undone', async () => {
+    await seed();
+    await library.saveEdits('a', JSON.stringify(slot({ title: 'Mine' })), 'Mine');
+
+    const written = await syncHistoryConfig(cardRoot, { library, t });
+    const reverted = await rollbackHistorySync(cardRoot, written);
+    expect(reverted?.applied).toEqual([]);
+    expect(reverted?.textBefore).toBeNull();
+    expect(reverted?.slots).toEqual(written.slotsBefore);
   });
 });
 

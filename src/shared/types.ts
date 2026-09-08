@@ -1258,8 +1258,16 @@ export interface GameMoveRequest {
  */
 export type ConfigMoveResult =
   | {
+      /**
+       * The move itself always succeeded — the game is on the target card and gone from the library.
+       * `applied` says only what the LAUNCHER could then do with it: `applied` — the card was re-read and
+       * the game is in the carousel; `deferred` — it went to a card that is not the active one, so there
+       * is nothing to re-read; `failed` — it went to the ACTIVE card and re-reading that card was refused,
+       * so the game is not on screen and the caller must not try to navigate to it (the reason is in the
+       * log). The same three words `ConfigSaveResult` uses, for the same reason.
+       */
       readonly moved: true;
-      readonly applied: 'applied' | 'deferred';
+      readonly applied: 'applied' | 'deferred' | 'failed';
     }
   | { readonly moved: false; readonly message: string };
 

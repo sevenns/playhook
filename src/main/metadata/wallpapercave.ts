@@ -33,6 +33,7 @@ import {
   type MetadataProvider,
 } from './provider';
 import { type HttpClient } from './http';
+import { BoundedMap } from './bounded-map';
 import { isLatinTitle, searchTerms } from './wallhaven';
 
 const ORIGIN = 'https://wallpapercave.com';
@@ -100,9 +101,14 @@ function attribute(tag: string, name: string): string | undefined {
   return match?.[1] === undefined ? undefined : decodeEntities(match[1]);
 }
 
-/** A `src` as an absolute URL, whichever of the three forms the markup used. */
+/**
+ * A `src` as an absolute URL, whichever of the three forms the markup used. A plain-http address is
+ * upgraded rather than passed on: the site serves everything over TLS anyway, and HttpClient refuses
+ * anything that is not https — an http link in the markup would silently cost the wallpaper.
+ */
 export function absoluteUrl(src: string): string {
-  if (/^https?:\/\//i.test(src)) return src;
+  if (/^https:\/\//i.test(src)) return src;
+  if (/^http:\/\//i.test(src)) return `https://${src.slice('http://'.length)}`;
   if (src.startsWith('//')) return `https:${src}`;
   return src.startsWith('/') ? `${ORIGIN}${src}` : `${ORIGIN}/${src}`;
 }
@@ -286,10 +292,13 @@ interface CaveSearch {
   readonly wallpapers: readonly CaveWallpaper[];
 }
 
+/** How many candidates this provider remembers an answer for — see BoundedMap. */
+const CACHE_LIMIT = 100;
+
 export class WallpaperCaveProvider implements MetadataProvider {
   readonly id = 'wallpapercave' as const;
   /** One search per candidate, by candidate key — see CaveSearch. */
-  private readonly searches = new Map<string, CaveSearch>();
+  private readonly searches = new BoundedMap<CaveSearch>(CACHE_LIMIT);
 
   constructor(private readonly deps: WallpaperCaveDeps) {}
 

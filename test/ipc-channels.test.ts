@@ -16,9 +16,9 @@ const PRELOAD_FILES = [path.resolve(__dirname, '../src/preload/preload.ts')];
 /** Extracts the string values of the `const CHANNELS = { … }` object literal from a preload source. */
 function readChannelValues(file: string): string[] {
   const source = fs.readFileSync(file, 'utf8');
-  const block = /const CHANNELS =\s*{([\s\S]*?)}\s*as const/.exec(source);
-  if (block === null) throw new Error(`no CHANNELS block found in ${path.basename(file)}`);
-  return [...block[1]!.matchAll(/:\s*'([^']+)'/g)].map((m) => m[1]!);
+  const body = /const CHANNELS =\s*{([\s\S]*?)}\s*as const/.exec(source)?.[1];
+  if (body === undefined) throw new Error(`no CHANNELS block found in ${path.basename(file)}`);
+  return [...body.matchAll(/:\s*'([^']+)'/g)].flatMap((m) => (m[1] === undefined ? [] : [m[1]]));
 }
 
 describe('IPC channel contract (preload ↔ shared/types)', () => {
@@ -41,8 +41,9 @@ describe('IPC channel contract (preload ↔ shared/types)', () => {
     // the project invariant is "every channel is exposed by EXACTLY one preload").
     for (let i = 0; i < perFile.length; i += 1) {
       for (let j = i + 1; j < perFile.length; j += 1) {
-        const a = perFile[i]!;
-        const b = perFile[j]!;
+        const a = perFile[i];
+        const b = perFile[j];
+        if (a === undefined || b === undefined) continue;
         const overlap = a.values.filter((v) => b.values.includes(v));
         expect(overlap, `overlap between ${a.name} and ${b.name}`).toEqual([]);
       }

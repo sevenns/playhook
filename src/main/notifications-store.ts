@@ -86,11 +86,29 @@ const notificationSchema = z.discriminatedUnion('kind', [
   }),
 ]);
 
+/**
+ * The list, read ITEM BY ITEM: anything that does not parse is dropped and the rest of the inbox is kept.
+ *
+ * `z.array(notificationSchema)` fails as a whole on one bad element, and a failed parse of the file falls
+ * back to EMPTY_NOTIFICATIONS — which the next `update()` then writes over the real file. One notification
+ * of a kind this build has never heard of (the user downgraded; alpha tags on the Deck make that a normal
+ * Tuesday) would take the whole inbox with it, permanently.
+ */
+const itemsSchema = z
+  .array(z.unknown())
+  .default([])
+  .transform((raw): readonly AppNotification[] => {
+    const kept: AppNotification[] = [];
+    for (const item of raw) {
+      const parsed = notificationSchema.safeParse(item);
+      if (parsed.success) kept.push(parsed.data);
+    }
+    return kept;
+  });
+
 const inboxSchema = z.object({
   schemaVersion: z.literal(1),
-  // `.readonly()` so the parsed shape matches NotificationsFile, whose list is immutable like every
-  // other snapshot passed around here (the model returns new arrays, it never edits one in place).
-  items: z.array(notificationSchema).readonly().default([]),
+  items: itemsSchema,
   /**
    * The last app version a "ready to install" notification was written for. PERSISTED, not in-memory:
    * the update check runs every 6 hours, so a session that outlives one check would notify about the

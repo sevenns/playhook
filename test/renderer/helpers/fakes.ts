@@ -219,6 +219,8 @@ export interface FakeTree {
 export interface FakeFilePickerApi extends FilePickerApi {
   readonly listed: readonly string[];
   readonly accepted: readonly (readonly string[])[];
+  /** Per accept, the history id it was routed with — null when it went to the ordinary root-based call. */
+  readonly viaHistoryId: readonly (string | null)[];
   /** What `acceptPaths` answers with; the default turns the picked paths into relative ones. */
   acceptWith: (paths: readonly string[]) => ConfigPickResult;
 }
@@ -228,6 +230,7 @@ const PICKER_ROOTS = [{ path: '/card', label: 'Card', kind: 'card' as const }];
 export function fakeFilePickerApi(tree: FakeTree, start = '/card'): FakeFilePickerApi {
   const listed: string[] = [];
   const accepted: (readonly string[])[] = [];
+  const viaHistoryId: (string | null)[] = [];
   const parentOf = (path: string): string | null => {
     const at = path.lastIndexOf('/');
     if (at <= 0) return null;
@@ -236,6 +239,7 @@ export function fakeFilePickerApi(tree: FakeTree, start = '/card'): FakeFilePick
   const api: FakeFilePickerApi = {
     listed,
     accepted,
+    viaHistoryId,
     acceptWith: (paths) => ({ ok: true, paths }),
     listDir: (request) => {
       const path = request.path ?? start;
@@ -249,10 +253,12 @@ export function fakeFilePickerApi(tree: FakeTree, start = '/card'): FakeFilePick
     },
     acceptPaths: (request) => {
       accepted.push(request.paths);
+      viaHistoryId.push(null);
       return Promise.resolve(api.acceptWith(request.paths));
     },
     acceptHistoryPaths: (request) => {
       accepted.push(request.paths);
+      viaHistoryId.push(request.id);
       return Promise.resolve(api.acceptWith(request.paths));
     },
   };

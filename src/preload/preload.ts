@@ -1,11 +1,13 @@
 // Typed main↔renderer bridge (contextIsolation: true, nodeIntegration: false).
 // Channels are inlined as literals rather than imported from shared, so the preload
 // stays sandbox-compatible (a sandboxed preload cannot require arbitrary files).
-// `satisfies Partial<typeof IPC>` gives us the compile-time bridge back: a wrong channel
-// value (TS2322) or a typo'd key (TS2353) now fails typecheck. `import type` keeps IPC
-// out of the runtime bundle (it erases), so the sandbox stays intact. Partial<> cannot
-// catch a *missing* channel though — that completeness is guarded by the ipc-channels
-// unit test (shared/types.ts is the single source of truth).
+// `satisfies typeof IPC` — not `Partial<>` — gives us the compile-time bridge back: a wrong channel
+// value (TS2322), a typo'd key (TS2353) AND a *forgotten* channel (TS2741) all fail typecheck.
+// Partial<> was right while a second window had a preload of its own and each held a slice; there is
+// one window now, so this map must be the whole map. `import type` keeps IPC out of the runtime bundle
+// (it erases), so the sandbox stays intact. The ipc-channels unit test still guards the same invariant
+// from the outside, and would carry it if a second preload ever returns (shared/types.ts is the single
+// source of truth).
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
 import type {
   AppNotification,
@@ -152,7 +154,7 @@ const CHANNELS = {
   notificationsDismiss: 'notifications:dismiss',
   notificationsClear: 'notifications:clear',
   notificationsMarkRead: 'notifications:mark-read',
-} as const satisfies Partial<typeof IPC>;
+} as const satisfies typeof IPC;
 
 const api: RendererApi = {
   onStateUpdate(callback: (state: AppState) => void): void {

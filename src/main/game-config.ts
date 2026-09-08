@@ -92,7 +92,7 @@ import {
 } from '../shared/asset-move-names';
 import { type PcStore } from './pc-store';
 import { type SavePathResolver } from './platform/types';
-import { resolveInside, validateManifestText } from './manifest';
+import { isSafeGameId, resolveInside, validateManifestText } from './manifest';
 import { writeFileAtomicEnsuringDir } from './json-store';
 import { describe } from './util';
 import { log } from './logger';
@@ -352,25 +352,35 @@ export class GameConfigService {
       IPC.gameConfigMoveToCard,
       (_event, payload: GameMoveRequest): Promise<ConfigMoveResult> => this.moveToCard(payload),
     );
+    // Every history channel addresses a game by id ALONE, and that id becomes a directory name under the
+    // history (LibraryStore.gameDir). The manifest schema validates the ids that come off a card; these
+    // come off the renderer, whose root this file's header says is never trusted — so they are held to
+    // the same rule here, before anything reaches `path.join`.
     ipcMain.handle(
       IPC.gameConfigReadHistory,
       (_event, id: unknown): Promise<HistoryConfigReadResult> =>
-        this.readHistoryGame(typeof id === 'string' ? id : ''),
+        this.readHistoryGame(isSafeGameId(id) ? id : ''),
     );
     ipcMain.handle(
       IPC.gameConfigSaveHistory,
       (_event, payload: HistoryConfigSaveRequest): Promise<ConfigSaveResult> =>
-        this.saveHistoryGame(payload),
+        isSafeGameId(payload.id)
+          ? this.saveHistoryGame(payload)
+          : Promise.resolve({ saved: false, message: this.deps.getTranslator()('errors.configInvalid') }),
     );
     ipcMain.handle(
       IPC.gameConfigAcceptPathHistory,
       (_event, payload: HistoryConfigAcceptRequest): Promise<ConfigPickResult> =>
-        this.acceptHistoryPaths(payload),
+        isSafeGameId(payload.id)
+          ? this.acceptHistoryPaths(payload)
+          : Promise.resolve({ ok: false, message: this.deps.getTranslator()('errors.configInvalid') }),
     );
     ipcMain.handle(
       IPC.gameConfigHistoryAssetPreview,
       (_event, payload: { readonly id: string; readonly ref: string }): Promise<string | null> =>
-        this.historyAssetPreview(payload.id, payload.ref),
+        isSafeGameId(payload.id)
+          ? this.historyAssetPreview(payload.id, payload.ref)
+          : Promise.resolve(null),
     );
   }
 
@@ -422,7 +432,14 @@ export class GameConfigService {
     const slot = extractGameSlot(text, id);
     if (!slot.ok) return { saved: false, message: t('errors.configInvalid') };
     const title = slot.slot['title'];
-    await this.deps.library.saveEdits(id, text, typeof title === 'string' ? title : id);
+    // The SLOT is stored, not the text it was extracted from. What is kept here is one game's edits, and
+    // `readEditedSlot` refuses anything that is not a bare object — so a text that arrived as an array
+    // would be written, read back as null, and dropped by the apply step as "flagged but has no edits".
+    await this.deps.library.saveEdits(
+      id,
+      `${JSON.stringify(slot.slot, null, 2)}\n`,
+      typeof title === 'string' ? title : id,
+    );
     this.deps.refreshLibrary();
     // "deferred" in the same sense a write to a non-active card is: the file is stored, and the launcher
     // has nothing to apply it to until that card comes back.
@@ -492,7 +509,11 @@ export class GameConfigService {
     return (await readImageDataUrl(this.deps.library.copiedAssetPath(id, copy))) ?? null;
   }
 
-  /** The staged file name a `staged/<name>`-shaped reference points at, or null for anything else. */
+  /**
+   * The staged file name an `assets/<name>`-shaped reference points at, or null for anything else. The
+   * prefix is HISTORY_ASSETS_DIRNAME — `assets/`, the same convention a card uses — because that is what
+   * the path will mean once the edits reach the card; the file only lives under `staged/` until then.
+   */
   private stagedNameOf(ref: string): string | null {
     const prefix = `${HISTORY_ASSETS_DIRNAME}/`;
     if (!ref.startsWith(prefix)) return null;
@@ -1076,10 +1097,12 @@ export class GameConfigService {
 
     // 6. Apply / defer, exactly like an ordinary card save.
     this.invalidateCandidates();
-    let applied: 'applied' | 'deferred';
+    let applied: 'applied' | 'deferred' | 'failed';
     if (request.toRoot === this.deps.getActiveRoot()) {
       const reload = await this.deps.reloadManifest(request.toRoot);
-      applied = 'applied';
+      // `failed`, not `applied`, when the re-read was refused — the same verdict `save()` gives for the
+      // same case. Reporting it as applied sent the caller off to focus a game the carousel has not got.
+      applied = reload.ok ? 'applied' : 'failed';
       if (!reload.ok) {
         log.warn(
           `[game-move] id=${request.id}: moved, but reloading the active card failed: ${reload.message}`,
@@ -1438,11 +1461,9 @@ export class GameConfigService {
   }
 
   /**
-   * True when `root` is a current removable/non-system mountpoint, or the app's own PC-library root
-   * (anti-arbitrary-write check — the closed set of roots this service will ever write to).
-   */
-  /**
-   * The public face of `isAllowedRoot`, for the one other service that writes into a game's root:
+   * The public face of `isAllowedRoot` — true when `root` is a current removable/non-system mountpoint,
+   * or the app's own PC-library root (the closed set of roots this service will ever write to) — for the
+   * one other service that writes into a game's root:
    * MetadataService puts a downloaded cover or track there, and it must answer the same question this
    * service asks before every write rather than a second, slightly different one.
    */

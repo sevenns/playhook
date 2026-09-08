@@ -47,13 +47,20 @@ const focusIndex = (): number =>
   );
 
 async function open(
-  request: { kind?: ConfigPickKind; multi?: boolean; current?: string } = {},
+  request: {
+    kind?: ConfigPickKind;
+    multi?: boolean;
+    current?: string;
+    root?: string;
+    historyId?: string;
+  } = {},
 ): Promise<void> {
   picker.open({
-    root: '/card',
+    root: request.root ?? '/card',
     kind: request.kind ?? 'executable',
     current: request.current ?? '',
     multi: request.multi ?? false,
+    ...(request.historyId !== undefined ? { historyId: request.historyId } : {}),
     onDone: (result) => {
       results.push(result);
     },
@@ -347,5 +354,84 @@ describe('file picker multi-select', () => {
 
     expect(req('picker-entries').querySelectorAll('.is-picked')).toHaveLength(0);
     expect(audio.limits()).toBe(1);
+  });
+});
+
+describe('a picker that has to survive a slow main', () => {
+  it("routes a HISTORY game's pick to the staging call, not to a root it has not got", async () => {
+    await open({ kind: 'image', root: '', historyId: 'hades' });
+    focusRow('games');
+    picker.navActivate();
+    await flushAsync();
+    focusRow('cover.png');
+
+    picker.navActivate();
+    await flushAsync();
+
+    expect(api.accepted).toEqual([['/card/games/cover.png']]);
+    expect(api.viaHistoryId).toEqual(['hades']);
+  });
+
+  it('imports once for a double press — the second A is refused while the first is in flight', async () => {
+    let release: () => void = () => undefined;
+    api.acceptWith = (paths) => ({ ok: true, paths });
+    const slow = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const original = api.acceptPaths.bind(api);
+    api.acceptPaths = async (request) => {
+      await slow;
+      return original(request);
+    };
+
+    await open({ kind: 'image' });
+    focusRow('games');
+    picker.navActivate();
+    await flushAsync();
+    focusRow('cover.png');
+
+    picker.navActivate();
+    picker.navActivate();
+    release();
+    await flushAsync();
+
+    expect(api.accepted).toHaveLength(1);
+    expect(results).toHaveLength(1);
+  });
+
+  it('does not paint a listing that belongs to the visit before this one', async () => {
+    // The first open's listing is held back; the picker is reopened for another field meanwhile. The late
+    // answer names the OLD root, and painting it would drop that directory over the one on screen.
+    let release: () => void = () => undefined;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const original = api.listDir.bind(api);
+    let call = 0;
+    api.listDir = async (request) => {
+      call += 1;
+      if (call === 1) {
+        const stale = await original(request);
+        await held;
+        return stale;
+      }
+      return await original({ ...request, path: '/card/games' });
+    };
+
+    picker.open({
+      root: '/card',
+      kind: 'executable',
+      current: '',
+      multi: false,
+      onDone: () => undefined,
+    });
+    await open({ kind: 'image' });
+    expect(rows()).toContain('cover.png');
+
+    release();
+    await flushAsync();
+
+    expect(rows()).toContain('cover.png');
+    expect(rows()).not.toContain('game.json');
   });
 });

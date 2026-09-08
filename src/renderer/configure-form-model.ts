@@ -18,7 +18,13 @@
  * state (no launch method chosen yet) - also only valid there; the form gets both constraints from the
  * selected root, not from the text (see `launchModesFor`/`draftModeFor` in game-settings-model.ts).
  */
-export type LaunchMode = 'executable' | 'installer' | 'steam' | 'pc' | 'none';
+export const LAUNCH_MODES = ['executable', 'installer', 'steam', 'pc', 'none'] as const;
+export type LaunchMode = (typeof LAUNCH_MODES)[number];
+
+/** Whether a `<select>`'s raw value is one of them — the select is DOM, and DOM answers `string`. */
+export function isLaunchMode(value: string): value is LaunchMode {
+  return (LAUNCH_MODES as readonly string[]).includes(value);
+}
 
 /**
  * Derives a manifest `id` from a game's display name for the Configure form: accents stripped, lowercased,
@@ -41,7 +47,13 @@ export function slugifyId(name: string): string {
  * by a checkbox inside the Executable mode, not by the installer type dropdown (which only offers the
  * three real families). See `copyToPc` / `copyInstall` on ManifestFormModel.
  */
-export type InstallType = 'nsis' | 'inno' | 'custom' | 'copy';
+export const INSTALL_TYPES = ['nsis', 'inno', 'custom', 'copy'] as const;
+export type InstallType = (typeof INSTALL_TYPES)[number];
+
+/** Whether a `<select>`'s raw value is one of them — see isLaunchMode. */
+export function isInstallType(value: string): value is InstallType {
+  return (INSTALL_TYPES as readonly string[]).includes(value);
+}
 
 /** The installer families the type dropdown offers — everything but `copy` (see InstallType). */
 export type InstallerFamily = Exclude<InstallType, 'copy'>;

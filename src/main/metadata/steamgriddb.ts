@@ -50,7 +50,9 @@ export function autocompleteUrl(term: string): string {
  */
 export function coversUrl(ref: SgdbArtRef): string {
   const target = ref.kind === 'steam' ? `steam/${ref.id}` : `game/${ref.id}`;
-  return `${API_ORIGIN}/grids/${target}?dimensions=${GRID_DIMENSIONS}`;
+  // `nsfw`/`humor` are stated rather than left to the API's defaults — the same way wallhaven.ts states
+  // its `purity`. A default is the server's decision to change; this is the launcher's.
+  return `${API_ORIGIN}/grids/${target}?dimensions=${GRID_DIMENSIONS}&nsfw=false&humor=false`;
 }
 
 /** Which id an art request is addressed by — the database's own, or a Steam appid. */

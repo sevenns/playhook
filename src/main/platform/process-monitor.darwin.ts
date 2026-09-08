@@ -145,6 +145,22 @@ function signalPids(pids: Iterable<number>, signal: NodeJS.Signals): void {
   }
 }
 
+/**
+ * Which of these pids are still there, a grace period after SIGTERM. Blindly following up with SIGKILL
+ * would aim it at whatever the OS has since given the number to.
+ */
+function stillAlive(pids: readonly number[]): readonly number[] {
+  return pids.filter((candidate) => {
+    try {
+      process.kill(candidate, 0);
+      return true;
+    } catch (cause) {
+      // EPERM means it exists and belongs to another user; ESRCH means it is gone.
+      return (cause as NodeJS.ErrnoException).code === 'EPERM';
+    }
+  });
+}
+
 /** The macOS `ps`-backed ProcessMonitor. */
 export function createDarwinProcessMonitor(): ProcessMonitor {
   const monitor: ProcessMonitor = {
@@ -164,17 +180,7 @@ export function createDarwinProcessMonitor(): ProcessMonitor {
       const pids = descendantPids(pid, await scanParents());
       signalPids(pids, 'SIGTERM');
       await delay(KILL_GRACE_MS);
-      // Re-check rather than blindly SIGKILL: a game that honoured SIGTERM is already gone, and its pid
-      // may by then belong to something else.
-      const stillAlive = pids.filter((candidate) => {
-        try {
-          process.kill(candidate, 0);
-          return true;
-        } catch (cause) {
-          return (cause as NodeJS.ErrnoException).code === 'EPERM';
-        }
-      });
-      signalPids(stillAlive, 'SIGKILL');
+      signalPids(stillAlive(pids), 'SIGKILL');
     },
     async killByName(names): Promise<void> {
       const wanted = new Set(names.map(normalizeImageName));
@@ -186,7 +192,9 @@ export function createDarwinProcessMonitor(): ProcessMonitor {
       if (pids.length === 0) return;
       signalPids(pids, 'SIGTERM');
       await delay(KILL_GRACE_MS);
-      signalPids(pids, 'SIGKILL');
+      // The same re-check killTree does, and for the same reason: the list was built a grace period ago,
+      // and a pid whose process honoured SIGTERM may by now belong to something else entirely.
+      signalPids(stillAlive(pids), 'SIGKILL');
     },
     // Д1: a mac process carries no readable Steam tag, so the watched image names ARE the running signal —
     // the same rule win32 uses. The appid is unused here.

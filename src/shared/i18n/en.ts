@@ -169,7 +169,7 @@ export const en = {
   'drive.noGames': 'no games yet',
   'drive.invalid': 'invalid game.json',
 
-  // ── Settings window (settings.html + settings.ts) ───────────────────────────
+  // ── Settings screen (settings-screen.ts) ────────────────────────────────────
   'settings.sectionUpdates': 'Updates',
   'settings.loading': 'Loading...',
   'settings.sectionAutoUpdate': 'Automatic updates',
@@ -190,7 +190,7 @@ export const en = {
   'settings.preventScreensaver': 'Keep the screen awake while the launcher is open',
   'settings.keepOpenWithoutCard': 'Keep the launcher open without a card',
   'settings.disableSilentInstall': 'Disable silent installer mode (show the installer wizard)',
-  // Steam Deck only — the row is hidden entirely elsewhere (see settings.ts / isSteamAvailable).
+  // Steam Deck only — the row is hidden entirely elsewhere (see settings-form-model.ts / isSteamAvailable).
   'settings.steamAutoLaunch': 'Open Playhook in Steam when a card is inserted (Game Mode only)',
   'settings.steamAutoLaunchHint':
     'Off frees about 120 MB of RAM: the background watcher stops running. The Steam tile stays — launch it from the library.',
@@ -212,7 +212,7 @@ export const en = {
   'settings.openGames': 'Open games folder',
   'settings.reset': 'Reset to defaults',
   'settings.confirmReset': 'Reset all settings to defaults?',
-  // Update-status line + primary button (settings.ts render()).
+  // Update-status line + primary button (settings-screen.ts render()).
   'settings.status.idle': 'Check for updates to see if a new version is available.',
   'settings.status.upToDate': 'You’re up to date.',
   'settings.status.checking': 'Checking for updates...',

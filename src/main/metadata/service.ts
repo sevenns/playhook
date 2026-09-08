@@ -42,6 +42,7 @@ import { describe } from '../util';
 import { applyRelativePath, stalePathsFor, validateApply, type ApplyTarget } from './apply-target';
 import { sniffMedia, type MediaKind } from './media-type';
 import { type HttpClient } from './http';
+import { BoundedMap } from './bounded-map';
 import {
   type ArtworkOffer,
   type ArtworkOffers,
@@ -62,6 +63,10 @@ const MAX_THUMB_BYTES = 8 * 1024 * 1024;
 const THUMB_CONCURRENCY = 3;
 /** How many keys each map remembers. Bounded for the reason card-art's LRU is: a session is unbounded. */
 const CACHE_LIMIT = 300;
+/** …and how many BYTES the thumbnail cache may hold on top of that — see `thumbs`. */
+const THUMB_CACHE_BYTES = 64 * 1024 * 1024;
+/** Makes each scratch download's file name its own — see writeScratch. */
+let scratchCounter = 0;
 /**
  * How many pictures ONE source puts on ONE page of the gallery. SteamGridDB answers with everything the
  * community uploaded, and a wallpaper site with more than anyone will look at — every one of which would
@@ -100,28 +105,6 @@ const DOWNLOADS_DIRNAME = 'downloads';
  * A Map that forgets its oldest entry once it is full — the same shape (and the same reason) as the
  * renderer's card-art cache. Re-reading a key refreshes it, so the keys a screen is actually using stay.
  */
-class BoundedMap<T> {
-  private readonly entries = new Map<string, T>();
-
-  constructor(private readonly limit: number) {}
-
-  get(key: string): T | undefined {
-    const value = this.entries.get(key);
-    if (value === undefined) return undefined;
-    this.entries.delete(key);
-    this.entries.set(key, value);
-    return value;
-  }
-
-  set(key: string, value: T): void {
-    this.entries.delete(key);
-    this.entries.set(key, value);
-    if (this.entries.size <= this.limit) return;
-    const oldest = this.entries.keys().next();
-    if (oldest.done !== true) this.entries.delete(oldest.value);
-  }
-}
-
 /**
  * One gallery in progress: which candidate it belongs to, what has already been shown, what was fetched
  * but did not fit, and which page each source will be asked for next.
@@ -160,7 +143,15 @@ export class MetadataService {
   private readonly candidates = new BoundedMap<GameCandidate>(CACHE_LIMIT);
   private readonly artwork = new BoundedMap<ArtworkOffer>(CACHE_LIMIT);
   private readonly tracks = new BoundedMap<MusicTrackOffer>(CACHE_LIMIT);
-  private readonly thumbs = new BoundedMap<string>(CACHE_LIMIT);
+  /**
+   * The one cache that needs a byte budget as well as an entry count: a value here is a data: URL of up
+   * to MAX_THUMB_BYTES, and for Wallpaper Cave the tile IS the full-size file. 300 of those at 8 MB is
+   * gigabytes of strings held in main for one browse.
+   */
+  private readonly thumbs = new BoundedMap<string>(CACHE_LIMIT, {
+    bytes: THUMB_CACHE_BYTES,
+    sizeOf: (dataUrl) => dataUrl.length,
+  });
   /**
    * Everything currently in flight. `metadata:cancel` aborts the lot: the user pressed Back, and every
    * request that is still running belongs to the surface they just left.
@@ -168,6 +159,8 @@ export class MetadataService {
   private readonly inFlight = new Set<AbortController>();
   /** The gallery the renderer is paging through, or null before the first page of one is asked for. */
   private gallery: GalleryPool | null = null;
+  /** Serializes gallery pages — see artworkFor. Rejections are swallowed so one bad page cannot jam it. */
+  private galleryTail: Promise<void> = Promise.resolve();
 
   constructor(private readonly deps: MetadataDeps) {}
 
@@ -310,7 +303,24 @@ export class MetadataService {
    * Page 0 starts a fresh gallery. Every later page is served from what the sources have already said
    * where possible, and only the sources whose pool has run dry are asked for another page of their own.
    */
-  private async artworkFor(
+  private artworkFor(
+    candidateKey: string,
+    kind: ArtworkKind,
+    page: number,
+    filter: ArtworkFilter,
+  ): Promise<MetadataResult<ArtworkPage>> {
+    // Serialized, because the pool this walks is read-modify-write state: two "load more" presses landing
+    // together each read the same `nextPage`, each write back the same +1, and the page in between is
+    // never asked for at all. One chain also means the second press sees the first one's `shown` set.
+    const run = this.galleryTail.then(() => this.artworkPage(candidateKey, kind, page, filter));
+    this.galleryTail = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
+  private async artworkPage(
     candidateKey: string,
     kind: ArtworkKind,
     page: number,
@@ -602,8 +612,12 @@ export class MetadataService {
   ): Promise<string> {
     const dir = path.join(this.deps.cacheDir, DOWNLOADS_DIRNAME);
     await fse.ensureDir(dir);
+    // Unique per write, not per target: the name is derived from the manifest field being filled, so two
+    // applies of the same slot (a cover for one game from two screens, a retry over a slow one still in
+    // flight) would otherwise write the same scratch file and each import the other's half.
+    scratchCounter += 1;
     const name = path.basename(applyRelativePath(target, extension));
-    const scratch = path.join(dir, name);
+    const scratch = path.join(dir, `${scratchCounter}-${name}`);
     await fse.writeFile(scratch, bytes);
     return scratch;
   }

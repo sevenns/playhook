@@ -158,6 +158,47 @@ function tmpNameFor(filePath: string): string {
   return `${filePath}.${process.pid}.${tmpCounter}.tmp`;
 }
 
+/** What `tmpNameFor` produces, as a matcher: `<anything>.<pid>.<counter>.tmp`. */
+const TMP_NAME = /\.\d+\.\d+\.tmp$/;
+
+/**
+ * How old an orphan has to be before it is swept. Long enough that no write in flight — including one
+ * riding out the full EBUSY backoff — can ever be mistaken for abandoned.
+ */
+const TMP_ORPHAN_AGE_MS = 60 * 60 * 1000;
+
+/**
+ * Deletes the temp files a killed write left behind in ONE directory (not recursive).
+ *
+ * Unique temp names are what made the concurrent writers safe, and the cost of that is that a write which
+ * never reached its rename — the card was pulled, the process was killed — leaves a file nobody will ever
+ * consume, under a name nothing will ever reuse. On a card that is a growing pile of `game.json.4711.3.tmp`
+ * next to the game, in the user's own file manager.
+ *
+ * Best-effort and silent by design: this is housekeeping, not an operation anyone is waiting on.
+ */
+export async function sweepAtomicTemps(dir: string): Promise<void> {
+  let names: readonly string[];
+  try {
+    names = await fs.readdir(dir);
+  } catch {
+    return; // no directory yet, or not ours to read — nothing to tidy either way
+  }
+  const cutoff = Date.now() - TMP_ORPHAN_AGE_MS;
+  for (const name of names) {
+    if (!TMP_NAME.test(name)) continue;
+    const target = path.join(dir, name);
+    try {
+      const stats = await fs.stat(target);
+      if (!stats.isFile() || stats.mtimeMs > cutoff) continue;
+      await fs.rm(target, { force: true });
+      log.info(`[json-store] swept the abandoned temp file "${name}"`);
+    } catch {
+      // Someone else's, still locked, or gone already — all of them mean "leave it".
+    }
+  }
+}
+
 function errorCode(cause: unknown): string | undefined {
   if (!(cause instanceof Error) || !('code' in cause)) return undefined;
   const code = (cause as { readonly code?: unknown }).code;
@@ -175,8 +216,8 @@ async function writeRaw(target: string, data: string | Buffer): Promise<void> {
 }
 
 /**
- * Last resort when the atomic replace is refused OUTRIGHT (not the transient EBUSY/EPERM withRetry
- * already rides out): the rename needs DELETE on the existing target, which is a different right from
+ * Last resort when the atomic replace is refused OUTRIGHT (not the transient EBUSY/EPERM
+ * `renameWithBackoff` already rides out): the rename needs DELETE on the existing target, which is a different right from
  * "may write to it", and a file can be left without it by something other than this app — a read-only
  * attribute, or an ACL inherited from an install under another account (a per-user install taking over a
  * `%APPDATA%` file an all-users one created is the case that surfaced this).

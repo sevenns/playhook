@@ -105,6 +105,12 @@ export function createOsk(deps: OskDeps): TextEntrySurface {
   const t = (): Translator => deps.getTranslator();
 
   let open = false;
+  /**
+   * Bumped on every open and every close. `paste` awaits main for the clipboard, and "still open" is not
+   * enough to know the answer is still WANTED: closing this field and opening the next one inside that
+   * await would land the clipboard in a field the user never asked to paste into.
+   */
+  let visit = 0;
   let mode: OskMode = 'text';
   let layout: Layout = 'en';
   let shifted = false;
@@ -303,8 +309,9 @@ export function createOsk(deps: OskDeps): TextEntrySurface {
    * put into the manifest what the keys themselves cannot.
    */
   async function paste(): Promise<void> {
+    const token = visit;
     const clipboard = await deps.readClipboard();
-    if (!open) return; // the keyboard was closed while main was answering
+    if (token !== visit) return; // closed — or closed and reopened for another field — while main answered
     // Capped, and capped by CHARACTER so the cut can't land inside one: nothing this keyboard edits is
     // longer than a path, and a clipboard holding a whole file would otherwise be drawn into the field.
     const filtered = charsOf(sanitize(mode, clipboard)).slice(0, PASTE_MAX_CHARS).join('');
@@ -400,6 +407,7 @@ export function createOsk(deps: OskDeps): TextEntrySurface {
     if (!open) return;
     deps.audio.play('popup-close');
     open = false;
+    visit += 1;
     entrance.cancel();
     root.classList.remove('is-open');
     root.setAttribute('aria-hidden', 'true');
@@ -637,6 +645,7 @@ export function createOsk(deps: OskDeps): TextEntrySurface {
       rowIndex = 0;
       colIndex = 0;
       open = true;
+      visit += 1;
       deps.audio.play('popup-open');
       titleEl.textContent = title;
       paintValue();

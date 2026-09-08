@@ -51,8 +51,8 @@ function textResponse(text: string, status = 200): FetchResponse {
     body: {
       getReader: () => ({
         read: async () => {
-          if (index >= chunks.length) return { done: true };
-          const value = chunks[index]!;
+          const value = chunks[index];
+          if (value === undefined) return { done: true };
           index += 1;
           return { done: false, value };
         },
@@ -170,6 +170,15 @@ describe('gog provider', () => {
 
     it('drops another game of the same series — a missing word is a different game', () => {
       expect(titleMatches('Sniper Elite V2 Remastered', 'Sniper Elite 5')).toBe(false);
+    });
+
+    it('matches WORDS, not substrings — a name inside a longer word is another game', () => {
+      expect(titleMatches('Shades of Doubt', 'Hades')).toBe(false);
+      expect(titleMatches('Dark Souls', 'Ark')).toBe(false);
+      expect(titleMatches('Trust', 'Rust')).toBe(false);
+      // …and the whole-word cases it must keep matching.
+      expect(titleMatches('Hades II', 'Hades')).toBe(true);
+      expect(titleMatches('Rust', 'Rust')).toBe(true);
     });
 
     it('ignores the articles and the marks stores sprinkle differently', () => {
