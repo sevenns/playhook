@@ -139,6 +139,23 @@ async function open(overrides: Partial<GameSettingsScreenApi> = {}): Promise<voi
   await flushAsync();
 }
 
+/** The same screen opened for a game whose card is not in (see history-config.ts). */
+async function openFromHistory(overrides: Partial<GameSettingsScreenApi> = {}): Promise<void> {
+  createScreen({
+    readHistory: vi.fn(() =>
+      Promise.resolve({
+        ok: true as const,
+        id: 'hades',
+        text: manifest([HADES]),
+        platform: 'windows' as const,
+      }),
+    ),
+    ...overrides,
+  });
+  screen.openFromHistory('hades');
+  await flushAsync();
+}
+
 /** Moves the column onto a section and steps into its pane. */
 function enterSection(title: string): void {
   for (let step = 0; step < sections().length; step += 1) {
@@ -505,5 +522,111 @@ describe('customize screen closing', () => {
 
     expect(req('game-settings-options').classList.contains('is-open')).toBe(false);
     expect(keyboard.isOpen()).toBe(false);
+  });
+});
+
+describe('customize screen for a game from the history', () => {
+  it('reads the stored manifest instead of a card and shows the game', async () => {
+    await openFromHistory();
+
+    expect(api.readHistory).toHaveBeenCalledWith('hades');
+    expect(api.read).not.toHaveBeenCalled();
+    expect(screen.isOpen()).toBe(true);
+    enterSection('Basics');
+    expect(valueOf('Title')).toBe('Hades');
+  });
+
+  it('refuses to open a game the history has nothing stored for', async () => {
+    await openFromHistory({
+      readHistory: vi.fn(() => Promise.resolve({ ok: false as const, message: 'No settings stored' })),
+    });
+
+    expect(rowLabels()).toEqual([]);
+    expect(req('game-settings-list').textContent).toContain('No settings stored');
+  });
+
+  it('shows a card-bound field with its value but refuses to open it', async () => {
+    await openFromHistory();
+
+    enterSection('Launch');
+    expect(valueOf('Executable')).toBe('Hades.exe');
+    expect(rowOf('Executable').classList.contains('is-disabled')).toBe(true);
+
+    focusRow('Executable');
+    screen.navActivate();
+    raf.flush(OPEN_FRAMES);
+
+    expect(req('game-settings-options').classList.contains('is-open')).toBe(false);
+  });
+
+  it('leaves the artwork rows editable — they are the point of the feature', async () => {
+    await openFromHistory();
+
+    enterSection('Artwork');
+    expect(rowOf('Card artwork').classList.contains('is-disabled')).toBe(false);
+  });
+
+  it('stages a picked file through the history instead of measuring it against a card', async () => {
+    await openFromHistory();
+    enterSection('Artwork');
+    focusRow('Card artwork');
+    screen.navActivate();
+    raf.flush(OPEN_FRAMES);
+    focusMenuEntry('Browse...');
+    screen.navActivate();
+    await flushAsync();
+
+    expect(picker.last().historyId).toBe('hades');
+    picker.done({ ok: true, paths: ['assets/cover.png'] });
+    await flushAsync();
+
+    // An artwork row draws a thumbnail rather than its path, so the value it holds is read off the form.
+    expect(screen.isDirty()).toBe(true);
+    expect(api.historyAssetPreview).toHaveBeenCalledWith('hades', 'assets/cover.png');
+  });
+
+  it('saves through the history channel, and reports it as waiting for the card', async () => {
+    await openFromHistory();
+    enterSection('Basics');
+    focusRow('Title');
+    screen.navActivate();
+    keyboard.commit('Hades (mine)');
+    await flushAsync();
+
+    focusColumn('Save');
+    screen.navActivate();
+    await flushAsync();
+
+    const saved = vi.mocked(api.saveHistory).mock.calls[0]?.[0];
+    expect(saved?.id).toBe('hades');
+    expect(saved?.text).toContain('Hades (mine)');
+    expect(api.save).not.toHaveBeenCalled();
+    expect(screen.isDirty()).toBe(false);
+  });
+
+  it('stays open when the card shows up mid-edit rather than discarding the edits', async () => {
+    await openFromHistory();
+    enterSection('Basics');
+    focusRow('Title');
+    screen.navActivate();
+    keyboard.commit('Hades (mine)');
+    await flushAsync();
+
+    screen.applyBrowse({
+      id: 'hades',
+      title: 'Hades',
+      active: true,
+      stats: { schemaVersion: 1, totalPlaySeconds: 0, lastPlayedAt: null, launchCount: 0 },
+    });
+
+    expect(screen.isOpen()).toBe(true);
+    expect(screen.isDirty()).toBe(true);
+  });
+
+  it('offers neither Delete nor Move to card — both act on a card that is not here', async () => {
+    await openFromHistory();
+
+    expect(sections()).not.toContain('Delete game');
+    expect(sections()).not.toContain('Move to card...');
   });
 });

@@ -40,6 +40,16 @@ export interface FilePickerApi {
     readonly paths: readonly string[];
     readonly base?: string;
   }): Promise<ConfigPickResult>;
+  /**
+   * The same question for a game being configured from the HISTORY: there is no root to measure a picked
+   * path against, so main copies the file into that game's staging directory and answers with the path
+   * the file will have on the card once the edits are applied.
+   */
+  acceptHistoryPaths(request: {
+    readonly id: string;
+    readonly kind: ConfigPickKind;
+    readonly paths: readonly string[];
+  }): Promise<ConfigPickResult>;
 }
 
 export interface FilePickerDeps {
@@ -69,6 +79,8 @@ export function createFilePicker(deps: FilePickerDeps): FilePickerSurface {
     readonly kind: ConfigPickKind;
     readonly multi: boolean;
     readonly base?: string;
+    /** Set for a history game — what is picked is staged by id rather than measured against a root. */
+    readonly historyId?: string;
     readonly onDone: (result: ConfigPickResult) => void;
   } | null = null;
 
@@ -314,12 +326,15 @@ export function createFilePicker(deps: FilePickerDeps): FilePickerSurface {
   async function accept(paths: readonly string[]): Promise<void> {
     const at = request;
     if (at === null) return;
-    const result = await deps.api.acceptPaths({
-      root: at.root,
-      kind: at.kind,
-      paths,
-      ...(at.base !== undefined ? { base: at.base } : {}),
-    });
+    const result =
+      at.historyId !== undefined
+        ? await deps.api.acceptHistoryPaths({ id: at.historyId, kind: at.kind, paths })
+        : await deps.api.acceptPaths({
+            root: at.root,
+            kind: at.kind,
+            paths,
+            ...(at.base !== undefined ? { base: at.base } : {}),
+          });
     if (!result.ok && !('cancelled' in result)) {
       // A rejection is not an exit: the user is standing in the folder they picked from, and the message
       // tells them what to pick instead.

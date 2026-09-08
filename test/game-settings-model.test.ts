@@ -42,6 +42,7 @@ const baseEnv: GameSettingsEnv = {
   dirty: false,
   canDelete: true,
   canMove: false,
+  historyMode: false,
 };
 
 function model(
@@ -637,5 +638,64 @@ describe('carryFormToCard', () => {
     const result = validateManifestText(text, t, 'card');
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.issues.some((issue) => issue.path === 'pcSavePath')).toBe(true);
+  });
+});
+
+describe('the history mode (a game whose card is not in)', () => {
+  /** Every row of the model, sections flattened — the locking is a property of the whole form. */
+  function rowsOf(env: GameSettingsEnv): readonly { id: string; disabled?: boolean }[] {
+    return buildGameSettingsModel(
+      {
+        ...emptyFormModel(),
+        title: 'Hades',
+        id: 'hades',
+        executable: 'Hades.exe',
+        gridImage: 'art/cover.png',
+        heroImage: ['art/bg.png'],
+        backgroundMusic: 'audio/theme.mp3',
+        args: ['-windowed'],
+        pcSavePath: '%APPDATA%/Hades',
+        saveOnCard: 'saves/hades',
+      },
+      env,
+    )
+      .sections.flatMap((section) => section.rows)
+      .filter((row) => row.kind !== 'note' && row.kind !== 'action')
+      .map((row) => ({
+        id: row.id,
+        ...('disabled' in row && row.disabled === true ? { disabled: true } : {}),
+      }));
+  }
+
+  const disabledIds = (env: GameSettingsEnv): readonly string[] =>
+    rowsOf(env)
+      .filter((row) => row.disabled === true)
+      .map((row) => row.id);
+
+  it('locks nothing when the game is edited on its own card', () => {
+    expect(disabledIds(baseEnv)).toEqual([]);
+  });
+
+  it('locks every field that names a file on the card — and nothing else', () => {
+    const locked = disabledIds({ ...baseEnv, historyMode: true });
+    expect(locked).toContain('executable');
+    expect(locked).toContain('launchMode');
+    expect(locked).toContain('pcSavePath');
+    expect(locked).toContain('saveOnCard');
+    expect(locked).toContain('id');
+    // The artwork, the music, the name and the launch PARAMETERS stay editable — that is the feature.
+    expect(locked).not.toContain('title');
+    expect(locked).not.toContain('gridImage');
+    expect(locked).not.toContain('heroImage');
+    expect(locked).not.toContain('backgroundMusic');
+    expect(locked).not.toContain('args');
+    expect(locked).not.toContain('watchProcesses');
+    expect(locked).not.toContain('launchTimeoutSec');
+  });
+
+  it('keeps the rows themselves, values and all — a hidden field explains nothing', () => {
+    const ids = rowsOf({ ...baseEnv, historyMode: true }).map((row) => row.id);
+    expect(ids).toContain('executable');
+    expect(ids).toContain('saveOnCard');
   });
 });

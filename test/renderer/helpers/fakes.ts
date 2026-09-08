@@ -112,6 +112,8 @@ interface PickerRequest {
   readonly current: string;
   readonly multi: boolean;
   readonly base?: string;
+  /** Set when the screen is editing a game from the history — see FilePickerSurface.open. */
+  readonly historyId?: string;
   readonly onDone: (result: ConfigPickResult) => void;
 }
 
@@ -249,6 +251,10 @@ export function fakeFilePickerApi(tree: FakeTree, start = '/card'): FakeFilePick
       accepted.push(request.paths);
       return Promise.resolve(api.acceptWith(request.paths));
     },
+    acceptHistoryPaths: (request) => {
+      accepted.push(request.paths);
+      return Promise.resolve(api.acceptWith(request.paths));
+    },
   };
   return api;
 }
@@ -263,6 +269,9 @@ export function fakeGameSettingsApi(
     validate: vi.fn(() => Promise.resolve(VALID)),
     save: vi.fn(() => Promise.resolve({ saved: true, applied: 'applied' } as const)),
     imagePreview: vi.fn(() => Promise.resolve(null)),
+    readHistory: vi.fn(() => Promise.resolve({ ok: false, message: 'not stubbed' } as const)),
+    saveHistory: vi.fn(() => Promise.resolve({ saved: true, applied: 'deferred' } as const)),
+    historyAssetPreview: vi.fn(() => Promise.resolve(null)),
     sources: vi.fn(() => Promise.resolve([])),
     readRoot: vi.fn(() => Promise.resolve({ ok: false, message: 'not stubbed' } as const)),
     forgetHistory: vi.fn(),

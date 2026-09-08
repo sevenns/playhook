@@ -34,8 +34,11 @@ export interface GridStep {
   readonly result: GridMove;
 }
 
-/** Which section of the library is shown. */
-export type LibraryFilter = 'all' | 'playable';
+/**
+ * Which section of the library is shown. Two of them ask WHAT a game is (everything / launchable right
+ * now) and two ask WHERE it comes from — a card, or this machine.
+ */
+export type LibraryFilter = 'all' | 'playable' | 'pc' | 'external';
 
 /**
  * How many columns fit into `innerWidth` design px. The card size is fixed and the count follows from the
@@ -97,11 +100,18 @@ export function isNearInGrid(
 /**
  * The games of one section, in main's order — the renderer never re-sorts (see orderForCarousel).
  * "Ready to play" is the games on the inserted card; "All" is everything, history included.
+ *
+ * The two source sections split the SAME list by where a game comes from, history included: "This PC"
+ * holds the local games (drafts among them — the section is about origin, not readiness, and only
+ * "Ready to play" excludes a game with no launch method yet), "External" the cards' — both the one that
+ * is in and every one this device has seen.
  */
 export function filterLibrary(
   games: readonly LibraryEntry[],
   filter: LibraryFilter,
 ): readonly LibraryEntry[] {
   if (filter === 'all') return games;
+  if (filter === 'pc') return games.filter((game) => game.source === 'pc');
+  if (filter === 'external') return games.filter((game) => game.source === 'card');
   return games.filter((game) => game.active && game.unconfigured !== true);
 }

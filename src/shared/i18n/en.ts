@@ -87,10 +87,17 @@ export const en = {
   // The Library overlay: its two sidebar sections and the copy shown when a section has nothing in it.
   'library.all': 'All',
   'library.playable': 'Ready to play',
+  'library.external': 'External',
   'library.empty': 'No games here yet.',
   'library.emptyPlayable':
     'Nothing is ready to play - insert a card or add a game from your PC.',
+  'library.emptyPc': 'No games from this PC yet - add one to get started.',
+  'library.emptyExternal': 'No games from a card yet - insert one to see it here.',
   // Confirmation popup copy (controls.ts). The Yes/No buttons use the shared common.* keys.
+  // Asked once when the same game turns up on the inserted card AND in this PC's own library.
+  'launcher.confirm.collision': 'Put your version of {title} on the card?',
+  'launcher.confirm.collisionNote':
+    'The card carries a game with the same id, so it hides your local one while it is inserted. Yes copies your name, cover, backgrounds and music onto the card. No leaves both as they are - and neither answer is asked again.',
   'launcher.confirm.install': 'Do you want to install game?',
   'launcher.confirm.uninstall': 'Do you want to uninstall game from your PC?',
   'launcher.confirm.uninstallPrefix': 'Clear the Proton prefix?',
@@ -235,6 +242,10 @@ export const en = {
   'gameConfig.pickPcSaveOutside':
     'That folder is not under a known save location (%DOCUMENTS%, %APPDATA%, %LOCALAPPDATA%, %LOCALLOW% or %USERPROFILE%). Pick a folder inside one of those.',
   'gameConfig.pickImportFailed': 'Could not copy the selected file into the local library.',
+  // Customize opened for a game from the history — see the gameConfig:*-history channels.
+  'gameConfig.gameNowAvailable':
+    'This game is available again, so it is configured directly. Close this screen and open Customize for it.',
+  'gameConfig.noStoredConfig': 'Playhook has no stored settings for this game.',
   'gameConfig.pickMissing': 'That file is no longer there.',
   'gameConfig.pickSymlink': 'That is a shortcut to somewhere else — pick the file itself.',
   'gameConfig.pickNeedsFolder': 'Pick a folder for this field.',
@@ -270,6 +281,10 @@ export const en = {
     'Your settings could not be saved and will be back as they were on the next start. Playhook has no write access to its settings file.',
   'notifications.gameMoveDuplicate':
     '{title} was written to the card, but could not be removed from the PC library — it now exists in both places. Remove the local copy through Customize.',
+  'notifications.historyConfigApplied':
+    'Your changes to {title} have been written to its card.',
+  'notifications.historyConfigDiscarded':
+    'Your changes to {title} were dropped — the version on the card is the newer one.',
   'notifications.empty': 'No notifications',
   'notifications.clearAll': 'Clear all',
   // Timestamp of a list entry: today shows the time alone, yesterday is named, older gets a date.

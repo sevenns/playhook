@@ -71,13 +71,18 @@ interface LabeledRow<Id extends string> {
   readonly label: RowLabel;
   readonly hint?: RowLabel;
   readonly error?: string;
+  /**
+   * Shown with its value, but inert. Used where the value is real and worth seeing while THIS screen has
+   * no business changing it — a field a history game cannot edit without its card, an install toggle a
+   * custom installer forces. Absent is the normal case; hiding such a row instead would leave the user
+   * wondering what the game is actually configured with.
+   */
+  readonly disabled?: boolean;
 }
 
 export interface CoreToggleRow<Id extends string = string> extends LabeledRow<Id> {
   readonly kind: 'toggle';
   readonly value: boolean;
-  /** A toggle the current state forces (install.runAsAdmin under a `custom` installer) — shown, inert. */
-  readonly disabled?: boolean;
 }
 
 export interface CoreSelectRow<Id extends string = string> extends LabeledRow<Id> {
@@ -271,8 +276,14 @@ function patchError(rendered: CoreRendered, error: string | undefined): void {
   rendered.el.classList.toggle('has-error', error !== undefined);
 }
 
-/** Builds one row's element. The control is built per `kind`; the label side is shared. */
+/** Builds one row's element, marking it inert when the row says so (see LabeledRow.disabled). */
 export function buildCoreRow(row: CoreRow, t: Translator): CoreRendered {
+  const rendered = buildCoreRowElement(row, t);
+  if (row.kind !== 'note' && row.disabled === true) rendered.el.classList.add('is-disabled');
+  return rendered;
+}
+
+function buildCoreRowElement(row: CoreRow, t: Translator): CoreRendered {
   const el = div('setting-row');
   el.dataset['kind'] = row.kind;
   appendLabelBox(el, row, t);

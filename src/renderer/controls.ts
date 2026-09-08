@@ -23,6 +23,7 @@ import type { SystemCardId } from './system-cards.js';
 import { type AudioController } from './audio.js';
 import { gameOf, phaseOf, steamBusy } from './state-view.js';
 import { req, reqQuery } from './dom.js';
+import type { GameCollision } from '../shared/types.js';
 
 // The current popup view (mutually exclusive; 'none' = closed). Mirrors the data-view on #popup.
 type PopupView = 'none' | 'details' | 'notifications' | 'power' | 'confirm' | 'busy' | 'error';
@@ -49,7 +50,10 @@ type ConfirmMode =
   | 'cancel-move-game-settings'
   // Taking the store's spelling into the Customize form's Title — the one thing the "Find online" screen
   // does that REPLACES something the user may have typed rather than adding a file beside the game.
-  | 'replace-game-title';
+  | 'replace-game-title'
+  // The same game turned up on the card AND on this PC. Both answers are answers — "No" means "leave
+  // them as they are", not "never mind" — and both are remembered (see GameCollision).
+  | 'game-collision';
 // Gamepad A doesn't trigger :active, so flash a press class to play the scale-down animation.
 const PRESS_MS = 130;
 /** How far the pointer must travel before hover may take the focus again (see armHover). */
@@ -123,6 +127,8 @@ export interface SettingsNav extends NavSurface {
  */
 export interface GameSettingsNav extends NavSurface {
   open(id: string): void;
+  /** Opens the same screen for a game whose card is not in — see GameSettingsScreen.openFromHistory. */
+  openFromHistory(id: string): void;
   /** Opens the same screen to CREATE a game — the "Add game" item of the Details menu. */
   openNew(): void;
   close(): void;
@@ -209,6 +215,12 @@ export interface Controls {
   openAddGame(): void;
   /** Clears the game-dependent menu item for the idle/no-game screen. */
   clearGameButtons(): void;
+  /**
+   * main found the same game on the card and on this PC: asks what should happen to it. Waits for the
+   * popup to free up rather than clobbering whatever is on screen — the question is not urgent, and the
+   * card it is about is already loaded.
+   */
+  askGameCollision(collision: GameCollision): void;
   /** Per-render refresh: force-close the popup off the ready screen (or while steam-busy), then re-apply focus. */
   refresh(): void;
   /** Opens the error popup with the given message (a failed launch/action from main). */
@@ -361,6 +373,9 @@ export function createControls(deps: ControlsDeps): Controls {
   let popupRoot: 'details' | 'direct' = 'details';
   /** The game the open remove-from-history confirm is about — captured when it opens (see openConfirm). */
   let forgetId: string | null = null;
+  /** The collision the open question is about, and the one waiting for the popup to free up. */
+  let askedCollision: GameCollision | null = null;
+  let queuedCollision: GameCollision | null = null;
 
   // ── Popup machine ────────────────────────────────────────────────────────────
   // One #popup element; opening = add .is-open + set data-view; switching views keeps .is-open (so the
@@ -421,6 +436,21 @@ export function createControls(deps: ControlsDeps): Controls {
     freezeMenuDuringFade();
     applyStackFocus(); // clear the stack highlight (stackActive becomes false)
     applyFocus(); // restore the main bar highlight
+    flushQueuedCollision();
+  }
+
+  /** Raises a collision question that arrived while the column was busy, once it is free again. */
+  function flushQueuedCollision(): void {
+    const waiting = queuedCollision;
+    if (waiting === null || popupView !== 'none') return;
+    if (deps.gameSettings.isOpen() || deps.settings.isOpen()) return;
+    queuedCollision = null;
+    askedCollision = waiting;
+    // After the fade, or the question would open into a column still fading the previous one out.
+    window.setTimeout(() => {
+      if (popupView !== 'none' || askedCollision === null) return;
+      openConfirm('game-collision');
+    }, POPUP_FADE_MS);
   }
 
   // Details menu (from More): game stats on top + Shutdown / Install|Uninstall / Close stack. Works on
@@ -597,6 +627,8 @@ export function createControls(deps: ControlsDeps): Controls {
       item.kind === 'game-moved-deferred' ||
       item.kind === 'game-move-save-skipped' ||
       item.kind === 'game-move-duplicate' ||
+      item.kind === 'history-config-applied' ||
+      item.kind === 'history-config-discarded' ||
       item.kind === 'settings-write-failed'
     )
       return;
@@ -698,6 +730,16 @@ export function createControls(deps: ControlsDeps): Controls {
       popup.dataset['mode'] = mode;
       delete popup.dataset['installVia'];
       confirmMessage.textContent = t()('launcher.confirm.forget', { title: browse.title });
+    } else if (mode === 'game-collision') {
+      // Not a menu question: main raised it after a card came in, so there is nothing underneath to
+      // return to — B and the veil simply leave it unanswered, and the next insertion asks again.
+      const collision = askedCollision;
+      if (collision === null) return;
+      confirmReturnTo = 'details';
+      popup.dataset['mode'] = mode;
+      delete popup.dataset['installVia'];
+      confirmMessage.textContent = t()('launcher.confirm.collision', { title: collision.title });
+      deleteNote.textContent = t()('launcher.confirm.collisionNote');
     } else if (mode === 'reset-settings') {
       // Asked from the Settings screen, which stays open UNDER the popup — so "No" must return there,
       // not to the Details menu the screen was reached through.
@@ -865,8 +907,12 @@ export function createControls(deps: ControlsDeps): Controls {
 
   function openCustomize(): void {
     const browse = deps.getBrowse();
-    if (browse === null || !browse.active) return; // the item's own rule, re-checked at the press
-    deps.gameSettings.open(browse.id);
+    if (browse === null) return;
+    // The item's own rule, re-checked at the press — and it decides WHICH screen opens: an available
+    // game is edited on its card, a history one through the stored snapshot.
+    if (browse.active) deps.gameSettings.open(browse.id);
+    else if (browse.configurable === true) deps.gameSettings.openFromHistory(browse.id);
+    else return;
     applyFocus();
   }
 
@@ -946,16 +992,18 @@ export function createControls(deps: ControlsDeps): Controls {
   // ── Menu item: Remove from history (history-only games) ──────────────────────
   // Offered ONLY for a game that is not available right now — `active` is main's word for "on the card or
   // in the PC library". Those games are rebuilt from their manifests on every insert, so removing one
-  // would be a lie the next refresh undoes; what CAN be removed is the record of a game you no longer have.
+  // would be a lie the next refresh undoes; what CAN be removed is the record of a game you no longer
+  // have. Since the history-config feature it can share the menu with Customize (see below).
   // ── Menu item: Customize (the per-game manifest editor) ──────────────────────
-  // The MIRROR of "Remove from history": that one is for a game we no longer have, this one for a game we
-  // do — `active` is main's word for "on the card or in the PC library", and it is exactly the condition
-  // under which a game.json to edit exists at all. The two are mutually exclusive by construction, so
-  // they never appear together.
+  // Offered for an AVAILABLE game — `active` is main's word for "on the card or in the PC library", and
+  // it is the condition under which a game.json to edit exists right now — and, since the history-config
+  // feature, for a history game main has a card snapshot of (`configurable`): those are edited with no
+  // card in, and the edits reach the card on its next insertion. So this and "Remove from history" now
+  // SHARE the menu for a history game — they used to be mutually exclusive by construction.
   function applyMenuCustomize(): void {
     if (menuFrozen()) return;
     const browse = deps.getBrowse();
-    const show = onGameScreen() && browse !== null && browse.active;
+    const show = onGameScreen() && browse !== null && (browse.active || browse.configurable === true);
     menuCustomize.classList.toggle('is-hidden', !show);
     if (show) menuCustomize.textContent = t()('launcher.menu.customize');
   }
@@ -1382,8 +1430,37 @@ export function createControls(deps: ControlsDeps): Controls {
         deps.gameSettings.confirmAccepted('delete');
         return;
       }
+      // "Leave them as they are" is an ANSWER to the collision question, and it is remembered — so the
+      // launcher stops asking about a game the user has already decided about.
+      if (popupView === 'confirm' && confirmMode === 'game-collision') {
+        audio.play('button');
+        closePopup();
+        answerCollision('ignore');
+        return;
+      }
       back(); // cancel → returns to Details / Power
     }
+  }
+
+  /**
+   * Sends the answer and, if it failed, says why. A failure means the card is no longer the one the
+   * question was asked about (pulled, or swapped for another carrying the same id) — nothing was written
+   * and nothing was remembered, so the question honestly returns on the next insertion.
+   */
+  function answerCollision(choice: 'merge' | 'ignore'): void {
+    const collision = askedCollision;
+    askedCollision = null;
+    if (collision === null) return;
+    void window.api
+      .resolveGameCollision({
+        id: collision.id,
+        choice,
+        root: collision.root,
+        signature: collision.signature,
+      })
+      .then((result) => {
+        if (!result.saved) openError(result.message);
+      });
   }
 
   function activateStack(): void {
@@ -1460,6 +1537,10 @@ export function createControls(deps: ControlsDeps): Controls {
       case 'cancel-move-game-settings':
         audio.play('back');
         deps.gameSettings.confirmAccepted('cancel-move');
+        break;
+      case 'game-collision':
+        audio.play('button');
+        answerCollision('merge');
         break;
       case 'replace-game-title':
         audio.play('button');
@@ -2067,6 +2148,16 @@ export function createControls(deps: ControlsDeps): Controls {
                     ? 'replace-game-title'
                     : 'discard-game-settings',
       );
+    },
+    askGameCollision: (collision) => {
+      // One at a time, and never over something the user is in the middle of: a confirm, the Customize
+      // screen's own question, the power menu. It is picked up the moment the surface clears.
+      if (popupView !== 'none' || deps.gameSettings.isOpen() || deps.settings.isOpen()) {
+        queuedCollision = collision;
+        return;
+      }
+      askedCollision = collision;
+      openConfirm('game-collision');
     },
     showBusy: openBusy,
     closeBusy: () => {

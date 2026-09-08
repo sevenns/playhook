@@ -1,10 +1,14 @@
-// The launcher's game HISTORY index — pure ordering/eviction logic over `library/index.json`, with no fs
-// and no electron (LibraryStore owns the bytes; this module owns the rules, so they are unit-testable).
+// The launcher's game HISTORY index — pure ordering logic over `library/index.json`, with no fs and no
+// electron (LibraryStore owns the bytes; this module owns the rules, so they are unit-testable).
 //
 // The index is a DENORMALIZATION, not a second source of truth: `launchCount`/`lastPlayedAt` are cached
-// copies of `stats/<id>.json` (the authority), kept here so building the carousel doesn't read up to
-// MAX_LIBRARY_ENTRIES stats files off disk on every card insert. LibraryStore re-syncs them on init and
-// after every recorded play.
+// copies of `stats/<id>.json` (the authority), kept here so building the carousel doesn't read a stats
+// file per game off disk on every card insert. LibraryStore re-syncs them on init and after every
+// recorded play.
+//
+// The history is UNBOUNDED by decision: it once evicted the weakest records past a 40-game limit, but a
+// record may now hold edits waiting for their card (see history-config.ts), and throwing those away
+// behind the user's back is worse than the disk they cost. `forget` is the only way out.
 
 /** One game's copied assets + the cached stats that order the carousel. Paths are FILE NAMES inside
  * `library/<id>/`, never absolute — the store owns the base directory. */
@@ -30,6 +34,20 @@ export interface LibraryEntryRecord {
   /** Cached from stats/<id>.json (see the module doc). */
   readonly launchCount: number;
   readonly lastPlayedAt: string | null;
+  /** Which source wrote this record last — a card, or this PC's own library. Absent on a record written
+   * before the field existed; those are read as `'card'` (nearly all history is cards) and fill in the
+   * next time the game shows up. Drives the library screen's source filter. */
+  readonly sourceKind?: 'card' | 'pc';
+  /** sha256 of the game's slot AS WE LAST SAW IT ON THE CARD — the baseline the insertion compares the
+   * card against (see history-config.ts `slotHash`). Absent until the first insert that snapshots it,
+   * which reads as "the card moved", i.e. the pre-feature behaviour. */
+  readonly cardSlotHash?: string;
+  /** When the user last saved edits for this game FROM THE HISTORY, or null when there are none pending.
+   * Non-null is what makes the next insertion consider writing them onto the card. */
+  readonly configuredAt: string | null;
+  /** When the user answered the "this game is on the card AND on this PC" dialog for this id, or null
+   * when they have not — the answer is remembered so the dialog does not return on every insert. */
+  readonly collisionResolvedAt: string | null;
 }
 
 export interface LibraryIndex {
@@ -54,64 +72,34 @@ export interface UpsertResult {
  *
  * Changed asset bytes under the SAME title are NOT that: they are the author editing their own card
  * (Configure → Save & Apply), which must re-copy silently.
+ *
+ * `previousTitle` overrides what the stored record says the game was called. The insertion path passes
+ * the title of the PRISTINE card snapshot, because `record.title` is now editable from the history: a
+ * rename saved but not yet applied to the card would otherwise read as a foreign card on every single
+ * insert — a false warning plus a pointless re-copy of every asset.
+ *
+ * A genuinely foreign replacement also CLEARS `collisionResolvedAt`: the user answered the collision
+ * dialog about a different game, so that answer says nothing about this one.
  */
-export function upsertEntry(index: LibraryIndex, record: LibraryEntryRecord): UpsertResult {
+export function upsertEntry(
+  index: LibraryIndex,
+  record: LibraryEntryRecord,
+  previousTitle?: string,
+): UpsertResult {
   const previous = index.entries.find((entry) => entry.id === record.id);
-  const replacedForeign = previous !== undefined && previous.title !== record.title;
+  const before = previousTitle ?? previous?.title;
+  const replacedForeign = previous !== undefined && before !== record.title;
+  const stored = replacedForeign ? { ...record, collisionResolvedAt: null } : record;
   const entries =
     previous === undefined
-      ? [...index.entries, record]
-      : index.entries.map((entry) => (entry.id === record.id ? record : entry));
+      ? [...index.entries, stored]
+      : index.entries.map((entry) => (entry.id === record.id ? stored : entry));
   return { index: { schemaVersion: 1, entries }, replacedForeign };
 }
 
 /** Drops one id from the index (used by the store after removing its directory). */
 export function removeEntry(index: LibraryIndex, id: string): LibraryIndex {
   return { schemaVersion: 1, entries: index.entries.filter((entry) => entry.id !== id) };
-}
-
-/** What `evictBeyond` decided: the trimmed index and the ids whose directories must be deleted. */
-export interface EvictResult {
-  readonly index: LibraryIndex;
-  readonly evicted: readonly string[];
-}
-
-/**
- * Trims the index to `limit` records. Eviction order is the carousel's order read backwards: the least
- * recently TOUCHED goes first (see lastTouchedAt), and an entry with no date at all — never played, and
- * written before `lastSeenAt` existed — goes before those. Ids on the currently-inserted card
- * (`protectedIds`) are never evicted: they are on screen right now.
- *
- * Ranking by the same date the carousel sorts by is what keeps the two consistent: judged by play date
- * alone, a card you inserted yesterday but never started would be the FIRST thing thrown away while
- * sitting at the top of the strip.
- */
-export function evictBeyond(
-  index: LibraryIndex,
-  limit: number,
-  protectedIds: readonly string[] = [],
-): EvictResult {
-  const shielded = new Set(protectedIds);
-  const removable = index.entries.filter((entry) => !shielded.has(entry.id));
-  const overflow = index.entries.length - limit;
-  if (overflow <= 0 || removable.length === 0) return { index, evicted: [] };
-
-  // Weakest first: undated entries, then the oldest touch. Ties fall back to the id so the choice is
-  // deterministic (a test asserting "which one went" must not depend on insertion order).
-  const byWeakest = [...removable].sort((a, b) => {
-    const at = lastTouchedAt(a);
-    const bt = lastTouchedAt(b);
-    if ((at === null) !== (bt === null)) return at === null ? -1 : 1;
-    if (at !== null && bt !== null && at !== bt) return Date.parse(at) - Date.parse(bt);
-    return a.id.localeCompare(b.id);
-  });
-  const evicted = new Set(
-    byWeakest.slice(0, Math.min(overflow, byWeakest.length)).map((e) => e.id),
-  );
-  return {
-    index: { schemaVersion: 1, entries: index.entries.filter((entry) => !evicted.has(entry.id)) },
-    evicted: [...evicted],
-  };
 }
 
 /** The minimum a game must carry to be placed in the carousel — see byRecentlyPlayed. */

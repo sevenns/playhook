@@ -119,6 +119,12 @@ export interface OnlinePickerSurface extends NavSurface {
     readonly query: string;
     /** A Steam appid the manifest already names — the one thing a search exists to find. */
     readonly appId?: number;
+    /**
+     * Offer the TEXT only — the game's name, its description, genres and release date — and none of the
+     * downloadable sections. Set when the caller has nowhere to download to: a game configured from the
+     * history has no game root on this PC, and its card is not in (see history-config.ts).
+     */
+    readonly textOnly?: boolean;
   }): void;
 }
 
@@ -163,6 +169,8 @@ export function createOnlinePicker(deps: OnlinePickerDeps): OnlinePickerSurface 
   let candidates: readonly GameCandidate[] = [];
   let candidate: GameCandidate | null = null;
   let section: OnlineSection = 'candidates';
+  /** The visit may only apply TEXT — no section that downloads anything is offered (see open). */
+  let textOnly = false;
 
   let variants: readonly ArtworkVariant[] = [];
   let picked: string[] = [];
@@ -251,10 +259,14 @@ export function createOnlinePicker(deps: OnlinePickerDeps): OnlinePickerSurface 
     nodes.push(sideButton({ kind: 'search' }, t()('metadata.searchAgain')));
     if (candidate !== null) {
       nodes.push(sideButton({ kind: 'title' }, t()('metadata.applyTitle')));
-      nodes.push(heading(t()('metadata.sections')));
-      nodes.push(sideButton({ kind: 'section', section: 'grid' }, t()('metadata.cover')));
-      nodes.push(sideButton({ kind: 'section', section: 'hero' }, t()('metadata.backgrounds')));
-      nodes.push(sideButton({ kind: 'section', section: 'music' }, t()('metadata.music')));
+      // The three sections DOWNLOAD a file beside the game. With nowhere to put one, offering them would
+      // be offering a button that cannot work — the name and the facts still apply, and they are text.
+      if (!textOnly) {
+        nodes.push(heading(t()('metadata.sections')));
+        nodes.push(sideButton({ kind: 'section', section: 'grid' }, t()('metadata.cover')));
+        nodes.push(sideButton({ kind: 'section', section: 'hero' }, t()('metadata.backgrounds')));
+        nodes.push(sideButton({ kind: 'section', section: 'music' }, t()('metadata.music')));
+      }
     }
     nodes.push(...sectionRows());
     const divider = document.createElement('div');
@@ -1153,6 +1165,7 @@ export function createOnlinePicker(deps: OnlinePickerDeps): OnlinePickerSurface 
       open = true;
       visit += 1;
       query = request.query;
+      textOnly = request.textOnly === true;
       candidates = [];
       candidate = null;
       section = 'candidates';

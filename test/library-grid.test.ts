@@ -13,7 +13,11 @@ import {
 } from '../src/renderer/library-grid';
 import type { LibraryEntry } from '../src/shared/types';
 
-const game = (id: string, active: boolean): LibraryEntry => ({ id, title: id, active });
+const game = (
+  id: string,
+  active: boolean,
+  overrides: Partial<LibraryEntry> = {},
+): LibraryEntry => ({ id, title: id, active, source: 'card', ...overrides });
 
 describe('gridColumns', () => {
   it('fits 6 columns into a 16:9 screen and 5 into a Steam Deck one', () => {
@@ -111,5 +115,28 @@ describe('filterLibrary', () => {
 
   it("preserves main's order — the renderer never sorts", () => {
     expect(filterLibrary(games, 'all').map((entry) => entry.id)).toEqual(['a', 'b', 'c']);
+  });
+});
+
+describe('filterLibrary', () => {
+  const games: readonly LibraryEntry[] = [
+    game('card-in', true),
+    game('card-history', false),
+    game('local', true, { source: 'pc' }),
+    game('draft', true, { source: 'pc', unconfigured: true }),
+    game('local-gone', false, { source: 'pc' }),
+  ];
+
+  it('shows everything under "All"', () => {
+    expect(filterLibrary(games, 'all')).toHaveLength(5);
+  });
+
+  it('keeps only what can be launched right now under "Ready to play"', () => {
+    expect(filterLibrary(games, 'playable').map((g) => g.id)).toEqual(['card-in', 'local']);
+  });
+
+  it('splits by source, drafts included and history alongside', () => {
+    expect(filterLibrary(games, 'pc').map((g) => g.id)).toEqual(['local', 'draft', 'local-gone']);
+    expect(filterLibrary(games, 'external').map((g) => g.id)).toEqual(['card-in', 'card-history']);
   });
 });

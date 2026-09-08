@@ -1,9 +1,8 @@
-// The history index's rules (ordering / eviction / upsert) — the pure half of the carousel feature.
+// The history index's rules (ordering / upsert) — the pure half of the carousel feature.
 // Everything here is fs-free by construction (see src/main/library-index.ts).
 import { describe, expect, it } from 'vitest';
 import {
   EMPTY_LIBRARY_INDEX,
-  evictBeyond,
   orderForCarousel,
   removeEntry,
   upsertEntry,
@@ -20,6 +19,8 @@ function entry(id: string, overrides: Partial<LibraryEntryRecord> = {}): Library
     lastSeenAt: null,
     launchCount: 1,
     lastPlayedAt: '2026-01-01T00:00:00.000Z',
+    configuredAt: null,
+    collisionResolvedAt: null,
     ...overrides,
   };
 }
@@ -57,78 +58,37 @@ describe('upsertEntry', () => {
     );
     expect(replacedForeign).toBe(false);
   });
+
+  it('judges a rename against the PRISTINE title, not the one edited from the history', () => {
+    const before = indexOf(entry('a', { title: 'Renamed by the user', configuredAt: '2026-01-02T00:00:00.000Z' }));
+    const { replacedForeign } = upsertEntry(before, entry('a', { title: 'Alpha' }), 'Alpha');
+    expect(replacedForeign).toBe(false);
+  });
+
+  it('clears the answered collision dialog when a FOREIGN card takes the id over', () => {
+    const before = indexOf(entry('a', { title: 'Alpha', collisionResolvedAt: '2026-01-02T00:00:00.000Z' }));
+    const { index, replacedForeign } = upsertEntry(
+      before,
+      entry('a', { title: 'Another game', collisionResolvedAt: '2026-01-02T00:00:00.000Z' }),
+    );
+    expect(replacedForeign).toBe(true);
+    expect(index.entries[0]?.collisionResolvedAt).toBeNull();
+  });
+
+  it('keeps the answered collision dialog through an ordinary replacement', () => {
+    const before = indexOf(entry('a', { title: 'Alpha', collisionResolvedAt: '2026-01-02T00:00:00.000Z' }));
+    const { index } = upsertEntry(
+      before,
+      entry('a', { title: 'Alpha', collisionResolvedAt: '2026-01-02T00:00:00.000Z' }),
+    );
+    expect(index.entries[0]?.collisionResolvedAt).toBe('2026-01-02T00:00:00.000Z');
+  });
 });
 
 describe('removeEntry', () => {
   it('drops the id and leaves the rest untouched', () => {
     const index = removeEntry(indexOf(entry('a'), entry('b')), 'a');
     expect(index.entries.map((e) => e.id)).toEqual(['b']);
-  });
-});
-
-describe('evictBeyond', () => {
-  it('does nothing while the index fits the limit', () => {
-    const before = indexOf(entry('a'), entry('b'));
-    const { index, evicted } = evictBeyond(before, 2);
-    expect(evicted).toEqual([]);
-    expect(index).toBe(before);
-  });
-
-  it('evicts a record with no date at all FIRST (never played, never seen since the field existed)', () => {
-    const before = indexOf(
-      entry('played-old', { lastPlayedAt: '2020-01-01T00:00:00.000Z' }),
-      entry('undated', { launchCount: 0, lastPlayedAt: null, savedAt: '2026-08-01T00:00:00.000Z' }),
-      entry('played-new', { lastPlayedAt: '2026-08-01T00:00:00.000Z' }),
-    );
-    const { index, evicted } = evictBeyond(before, 2);
-    expect(evicted).toEqual(['undated']);
-    expect(index.entries.map((e) => e.id)).toEqual(['played-old', 'played-new']);
-  });
-
-  // The carousel sorts by the same date, so a freshly inserted card must not be the first thing thrown
-  // away while it sits at the top of the strip.
-  it('keeps a recently inserted but never-played game over an old played one', () => {
-    const before = indexOf(
-      entry('played-long-ago', {
-        lastPlayedAt: '2020-01-01T00:00:00.000Z',
-        lastSeenAt: '2020-01-01T00:00:00.000Z',
-      }),
-      entry('inserted-yesterday', {
-        launchCount: 0,
-        lastPlayedAt: null,
-        lastSeenAt: '2026-08-10T00:00:00.000Z',
-      }),
-    );
-    const { evicted } = evictBeyond(before, 1);
-    expect(evicted).toEqual(['played-long-ago']);
-  });
-
-  it('then evicts the least recently played', () => {
-    const before = indexOf(
-      entry('old', { lastPlayedAt: '2020-01-01T00:00:00.000Z' }),
-      entry('mid', { lastPlayedAt: '2023-01-01T00:00:00.000Z' }),
-      entry('new', { lastPlayedAt: '2026-01-01T00:00:00.000Z' }),
-    );
-    const { index, evicted } = evictBeyond(before, 1);
-    expect(evicted).toEqual(['old', 'mid']);
-    expect(index.entries.map((e) => e.id)).toEqual(['new']);
-  });
-
-  it('never evicts a game on the inserted card, even the weakest one', () => {
-    const before = indexOf(
-      entry('orphan-active', { launchCount: 0, lastPlayedAt: null }),
-      entry('played', { lastPlayedAt: '2026-01-01T00:00:00.000Z' }),
-    );
-    const { index, evicted } = evictBeyond(before, 1, ['orphan-active']);
-    expect(evicted).toEqual(['played']);
-    expect(index.entries.map((e) => e.id)).toEqual(['orphan-active']);
-  });
-
-  it('keeps a protected over-limit index intact rather than evicting a protected id', () => {
-    const before = indexOf(entry('a'), entry('b'));
-    const { index, evicted } = evictBeyond(before, 1, ['a', 'b']);
-    expect(evicted).toEqual([]);
-    expect(index.entries).toHaveLength(2);
   });
 });
 

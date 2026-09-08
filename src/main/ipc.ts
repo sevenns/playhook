@@ -10,6 +10,9 @@ import {
   type AppState,
   type SfxSet,
   type BrowseInfo,
+  type ConfigSaveResult,
+  type GameCollision,
+  type GameCollisionAnswer,
   type GameInfo,
   type GameLibrary,
   type HeroAssets,
@@ -29,6 +32,12 @@ import { type StatsService } from './stats';
 import { type LibraryStore } from './library-store';
 import { type PcLibraryStore } from './pc-library';
 import { byRecentlyPlayed } from './library-index';
+import {
+  rollbackHistorySync,
+  syncHistoryConfig,
+  type HistorySyncResult,
+} from './history-sync';
+import { localGameGoesAfterMerge } from './history-config';
 import { type DriveWatcher } from './drive-watcher';
 import { readManifests, findCaseInsensitiveName, type ManifestEnv } from './manifest';
 import { syncDir, syncByChange, snapshotTree } from './save-sync';
@@ -55,6 +64,19 @@ import { normalizeImageNames } from './image-names';
 import { SteamInstallWatch } from './steam-install-watch';
 import { describe, delay } from './util';
 import { log } from './logger';
+
+/**
+ * What the collision answer needs from the Customize backend (GameConfigService). Attached after
+ * construction — the service is built from this controller, so it cannot also be one of its deps.
+ */
+export interface CollisionResolver {
+  /** The card's content signature right now, or null when it cannot be read. */
+  signatureFor(root: string): Promise<string | null>;
+  /** Puts a local game's name and artwork onto the card that carries the same id. */
+  mergeCollision(answer: GameCollisionAnswer): Promise<ConfigSaveResult>;
+  /** Drops a local game from the PC library (the draft whose look has just moved onto the card). */
+  removeLocalGame(id: string): Promise<ConfigSaveResult>;
+}
 
 export interface ControllerDeps {
   readonly state: StateManager;
@@ -316,6 +338,13 @@ export class GameController {
   // the carousel cannot enter another game's detail as actionable (its guard is `kind==='ready'`).
   private locked = false;
   private cardPresent = false;
+  // True for the whole body of loadCard. A game on the card being read right now is about to become
+  // available, so save-from-history must refuse: an invoke that slipped in after the sync step and before
+  // the manifests landed would be stored as "pending" and sit there until the NEXT insertion.
+  private cardLoadInFlight = false;
+  // True while a collision answer is being carried out. The merge writes the card and reloads it, which
+  // re-enters loadCard — and the detection at the end of it would ask the very question being answered.
+  private collisionInFlight = false;
   // The id of the game with a Steam download/removal in flight, or null. Steam operations are the one
   // kind of activity that leaves the state `ready`, so this is what stops a SECOND game from being
   // launched or installed underneath them (see onLaunchRequested).
@@ -467,13 +496,14 @@ export class GameController {
     return [...this.cardGames, ...this.pcGames.filter((m) => !cardIds.has(m.raw.id))];
   }
 
-  /**
-   * Ids that must survive a history eviction: everything on the card AND everything in the PC library —
-   * including a local game currently shadowed by the card (its record is the same one). Passing only one
-   * source's ids would let a full history evict the other source's games (see LibraryStore.gc).
-   */
-  private protectedIds(): readonly string[] {
-    return [...this.cardGames, ...this.pcGames].map((manifest) => manifest.raw.id);
+  /** Tells the user what the sync step did with their pending edits — one entry per game. */
+  private notifyHistorySync(sync: HistorySyncResult): void {
+    for (const gameTitle of sync.applied) {
+      this.deps.notifications.notify({ kind: 'history-config-applied', gameTitle });
+    }
+    for (const gameTitle of sync.discarded) {
+      this.deps.notifications.notify({ kind: 'history-config-discarded', gameTitle });
+    }
   }
 
   /**
@@ -629,6 +659,11 @@ export class GameController {
       (_event, id: unknown, immediate: unknown) => void this.onBrowseRequested(id, immediate),
     );
     ipcMain.on(IPC.libraryForget, (_event, id: unknown) => void this.onForgetRequested(id));
+    ipcMain.handle(
+      IPC.gameCollisionResolve,
+      (_event, answer: GameCollisionAnswer): Promise<ConfigSaveResult> =>
+        this.resolveCollision(answer),
+    );
     ipcMain.handle(IPC.wallpaperRequest, (): Promise<string | null> => this.assets.readWallpaperDataUrl());
     ipcMain.handle(
       IPC.startupSoundRequest,
@@ -759,13 +794,39 @@ export class GameController {
     root: string,
     opts: { readonly focus: boolean },
   ): Promise<{ ok: true } | { ok: false; message: string }> {
+    this.cardLoadInFlight = true;
+    try {
+      return await this.loadCardBody(root, opts);
+    } finally {
+      this.cardLoadInFlight = false;
+    }
+  }
+
+  private async loadCardBody(
+    root: string,
+    opts: { readonly focus: boolean },
+  ): Promise<{ ok: true } | { ok: false; message: string }> {
     this.cardPresent = true;
     log.info(`[insert] card detected at root="${root}"`);
     // Documents is resolved via the system Known Folder API (the same one the game uses),
     // so %DOCUMENTS% in the manifest maps to the real save folder regardless of UI
     // language or OneDrive redirection. Safe to read here — app is ready by now.
     const env: ManifestEnv = { documents: app.getPath('documents'), t: this.t };
-    const result = await readManifests(root, env, this.deps.platform.resolveInstallDir);
+    // BEFORE the manifests are read: edits the user made from the history are written onto the card here,
+    // so everything downstream — validation, the resolved manifests, the history copy — sees one already
+    // reconciled file. It also runs on a plain reload (a Save from Customize), where it is a no-op: an
+    // available game cannot have pending edits, since save-from-history refuses one.
+    const sync = await syncHistoryConfig(root, { library: this.deps.library, t: this.t });
+    let result = await readManifests(root, env, this.deps.platform.resolveInstallDir);
+    if (!result.ok && sync.textBefore !== null) {
+      // We rewrote the file and the card stopped reading. Put the author's own text back and try again
+      // rather than leave a card that the launcher itself bricked.
+      if (await rollbackHistorySync(root, sync.textBefore)) {
+        result = await readManifests(root, env, this.deps.platform.resolveInstallDir);
+      }
+    } else {
+      this.notifyHistorySync(sync);
+    }
     if (!result.ok) {
       // No valid game determined → keep the window hidden (the reason is in the log). We still set
       // the error state so a manually-summoned window can show it, but we never auto-surface it.
@@ -854,9 +915,12 @@ export class GameController {
     // is already on screen. One sequential task for the whole card (index.json is a single file — see
     // LibraryStore.saveFromCard), then a list refresh so the freshly-copied games get their artwork.
     void this.deps.library
-      .saveFromCard(manifests, this.protectedIds())
+      .saveFromCard(manifests, sync.slots)
       .then(() => this.refreshLibrary())
       .catch((cause: unknown) => log.warn('[library] copying the card assets failed:', describe(cause)));
+    // Last, and only now: a game that lives on this card AND on this PC needs an answer from the user,
+    // and asking for one is not allowed to hold the card up (see askAboutCollisions).
+    this.askAboutCollisions(root);
     return { ok: true };
   }
 
@@ -876,6 +940,13 @@ export class GameController {
     this.pcGames = [...read.manifests];
     log.info(`[pc-library] ${read.manifests.length} local game(s) ids=[${read.manifests.map((m) => m.raw.id).join(',')}]`);
     this.warnShadowedLocalGames();
+    // A local game that is gone takes its collision answer with it: there is nothing left to collide,
+    // and a draft recreated under the same id later deserves the question afresh.
+    void this.deps.library
+      .clearCollisionAnswers(read.manifests.map((manifest) => manifest.raw.id))
+      .catch((cause: unknown) =>
+        log.warn('[collision] clearing the answers of removed local games failed:', describe(cause)),
+      );
     for (const manifest of read.manifests) {
       this.statsById.set(manifest.raw.id, await this.deps.stats.read(manifest.raw.id));
     }
@@ -911,7 +982,7 @@ export class GameController {
     // the same history record, and re-inserting the card would then flip its artwork back and forth.
     const visibleLocal = this.games.filter((manifest) => manifest.source === 'pc');
     void this.deps.library
-      .saveFromCard(visibleLocal, this.protectedIds())
+      .saveFromCard(visibleLocal)
       .then(() => this.refreshLibrary())
       .catch((cause: unknown) => log.warn('[library] copying the local games\' assets failed:', describe(cause)));
 
@@ -1029,6 +1100,95 @@ export class GameController {
   }
 
   /** Logs the local games the inserted card currently shadows (same id — the card wins, see `games`). */
+  /**
+   * The Customize backend, attached after construction — it needs this controller to exist first (see
+   * main.ts), and the collision answer needs it back. A narrow view of the service, not the service.
+   */
+  private collisionResolver: CollisionResolver | null = null;
+
+  setCollisionResolver(resolver: CollisionResolver): void {
+    this.collisionResolver = resolver;
+  }
+
+  /** The PC library's own manifest for `id`, even while a card of the same id shadows it (Р10). */
+  findPcManifest(id: string): ResolvedManifest | null {
+    return this.pcGames.find((manifest) => manifest.raw.id === id) ?? null;
+  }
+
+  /**
+   * Asks — once per game — what should happen when the same id turns up on the card AND on this PC.
+   *
+   * Today the card simply wins, and the local game's name and artwork appear to vanish whenever it is
+   * inserted (`warnShadowedLocalGames` says so in the log and nowhere else). A silent reconciliation is
+   * not an option: the two manifests are independent, not a copy and its original, so there is no
+   * baseline and no "which is newer" to decide by — hence a question rather than a rule.
+   *
+   * Raised at the END of loadCard: the card is already on screen, so nothing about it is held up by the
+   * answer. One game at a time; an answer is remembered per id (collisionResolvedAt).
+   */
+  private askAboutCollisions(root: string): void {
+    if (this.collisionInFlight) return;
+    const cardIds = new Set(this.cardGames.map((manifest) => manifest.raw.id));
+    const local = this.pcGames.find(
+      (manifest) =>
+        cardIds.has(manifest.raw.id) &&
+        (this.deps.library.entry(manifest.raw.id)?.collisionResolvedAt ?? null) === null,
+    );
+    if (local === undefined) return;
+    void this.pushCollision(root, local);
+  }
+
+  private async pushCollision(root: string, local: ResolvedManifest): Promise<void> {
+    // The signature is captured WITH the question: the answer may arrive after the card has been pulled,
+    // or swapped for a different one carrying the same id, and neither may be written to.
+    const signature = await this.collisionResolver?.signatureFor(root);
+    if (signature === undefined || signature === null) return;
+    const collision: GameCollision = {
+      id: local.raw.id,
+      title: local.raw.title,
+      root,
+      signature,
+    };
+    const browserWindow = this.deps.window.browserWindow;
+    if (browserWindow !== null && !browserWindow.isDestroyed()) {
+      browserWindow.webContents.send(IPC.gameCollision, collision);
+    }
+  }
+
+  /**
+   * The answer. "Merge" puts the local game's look on the card and — for a DRAFT, which has nothing else
+   * to offer — removes it from the PC library, so the collision is gone for good. A fully configured
+   * local game stays: it has its own launch and its own saves, and after the merge the flip between the
+   * two sources is invisible anyway.
+   *
+   * The answer is remembered only once it has actually happened: a merge that failed leaves nothing
+   * written and no decision recorded, so the question honestly comes back.
+   */
+  private async resolveCollision(answer: GameCollisionAnswer): Promise<ConfigSaveResult> {
+    if (answer.choice === 'ignore') {
+      await this.deps.library.markCollisionResolved(answer.id);
+      return { saved: true, applied: 'deferred' };
+    }
+    const resolver = this.collisionResolver;
+    if (resolver === null) return { saved: false, message: this.t('errors.configInvalid') };
+    const local = this.findPcManifest(answer.id);
+    this.collisionInFlight = true;
+    try {
+      const result = await resolver.mergeCollision(answer);
+      if (!result.saved) return result;
+      if (localGameGoesAfterMerge(result, local)) {
+        const removed = await resolver.removeLocalGame(answer.id);
+        if (!removed.saved) {
+          log.warn(`[collision] the card took id=${answer.id}, but the local draft could not be removed: ${removed.message}`);
+        }
+      }
+      await this.deps.library.markCollisionResolved(answer.id);
+      return result;
+    } finally {
+      this.collisionInFlight = false;
+    }
+  }
+
   private warnShadowedLocalGames(): void {
     const cardIds = new Set(this.cardGames.map((manifest) => manifest.raw.id));
     for (const manifest of this.pcGames) {
@@ -1706,10 +1866,8 @@ export class GameController {
       const updatedStats = await stats.recordPlay(manifest.raw.id, playSeconds);
       const updatedInfo = await this.buildGameInfo(manifest, updatedStats);
       // The history's cached stats follow the authority, and the game may have just EARNED its place in
-      // the carousel (an inserted-but-never-played game is not listed until now). The GC runs here too:
-      // recordPlay is the one moment the ordering that decides eviction actually changes.
+      // the carousel (an inserted-but-never-played game is not listed until now).
       await this.deps.library.noteLaunch(manifest.raw.id, updatedStats);
-      await this.deps.library.gc(this.protectedIds());
       // Before the refresh, not after: the card's own games are ordered by these very dates, and this
       // game has just become the most recently played one.
       this.statsById.set(manifest.raw.id, updatedStats);
@@ -2334,6 +2492,16 @@ export class GameController {
    * A card game is listed even when the library has no record for it yet — the asset copy runs in the
    * background after the window is already up, and the carousel must not wait for it.
    */
+  /** True while a card is being read — see cardLoadInFlight (the Customize-from-history guard). */
+  isCardLoading(): boolean {
+    return this.cardLoadInFlight;
+  }
+
+  /** Re-pushes the carousel row (GameConfigService calls it after a save from the history). */
+  refreshLibraryRow(): void {
+    this.refreshLibrary();
+  }
+
   private refreshLibrary(): void {
     this.setLibrary(this.buildLibrary());
   }
@@ -2362,6 +2530,7 @@ export class GameController {
           id: game.id,
           title: game.title,
           active: true,
+          source: game.source,
           ...(stored !== null ? { artRev: stored.savedAt } : {}),
           ...(game.unconfigured === true ? { unconfigured: true as const } : {}),
         };
@@ -2373,6 +2542,9 @@ export class GameController {
           id: entry.id,
           title: entry.title,
           active: false,
+          // A record written before `sourceKind` existed is a card's: the history was cards only until
+          // the PC library came along, and the field fills in the next time the game shows up.
+          source: entry.sourceKind ?? ('card' as const),
           artRev: entry.savedAt,
         })),
     ];
@@ -2380,13 +2552,17 @@ export class GameController {
   }
 
   /** One source's games, most recently played first — the per-group ordering refreshLibrary applies. */
-  private orderedForCarousel(
-    manifests: readonly ResolvedManifest[],
-  ): readonly { readonly id: string; readonly title: string; readonly unconfigured?: true }[] {
+  private orderedForCarousel(manifests: readonly ResolvedManifest[]): readonly {
+    readonly id: string;
+    readonly title: string;
+    readonly source: ManifestSource;
+    readonly unconfigured?: true;
+  }[] {
     return byRecentlyPlayed(
       manifests.map((manifest) => ({
         id: manifest.raw.id,
         title: manifest.raw.title,
+        source: manifest.source,
         lastPlayedAt:
           this.statsById.get(manifest.raw.id)?.lastPlayedAt ??
           this.deps.library.entry(manifest.raw.id)?.lastPlayedAt ??
@@ -2494,7 +2670,16 @@ export class GameController {
       return;
     }
     const stats = await this.deps.stats.read(id);
-    this.pushBrowse({ id, title: entry.title, active: false, stats });
+    // Read off the in-memory record, never off the disk: browseTo runs on EVERY step through the
+    // carousel, with no debounce in front of it.
+    const configurable = entry.cardSlotHash !== undefined && entry.sourceKind !== 'pc';
+    this.pushBrowse({
+      id,
+      title: entry.title,
+      active: false,
+      stats,
+      ...(configurable ? { configurable: true as const } : {}),
+    });
     this.scheduleBrowseAssets(id, immediate);
   }
 

@@ -29,8 +29,8 @@ function deferredGrid(): {
 
 describe('artKey', () => {
   it('keys by id AND artwork revision, so a re-copied cover misses the cache', () => {
-    expect(artKey({ id: 'g', title: 'g', active: true, artRev: '7' })).toBe('g@7');
-    expect(artKey({ id: 'g', title: 'g', active: true })).not.toBe('g@7');
+    expect(artKey({ id: 'g', title: 'g', active: true, source: 'card', artRev: '7' })).toBe('g@7');
+    expect(artKey({ id: 'g', title: 'g', active: true, source: 'card' })).not.toBe('g@7');
   });
 });
 

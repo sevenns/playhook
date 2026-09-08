@@ -18,6 +18,8 @@ import {
   type ManifestEnv,
 } from './manifest';
 import { log } from './logger';
+import { uniqueAssetFileName } from './asset-file-names';
+import { assertImportableAsset, type ImportKind } from './asset-import';
 import { describe } from './util';
 
 export interface PcLibraryDeps {
@@ -36,24 +38,6 @@ export interface PcLibraryRead {
    */
   readonly intact: boolean;
 }
-
-/** Characters an imported asset's file name may keep. Everything else collapses into `-`. */
-const SAFE_ASSET_NAME = /[^A-Za-z0-9._-]+/g;
-
-/**
- * What an import may be, and how big. Both were implicit while the only way in was a native dialog whose
- * filters the OS enforced; the in-launcher picker names the path from the renderer instead, so the limits
- * are stated here — the one place every import passes through (see the plan, Р5.1/Р5.2).
- *
- * The sizes are chosen with room to spare over what real artwork and music weigh: a 4K PNG cover is a few
- * megabytes, a lossless album track tens of them. They exist to stop a disk image being copied into
- * `<userData>` by a mistyped path, not to police the user's files.
- */
-export type ImportKind = 'image' | 'audio';
-const MAX_IMPORT_BYTES: Readonly<Record<ImportKind, number>> = {
-  image: 32 * 1024 * 1024,
-  audio: 64 * 1024 * 1024,
-};
 
 export class PcLibraryStore {
   /** The library root — a card root in every respect but its manifest source. */
@@ -116,22 +100,9 @@ export class PcLibraryStore {
     kind: ImportKind,
     allowedExtensions: readonly string[],
   ): Promise<string> {
-    const extension = path.extname(absolutePath).replace(/^\./, '').toLowerCase();
-    if (!allowedExtensions.includes(extension)) {
-      throw new Error(`refusing to import "${absolutePath}": not a ${kind} extension`);
-    }
-    const stats = await fse.lstat(absolutePath);
-    if (stats.isSymbolicLink()) {
-      throw new Error(`refusing to import "${absolutePath}": symbolic link`);
-    }
-    if (!stats.isFile()) {
-      throw new Error(`refusing to import "${absolutePath}": not a regular file`);
-    }
-    if (stats.size > MAX_IMPORT_BYTES[kind]) {
-      throw new Error(`refusing to import "${absolutePath}": larger than ${MAX_IMPORT_BYTES[kind]} bytes`);
-    }
+    await assertImportableAsset(absolutePath, kind, allowedExtensions);
     await fse.ensureDir(this.assetsDir);
-    const name = await this.uniqueAssetName(path.basename(absolutePath));
+    const name = await uniqueAssetFileName(this.assetsDir, path.basename(absolutePath));
     await fse.copy(absolutePath, path.join(this.assetsDir, name), { overwrite: false, errorOnExist: true });
     return `assets/${name}`;
   }
@@ -167,19 +138,6 @@ export class PcLibraryStore {
 
   private manifestPath(): string {
     return path.join(this.root, MANIFEST_FILENAME);
-  }
-
-  /** A sanitized, collision-free file name inside `assets/`. */
-  private async uniqueAssetName(original: string): Promise<string> {
-    const sanitized = original.replace(SAFE_ASSET_NAME, '-').replace(/^[-.]+/, '');
-    const base = sanitized.length > 0 ? sanitized : 'asset';
-    const extension = path.extname(base);
-    const stem = base.slice(0, base.length - extension.length);
-    let candidate = base;
-    for (let suffix = 2; await fse.pathExists(path.join(this.assetsDir, candidate)); suffix += 1) {
-      candidate = `${stem}-${suffix}${extension}`;
-    }
-    return candidate;
   }
 }
 

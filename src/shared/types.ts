@@ -380,6 +380,34 @@ export interface LibraryEntry {
    * dot, the "Ready to play" section, Play itself) must check this flag too, not `active` alone.
    */
   readonly unconfigured?: true;
+  /**
+   * Where the game comes from — a card, or this PC. For an available game it is its manifest's source;
+   * for one in the history it is whichever source wrote its record last. The library screen filters by
+   * it ("External" / "This PC"); a record written before the field existed reads as `'card'`, which is
+   * what nearly all history is.
+   */
+  readonly source: ManifestSource;
+}
+
+/**
+ * One game that is on the inserted card AND in the PC library. Carries the card's content signature so
+ * the answer can be refused if the card is pulled — or swapped for another one with the same id —
+ * while the question is on screen.
+ */
+export interface GameCollision {
+  readonly id: string;
+  /** The name to put in the question: the local game's, since that is the one about to change. */
+  readonly title: string;
+  readonly root: string;
+  readonly signature: string;
+}
+
+/** What the user answered: take the local game's look onto the card, or leave both as they are. */
+export interface GameCollisionAnswer {
+  readonly id: string;
+  readonly choice: 'merge' | 'ignore';
+  readonly root: string;
+  readonly signature: string;
 }
 
 /** The carousel list, already in display order — the renderer never sorts it (see orderForCarousel). */
@@ -402,6 +430,12 @@ export interface BrowseInfo {
   /** The browsed game is on the inserted card (so Play/Install apply to it). */
   readonly active: boolean;
   readonly stats: Stats;
+  /**
+   * True for a HISTORY game the launcher has a card snapshot of: Customize can be opened for it with no
+   * card in, and the edits wait for the card to come back (see history-config.ts). Absent for an active
+   * game, which is configurable through the ordinary path anyway.
+   */
+  readonly configurable?: true;
   /** Only for an active game: everything the ready screen needs (requiresInstall, canUninstall, …). */
   readonly game?: GameInfo;
 }
@@ -709,6 +743,16 @@ export type AppNotification =
    */
   | (NotificationBase & { readonly kind: 'game-move-duplicate'; readonly gameTitle: string })
   /**
+   * Edits made to a game from the HISTORY (with no card in) reached their card on this insertion — the
+   * card now carries them. No `gameId`: the game is on screen already, and the entry only reports.
+   */
+  | (NotificationBase & { readonly kind: 'history-config-applied'; readonly gameTitle: string })
+  /**
+   * The same edits were dropped instead: the card's own version turned out to be the newer one, or the
+   * card refused the write (a foreign game under the same id, an executable that no longer resolves).
+   */
+  | (NotificationBase & { readonly kind: 'history-config-discarded'; readonly gameTitle: string })
+  /**
    * A settings change could not be written to disk, so it did not stick. Carries no detail: the cause is
    * in the log, and the only thing the user can act on is that their setting did not save.
    */
@@ -796,6 +840,14 @@ export const IPC = {
    * renderer's half of the same rule. Saves and playtime survive: this forgets the catalogue entry, not
    * the game. */
   libraryForget: 'library:forget',
+  /** main → renderer: this game exists BOTH on the inserted card and in the PC library, and the user has
+   * not said what should happen. The card shadows the local copy, so the local game's artwork and name
+   * seem to vanish whenever that card is in — the launcher asks once rather than flipping silently.
+   * Payload GameCollision. */
+  gameCollision: 'game:collision',
+  /** renderer → main (invoke): the answer to that question — merge the local game's presentation onto
+   * the card, or leave things as they are. Either way it is remembered. Payload GameCollisionAnswer. */
+  gameCollisionResolve: 'game:collision-resolve',
   /** main → renderer: what is on screen (title/stats/active/GameInfo) — see BrowseInfo. */
   browseUpdate: 'browse:update',
   /** renderer → main (invoke): the current BrowseInfo (seed on window startup, like state:request). */
@@ -887,7 +939,8 @@ export const IPC = {
    * from and the manifest's content signature (the swap guard for Save). Payload the game id. */
   gameConfigRead: 'gameConfig:read',
   /** game-renderer → main (invoke): static validation of manifest text against a root's source.
-   * Payload {root, text}. */
+   * Payload {root, text, source?} — `source` is what the history screen names instead of a root, which
+   * it does not have (the card the edits are for may be anywhere). */
   gameConfigValidate: 'gameConfig:validate',
   /** game-renderer → main (invoke): write game.json + try to apply it without a restart. Payload
    * {root, signature, text}; a signature mismatch means the media was swapped and the write is refused. */
@@ -914,6 +967,20 @@ export const IPC = {
    * gameConfig:save calls without a window where the game exists twice or nowhere (see the plan, Р2.5).
    * Payload GameMoveRequest; answers with ConfigMoveResult. */
   gameConfigMoveToCard: 'gameConfig:move-to-card',
+  /** game-renderer → main (invoke): the stored manifest text of a game from the HISTORY — the user's
+   * pending edits when there are any, the pristine card snapshot otherwise. Payload the game id;
+   * answers with HistoryConfigReadResult. */
+  gameConfigReadHistory: 'gameConfig:read-history',
+  /** game-renderer → main (invoke): store edits for a game from the history, to be applied to its card
+   * on the next insertion. Payload HistoryConfigSaveRequest; refused while the game is available (it
+   * must be configured through the ordinary path then). */
+  gameConfigSaveHistory: 'gameConfig:save-history',
+  /** game-renderer → main (invoke): copy path(s) the picker chose into the history's staging directory
+   * and answer with the card-relative paths the slot must name. Payload HistoryConfigAcceptRequest. */
+  gameConfigAcceptPathHistory: 'gameConfig:accept-path-history',
+  /** game-renderer → main (invoke): a thumbnail for one asset path of a history game — read from what is
+   * staged, else from the copy the history keeps. Payload {id, ref}; null when there is nothing to show. */
+  gameConfigHistoryAssetPreview: 'gameConfig:history-asset-preview',
   /** game-renderer → main (invoke): the system clipboard as text, for the on-screen keyboard's Paste.
    * Reading it belongs to main like every other environment fact; the renderer is sandboxed and its own
    * clipboard API would need a permission prompt that Game Mode has nowhere to show. No payload. */
@@ -1114,6 +1181,34 @@ export type ConfigRootReadResult =
       readonly platform: HostPlatform;
     }
   | { readonly ok: false; readonly message: string };
+
+/**
+ * What `gameConfig:read-history` answers with: the stored slot text for a game whose card is not in.
+ * There is no root and no signature — the card the edits are for may be anywhere, or nowhere — so the
+ * screen addresses everything by id instead (see the plan, Р6).
+ */
+export type HistoryConfigReadResult =
+  | {
+      readonly ok: true;
+      readonly id: string;
+      readonly text: string;
+      /** The OS the launcher runs on — see HostPlatform. */
+      readonly platform: HostPlatform;
+    }
+  | { readonly ok: false; readonly message: string };
+
+/** Payload for gameConfig:save-history — the game's id and its edited one-game manifest text. */
+export interface HistoryConfigSaveRequest {
+  readonly id: string;
+  readonly text: string;
+}
+
+/** Payload for gameConfig:accept-path-history — the same question as accept-path, addressed by id. */
+export interface HistoryConfigAcceptRequest {
+  readonly id: string;
+  readonly kind: ConfigPickKind;
+  readonly paths: readonly string[];
+}
 
 /** Payload for gameConfig:save — the manifest text plus the media signature read alongside it. */
 export interface GameConfigSaveRequest {
@@ -1435,6 +1530,10 @@ export interface RendererApi {
   forgetGame(id: string): void;
   /** Live updates of what is on screen (title/stats/active/GameInfo). */
   onBrowseUpdate(callback: (browse: BrowseInfo | null) => void): void;
+  /** A game turned up on the card AND on this PC — the launcher asks what to do about it once. */
+  onGameCollision(callback: (collision: GameCollision) => void): void;
+  /** The user's answer. `saved` false with a message when the card refused it (pulled, swapped, …). */
+  resolveGameCollision(answer: GameCollisionAnswer): Promise<ConfigSaveResult>;
   /** What is on screen right now (on window startup). */
   requestBrowse(): Promise<BrowseInfo | null>;
   /** Hero backgrounds of the browsed game (independent of the inserted card's hero:update). */
@@ -1504,8 +1603,13 @@ export interface RendererApi {
   // ── Customize screen (per-game game.json editing; see the gameConfig:* channels) ──
   /** The manifest text of one game by id, with the root/source/signature it was read against. */
   readGameConfig(id: string): Promise<GameConfigReadResult>;
-  /** Static (fs-free) validation of the edited text — the Save verdict, debounced by the screen. */
-  validateGameConfig(root: string, text: string): Promise<ConfigValidationResult>;
+  /** Static (fs-free) validation of the edited text — the Save verdict, debounced by the screen.
+   * `source` overrides the dialect the root would imply — the history screen has no root to imply one. */
+  validateGameConfig(
+    root: string,
+    text: string,
+    source?: ManifestSource,
+  ): Promise<ConfigValidationResult>;
   /** Write game.json and try to apply it without a restart; refused when the media signature moved on. */
   saveGameConfig(request: GameConfigSaveRequest): Promise<ConfigSaveResult>;
   /** A root-relative image as a data URL for a row's thumbnail (null when unreadable). */
@@ -1520,6 +1624,14 @@ export interface RendererApi {
   readGameConfigRoot(root: string): Promise<ConfigRootReadResult>;
   /** Moves a local (PC-library) game onto a card in one transaction (see GameMoveRequest). */
   moveGameConfigToCard(request: GameMoveRequest): Promise<ConfigMoveResult>;
+  /** The stored manifest text of a game from the history (its edits, else the card snapshot). */
+  readHistoryGameConfig(id: string): Promise<HistoryConfigReadResult>;
+  /** Store edits for a history game; they reach its card on the next insertion. */
+  saveHistoryGameConfig(request: HistoryConfigSaveRequest): Promise<ConfigSaveResult>;
+  /** Stage path(s) the picker chose for a history game, answering with card-relative paths. */
+  acceptHistoryGameConfigPaths(request: HistoryConfigAcceptRequest): Promise<ConfigPickResult>;
+  /** A thumbnail for one asset path of a history game (staged file, else the history's copy). */
+  getHistoryGameConfigImage(id: string, ref: string): Promise<string | null>;
   /** The clipboard as text, for the on-screen keyboard's Paste key. Empty when there is nothing to paste. */
   readClipboard(): Promise<string>;
 

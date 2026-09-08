@@ -65,9 +65,15 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'launcher.card.system': 'Система',
   'library.all': 'Все',
   'library.playable': 'Готовые к запуску',
+  'library.external': 'Внешние',
   'library.empty': 'Здесь пока нет игр.',
   'library.emptyPlayable':
     'Нет игр, готовых к запуску - вставьте карту или добавьте игру с ПК.',
+  'library.emptyPc': 'Игр с этого ПК пока нет - добавьте первую.',
+  'library.emptyExternal': 'Игр с карт пока нет - вставьте карту, и они появятся здесь.',
+  'launcher.confirm.collision': 'Перенести вашу версию {title} на карту?',
+  'launcher.confirm.collisionNote':
+    'На карте есть игра с тем же id, и пока карта вставлена, она перекрывает локальную. «Да» перенесёт на карту ваши название, обложку, фоны и музыку. «Нет» оставит всё как есть - и больше об этой игре не спросим.',
   'launcher.confirm.install': 'Установить игру?',
   'launcher.confirm.uninstall': 'Удалить игру с компьютера?',
   'launcher.confirm.uninstallPrefix': 'Очистить Proton-префикс?',
@@ -193,6 +199,9 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'gameConfig.pickPcSaveOutside':
     'Эта папка не находится в известном месте сохранений (%DOCUMENTS%, %APPDATA%, %LOCALAPPDATA%, %LOCALLOW% или %USERPROFILE%). Выберите папку внутри одного из них.',
   'gameConfig.pickImportFailed': 'Не удалось скопировать выбранный файл в локальную библиотеку.',
+  'gameConfig.gameNowAvailable':
+    'Игра снова доступна - теперь она настраивается напрямую. Закройте этот экран и откройте настройки игры.',
+  'gameConfig.noStoredConfig': 'У Playhook нет сохранённых настроек для этой игры.',
   'gameConfig.pickMissing': 'Этого файла больше нет.',
   'gameConfig.pickSymlink': 'Это ссылка на другое место - выберите сам файл.',
   'gameConfig.pickNeedsFolder': 'Для этого поля нужна папка.',
@@ -225,6 +234,9 @@ export const ru: Partial<Record<MessageKey, string>> = {
     'Настройки не сохранились и после перезапуска вернутся как были: у Playhook нет доступа на запись к своему файлу настроек.',
   'notifications.gameMoveDuplicate':
     '{title} записана на карту, но её не удалось убрать из PC-библиотеки - теперь она есть в обоих местах. Удалите локальную копию через настройки игры.',
+  'notifications.historyConfigApplied': 'Ваши правки для {title} записаны на карту.',
+  'notifications.historyConfigDiscarded':
+    'Ваши правки для {title} отброшены - на карте более свежая версия.',
   'notifications.empty': 'Уведомлений нет',
   'notifications.clearAll': 'Очистить всё',
   'notifications.yesterday': 'вчера, {time}',

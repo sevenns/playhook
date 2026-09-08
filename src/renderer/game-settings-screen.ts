@@ -30,6 +30,8 @@ import type {
   DriveCandidate,
   GameConfigAcceptRequest,
   GameConfigReadResult,
+  HistoryConfigReadResult,
+  HistoryConfigSaveRequest,
   GameConfigSaveRequest,
   GameMoveRequest,
   GameCandidate,
@@ -100,9 +102,22 @@ const MARQUEE_SPEED_PX_PER_S = 60;
 /** What the screen sends to main. A seam, so app.ts owns the window.api wiring. */
 export interface GameSettingsScreenApi {
   read(id: string): Promise<GameConfigReadResult>;
-  validate(root: string, text: string): Promise<ConfigValidationResult>;
+  /** `source` names the dialect when there is no root to imply one (a game from the history). */
+  validate(
+    root: string,
+    text: string,
+    source?: ManifestSource,
+  ): Promise<ConfigValidationResult>;
   save(request: GameConfigSaveRequest): Promise<ConfigSaveResult>;
   imagePreview(root: string, path: string): Promise<string | null>;
+
+  // ── A game whose card is not in (see history-config.ts) ──
+  /** Its stored manifest: the edits waiting for the card, or the snapshot the card was read into. */
+  readHistory(id: string): Promise<HistoryConfigReadResult>;
+  /** Stores edits for it — they reach the card on its next insertion, not now. */
+  saveHistory(request: HistoryConfigSaveRequest): Promise<ConfigSaveResult>;
+  /** A thumbnail for one of its asset paths: what is staged on this PC, else the history's own copy. */
+  historyAssetPreview(id: string, ref: string): Promise<string | null>;
   /** Where a new game may be added — the cards plus the PC library (add mode only). */
   sources(): Promise<readonly DriveCandidate[]>;
   /** One root's manifest, for adding a game to it — it may carry no game yet (add mode only). */
@@ -166,12 +181,20 @@ export interface TextEntrySurface extends NavSurface {
 
 export interface FilePickerSurface extends NavSurface {
   open(request: {
+    /** Where picked paths are measured from. Empty for a history game — there is no card to measure
+     * against, and `historyId` names where the file is copied to instead. */
     readonly root: string;
     readonly kind: ConfigPickKind;
     readonly current: string;
     readonly multi: boolean;
     /** The root-relative sub-directory this field is measured from, when it has one (see baseFor). */
     readonly base?: string;
+    /**
+     * Set when the screen is editing a game from the HISTORY: what is picked is copied into that game's
+     * staging directory on this PC (the card it is for is not in), and the field stores the path the
+     * file will have on the card once the edits are applied.
+     */
+    readonly historyId?: string;
     readonly onDone: (result: ConfigPickResult) => void;
   }): void;
 }
@@ -212,6 +235,12 @@ export interface GameSettingsScreenDeps {
 export interface GameSettingsScreen extends NavSurface {
   /** Opens the screen for one game, reading its manifest. */
   open(id: string): void;
+  /**
+   * The same screen for a game whose card is NOT in: the stored manifest is read from the history, the
+   * fields that name files on the card are inert, and Save queues the edits for the card's next
+   * insertion instead of writing anything (see history-config.ts).
+   */
+  openFromHistory(id: string): void;
   /** Opens the same screen with no game behind it — the form CREATES one (see `mode`). */
   openNew(): void;
   close(): void;
@@ -316,14 +345,35 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
    */
   let adoptingRoot: string | null = null;
   let adoptToken = 0;
-  // Where the manifest came from, and the media signature it was read against (the swap guard, Р6.2).
-  let origin: {
+  /**
+   * Where the manifest came from. Two kinds, because the screen now edits games whose file it cannot
+   * reach:
+   *
+   *   `media`   — the ordinary case: a real root (a card, or the PC library) plus the content signature
+   *               it was read against, which is the swap guard every save is checked against (Р6.2).
+   *   `history` — a game whose card is NOT in. There is no root to browse, no signature to guard and no
+   *               file to write; everything is addressed by the game's ID instead, and the edits are
+   *               stored on this PC until that card comes back (see history-config.ts).
+   *
+   * A union rather than an "empty root", so every place that needs a real path has to say which case it
+   * is handling instead of quietly reaching for ''.
+   */
+  type MediaOrigin = {
+    readonly kind: 'media';
     readonly root: string;
     readonly source: ManifestSource;
     readonly signature: string;
     /** Read alongside the manifest — main answers it, the renderer never asks the OS itself. */
     readonly platform: HostPlatform;
-  } | null = null;
+  };
+  type Origin = MediaOrigin | { readonly kind: 'history'; readonly id: string; readonly platform: HostPlatform };
+  let origin: Origin | null = null;
+  /** The media origin, or null when this visit is a history one — the guard for anything path-shaped. */
+  const mediaOrigin = (): MediaOrigin | null =>
+    origin !== null && origin.kind === 'media' ? origin : null;
+  /** The game's id when the screen is editing from the history, else null. */
+  const historyId = (): string | null =>
+    origin !== null && origin.kind === 'history' ? origin.id : null;
   // Every game in the file. Ours is `slots[slotIndex]`; the others are only ever carried through.
   let slots: GameFormState[] = [];
   let slotIndex = -1;
@@ -368,6 +418,12 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
    * resolve is not even in the carousel — but a NEW one means we introduced it (see the plan, Э4).
    */
   let baselineOtherIssues: ReadonlySet<string> = new Set();
+  /**
+   * The problems OUR OWN slot already had when the screen opened — only ever non-empty for a game edited
+   * from the history, whose stored manifest may predate the editor's gates entirely. Save is allowed
+   * while they are there; a NEW one is ours (the same rule main applies, see GameConfigService).
+   */
+  let baselineOwnIssues: ReadonlySet<string> = new Set();
   let ownIssues = false;
   let status: string | null = null;
 
@@ -444,16 +500,20 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
    */
   function canDelete(): boolean {
     if (pendingMove !== null) return false;
-    if (origin === null || deps.isBusy()) return false;
-    return origin.source === 'pc' ? true : slots.length >= 2;
+    // Deleting a history game would mean deleting it from a card that is not here. "Remove from history"
+    // in the carousel menu is the action that DOES apply there, and it is a different thing entirely.
+    const at = mediaOrigin();
+    if (at === null || deps.isBusy()) return false;
+    return at.source === 'pc' ? true : slots.length >= 2;
   }
 
   /** Whether "Move to card…" (the action row above Delete) may run right now — a card has nowhere to
    * move TO that would mean anything, so this is local games only; same busy guard as Delete. */
   function canMove(): boolean {
     if (pendingMove !== null) return false;
-    if (origin === null || deps.isBusy()) return false;
-    return origin.source === 'pc';
+    const at = mediaOrigin();
+    if (at === null || deps.isBusy()) return false;
+    return at.source === 'pc';
   }
 
   function canSave(): boolean {
@@ -475,9 +535,11 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   }
 
   function currentModel(): GameSettingsModel | null {
-    if (origin === null) return null;
+    const where = origin;
+    if (where === null) return null;
     const move = pendingMove;
-    const at = move !== null ? move.target.root : origin.root;
+    const media = mediaOrigin();
+    const at = move !== null ? move.target.root : (media?.root ?? '');
     return buildGameSettingsModel(form, {
       mode,
       move: move !== null,
@@ -488,9 +550,11 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
           : (sources.find((candidate) => candidate.root === at)?.label ?? null),
       // While a move is pending the form is edited AS THE TARGET CARD would read it — the whole point of
       // "the form expands" (see the plan, Р2.2/Р2.3): rows, launch modes and pickers all key off this.
-      source: move !== null ? 'card' : origin.source,
-      platform: origin.platform,
+      // A history game is a card's game by definition — its manifest came off one.
+      source: move !== null || media === null ? 'card' : media.source,
+      platform: where.platform,
       root: at,
+      historyMode: where.kind === 'history',
       loadedId,
       mixed,
       issues,
@@ -808,10 +872,13 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   /** Cache key includes the root: the same card-relative STRING can name different bytes in the PC
    * library and on a move's target card (see assetPreviewRoot), and thumbnails must not conflate them. */
   async function thumbnailFor(root: string, path: string): Promise<string | null> {
-    const key = `${root} ${path}`;
+    // A history game has no root, so its cache namespace is the game itself — otherwise every history
+    // game would share the '' key and serve each other's covers.
+    const id = historyId();
+    const key = id !== null ? `history:${id} ${path}` : `${root} ${path}`;
     const cached = thumbnails.get(key);
     if (cached !== undefined) return cached;
-    const url = await deps.api.imagePreview(root, path);
+    const url = id !== null ? await deps.api.historyAssetPreview(id, path) : await deps.api.imagePreview(root, path);
     thumbnails.set(key, url);
     return url;
   }
@@ -821,9 +888,12 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     if (origin === null) return;
     // Card-relative during a pending move (see assetPreviewRoot): a hero/grid image the move carried
     // over unedited previews from the PC library, everything else from wherever the form is pointed.
+    // A history game's assets are addressed by id inside thumbnailFor; the path travels unchanged.
+    const forHistory = historyId() !== null;
     const thumbnailAt = (
       path: string,
-    ): { readonly root: string; readonly relative: string } | null => assetPreviewRoot(path);
+    ): { readonly root: string; readonly relative: string } | null =>
+      forHistory ? { root: '', relative: path } : assetPreviewRoot(path);
     for (const row of rendered) {
       const source = row.row;
       if (source.kind === 'list' && source.preview !== undefined) {
@@ -1173,7 +1243,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
    */
   function cycleSource(delta: number): void {
     if (sources.length === 0) return;
-    const current = adoptingRoot ?? origin?.root ?? '';
+    const current = adoptingRoot ?? mediaOrigin()?.root ?? '';
     const at = sources.findIndex((candidate) => candidate.root === current);
     const next = sources[wrapIndex(at === -1 ? 0 : at, delta, sources.length)];
     if (next === undefined || next.root === current) return;
@@ -1187,7 +1257,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
    * carryFormAcrossSources). With nothing but a name typed there is nothing to warn about.
    */
   function requestSource(root: string): void {
-    if (root === (adoptingRoot ?? origin?.root)) return;
+    if (root === (adoptingRoot ?? mediaOrigin()?.root)) return;
     if (hasSourceBoundValues(form)) {
       pendingSource = root;
       deps.onConfirmRequested('switch-source');
@@ -1306,24 +1376,32 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   function assetPreviewRoot(
     relative: string,
   ): { readonly root: string; readonly relative: string } | null {
+    const media = mediaOrigin();
     const move = pendingMove;
     if (move !== null) {
       const source = move.sourceAssetPaths.get(relative);
-      if (source !== undefined)
-        return origin === null ? null : { root: origin.root, relative: source };
+      if (source !== undefined) return media === null ? null : { root: media.root, relative: source };
       return { root: move.target.root, relative };
     }
-    return origin === null ? null : { root: origin.root, relative };
+    return media === null ? null : { root: media.root, relative };
   }
 
   /** Opens the artwork at full size. Nothing but a look — B (or the veil) closes it. */
   async function showImage(relative: string): Promise<void> {
     if (relative === '') return;
-    const at = assetPreviewRoot(relative);
-    if (at === null) return;
-    const url = await deps.api.imagePreview(at.root, at.relative);
+    // A history game's files are not on any root the renderer can name: what is staged sits in the app's
+    // own storage, and the rest exists only as the copy the history keeps (see historyAssetPreview).
+    const id = historyId();
+    const url =
+      id !== null ? await deps.api.historyAssetPreview(id, relative) : await mediaImage(relative);
     if (url === null) return; // a preview that could not be read never became a surface — and never sounds
     openLightbox(url, relative);
+  }
+
+  async function mediaImage(relative: string): Promise<string | null> {
+    const at = assetPreviewRoot(relative);
+    if (at === null) return null;
+    return deps.api.imagePreview(at.root, at.relative);
   }
 
   /** The lightbox itself, shared by a file already on the card and a variant still only online. */
@@ -1360,12 +1438,18 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     onPicked?: (paths: readonly string[]) => void,
   ): void {
     const move = pendingMove;
+    const media = mediaOrigin();
+    // A history game browses THIS PC's filesystem with no root behind it: the picker's listing is
+    // root-agnostic already, and what is picked is staged by id rather than measured against a card.
+    const forHistory = historyId();
     const at =
       move !== null
         ? { root: move.target.root, source: 'card' as const }
-        : origin !== null
-          ? { root: origin.root, source: origin.source }
-          : null;
+        : media !== null
+          ? { root: media.root, source: media.source }
+          : forHistory !== null
+            ? { root: '', source: 'card' as const }
+            : null;
     if (at === null) return;
     const kind = pickKindFor(id, form.launchMode, at.source);
     if (kind === null) return;
@@ -1374,6 +1458,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       kind,
       current,
       multi,
+      ...(forHistory !== null ? { historyId: forHistory } : {}),
       ...(baseFor(id) !== null ? { base: baseFor(id) ?? '' } : {}),
       onDone: (result) => {
         if (!result.ok) {
@@ -1548,13 +1633,16 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
    */
   async function runValidate(): Promise<void> {
     const move = pendingMove;
-    const root = move !== null ? move.target.root : origin?.root;
-    if (root === undefined || unreadable !== null) return;
+    const media = mediaOrigin();
+    // A history game has no root to imply a dialect, so the dialect is named outright: its manifest came
+    // off a card and has to keep validating as one.
+    const root = move !== null ? move.target.root : (media?.root ?? '');
+    if (origin === null || unreadable !== null) return;
     const index = move !== null ? move.targetIndex : slotIndex;
     const activeSlots = move !== null ? move.targetSlots : slots;
     const token = ++validateToken;
     const text = currentText();
-    const result = await deps.api.validate(root, text);
+    const result = await deps.api.validate(root, text, origin.kind === 'history' ? 'card' : undefined);
     if (token !== validateToken) return; // a newer edit already asked
     const own = new Map<string, string>();
     const others: string[] = [];
@@ -1573,9 +1661,18 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       }
     }
     issues = own;
-    ownIssues = own.size > 0;
+    // Only issues this VISIT introduced block Save. For a game edited from the history the baseline is
+    // its stored manifest, which — on a card written by hand years ago — can fail the editor's stricter
+    // gates all by itself (see manifest.ts). Without this mirror of main's own rule the button would be
+    // dead for such a card and the user would never reach the message explaining why.
+    ownIssues = [...own].some(([path, message]) => !baselineOwnIssues.has(issueKey(path, message)));
     otherIssues = others;
     render();
+  }
+
+  /** How one issue is remembered in a baseline set — path and wording together, as main compares them. */
+  function issueKey(path: string, message: string): string {
+    return `${path}\u0000${message}`;
   }
 
   /** "Hades (game 3): install.args — expected array" — the other game is named when we can name it. */
@@ -1641,6 +1738,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     }
     deps.audio.play('button'); // the screen is entered like a button, not like a popup
     origin = {
+      kind: 'media',
       root: result.root,
       source: result.source,
       signature: result.signature,
@@ -1652,12 +1750,46 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   }
 
   /**
+   * The same screen for a game whose card is NOT in. What comes back is one game's manifest — the edits
+   * waiting for that card, or the snapshot taken of it — and everything that would need the card
+   * (browsing for a file, the swap guard, writing) is answered by the history instead.
+   */
+  async function loadHistory(id: string): Promise<void> {
+    gameId = id;
+    origin = null;
+    unreadable = null;
+    status = null;
+    issues = new Map();
+    otherIssues = [];
+    ownIssues = false;
+    baselineOwnIssues = new Set();
+    render();
+    const result = await deps.api.readHistory(id);
+    if (!open || gameId !== id) return; // closed (or moved on) while main was reading
+    if (!result.ok) {
+      origin = null;
+      unreadable = result.message;
+      render();
+      return;
+    }
+    deps.audio.play('button');
+    origin = { kind: 'history', id, platform: result.platform };
+    adoptText(result.text);
+    await runValidate();
+    baselineOtherIssues = new Set(otherIssues);
+    // What was already wrong with the stored manifest is not this visit's doing — see runValidate.
+    baselineOwnIssues = new Set([...issues].map(([path, message]) => issueKey(path, message)));
+    ownIssues = false;
+    render();
+  }
+
+  /**
    * "Move to card…" (Р2.1): lists the cards a local game may move to and lets the user pick one. Called
    * once `load` has landed — re-checks the source itself, since the menu item's own visibility rule
    * (controls.ts) can go stale between the press and the read completing.
    */
   async function beginMove(): Promise<void> {
-    if (origin === null || origin.source !== 'pc') return;
+    if (mediaOrigin()?.source !== 'pc') return;
     const forGame = gameId;
     const list = await deps.api.sources();
     // Closed, reopened for another game / in add mode, or a target was already picked meanwhile.
@@ -1797,6 +1929,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       return;
     }
     origin = {
+      kind: 'media',
       root: result.root,
       source: result.source,
       signature: result.signature,
@@ -1854,10 +1987,12 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     // textToGames has no `source`, so a PC-library draft (no launch block at all) parses indistinguishably
     // from a blank card form and defaults to 'executable' — draftModeFor corrects that with the source the
     // screen actually has.
+    // A history game's manifest is a card's, whatever else the screen has to do without.
+    const dialect = origin === null ? null : (mediaOrigin()?.source ?? 'card');
     form =
-      origin === null
+      dialect === null
         ? ours.model
-        : { ...ours.model, launchMode: draftModeFor(ours.model, origin.source) };
+        : { ...ours.model, launchMode: draftModeFor(ours.model, dialect) };
     rest = ours.rest;
     corrupt = ours.corrupt;
     mixed = ours.mixed;
@@ -1873,7 +2008,12 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     if (at === null || !canSave()) return;
     const text = currentText();
     setStatus(t()('gameSettings.saving'));
-    const result = await deps.api.save({ root: at.root, signature: at.signature, text });
+    // Nothing is written to any card here when the game came from the history: the edits are stored on
+    // this PC and the card picks them up the next time it is inserted (see history-config.ts).
+    const result =
+      at.kind === 'history'
+        ? await deps.api.saveHistory({ id: at.id, text })
+        : await deps.api.save({ root: at.root, signature: at.signature, text });
     if (!result.saved) {
       failWith(result.message);
       return;
@@ -1897,7 +2037,8 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
    */
   async function runMove(): Promise<void> {
     const move = pendingMove;
-    if (move === null || origin === null || !canSave()) return;
+    const media = mediaOrigin();
+    if (move === null || media === null || !canSave()) return;
     const text = currentText();
     const movedId = form.id;
     setStatus(t()('gameSettings.saving'));
@@ -1906,8 +2047,8 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       // The id the manifest was READ with — what main addresses the PC-library side by. `form.id` is an
       // editable field and must never be what decides which local game gets removed.
       fromId: loadedId,
-      fromRoot: origin.root,
-      fromSignature: origin.signature,
+      fromRoot: media.root,
+      fromSignature: media.signature,
       toRoot: move.target.root,
       toSignature: move.targetSignature,
       toText: text,
@@ -1932,7 +2073,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
    *  • `failed` — written, but the reload was refused. That is an error to read, so the screen stays.
    */
   async function runAdd(): Promise<void> {
-    const at = origin;
+    const at = mediaOrigin();
     if (at === null || !canSave()) return;
     const text = currentText();
     const addedId = form.id;
@@ -1970,6 +2111,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       (slot, index) => index !== parsed.index && (isRawSlot(slot) || slot.model.id !== writtenId),
     );
     origin = {
+      kind: 'media',
       root: result.root,
       source: result.source,
       signature: result.signature,
@@ -1988,7 +2130,9 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
    * READ, so unsaved edits are discarded with it — which the confirm says out loud.
    */
   async function runDelete(forgetHistory: boolean): Promise<void> {
-    const at = origin;
+    // Delete is not offered for a history game (canDelete), and could not act on one anyway: the file it
+    // would cut the slot from is on a card that is not here.
+    const at = mediaOrigin();
     if (at === null || slotIndex < 0) return;
     const remaining = slots.filter((_, index) => index !== slotIndex);
     const text = gamesToText(remaining);
@@ -2033,7 +2177,9 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
    */
   function metadataTarget(): { readonly root: string; readonly gameId: string } | null {
     const move = pendingMove;
-    const root = move !== null ? move.target.root : (origin?.root ?? null);
+    // A history game downloads nothing: there is no game root to put a file beside, which is why the
+    // online surface offers it the TEXT only (see startFindOnline).
+    const root = move !== null ? move.target.root : (mediaOrigin()?.root ?? null);
     if (root === null) return null;
     const id = form.id.trim();
     return id === '' ? null : { root, gameId: id };
@@ -2054,6 +2200,8 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     deps.onlinePicker.open({
       query: form.title.trim(),
       ...(steamApp ? { appId } : {}),
+      // A history game has no root to download a cover into — the text half of the flow still applies.
+      ...(historyId() !== null ? { textOnly: true } : {}),
     });
   }
 
@@ -2246,12 +2394,15 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
 
   function activateRow(target: RenderedGameRow): void {
     const row = target.row;
+    // A disabled row is shown for its VALUE, not for editing: a toggle a custom installer forces, and —
+    // for a game configured from the history — every field that names something on the card that is not
+    // here to be browsed (see buildGameSettingsModel's historyMode).
+    if (row.kind !== 'note' && row.kind !== 'action' && row.disabled === true) {
+      deps.audio.playLimit();
+      return;
+    }
     switch (row.kind) {
       case 'toggle':
-        if (row.disabled === true) {
-          deps.audio.playLimit(); // the row is shown, but this game cannot have it switched
-          return;
-        }
         deps.audio.play('button');
         pressFlash(target.el);
         toggleField(row.id);
@@ -2531,6 +2682,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     pendingMove = null;
     baseline = '';
     baselineOtherIssues = new Set();
+    baselineOwnIssues = new Set();
     sources = [];
     pendingSource = null;
     adoptingRoot = null;
@@ -2544,6 +2696,12 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       mode = 'edit';
       resetScreenState();
       void load(id); // the sound waits for the read to land — an unreadable game never became a screen
+    },
+    openFromHistory: (id: string) => {
+      if (open) return;
+      mode = 'edit';
+      resetScreenState();
+      void loadHistory(id);
     },
     openNew: () => {
       if (open) return;
@@ -2568,7 +2726,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     navActivate,
     navBack,
     isDirty: dirty,
-    deletesLocalGame: () => origin?.source === 'pc',
+    deletesLocalGame: () => mediaOrigin()?.source === 'pc',
     askOnlineQuery: (initial, onDone) => {
       deps.keyboard.open({
         value: initial,
@@ -2651,6 +2809,11 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       // Add mode has no game of its own, so every browse push would match `gameId === ''` and close the
       // screen the moment anything at all changed in the carousel.
       if (mode === 'add') return;
+      // A history visit is not about a reachable file in the first place — it edits a stored copy — so
+      // none of what follows applies to it. A card arriving mid-edit is handled where it matters: the
+      // save is refused with a message that says the game is available again. Closing the screen under
+      // the user (and discarding what they typed) would be the worse answer.
+      if (origin?.kind === 'history') return;
       // The card was pulled, or swapped, or the game stopped being playable: the screen is about a file
       // that is no longer reachable, and everything under it (the carousel, the detail screen) has been
       // rebuilt already. Leaving would be worse than closing, so it closes — see the plan, Р6.2.
