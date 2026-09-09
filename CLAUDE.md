@@ -4,11 +4,31 @@ Conventions for extending Playhook safely. These were distilled from an architec
 was: **add features without breaking existing behaviour.** Follow them for new code; they are not a
 mandate to rewrite what already works.
 
+## UI text
+
+- **Never type the `…` glyph in user-facing text rendered through the app's own font**, and prefer copy
+  that does not trail off at all. The bundled font (M PLUS Rounded 1c) draws periods and the ellipsis
+  glyph CENTERED vertically — the CJK convention, not the Latin one — so they sit above the baseline and
+  read as a row of raised dots instead of trailing punctuation. `styles.css` carves those two code points
+  out of the font (see the `@font-face … unicode-range: U+002E, U+2026` overrides right after the four
+  real ones) so the fallback stack draws them properly wherever they DO appear — including text this app
+  does not author, like a game's own title.
+- **Where a label genuinely continues** — a progress state ("Installing..."), a control that opens
+  something else ("Find online...") — write three PERIODS, never the glyph. That is the existing
+  convention and it is deliberate: see the comments at `en.ts` "Status labels" and `state-view.ts`
+  `statusOf`. The override above is what makes it render correctly, so this is the one place it is leant
+  on by design. Text rendered by the OS rather than by the app's font — the tray menu — uses `…` normally.
+
 ## Layers (do not blur)
 
 - **main** owns all game logic (fs, registry, process control, FFI). **renderer** is stateless UI.
 - They talk **only over IPC**. The renderer never touches fs/registry; main never touches the DOM.
 - Preload bridges are typed and sandboxed (`contextIsolation: true`, `sandbox: true`).
+- A **pure** function BOTH sides must compute identically (no fs/electron either way) lives in
+  `src/shared/` alongside `types.ts` and `i18n/` — not duplicated in each layer, and not placed under
+  `src/main/`: `tsconfig.renderer.json` does not include it and esbuild builds the renderer for the
+  browser, so a `node:*` import there breaks the build, not just the convention. See
+  `src/shared/asset-move-names.ts` (move-to-card asset names, computed identically in main and renderer).
 
 ## Error-handling convention
 
@@ -31,20 +51,23 @@ Pick per situation, matching the existing patterns:
 Follow the **interface-DI** shape of `StatsService` / `UpdaterService` (dependencies passed via a
 typed `…Deps` interface), not the bare-primitive-constructor or free-function styles that predate it.
 Interface-DI is the most testable: it lets a unit test inject fakes without electron/fs. Bootstrap the
-service in `main.ts`; wire IPC through `GameController`/`SettingsWindow` as appropriate.
+service in `main.ts`; wire IPC through `GameController` (or the service's own `init()`, the way
+`GameConfigService` and `MetadataService` register their channels).
 
 ## Adding a new IPC channel
 
 The channel literal lives in **one** source of truth and is bridged with compile-time checks:
 
 1. Add the channel to the `IPC` const map in `shared/types.ts` (with a doc comment on direction).
-2. Add the method to the matching `RendererApi` / `SettingsApi` interface.
-3. Add the literal to the preload's `CHANNELS` map (`preload.ts` for game, `settings-preload.ts` for
-   settings). The `satisfies Partial<typeof IPC>` catches a wrong value or typo'd key at compile time.
+2. Add the method to the `RendererApi` interface.
+3. Add the literal to `src/preload/preload.ts`'s `CHANNELS` map. It is `satisfies typeof IPC`, so a
+   wrong value, a typo'd key AND a forgotten channel are all compile errors — there is one window and one
+   preload, so the map has to be complete.
 4. Wire the handler in `ipc.ts` (main) and consume it in the renderer.
 
-The `test/ipc-channels.test.ts` suite guards **completeness**: every `IPC` channel must be exposed by
-exactly one preload. `satisfies Partial<>` cannot catch a *forgotten* channel — that test can.
+The `test/ipc-channels.test.ts` suite guards the same invariant from the outside (it reads the preload
+sources as text) and would still catch it if a second window — and a second preload, back to
+`satisfies Partial<typeof IPC>` — ever returns.
 
 ## Two entry points: GUI and daemon
 
@@ -68,32 +91,48 @@ happened once already, via `logger.ts` and `steam.ts`.
 
 ## Platform layer (OS-specific code)
 
-Playhook runs on Windows and on the Steam Deck / Linux (Windows games via Proton/umu-launcher). **All
-OS-specific behaviour lives behind the `Platform` bundle in `src/main/platform/`**, not scattered
-`process.platform` checks. When you add code that differs per OS:
+Playhook runs on **three** OSes: Windows, the Steam Deck / Linux (Windows games via Proton/umu-launcher)
+and macOS. macOS is a deliberately narrower port — NATIVE mac games (a bare binary or a `.app` bundle) plus
+Steam mode; a Windows `*.exe` does not run there (no Wine/CrossOver), install mode is unsupported, and the
+build does not self-update. **All OS-specific behaviour lives behind the `Platform` bundle in
+`src/main/platform/`**, not scattered `process.platform` checks. When you add code that differs per OS:
 
 - Add the capability to an interface in `platform/types.ts` (the bundle is `ProcessMonitor`,
-  `SteamLocator`, `GameProcessLauncher`, `SavePathResolver`, `PowerBackend`, `resolveInstallDir`).
-- Implement it in **both** `platform/win32.ts` and `platform/linux.ts` (linux Proton helpers live in
-  `platform/*.linux.ts` / `umu.ts`). `createPlatform(process.platform)` selects the bundle once at
-  bootstrap; the rest of the code is platform-agnostic and receives it via DI (`ControllerDeps.platform`).
-- **Never change Windows behaviour** when adding the Linux side — the win32 implementation must stay 1:1
-  (the port's guiding invariant). Keep the OS-neutral fs/parse code (manifest, save-sync, `.acf`/VDF,
-  drive-watcher) shared — don't fork it.
-- Card format is a **Windows dictionary** on both OSes (`%APPDATA%`, `*.exe`, `install.type`); on Linux it
-  is interpreted relative to the game's Wine prefix. A `game.json` must work unchanged on both platforms —
-  Linux-only manifest fields (`winetricks`, `umuGameId`) are ignored on Windows, never rejected.
-- Extract the pure bits (path/env/argv construction, `/proc` parsing, prefix mapping) into electron-free
-  helpers and unit-test them (see `umu.ts`, `proc.ts`, `save-path.linux.ts`).
-- **Build Linux paths with `path.posix`, never bare `path.join`.** `path.join` follows the OS the code
-  RUNS on, and CI runs the test suite on Windows too — so a Linux path built with `path.join` comes out as
-  `\home\deck\...` there and fails a test that (correctly) expects `/home/deck/...`. This has broken the
-  Windows job repeatedly. In any `*.linux.ts` module — and in any Linux-only feature elsewhere — use
-  `path.posix.join` / `path.posix.dirname` / `path.posix.basename`. Reference: `umu.ts` `prefixDir`,
-  `steam-userdata.linux.ts`. The win32 side keeps plain `path.join` (there it is right).
+  `SteamLocator`, `SteamShortcuts`, `GameProcessLauncher`, `SavePathResolver`, `PowerBackend`,
+  `RemovableMounter`, `resolveInstallDir`).
+- Implement it in **all three** of `platform/win32.ts`, `platform/linux.ts` and `platform/darwin.ts`
+  (linux Proton helpers live in `platform/*.linux.ts` / `umu.ts`; the macOS ones in `platform/*.darwin.ts`).
+  `createPlatform(process.platform)` selects the bundle once at bootstrap in an explicit three-way branch
+  (win32 / darwin / everything-else = linux); the rest of the code is platform-agnostic and receives it via
+  DI (`ControllerDeps.platform`).
+- **Never change the behaviour of an OS you are not porting.** Adding the Linux side must leave win32 1:1;
+  adding macOS must leave BOTH win32 and linux 1:1 (the port's guiding invariant, and the one most easily
+  broken by accident — a visibility rule phrased as "only on Linux" silently takes a section away from
+  Windows too; phrase it as "not on the OS being added"). Keep the OS-neutral fs/parse code (manifest,
+  save-sync, `.acf`/VDF, drive-watcher) shared — don't fork it.
+- Card format is a **Windows dictionary** on every OS (`%APPDATA%`, `*.exe`, `install.type`), interpreted
+  per platform: on Linux relative to the game's Wine prefix; on macOS translated into the mac profile
+  (`%APPDATA%`/`%LOCALAPPDATA%`/`%LOCALLOW%` → `~/Library/Application Support`, `%USERPROFILE%` → `~`,
+  `%DOCUMENTS%` → `~/Documents`) while a card whose `executable` is a `*.exe` simply refuses to launch
+  there. A `game.json` must work unchanged wherever it CAN work — Linux-only manifest fields (`winetricks`,
+  `umuGameId`) are ignored elsewhere, never rejected. `watchProcesses` names may omit the `.exe` suffix
+  (a native mac process has none); keep the `*.exe` spelling on a card meant to travel — the macOS matcher
+  normalizes the suffix away, so one spelling matches on all three.
+- Extract the pure bits (path/env/argv construction, `/proc` and `ps` parsing, prefix mapping) into
+  electron-free helpers and unit-test them (see `umu.ts`, `proc.ts`, `save-path.linux.ts`,
+  `process-monitor.darwin.ts`, `save-path.darwin.ts`).
+- **Build Linux AND macOS paths with `path.posix`, never bare `path.join`.** `path.join` follows the OS the
+  code RUNS on, and CI runs the test suite on Windows too — so a Linux path built with `path.join` comes
+  out as `\home\deck\...` there and fails a test that (correctly) expects `/home/deck/...`. This has broken
+  the Windows job repeatedly. The rule applies verbatim to macOS: `path.join('~/Library/Application
+  Support', …)` in a darwin module yields `\Library\…` on the Windows runner. In any `*.linux.ts` or
+  `*.darwin.ts` module — and in any OS-specific feature elsewhere — use `path.posix.join` /
+  `path.posix.dirname` / `path.posix.basename`. Reference: `umu.ts` `prefixDir`, `steam-userdata.linux.ts`,
+  `steam-locator.darwin.ts`. The win32 side keeps plain `path.join` (there it is right).
   Beware the silent variant: when a value is *derived* from a path (the Steam shortcut appid is a CRC32 of
   it), a wrong separator does not fail loudly — it produces a wrong value.
-  Quick check before pushing: `grep -rn "path\.\(join\|dirname\|basename\|resolve\)(" src/main/platform/*.linux.ts`
+  Quick check before pushing:
+  `grep -rn "path\.\(join\|dirname\|basename\|resolve\)(" src/main/platform/*.{linux,darwin}.ts`
 
 ## Tests
 
@@ -104,7 +143,32 @@ OS-specific behaviour lives behind the `Platform` bundle in `src/main/platform/`
   was) and test that.
 - Prefer covering the risky, data-touching functions: manifest validation/anti-traversal, stats merge,
   save-sync retry, argument quoting.
-- **The suite runs on Windows AND Linux in CI, so a green local run proves nothing about path handling.**
+- **DOM tests of the renderer's screen controllers live in `test/renderer/**`** and run under
+  **happy-dom** instead of plain Node (`environmentMatchGlobs` in `vitest.config.ts` — scoped by glob, so
+  every other suite keeps its Node environment and its POSIX path literals). A controller is testable
+  there because it is a factory taking a narrow `…Deps` seam: the fixture is the REAL
+  `src/renderer/index.html` (loaded by `test/renderer/helpers/fixture.ts`, so every id `req()` asks for
+  has to exist), the deps are faked (`helpers/fakes.ts`: audio, the screen APIs, the keyboard / file
+  picker / online picker surfaces), and the translator is the real `createTranslator('en')`. Input is the
+  `NavSurface` primitives called directly — no gamepad polling; the hover/veil branches are reachable
+  through `hoverOver()` (they all sit behind the `mouse-asleep` class the fixture starts with).
+  Four rules that bite:
+  - **The screens that fetch their own data open ASYNCHRONOUSLY** — `filePicker.open()` awaits `listDir`,
+    `gameSettings.open(id)` awaits the manifest read, so assert after `await flushAsync()`. `SettingsScreen`
+    is the exception: its `open()` is synchronous and the snapshot arrives through `applySettings()`.
+  - **rAF must be the harness in `helpers/raf.ts`, with a frame-BOUNDED `flush(n)`** — the marquees
+    reschedule themselves forever while element widths are zero, which they always are without layout.
+  - **Load the fixture per test** (`beforeEach`), and create the controller after it: no controller removes
+    its listeners, so a fixture shared across a file collects one live instance per test on the same nodes.
+  - **`app.ts` stays out** — it touches `window.api` at module scope.
+  Covered so far: `screen-sidebar`, `osk`, `file-picker`, `settings-screen`, `game-settings-screen`. Still
+  uncovered and next in line for the same base: `controls.ts`, `online-picker.ts`, `library-screen.ts`,
+  `carousel.ts`. Anything needing real layout (`scrollHeight`, canvas) is still a manual check on the Deck.
+  Upgrade note: `environmentMatchGlobs` is deprecated in vitest 3 and GONE in vitest 4 — an upgrade must
+  move `test/renderer/**` to `test.projects` (or a per-file `@vitest-environment` docblock) or the suites
+  will quietly run in Node again and fail on `document is not defined`.
+- **The suite runs on Windows, Linux AND macOS in CI, so a green local run proves nothing about path
+  handling.**
   A test that asserts a Linux path against a literal (`expect(...).toBe('/home/deck/...')`) is correct and
   should stay — it is the *source* that must use `path.posix` (see the platform-layer rule above). Never
   "fix" such a failure by rewriting the expectation with `path.join`: that makes the test assert whatever
@@ -112,9 +176,11 @@ OS-specific behaviour lives behind the `Platform` bundle in `src/main/platform/`
 
 ## Tooling (all run in CI before build)
 
-- `npm run typecheck` — strict `tsc`, no `any`, no non-null `!`.
-- `npm run lint` — ESLint with type-aware rules (`no-floating-promises`, `no-misused-promises`,
-  `strict-boolean-expressions`).
+- `npm run typecheck` — strict `tsc`, no `any`. Covers `test/` as well as `src/`.
+- `npm run lint` — ESLint with type-aware rules (`no-non-null-assertion` — the "no `!`" rule, which
+  `tsc` cannot express — plus `no-floating-promises`, `no-misused-promises`,
+  `strict-boolean-expressions`), over `src` and `test`. Tests switch off `require-await` and
+  `unbound-method` (both only ever fire on test doubles) and allow a `_`-prefixed unused parameter.
 - `npm test` — vitest.
 - `npm run format` / `format:check` — Prettier (available for new code; the existing hand-aligned
   files are intentionally not mass-reformatted).

@@ -14,7 +14,7 @@ import fse from 'fs-extra';
 import { z } from 'zod';
 import { CARD_STATS_FILENAME, type Stats } from '../shared/types';
 import { parseStats, statsSchema, type PcStore } from './pc-store';
-import { writeFileAtomic } from './save-sync';
+import { writeFileAtomicEnsuringDir } from './json-store';
 import { log } from './logger';
 import { describe } from './util';
 
@@ -159,7 +159,7 @@ export class StatsService {
       const games: Record<string, Stats> = read.kind === 'map' ? { ...read.games } : {};
       games[id] = stats;
       const map = { schemaVersion: 1 as const, games };
-      await writeFileAtomic(target, JSON.stringify(map, null, 2));
+      await writeFileAtomicEnsuringDir(target, JSON.stringify(map, null, 2));
       log.info(`[stats] wrote card copy id=${id} → "${target}"`);
     } catch (cause) {
       log.error(`[stats] FAILED to write card copy id=${id} → "${target}":`, cause);

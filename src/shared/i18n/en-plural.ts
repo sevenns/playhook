@@ -10,6 +10,9 @@ export const enPlural = {
   'format.minutes': { one: '{n}m', other: '{n}m' },
   // Drive-picker label for a multi-game card (the individual titles don't fit one line — show the count).
   'drive.games': { one: '{n} game', other: '{n} games' },
+  // The single summary plate shown instead of a queue of them: after a game exits, or when the user
+  // comes back to a launcher that has been collecting notifications while they were away.
+  'notifications.unread': { one: '{n} unread notification', other: '{n} unread notifications' },
 } as const satisfies Record<string, PluralForms>;
 
 /** Every plural key — the compile-time contract the Russian plural mirror indexes against. */

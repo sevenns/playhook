@@ -1,21 +1,57 @@
 // Typed main↔renderer bridge (contextIsolation: true, nodeIntegration: false).
 // Channels are inlined as literals rather than imported from shared, so the preload
 // stays sandbox-compatible (a sandboxed preload cannot require arbitrary files).
-// `satisfies Partial<typeof IPC>` gives us the compile-time bridge back: a wrong channel
-// value (TS2322) or a typo'd key (TS2353) now fails typecheck. `import type` keeps IPC
-// out of the runtime bundle (it erases), so the sandbox stays intact. Partial<> cannot
-// catch a *missing* channel though — that completeness is guarded by the ipc-channels
-// unit test (shared/types.ts is the single source of truth).
+// `satisfies typeof IPC` — not `Partial<>` — gives us the compile-time bridge back: a wrong channel
+// value (TS2322), a typo'd key (TS2353) AND a *forgotten* channel (TS2741) all fail typecheck.
+// Partial<> was right while a second window had a preload of its own and each held a slice; there is
+// one window now, so this map must be the whole map. `import type` keeps IPC out of the runtime bundle
+// (it erases), so the sandbox stays intact. The ipc-channels unit test still guards the same invariant
+// from the outside, and would carry it if a second preload ever returns (shared/types.ts is the single
+// source of truth).
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
 import type {
+  AppNotification,
+  AppSettings,
   AppState,
+  NotificationToast,
   SfxSet,
+  AudioOptions,
   AudioVolumes,
+  AutoUpdateMode,
   BrowseInfo,
+  ConfigMoveResult,
+  ConfigPickResult,
+  ConfigRootReadResult,
+  ConfigSaveResult,
+  ConfigValidationResult,
+  DriveCandidate,
+  GameConfigAcceptRequest,
+  GameConfigListDirRequest,
+  GameConfigReadResult,
+  GameConfigSaveRequest,
   GameLibrary,
+  GameCollision,
+  GameCollisionAnswer,
+  GameMoveRequest,
+  HistoryConfigAcceptRequest,
+  HistoryConfigReadResult,
+  HistoryConfigSaveRequest,
+  ManifestSource,
   HeroAssets,
+  LanguageMode,
+  ListDirResult,
+  ArtworkKind,
+  ArtworkFilter,
+  ArtworkPage,
+  GameCandidate,
+  GameDetails,
+  MetadataApplyRequest,
+  MetadataApplyResult,
+  MetadataResult,
+  MusicAlbum,
+  MusicTrack,
   RendererApi,
-  SfxName,
+  UpdateStatus,
 } from '../shared/types';
 import type { IPC } from '../shared/types';
 import type { Locale } from '../shared/i18n/index';
@@ -38,7 +74,6 @@ const CHANNELS = {
   cardMusicRequest: 'card-music:request',
   ambientUpdate: 'ambient:update',
   ambientRequest: 'ambient:request',
-  sfxPlay: 'sfx:play',
   windowFocus: 'window:focus',
   heroUpdate: 'hero:update',
   heroRequest: 'hero:request',
@@ -46,7 +81,10 @@ const CHANNELS = {
   libraryRequest: 'library:request',
   libraryGridRequest: 'library:grid-request',
   libraryBrowse: 'library:browse',
+  libraryForget: 'library:forget',
   browseUpdate: 'browse:update',
+  gameCollision: 'game:collision',
+  gameCollisionResolve: 'game:collision-resolve',
   browseRequest: 'browse:request',
   browseHero: 'browse:hero',
   browseMusic: 'browse:music',
@@ -54,12 +92,69 @@ const CHANNELS = {
   sfxSetRequest: 'sfx:set-request',
   actionSelect: 'action:select',
   wallpaperRequest: 'wallpaper:request',
-  wallpaperUpdate: 'wallpaper:update',
+  startupSoundRequest: 'audio:startup-request',
   volumeRequest: 'volume:request',
   volumeUpdate: 'volume:update',
   languageRequest: 'app:language-request',
   languageUpdate: 'app:language-update',
-} as const satisfies Partial<typeof IPC>;
+  // Settings screen (these lived in settings-preload.ts until the window became a launcher screen).
+  updateStatusUpdate: 'update:status',
+  updateStatusRequest: 'update:request',
+  updateCheck: 'update:check',
+  updateDownload: 'update:download',
+  updateInstall: 'update:install',
+  settingsRequest: 'settings:request',
+  settingsUpdate: 'settings:update',
+  settingsSteamAvailable: 'settings:steam-available',
+  settingsReset: 'settings:reset',
+  settingsSetAutoUpdate: 'settings:set-auto-update',
+  settingsSetPrerelease: 'settings:set-prerelease',
+  settingsSetSummonHotkey: 'settings:set-summon-hotkey',
+  settingsSetPreventScreensaver: 'settings:set-prevent-screensaver',
+  settingsSetKeepOpenWithoutCard: 'settings:set-keep-open-without-card',
+  settingsSetDisableSilentInstall: 'settings:set-disable-silent-install',
+  settingsSetSteamAutoLaunch: 'settings:set-steam-auto-launch',
+  settingsSetMusicVolume: 'settings:set-music-volume',
+  settingsSetSfxVolume: 'settings:set-sfx-volume',
+  settingsSetSoundSet: 'settings:set-sound-set',
+  settingsSetAmbientTrack: 'settings:set-ambient-track',
+  settingsSetOnlyGlobalAmbient: 'settings:set-only-global-ambient',
+  settingsSetSteamGridDbKey: 'settings:set-steamgriddb-key',
+  settingsSetLanguage: 'settings:set-language',
+  appVersionRequest: 'app:version',
+  audioOptionsRequest: 'app:audio-options',
+  // Customize screen — per-game game.json editing, in the launcher's own namespace (see shared/types).
+  gameConfigRead: 'gameConfig:read',
+  gameConfigValidate: 'gameConfig:validate',
+  gameConfigSave: 'gameConfig:save',
+  gameConfigImagePreview: 'gameConfig:image-preview',
+  gameConfigAcceptPath: 'gameConfig:accept-path',
+  gameConfigListDir: 'gameConfig:list-dir',
+  gameConfigSources: 'gameConfig:sources',
+  gameConfigReadRoot: 'gameConfig:read-root',
+  gameConfigMoveToCard: 'gameConfig:move-to-card',
+  gameConfigReadHistory: 'gameConfig:read-history',
+  gameConfigSaveHistory: 'gameConfig:save-history',
+  gameConfigAcceptPathHistory: 'gameConfig:accept-path-history',
+  gameConfigHistoryAssetPreview: 'gameConfig:history-asset-preview',
+  clipboardRead: 'clipboard:read',
+  metadataSearch: 'metadata:search',
+  metadataSteamCandidate: 'metadata:steam-candidate',
+  metadataArtwork: 'metadata:artwork',
+  metadataMusicAlbums: 'metadata:music-albums',
+  metadataMusicTracks: 'metadata:music-tracks',
+  metadataTrackPreview: 'metadata:track-preview',
+  metadataDescriptions: 'metadata:descriptions',
+  metadataApply: 'metadata:apply',
+  metadataCancel: 'metadata:cancel',
+  // Notifications — the inbox lives in main; these are its two surfaces in the renderer.
+  notificationsUpdate: 'notifications:update',
+  notificationsToast: 'notifications:toast',
+  notificationsRequest: 'notifications:request',
+  notificationsDismiss: 'notifications:dismiss',
+  notificationsClear: 'notifications:clear',
+  notificationsMarkRead: 'notifications:mark-read',
+} as const satisfies typeof IPC;
 
 const api: RendererApi = {
   onStateUpdate(callback: (state: AppState) => void): void {
@@ -126,11 +221,6 @@ const api: RendererApi = {
   requestAmbient(): Promise<string | null> {
     return ipcRenderer.invoke(CHANNELS.ambientRequest) as Promise<string | null>;
   },
-  onSfxPlay(callback: (name: SfxName) => void): void {
-    ipcRenderer.on(CHANNELS.sfxPlay, (_event: IpcRendererEvent, name: SfxName) => {
-      callback(name);
-    });
-  },
   onHeroUpdate(callback: (assets: HeroAssets | null) => void): void {
     ipcRenderer.on(CHANNELS.heroUpdate, (_event: IpcRendererEvent, assets: HeroAssets | null) => {
       callback(assets);
@@ -140,9 +230,12 @@ const api: RendererApi = {
     return ipcRenderer.invoke(CHANNELS.heroRequest) as Promise<HeroAssets | null>;
   },
   onLibraryUpdate(callback: (library: GameLibrary | null) => void): void {
-    ipcRenderer.on(CHANNELS.libraryUpdate, (_event: IpcRendererEvent, library: GameLibrary | null) => {
-      callback(library);
-    });
+    ipcRenderer.on(
+      CHANNELS.libraryUpdate,
+      (_event: IpcRendererEvent, library: GameLibrary | null) => {
+        callback(library);
+      },
+    );
   },
   requestLibrary(): Promise<GameLibrary | null> {
     return ipcRenderer.invoke(CHANNELS.libraryRequest) as Promise<GameLibrary | null>;
@@ -150,13 +243,24 @@ const api: RendererApi = {
   requestGrid(id: string): Promise<string | null> {
     return ipcRenderer.invoke(CHANNELS.libraryGridRequest, id) as Promise<string | null>;
   },
-  browseGame(id: string): void {
-    ipcRenderer.send(CHANNELS.libraryBrowse, id);
+  browseGame(id: string | null, immediate = false): void {
+    ipcRenderer.send(CHANNELS.libraryBrowse, id, immediate);
+  },
+  forgetGame(id: string): void {
+    ipcRenderer.send(CHANNELS.libraryForget, id);
   },
   onBrowseUpdate(callback: (browse: BrowseInfo | null) => void): void {
     ipcRenderer.on(CHANNELS.browseUpdate, (_event: IpcRendererEvent, browse: BrowseInfo | null) => {
       callback(browse);
     });
+  },
+  onGameCollision(callback: (collision: GameCollision) => void): void {
+    ipcRenderer.on(CHANNELS.gameCollision, (_event: IpcRendererEvent, collision: GameCollision) => {
+      callback(collision);
+    });
+  },
+  resolveGameCollision(answer: GameCollisionAnswer): Promise<ConfigSaveResult> {
+    return ipcRenderer.invoke(CHANNELS.gameCollisionResolve, answer) as Promise<ConfigSaveResult>;
   },
   requestBrowse(): Promise<BrowseInfo | null> {
     return ipcRenderer.invoke(CHANNELS.browseRequest) as Promise<BrowseInfo | null>;
@@ -185,10 +289,8 @@ const api: RendererApi = {
   requestWallpaper(): Promise<string | null> {
     return ipcRenderer.invoke(CHANNELS.wallpaperRequest) as Promise<string | null>;
   },
-  onWallpaperUpdate(callback: (url: string) => void): void {
-    ipcRenderer.on(CHANNELS.wallpaperUpdate, (_event: IpcRendererEvent, url: string) => {
-      callback(url);
-    });
+  requestStartupSound(): Promise<string | null> {
+    return ipcRenderer.invoke(CHANNELS.startupSoundRequest) as Promise<string | null>;
   },
   requestVolumes(): Promise<AudioVolumes> {
     return ipcRenderer.invoke(CHANNELS.volumeRequest) as Promise<AudioVolumes>;
@@ -205,6 +307,225 @@ const api: RendererApi = {
     ipcRenderer.on(CHANNELS.languageUpdate, (_event: IpcRendererEvent, locale: Locale) => {
       callback(locale);
     });
+  },
+  getSettings(): Promise<AppSettings> {
+    return ipcRenderer.invoke(CHANNELS.settingsRequest) as Promise<AppSettings>;
+  },
+  onSettingsUpdate(callback: (settings: AppSettings) => void): void {
+    ipcRenderer.on(CHANNELS.settingsUpdate, (_event: IpcRendererEvent, settings: AppSettings) => {
+      callback(settings);
+    });
+  },
+  isSteamAvailable(): Promise<boolean> {
+    return ipcRenderer.invoke(CHANNELS.settingsSteamAvailable) as Promise<boolean>;
+  },
+  getAudioOptions(): Promise<AudioOptions> {
+    return ipcRenderer.invoke(CHANNELS.audioOptionsRequest) as Promise<AudioOptions>;
+  },
+  getAppVersion(): Promise<string> {
+    return ipcRenderer.invoke(CHANNELS.appVersionRequest) as Promise<string>;
+  },
+  setAutoUpdate(mode: AutoUpdateMode): void {
+    ipcRenderer.send(CHANNELS.settingsSetAutoUpdate, mode);
+  },
+  setPrerelease(on: boolean): void {
+    ipcRenderer.send(CHANNELS.settingsSetPrerelease, on);
+  },
+  setSummonHotkey(on: boolean): void {
+    ipcRenderer.send(CHANNELS.settingsSetSummonHotkey, on);
+  },
+  setPreventScreensaver(on: boolean): void {
+    ipcRenderer.send(CHANNELS.settingsSetPreventScreensaver, on);
+  },
+  setKeepOpenWithoutCard(on: boolean): void {
+    ipcRenderer.send(CHANNELS.settingsSetKeepOpenWithoutCard, on);
+  },
+  setDisableSilentInstall(on: boolean): void {
+    ipcRenderer.send(CHANNELS.settingsSetDisableSilentInstall, on);
+  },
+  setSteamAutoLaunch(on: boolean): void {
+    ipcRenderer.send(CHANNELS.settingsSetSteamAutoLaunch, on);
+  },
+  setSoundSet(set: string): void {
+    ipcRenderer.send(CHANNELS.settingsSetSoundSet, set);
+  },
+  setAmbientTrack(track: string | null): void {
+    ipcRenderer.send(CHANNELS.settingsSetAmbientTrack, track);
+  },
+  setOnlyGlobalAmbient(on: boolean): void {
+    ipcRenderer.send(CHANNELS.settingsSetOnlyGlobalAmbient, on);
+  },
+  setSteamGridDbKey(key: string): void {
+    ipcRenderer.send(CHANNELS.settingsSetSteamGridDbKey, key);
+  },
+  setMusicVolume(volume: number): void {
+    ipcRenderer.send(CHANNELS.settingsSetMusicVolume, volume);
+  },
+  setSfxVolume(volume: number): void {
+    ipcRenderer.send(CHANNELS.settingsSetSfxVolume, volume);
+  },
+  setLanguage(mode: LanguageMode): void {
+    ipcRenderer.send(CHANNELS.settingsSetLanguage, mode);
+  },
+  resetSettings(): Promise<AppSettings> {
+    return ipcRenderer.invoke(CHANNELS.settingsReset) as Promise<AppSettings>;
+  },
+  onUpdateStatus(callback: (status: UpdateStatus) => void): void {
+    ipcRenderer.on(
+      CHANNELS.updateStatusUpdate,
+      (_event: IpcRendererEvent, status: UpdateStatus) => {
+        callback(status);
+      },
+    );
+  },
+  requestUpdateStatus(): Promise<UpdateStatus> {
+    return ipcRenderer.invoke(CHANNELS.updateStatusRequest) as Promise<UpdateStatus>;
+  },
+  checkForUpdates(): void {
+    ipcRenderer.send(CHANNELS.updateCheck);
+  },
+  downloadUpdate(): void {
+    ipcRenderer.send(CHANNELS.updateDownload);
+  },
+  installUpdate(): void {
+    ipcRenderer.send(CHANNELS.updateInstall);
+  },
+  readGameConfig(id: string): Promise<GameConfigReadResult> {
+    return ipcRenderer.invoke(CHANNELS.gameConfigRead, id) as Promise<GameConfigReadResult>;
+  },
+  validateGameConfig(
+    root: string,
+    text: string,
+    source?: ManifestSource,
+  ): Promise<ConfigValidationResult> {
+    return ipcRenderer.invoke(CHANNELS.gameConfigValidate, {
+      root,
+      text,
+      ...(source !== undefined ? { source } : {}),
+    }) as Promise<ConfigValidationResult>;
+  },
+  saveGameConfig(request: GameConfigSaveRequest): Promise<ConfigSaveResult> {
+    return ipcRenderer.invoke(CHANNELS.gameConfigSave, request) as Promise<ConfigSaveResult>;
+  },
+  getGameConfigImage(root: string, path: string): Promise<string | null> {
+    return ipcRenderer.invoke(CHANNELS.gameConfigImagePreview, { root, path }) as Promise<
+      string | null
+    >;
+  },
+  acceptGameConfigPaths(request: GameConfigAcceptRequest): Promise<ConfigPickResult> {
+    return ipcRenderer.invoke(CHANNELS.gameConfigAcceptPath, request) as Promise<ConfigPickResult>;
+  },
+  listGameConfigDir(request: GameConfigListDirRequest): Promise<ListDirResult> {
+    return ipcRenderer.invoke(CHANNELS.gameConfigListDir, request) as Promise<ListDirResult>;
+  },
+  listGameConfigSources(): Promise<readonly DriveCandidate[]> {
+    return ipcRenderer.invoke(CHANNELS.gameConfigSources) as Promise<readonly DriveCandidate[]>;
+  },
+  readGameConfigRoot(root: string): Promise<ConfigRootReadResult> {
+    return ipcRenderer.invoke(CHANNELS.gameConfigReadRoot, root) as Promise<ConfigRootReadResult>;
+  },
+  moveGameConfigToCard(request: GameMoveRequest): Promise<ConfigMoveResult> {
+    return ipcRenderer.invoke(CHANNELS.gameConfigMoveToCard, request) as Promise<ConfigMoveResult>;
+  },
+  readHistoryGameConfig(id: string): Promise<HistoryConfigReadResult> {
+    return ipcRenderer.invoke(
+      CHANNELS.gameConfigReadHistory,
+      id,
+    ) as Promise<HistoryConfigReadResult>;
+  },
+  saveHistoryGameConfig(request: HistoryConfigSaveRequest): Promise<ConfigSaveResult> {
+    return ipcRenderer.invoke(CHANNELS.gameConfigSaveHistory, request) as Promise<ConfigSaveResult>;
+  },
+  acceptHistoryGameConfigPaths(request: HistoryConfigAcceptRequest): Promise<ConfigPickResult> {
+    return ipcRenderer.invoke(
+      CHANNELS.gameConfigAcceptPathHistory,
+      request,
+    ) as Promise<ConfigPickResult>;
+  },
+  getHistoryGameConfigImage(id: string, ref: string): Promise<string | null> {
+    return ipcRenderer.invoke(CHANNELS.gameConfigHistoryAssetPreview, { id, ref }) as Promise<
+      string | null
+    >;
+  },
+  readClipboard(): Promise<string> {
+    return ipcRenderer.invoke(CHANNELS.clipboardRead) as Promise<string>;
+  },
+  searchMetadata(query: string): Promise<MetadataResult<readonly GameCandidate[]>> {
+    return ipcRenderer.invoke(CHANNELS.metadataSearch, query) as Promise<
+      MetadataResult<readonly GameCandidate[]>
+    >;
+  },
+  requestMetadataSteamCandidate(appId: number): Promise<MetadataResult<GameCandidate>> {
+    return ipcRenderer.invoke(CHANNELS.metadataSteamCandidate, appId) as Promise<
+      MetadataResult<GameCandidate>
+    >;
+  },
+  requestMetadataArtwork(
+    candidateKey: string,
+    kind: ArtworkKind,
+    page: number,
+    filter: ArtworkFilter,
+  ): Promise<MetadataResult<ArtworkPage>> {
+    return ipcRenderer.invoke(CHANNELS.metadataArtwork, {
+      candidateKey,
+      kind,
+      page,
+      filter,
+    }) as Promise<MetadataResult<ArtworkPage>>;
+  },
+  searchMetadataMusic(query: string): Promise<MetadataResult<readonly MusicAlbum[]>> {
+    return ipcRenderer.invoke(CHANNELS.metadataMusicAlbums, query) as Promise<
+      MetadataResult<readonly MusicAlbum[]>
+    >;
+  },
+  requestMetadataTracks(albumKey: string): Promise<MetadataResult<readonly MusicTrack[]>> {
+    return ipcRenderer.invoke(CHANNELS.metadataMusicTracks, albumKey) as Promise<
+      MetadataResult<readonly MusicTrack[]>
+    >;
+  },
+  requestMetadataTrackPreview(trackKey: string): Promise<MetadataResult<string>> {
+    return ipcRenderer.invoke(CHANNELS.metadataTrackPreview, trackKey) as Promise<
+      MetadataResult<string>
+    >;
+  },
+  requestMetadataDescriptions(candidateKey: string): Promise<MetadataResult<GameDetails>> {
+    return ipcRenderer.invoke(CHANNELS.metadataDescriptions, candidateKey) as Promise<
+      MetadataResult<GameDetails>
+    >;
+  },
+  applyMetadata(request: MetadataApplyRequest): Promise<MetadataApplyResult> {
+    return ipcRenderer.invoke(CHANNELS.metadataApply, request) as Promise<MetadataApplyResult>;
+  },
+  cancelMetadata(): void {
+    ipcRenderer.send(CHANNELS.metadataCancel);
+  },
+  onNotifications(callback: (items: readonly AppNotification[]) => void): void {
+    ipcRenderer.on(
+      CHANNELS.notificationsUpdate,
+      (_event: IpcRendererEvent, items: readonly AppNotification[]) => {
+        callback(items);
+      },
+    );
+  },
+  onNotificationToast(callback: (toast: NotificationToast) => void): void {
+    ipcRenderer.on(
+      CHANNELS.notificationsToast,
+      (_event: IpcRendererEvent, toast: NotificationToast) => {
+        callback(toast);
+      },
+    );
+  },
+  requestNotifications(): Promise<readonly AppNotification[]> {
+    return ipcRenderer.invoke(CHANNELS.notificationsRequest) as Promise<readonly AppNotification[]>;
+  },
+  dismissNotification(id: string): void {
+    ipcRenderer.send(CHANNELS.notificationsDismiss, id);
+  },
+  clearNotifications(): void {
+    ipcRenderer.send(CHANNELS.notificationsClear);
+  },
+  markNotificationsRead(): void {
+    ipcRenderer.send(CHANNELS.notificationsMarkRead);
   },
 };
 

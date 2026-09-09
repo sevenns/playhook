@@ -70,7 +70,9 @@ describe('stripCopySourcePrefix (copy mode: executable relative to the copied di
 
   it('normalizes Windows backslashes on both sides (Р12)', () => {
     expect(stripCopySourcePrefix('game\\game.exe', 'game')).toBe('game.exe');
-    expect(stripCopySourcePrefix('Games\\MyGame\\bin\\game.exe', 'Games\\MyGame')).toBe('bin/game.exe');
+    expect(stripCopySourcePrefix('Games\\MyGame\\bin\\game.exe', 'Games\\MyGame')).toBe(
+      'bin/game.exe',
+    );
   });
 
   it('tolerates a trailing slash on the source', () => {
@@ -133,7 +135,6 @@ describe('expandPcSavePath', () => {
 });
 
 describe('validateManifestText', () => {
-
   it('rejects JSONC (README-style // comments) as a syntax error', () => {
     const jsonc = '{\n  "schemaVersion": 1, // a comment\n  "id": "x"\n}';
     const result = validateManifestText(jsonc, t);
@@ -146,14 +147,128 @@ describe('validateManifestText', () => {
     expect(result.ok).toBe(false);
   });
 
-  it('rejects a non-steam manifest with no executable (schema)', () => {
-    const result = validateManifestText(JSON.stringify({ schemaVersion: 1, id: 'x', title: 'X' }), t);
+  it('rejects a non-steam CARD manifest with no executable (semantic — the schema no longer requires it, to allow the PC-library draft state)', () => {
+    const result = validateManifestText(
+      JSON.stringify({ schemaVersion: 1, id: 'x', title: 'X' }),
+      t,
+    );
     expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.issues.some((i) => i.path === 'executable')).toBe(true);
+      // heroRequired fires in the same pass now that the schema itself no longer short-circuits.
+      expect(result.issues.some((i) => i.path === 'heroImage')).toBe(true);
+    }
+  });
+
+  // The description is fetched online and written by the form; nothing reads it back yet. What matters
+  // now is that a bad one can never cost the user a playable game — see the `.catch(undefined)` in the
+  // schema, and the same tolerance the manifest already shows towards unknown keys.
+  it('accepts a manifest carrying a localized description', () => {
+    const text = JSON.stringify({
+      schemaVersion: 1,
+      id: 'x',
+      title: 'X',
+      executable: 'g/g.exe',
+      heroImage: 'a/hero.jpg',
+      description: { en: 'A game.', ru: 'Игра.' },
+    });
+    expect(validateManifestText(text, t).ok).toBe(true);
+  });
+
+  it('does not reject a manifest whose description is malformed — it is dropped instead', () => {
+    for (const description of ['just a string', 42, { en: 'a'.repeat(5000) }, { en: 7 }]) {
+      const text = JSON.stringify({
+        schemaVersion: 1,
+        id: 'x',
+        title: 'X',
+        executable: 'g/g.exe',
+        heroImage: 'a/hero.jpg',
+        description,
+      });
+      expect(validateManifestText(text, t).ok, JSON.stringify(description)).toBe(true);
+    }
+  });
+
+  it('accepts the facts stored for a future library view', () => {
+    const text = JSON.stringify({
+      schemaVersion: 1,
+      id: 'x',
+      title: 'X',
+      executable: 'g/g.exe',
+      heroImage: 'a/hero.jpg',
+      genres: ['Action', 'Roguelike'],
+      releaseDate: '2020-09-17',
+      platforms: ['windows', 'linux'],
+    });
+    expect(validateManifestText(text, t).ok).toBe(true);
+  });
+
+  it('drops a malformed genre list / date / platform rather than rejecting the game', () => {
+    const cases: readonly Record<string, unknown>[] = [
+      { genres: 'Action' },
+      { genres: [1, 2] },
+      { releaseDate: 'Coming soon' },
+      { platforms: ['amiga'] },
+      { platforms: 'windows' },
+    ];
+    for (const extra of cases) {
+      const text = JSON.stringify({
+        schemaVersion: 1,
+        id: 'x',
+        title: 'X',
+        executable: 'g/g.exe',
+        heroImage: 'a/hero.jpg',
+        ...extra,
+      });
+      expect(validateManifestText(text, t).ok, JSON.stringify(extra)).toBe(true);
+    }
   });
 
   it('rejects steam mode without watchProcesses (schema)', () => {
     const text = JSON.stringify({ schemaVersion: 1, id: 'x', title: 'X', steam: { appid: 480 } });
     expect(validateManifestText(text, t).ok).toBe(false);
+  });
+
+  // The `.exe` suffix is optional (Д5): a native macOS process has no such name, and steam mode requires
+  // watchProcesses — so demanding it would make steam mode impossible on macOS. Everything that made the
+  // old pattern safe (no separators, no quotes, no traversal) still holds.
+  it('accepts a watchProcesses name WITHOUT the .exe suffix (a native mac binary)', () => {
+    const text = JSON.stringify({
+      schemaVersion: 1,
+      id: 'x',
+      title: 'X',
+      steam: { appid: 480 },
+      heroImage: 'a/hero.jpg',
+      watchProcesses: ['valheim'],
+    });
+    expect(validateManifestText(text, t).ok).toBe(true);
+  });
+
+  it('still accepts the *.exe spelling a cross-platform card carries', () => {
+    const text = JSON.stringify({
+      schemaVersion: 1,
+      id: 'x',
+      title: 'X',
+      steam: { appid: 480 },
+      heroImage: 'a/hero.jpg',
+      watchProcesses: ['valheim.exe'],
+    });
+    expect(validateManifestText(text, t).ok).toBe(true);
+  });
+
+  it('rejects a watchProcesses name that is a path, a traversal or blank', () => {
+    const bad = ['games/valheim', 'games\\valheim', '..', '.', '   ', '"valheim.exe"', ''];
+    for (const name of bad) {
+      const text = JSON.stringify({
+        schemaVersion: 1,
+        id: 'x',
+        title: 'X',
+        steam: { appid: 480 },
+        heroImage: 'a/hero.jpg',
+        watchProcesses: [name],
+      });
+      expect(validateManifestText(text, t).ok, name).toBe(false);
+    }
   });
 
   it('rejects a custom installer that is elevated (schema refine)', () => {
@@ -303,7 +418,7 @@ describe('validateManifestText — multi-game array', () => {
     if (!result.ok) expect(result.issues.some((i) => i.path === 'games.1.id')).toBe(true);
   });
 
-  it('prefixes each element\'s issue path with games.<i>.', () => {
+  it("prefixes each element's issue path with games.<i>.", () => {
     // Second game is missing its hero → the issue is attributed to games.1.heroImage.
     const text = JSON.stringify([game('a'), game('b', { heroImage: undefined })]);
     const result = validateManifestText(text, t);
@@ -341,7 +456,9 @@ describe('absoluteToPcSavePath (reverse of expandPcSavePath, for the folder pick
   });
 
   it('maps a folder under %DOCUMENTS%', () => {
-    expect(absoluteToPcSavePath(path.join(docs, 'MyGame', 'Saves'), env)).toBe('%DOCUMENTS%/MyGame/Saves');
+    expect(absoluteToPcSavePath(path.join(docs, 'MyGame', 'Saves'), env)).toBe(
+      '%DOCUMENTS%/MyGame/Saves',
+    );
   });
 
   it('prefers the most specific base (%APPDATA% over %USERPROFILE%)', () => {
@@ -375,7 +492,9 @@ describe('manifestJsonSchema', () => {
     expect(Object.keys(objectSchema?.properties ?? {})).toEqual(
       expect.arrayContaining(['schemaVersion', 'id', 'title']),
     );
-    expect(objectSchema?.required).toEqual(expect.arrayContaining(['schemaVersion', 'id', 'title']));
+    expect(objectSchema?.required).toEqual(
+      expect.arrayContaining(['schemaVersion', 'id', 'title']),
+    );
     // Second branch: an array of the same object schema.
     expect(arraySchema?.type).toBe('array');
     expect(arraySchema?.items?.type).toBe('object');
@@ -423,7 +542,10 @@ describe('validateManifestText — gridImage', () => {
   });
 
   it('rejects a 4th heroImage (editor-only cap)', () => {
-    const result = validateManifestText(game({ heroImage: ['a.jpg', 'b.jpg', 'c.jpg', 'd.jpg'] }), t);
+    const result = validateManifestText(
+      game({ heroImage: ['a.jpg', 'b.jpg', 'c.jpg', 'd.jpg'] }),
+      t,
+    );
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.issues.some((i) => i.path === 'heroImage')).toBe(true);
   });
@@ -472,7 +594,13 @@ describe('readManifests — gridImage + hero truncation (runtime is lenient)', (
   });
 
   it('resolves gridImage inside the card root', async () => {
-    await write({ schemaVersion: 1, id: 'x', title: 'X', executable: 'g/g.exe', gridImage: 'art/grid.jpg' });
+    await write({
+      schemaVersion: 1,
+      id: 'x',
+      title: 'X',
+      executable: 'g/g.exe',
+      gridImage: 'art/grid.jpg',
+    });
     const result = await readManifests(cardRoot, env, resolveInstallDir);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -517,5 +645,333 @@ describe('readManifests — gridImage + hero truncation (runtime is lenient)', (
     });
     const result = await readManifests(cardRoot, env, resolveInstallDir);
     expect(result.ok).toBe(false);
+  });
+});
+
+// ── PC mode (local games) ────────────────────────────────────────────────────
+// The whole feature rests on one asymmetry: a `pc` block (and an absolute path) is legal ONLY when the
+// manifest was read from the PC library. These tests pin both directions of that, plus the "a missing
+// game keeps its card" rule that lets a deleted game stay in the library.
+// Every path here is built with path.join/os.tmpdir: pc paths are NATIVE (the library never travels) and
+// CI runs the suite on Windows too, where a `/games/x.exe` literal is not absolute.
+
+describe('validateManifestText — pc mode', () => {
+  const exe = path.join(path.resolve(path.sep), 'Games', 'Hades', 'Hades.exe');
+  const pcGame = (extra: Record<string, unknown> = {}): string =>
+    JSON.stringify({
+      schemaVersion: 1,
+      id: 'hades',
+      title: 'Hades',
+      pc: { executable: exe },
+      heroImage: 'assets/hero.jpg',
+      ...extra,
+    });
+
+  it('accepts a pc-mode game for source "pc"', () => {
+    expect(validateManifestText(pcGame(), t, 'pc').ok).toBe(true);
+  });
+
+  it('rejects a pc block on a card', () => {
+    const result = validateManifestText(pcGame(), t, 'card');
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.issues.some((i) => i.path === 'pc')).toBe(true);
+  });
+
+  it('rejects a card-dialect executable in the PC library (B1 — no fifth launch mode)', () => {
+    const text = JSON.stringify({
+      schemaVersion: 1,
+      id: 'x',
+      title: 'X',
+      executable: 'g/g.exe',
+      heroImage: 'assets/hero.jpg',
+    });
+    const result = validateManifestText(text, t, 'pc');
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.issues.some((i) => i.path === 'executable')).toBe(true);
+  });
+
+  it('accepts a draft with no launch method configured yet', () => {
+    const text = JSON.stringify({
+      schemaVersion: 1,
+      id: 'x',
+      title: 'X',
+      heroImage: 'assets/hero.jpg',
+    });
+    expect(validateManifestText(text, t, 'pc').ok).toBe(true);
+  });
+
+  it('rejects a relative pc.executable', () => {
+    const result = validateManifestText(pcGame({ pc: { executable: 'games/hades.exe' } }), t, 'pc');
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.issues.some((i) => i.path === 'pc.executable')).toBe(true);
+  });
+
+  it('rejects pc together with steam / install / executable / saveOnCard (schema)', () => {
+    expect(validateManifestText(pcGame({ steam: { appid: 480 } }), t, 'pc').ok).toBe(false);
+    expect(
+      validateManifestText(pcGame({ install: { installer: 's.exe', type: 'nsis' } }), t, 'pc').ok,
+    ).toBe(false);
+    expect(validateManifestText(pcGame({ executable: 'g/g.exe' }), t, 'pc').ok).toBe(false);
+    expect(validateManifestText(pcGame({ saveOnCard: 'saves' }), t, 'pc').ok).toBe(false);
+  });
+
+  it('accepts a lone pcSavePath (the backup side is supplied by the app)', () => {
+    const abs = path.join(path.resolve(path.sep), 'Games', 'Hades', 'Saves');
+    expect(validateManifestText(pcGame({ pcSavePath: abs }), t, 'pc').ok).toBe(true);
+    expect(validateManifestText(pcGame({ pcSavePath: '%DOCUMENTS%/Hades' }), t, 'pc').ok).toBe(
+      true,
+    );
+  });
+
+  it('rejects an absolute pcSavePath on a CARD (the allowlist still rules there)', () => {
+    const abs = path.join(path.resolve(path.sep), 'Games', 'Hades', 'Saves');
+    const text = JSON.stringify({
+      schemaVersion: 1,
+      id: 'x',
+      title: 'X',
+      executable: 'g/g.exe',
+      heroImage: 'hero.jpg',
+      saveOnCard: 'saves',
+      pcSavePath: abs,
+    });
+    const result = validateManifestText(text, t, 'card');
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.issues.some((i) => i.path === 'pcSavePath')).toBe(true);
+  });
+
+  it('accepts an empty array for source "pc" (the library has no games left)', () => {
+    expect(validateManifestText('[]', t, 'pc').ok).toBe(true);
+    expect(validateManifestText('[]', t, 'card').ok).toBe(false);
+  });
+});
+
+describe('validateManifestText — a STEAM game in the PC library', () => {
+  const steamGame = (extra: Record<string, unknown> = {}): string =>
+    JSON.stringify({
+      schemaVersion: 1,
+      id: 'hades',
+      title: 'Hades',
+      steam: { appid: 1145360 },
+      watchProcesses: ['Hades.exe'],
+      heroImage: 'assets/hero.jpg',
+      ...extra,
+    });
+
+  it('accepts a steam game as the second mode the library allows', () => {
+    expect(validateManifestText(steamGame(), t, 'pc').ok).toBe(true);
+  });
+
+  it('still rejects a card-dialect executable in the PC library, even with steam-shaped fields absent', () => {
+    const text = JSON.stringify({
+      schemaVersion: 1,
+      id: 'x',
+      title: 'X',
+      executable: 'g/g.exe',
+      heroImage: 'assets/hero.jpg',
+    });
+    const result = validateManifestText(text, t, 'pc');
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.issues.some((i) => i.path === 'executable')).toBe(true);
+  });
+
+  it('rejects saveOnCard for a LOCAL steam game (the library keeps the backup itself)', () => {
+    const result = validateManifestText(steamGame({ saveOnCard: 'saves' }), t, 'pc');
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.issues.some((i) => i.path === 'saveOnCard')).toBe(true);
+    // …while the very same manifest is the normal spelling on a card.
+    expect(
+      validateManifestText(
+        steamGame({ saveOnCard: 'saves', pcSavePath: '%APPDATA%/Hades' }),
+        t,
+        'card',
+      ).ok,
+    ).toBe(true);
+  });
+
+  it('accepts a %PREFIX% pcSavePath (a Proton game keeps its saves inside the prefix)', () => {
+    expect(validateManifestText(steamGame({ pcSavePath: '%APPDATA%/Hades' }), t, 'pc').ok).toBe(
+      true,
+    );
+  });
+});
+
+describe('readManifests — pc source', () => {
+  const env = { documents: path.resolve('documents'), t };
+  const resolveInstallDir = (): null => null;
+  let pcRoot: string;
+  const exe = path.join(path.resolve(path.sep), 'Games', 'Hades', 'Hades.exe');
+
+  beforeEach(async () => {
+    pcRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'playhook-pc-'));
+  });
+
+  afterEach(async () => {
+    await fs.rm(pcRoot, { recursive: true, force: true });
+  });
+
+  const write = async (value: unknown): Promise<void> => {
+    await fs.writeFile(path.join(pcRoot, 'game.json'), JSON.stringify(value));
+  };
+
+  const pcGame = (extra: Record<string, unknown> = {}): Record<string, unknown> => ({
+    schemaVersion: 1,
+    id: 'hades',
+    title: 'Hades',
+    pc: { executable: exe },
+    ...extra,
+  });
+
+  it('resolves a pc game whose executable does NOT exist (it stays in the library)', async () => {
+    await write(pcGame());
+    const result = await readManifests(pcRoot, env, resolveInstallDir, { source: 'pc' });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const manifest = result.manifests[0];
+    expect(manifest?.source).toBe('pc');
+    expect(manifest?.executablePath).toBe(exe);
+    expect(manifest?.cwd).toBe(path.dirname(exe));
+  });
+
+  it('marks a card manifest with source "card"', async () => {
+    const cardRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'playhook-card-'));
+    await fs.mkdir(path.join(cardRoot, 'g'), { recursive: true });
+    await fs.writeFile(path.join(cardRoot, 'g', 'g.exe'), '');
+    await fs.writeFile(
+      path.join(cardRoot, 'game.json'),
+      JSON.stringify({ schemaVersion: 1, id: 'x', title: 'X', executable: 'g/g.exe' }),
+    );
+    const result = await readManifests(cardRoot, env, resolveInstallDir);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.manifests[0]?.source).toBe('card');
+    await fs.rm(cardRoot, { recursive: true, force: true });
+  });
+
+  it('substitutes saveOnCardPath under the library root when pcSavePath is set', async () => {
+    const saves = path.join(path.resolve(path.sep), 'Games', 'Hades', 'Saves');
+    await write(pcGame({ pcSavePath: saves }));
+    const result = await readManifests(pcRoot, env, resolveInstallDir, { source: 'pc' });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.manifests[0]?.saveOnCardPath).toBe(path.join(pcRoot, 'saves', 'hades'));
+    expect(result.manifests[0]?.pcSavePath).toBe(saves);
+  });
+
+  it('leaves saveOnCardPath undefined when the game declares no pcSavePath', async () => {
+    await write(pcGame());
+    const result = await readManifests(pcRoot, env, resolveInstallDir, { source: 'pc' });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.manifests[0]?.saveOnCardPath).toBeUndefined();
+  });
+
+  it('rejects a relative pc.executable', async () => {
+    await write(pcGame({ pc: { executable: 'games/hades.exe' } }));
+    const result = await readManifests(pcRoot, env, resolveInstallDir, { source: 'pc' });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.manifests).toEqual([]);
+  });
+
+  it('rejects a pc block read from a card root', async () => {
+    await write(pcGame());
+    const result = await readManifests(pcRoot, env, resolveInstallDir);
+    expect(result.ok).toBe(false);
+  });
+
+  it('rejects a card-shaped manifest read from the PC library', async () => {
+    await write({ schemaVersion: 1, id: 'x', title: 'X', executable: 'g/g.exe' });
+    const result = await readManifests(pcRoot, env, resolveInstallDir, { source: 'pc' });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.manifests).toEqual([]);
+  });
+
+  it('rejects an install block in the PC library, even without executable (B1)', async () => {
+    await write({
+      schemaVersion: 1,
+      id: 'x',
+      title: 'X',
+      install: { installer: 's.exe', type: 'nsis' },
+    });
+    const result = await readManifests(pcRoot, env, resolveInstallDir, { source: 'pc' });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.manifests).toEqual([]);
+  });
+
+  it('resolves a draft PC game with no launch method and marks it unconfigured', async () => {
+    await write({ schemaVersion: 1, id: 'x', title: 'X', heroImage: 'assets/hero.jpg' });
+    const result = await readManifests(pcRoot, env, resolveInstallDir, { source: 'pc' });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const manifest = result.manifests[0];
+    expect(manifest?.unconfigured).toBe(true);
+    expect(manifest?.executablePath).toBe('');
+    expect(manifest?.cwd).toBe('');
+  });
+
+  it('treats a missing game.json as an empty library', async () => {
+    const result = await readManifests(pcRoot, env, resolveInstallDir, { source: 'pc' });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.manifests).toEqual([]);
+  });
+
+  it('treats an empty array as an empty library (fatal on a card)', async () => {
+    await write([]);
+    const pcResult = await readManifests(pcRoot, env, resolveInstallDir, { source: 'pc' });
+    expect(pcResult.ok).toBe(true);
+    if (pcResult.ok) expect(pcResult.manifests).toEqual([]);
+    expect((await readManifests(pcRoot, env, resolveInstallDir)).ok).toBe(false);
+  });
+
+  it('resolves a local STEAM game (no executable of its own — steam:// does the launching)', async () => {
+    await write({
+      schemaVersion: 1,
+      id: 'hades',
+      title: 'Hades',
+      steam: { appid: 1145360 },
+      watchProcesses: ['Hades.exe'],
+    });
+    const result = await readManifests(pcRoot, env, resolveInstallDir, { source: 'pc' });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const manifest = result.manifests[0];
+    expect(manifest?.source).toBe('pc');
+    expect(manifest?.steam).toEqual({ appid: 1145360 });
+    expect(manifest?.executablePath).toBe('');
+  });
+
+  it('gives a local steam game the same library-side save backup as a pc game', async () => {
+    await write({
+      schemaVersion: 1,
+      id: 'hades',
+      title: 'Hades',
+      steam: { appid: 1145360 },
+      watchProcesses: ['Hades.exe'],
+      pcSavePath: '%APPDATA%/Hades',
+    });
+    const result = await readManifests(pcRoot, env, resolveInstallDir, { source: 'pc' });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.manifests[0]?.saveOnCardPath).toBe(path.join(pcRoot, 'saves', 'hades'));
+    }
+  });
+
+  it('drops a local steam game that names a saveOnCard', async () => {
+    await write({
+      schemaVersion: 1,
+      id: 'hades',
+      title: 'Hades',
+      steam: { appid: 1145360 },
+      watchProcesses: ['Hades.exe'],
+      saveOnCard: 'saves',
+      pcSavePath: '%APPDATA%/Hades',
+    });
+    const result = await readManifests(pcRoot, env, resolveInstallDir, { source: 'pc' });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.manifests).toEqual([]);
+  });
+
+  it('reads several local games from an array', async () => {
+    await write([pcGame(), pcGame({ id: 'celeste', title: 'Celeste' })]);
+    const result = await readManifests(pcRoot, env, resolveInstallDir, { source: 'pc' });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.manifests.map((m) => m.raw.id)).toEqual(['hades', 'celeste']);
   });
 });

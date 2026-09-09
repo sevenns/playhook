@@ -120,6 +120,13 @@ async function prefixForManifest(
 export function createLinuxSavePathResolver(deps: LinuxSavePathDeps): SavePathResolver {
   return {
     async resolvePcSavePath(manifest, pcSavePath): Promise<PcSaveLocation | null> {
+      // A local PC game may name an absolute folder instead of a `%PREFIX%` token. Here that is a HOST
+      // path (the user browsed to it on this machine), not a path inside the game's Wine prefix — so it
+      // is returned as-is and the host filesystem is its container. The `%PREFIX%` spelling still maps
+      // into the prefix below, which is what a Windows game writing to %APPDATA% needs.
+      if (manifest.source === 'pc' && path.posix.isAbsolute(pcSavePath)) {
+        return { path: path.posix.normalize(pcSavePath), containerExists: true };
+      }
       const prefix = await prefixForManifest(manifest, deps);
       if (prefix === null) {
         // Steam mode with no compatdata: the game has never run under Proton (or isn't installed), so

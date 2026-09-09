@@ -11,9 +11,8 @@ const srcRenderer = resolve(root, 'src/renderer');
 const outDist = resolve(root, 'dist');
 const outRenderer = resolve(outDist, 'renderer');
 
-// settings.js / configure.js are NOT here — esbuild emits them straight into dist/renderer (see
-// build:settings / build:configure).
-const files = ['index.html', 'styles.css', 'settings.html', 'settings.css', 'configure.html', 'configure.css'];
+// app.js is NOT here — esbuild emits it straight into dist/renderer (see build:app).
+const files = ['index.html', 'styles.css'];
 const dirs = ['fonts'];
 
 await mkdir(outRenderer, { recursive: true });
@@ -27,8 +26,7 @@ for (const name of dirs) {
 // App icons: copied from assets/ into dist so they ship inside the asar and are usable at runtime.
 // icon.ico — main app icon (BrowserWindow, tray on Windows; also referenced by electron-builder for
 //   exe/installer).
-// icon.png — app icon read by main and handed to the settings window's custom title bar as a data URL
-//   (its CSP allows img-src data: only); the Linux BrowserWindow/AppImage icon; the tray icon on Linux
+// icon.png — the Linux BrowserWindow/AppImage icon; the tray icon on Linux
 //   (a .ico yields an empty nativeImage there); and the Steam shortcut's tile icon + grid logo.
 // There are no separate icon-tray.* files any more — the tray uses these same two.
 const icons = ['icon.ico', 'icon.png'];
@@ -60,11 +58,17 @@ await writeFile(
 // data-URI MIME in asset-reader.ts must match — keep the extension in sync with that constant.
 await cp(resolve(root, 'assets/playhook-wallpaper.jpg'), resolve(outDist, 'wallpaper.jpg'));
 
+// The startup jingle, played once while the boot screen is up (its first seconds are the boot image's,
+// the rest plays over the UI arriving — see the boot reveal in app.ts). Main reads it and hands it to the
+// renderer as a data URL, so the MIME in asset-reader.ts must match this extension.
+await cp(resolve(root, 'assets/playhook-startup.mp3'), resolve(outDist, 'startup.mp3'));
+
 // Steam library artwork for the non-Steam shortcut (Game Mode tile). Copied out to the user's
 // `userdata/<id>/config/grid/` when the shortcut is added — see steam-artwork.ts for the naming.
 await cp(resolve(root, 'assets/steam'), resolve(outDist, 'steam'), { recursive: true });
 
 console.log(
   `Copied ${files.length} file(s), ${dirs.length} dir(s), ${icons.length} icon(s), audio ` +
-    `(${soundSets.length} set(s), ${ambientTracks.length} ambience track(s)), wallpaper and Steam artwork to dist`,
+    `(${soundSets.length} set(s), ${ambientTracks.length} ambience track(s)), wallpaper, startup jingle ` +
+    'and Steam artwork to dist',
 );

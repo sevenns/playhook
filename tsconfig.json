@@ -13,11 +13,16 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "resolveJsonModule": true,
+    // For the ONE .mjs import in the suite (test/audio-index.test.ts pulls scripts/audio-index.mjs, which
+    // has no declarations); without it the typecheck fails on TS7016.
+    "allowJs": true,
     "isolatedModules": true,
     "noEmit": true,
     "types": ["node"]
   },
-  // Type-check ONLY config (noEmit) over the whole of src — including settings.ts, which the renderer
-  // build config excludes because esbuild bundles it (audit N5). This is the single typecheck gate.
-  "include": ["src/**/*.ts"]
+  // Type-check ONLY config (noEmit) over the whole of src AND test — including the renderer, which the
+  // renderer build config excludes entirely because esbuild bundles it (audit N5). This is the single
+  // typecheck gate; tsconfig.main.json / tsconfig.renderer.json do not extend it, so test/ never reaches
+  // a build.
+  "include": ["src/**/*.ts", "test/**/*.ts"]
 }

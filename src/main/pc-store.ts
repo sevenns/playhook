@@ -7,10 +7,11 @@
 import path from 'node:path';
 import fse from 'fs-extra';
 import { z } from 'zod';
-import { type Stats } from '../shared/types';
+import { type ResolvedManifest, type Stats } from '../shared/types';
 import { readJsonValidated, writeJsonAtomic } from './json-store';
 import { type SyncState } from './save-sync';
 import { log } from './logger';
+import { describe } from './util';
 
 // Exported so stats.ts can build the per-id card-stats map schema (v2) on top of the same single-game
 // shape — one source of truth for what a valid Stats record is.
@@ -55,6 +56,26 @@ const syncStateSchema = z.object({
   pc: treeSnapshotSchema,
   syncedAt: z.number(),
 });
+
+/**
+ * Which pairing a sync baseline describes: `card` — the inserted card ↔ the PC save folder (the original
+ * and only slot); `pc` — a local game's own backup in the PC library ↔ that same folder. See syncStatePath.
+ */
+export type SyncSlot = 'card' | 'pc';
+
+/**
+ * Whether a game may RECEIVE a deferred PC→SD flush (the snapshot taken when a card was yanked mid-game).
+ *
+ * The `source` half is the load-bearing one. A local game has a `saveOnCardPath` too — its backup inside
+ * the PC library — so the plain "has a card side?" test would happily pour a snapshot meant for the real
+ * card into that backup and then clear the queue, silently destroying the progress the next card
+ * insertion was supposed to receive. A pending snapshot belongs to a CARD, and only a card may take it.
+ */
+export function acceptsPendingFlush(
+  manifest: Pick<ResolvedManifest, 'source' | 'saveOnCardPath'>,
+): boolean {
+  return manifest.source === 'card' && manifest.saveOnCardPath !== undefined;
+}
 
 export class PcStore {
   private readonly statsDir: string;
@@ -132,8 +153,24 @@ export class PcStore {
     await fse.remove(this.pendingEntryDir(id));
   }
 
-  private syncStatePath(id: string): string {
-    return path.join(this.syncStateDir, `${id}.json`);
+  /**
+   * Where a game's last-sync baseline lives, per SLOT. A game can be synced against two different
+   * partners — the card it came on, and (for a local game) the backup Playhook keeps — and each pair has
+   * its own history: sharing one baseline would make every sync look like "the other side changed",
+   * i.e. a permanent false conflict resolved by LWW.
+   *
+   * The PC slot is a SUBDIRECTORY rather than a `<id>.pc.json` suffix on purpose: `id` may contain dots
+   * (manifest.ts), so a card game called `hades.pc` would otherwise collide with the PC slot of `hades`.
+   */
+  private syncStatePath(id: string, slot: SyncSlot): string {
+    return slot === 'pc'
+      ? path.join(this.syncStateDir, 'pc', `${id}.json`)
+      : path.join(this.syncStateDir, `${id}.json`);
+  }
+
+  /** Whether a CARD baseline exists for this game — i.e. whether a card carrying it was ever synced here. */
+  async hasCardSyncState(id: string): Promise<boolean> {
+    return fse.pathExists(this.syncStatePath(id, 'card'));
   }
 
   /**
@@ -141,10 +178,10 @@ export class PcStore {
    * an update → the caller falls back to the deterministic phase direction) or corrupted (logged, then
    * treated as absent so a damaged file can't wedge sync — the next successful sync rewrites it).
    */
-  async readSyncState(id: string): Promise<SyncState | null> {
+  async readSyncState(id: string, slot: SyncSlot = 'card'): Promise<SyncState | null> {
     let raw: unknown;
     try {
-      raw = await fse.readJson(this.syncStatePath(id));
+      raw = await fse.readJson(this.syncStatePath(id, slot));
     } catch (cause) {
       // ENOENT is the expected first-run case → silent; anything else is a real read anomaly → warn.
       if (cause instanceof Error && (cause as { code?: unknown }).code !== 'ENOENT') {
@@ -160,8 +197,24 @@ export class PcStore {
     return parsed.data;
   }
 
-  async writeSyncState(id: string, state: SyncState): Promise<void> {
-    await fse.ensureDir(this.syncStateDir);
-    await writeJsonAtomic(this.syncStatePath(id), state);
+  async writeSyncState(id: string, state: SyncState, slot: SyncSlot = 'card'): Promise<void> {
+    const target = this.syncStatePath(id, slot);
+    await fse.ensureDir(path.dirname(target));
+    await writeJsonAtomic(target, state);
+  }
+
+  /**
+   * Drops a game's sync baseline. Used when a local game moves to a card (Р2.5): its `pc` baseline
+   * partnered the PC-library backup with the local save folder, and that pairing no longer exists once
+   * the game leaves the library — keeping it would read as a stale baseline and could report a false
+   * conflict if the game is ever moved back to the PC. Silent on an already-absent file (the normal case
+   * for a game whose saves were never synced).
+   */
+  async removeSyncState(id: string, slot: SyncSlot = 'card'): Promise<void> {
+    try {
+      await fse.remove(this.syncStatePath(id, slot));
+    } catch (cause) {
+      log.warn(`[sync-state] failed to remove the "${slot}" baseline for "${id}":`, describe(cause));
+    }
   }
 }

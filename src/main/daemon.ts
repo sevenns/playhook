@@ -25,6 +25,7 @@ import { toRunGameId } from './platform/steam-appid';
 import { launchWhenSteamReady } from './daemon-launch';
 import { systemEnv } from './appimage-env';
 import { isSteamPipeReady } from './platform/steam-pipe.linux';
+import { createTranslator } from '../shared/i18n/index';
 
 /** Electron's `app.getPath('userData')` on Linux, reproduced without Electron: `$XDG_CONFIG_HOME/playhook`. */
 function userDataDir(home: string): string {
@@ -104,6 +105,9 @@ export function startDaemon(): void {
     // Unused by the daemon (it launches nothing through Proton), but PlatformDeps requires it. Resolved
     // the same way main.ts does so the value is at least correct rather than a lie.
     umuRunPath: path.join(process.resourcesPath, 'umu', 'umu-run'),
+    // The daemon surfaces no platform refusal to a user (it only watches for a card and asks Steam to
+    // launch), and it is Linux-only, so a fixed English translator is enough here.
+    getTranslator: () => createTranslator('en'),
   });
   const settings = new AppSettingsStore(userData);
   // Guards against overlapping launch attempts while one is being confirmed (the confirm window is

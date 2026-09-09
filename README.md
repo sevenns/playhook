@@ -3,10 +3,11 @@
   <h1>Playhook</h1>
   <p><strong>Bring console vibes to your PC.</strong></p>
   <p>
-    <a href="#building-from-source-for-developers"><img src="https://img.shields.io/badge/platform-Windows%2010%2F11%20%7C%20Steam%20Deck%20(Linux)-0078D6" alt="Platform"></a>
+    <a href="#building-from-source-for-developers"><img src="https://img.shields.io/badge/platform-Windows%2010%2F11%20%7C%20Steam%20Deck%20(Linux)%20%7C%20macOS%20(Apple%20Silicon)-0078D6" alt="Platform"></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="License: MIT"></a>
     <a href="https://github.com/sevenns/playhook/actions/workflows/build-windows.yml"><img src="https://github.com/sevenns/playhook/actions/workflows/build-windows.yml/badge.svg" alt="Build Windows"></a>
     <a href="https://github.com/sevenns/playhook/actions/workflows/build-linux.yml"><img src="https://github.com/sevenns/playhook/actions/workflows/build-linux.yml/badge.svg" alt="Build Linux"></a>
+    <a href="https://github.com/sevenns/playhook/actions/workflows/build-macos.yml"><img src="https://github.com/sevenns/playhook/actions/workflows/build-macos.yml/badge.svg" alt="Build macOS"></a>
   </p>
 </div>
 
@@ -24,17 +25,19 @@ The card can carry the game itself, an **installer** for heavy games
 `appid` that Playhook installs, launches and uninstalls through your local Steam client
 ([Steam mode](#steam-mode-launch-and-install-steam-games)).
 
-> **Cross-platform.** Playhook runs on Windows and on the Steam Deck / Linux (SteamOS). On Linux the
-> same Windows game cards run through **Proton** (via [umu-launcher](https://github.com/Open-Wine-Components/umu-launcher));
-> native Linux/ELF games are not a target. macOS is not supported. See [Steam Deck](#steam-deck-linux--steamos).
+> **Cross-platform.** Playhook runs on Windows, on the Steam Deck / Linux (SteamOS) and on macOS
+> (Apple Silicon). On Linux the same Windows game cards run through **Proton**
+> (via [umu-launcher](https://github.com/Open-Wine-Components/umu-launcher)); native Linux/ELF games are
+> not a target. macOS is a **narrower** port: native mac games and Steam mode, but no Windows `.exe` and
+> no install mode. See [Steam Deck](#steam-deck-linux--steamos) and [macOS](#macos).
 
 > **Security note.** The card is untrusted input — every path in the manifest is validated
 > against directory traversal and an allowlist before anything is read or written. See
 > [Preparing a card](#preparing-a-card-gamejson) for the exact rules.
 
 <div align="center">
-  <img src="assets/github/playhook-bloodborne-example.jpg" width="760" alt="Playhook game card — Bloodborne">
-  <p><em>The Playhook game card, running Bloodborne. Ready-made cards like this — <code>game.json</code>, hero art and music — live in the <a href="https://sevenns.github.io/playhook-collection/">Playhook Collection</a>, whose UI you can also try right in the browser.</em></p>
+  <img src="assets/github/playhook-example.jpg" width="760" alt="Playhook home screen — the history carousel over the selected game's hero art">
+  <p><em>The Playhook home screen: the history carousel, with the selected game's hero art behind it. Ready-made cards — <code>game.json</code>, hero art and music — live in the <a href="https://sevenns.github.io/playhook-collection/">Playhook Collection</a>, whose UI you can also try right in the browser.</em></p>
 </div>
 
 ---
@@ -42,13 +45,15 @@ The card can carry the game itself, an **installer** for heavy games
 ## Download (for users)
 
 Grab the latest build from the [**Releases**](https://github.com/sevenns/playhook/releases/latest)
-page. Three are published:
+page. Four are published:
 
 - **NSIS installer** (`.exe`, recommended on Windows) — installs the app, configures autostart reliably,
   and **updates itself** automatically.
 - **portable** (`.exe`) — runs without installation; no auto-update, autostart is best-effort.
 - **AppImage** — the Steam Deck / Linux build; it self-updates too. See
   [Steam Deck](#steam-deck-linux--steamos) for the setup.
+- **dmg** (`-arm64.dmg`) — the macOS build, **Apple Silicon only**. It does **not** self-update: grab a
+  new dmg from this page when a version comes out. See [macOS](#macos).
 
 A couple of things to expect on first run **on Windows**:
 
@@ -57,6 +62,18 @@ A couple of things to expect on first run **on Windows**:
 - **Visual C++ Redistributable.** If the app fails to start on a clean Windows install, install
   the latest [Visual C++ Redistributable (x64)](https://aka.ms/vs/17/release/vc_redist.x64.exe).
   (`.NET` is **not** required.)
+
+And **on macOS**:
+
+- **Gatekeeper.** The build is not signed with an Apple Developer ID, so the first launch is blocked.
+  On macOS 15+ the old right-click → *Open* trick no longer works for an unsigned app: open the app,
+  let it be refused, then go to *System Settings → Privacy & Security* and press **Open Anyway** next to
+  the message about Playhook. (The command-line equivalent is
+  `xattr -dr com.apple.quarantine /Applications/Playhook.app`.)
+- **Removable-volume access.** The first time Playhook looks at a card, macOS asks for permission to
+  read removable volumes. **Decline it and your cards become invisible** with no other symptom — the only
+  trace is a `permission denied` line in the log. Grant it again in *System Settings → Privacy &
+  Security → Files and Folders*.
 
 ### Quick start
 
@@ -67,8 +84,8 @@ A couple of things to expect on first run **on Windows**:
 4. Press **A** on the gamepad (or click **Play**) — saves sync and the game launches.
 5. **Close the game** — Playhook counts the time, updates stats, and syncs saves back to the card.
 
-Don't want to hand-write a `game.json`? The tray has a **Configure game** editor that writes one onto
-the inserted card for you — see [Settings and the card editor](#settings-and-the-card-editor).
+Don't want to hand-write a `game.json`? Open a game's **More ⋯ → Customize** and edit it right in the
+launcher — see [Settings and Customize](#settings-and-customize).
 
 ---
 
@@ -97,9 +114,16 @@ state, offers:
   [Steam-mode](#steam-mode-launch-and-install-steam-games) cards (an uninstalled game has no Play
   button at all — you start from here);
 - **Force close** — while a game is running, kills it and still records the session and syncs saves;
+- **Remove from history** — for a game you no longer have (its card is out and it is not a local game),
+  drops it from the carousel along with the art copied for it. Saves and playtime stay: put the card
+  back in and the game returns with its stats. Games you *can* play right now don't offer this item —
+  they are rebuilt from their card / library every time it is read;
 - **System** — a submenu with Shutdown / Reboot / Sleep (each behind a confirmation) and
   **Minimize Playhook**, which sends the window back to the tray. In Game Mode that last item is
-  **Close Playhook** (a full quit) instead, since there is no tray to minimize into.
+  **Close Playhook** (a full quit) instead, since there is no tray to minimize into. It belongs to the
+  launcher rather than to any one game, so it lives in the **carousel's** own More menu (System + Close),
+  and a game's menu is only about that game. With no carousel to go up to — a single-game card, or the
+  empty screen — it stays where it was: that menu is then the only one there is.
 
 Every confirmation and every error uses that same popup; close it with **B** or a click on **Close**.
 If a launch fails, the reason appears there and you can simply retry.
@@ -107,12 +131,17 @@ If a launch fails, the reason appears there and you can simply retry.
 ### Launch history
 
 Every game inserted into this device leaves a copy of its art and music in
-`%APPDATA%/playhook/library/` (`~/.config/playhook/` on Linux), so the carousel still shows the games you
+`%APPDATA%/playhook/library/` (`~/.config/playhook/` on Linux, `~/Library/Application Support/playhook/`
+on macOS), so the carousel still shows the games you
 have had once the card is out — pick one and you get its screen (title, stats, background and music),
 with no Play button: there is nothing to launch without the card.
 
 Flip through the row with **left/right** (hold to run through it), open a game with **A**, and step back
-to the row with **B**. With a mouse: the wheel scrolls the row, a click selects a card, a second click
+to the row with **B**. **Y** hands the highlight over to the **More** button beside the row and back
+again — the row's own menu is the launcher's (System + Close) — and so does **right** on the last card,
+though only as a separate press: holding right runs to the end of the row and stops there. From the
+button, **left** and **B** both return to the cards. With a mouse: the wheel scrolls the row, a click
+selects a card, a second click
 opens it, and a right-click steps back. The row is the top level — the game's screen sits one step
 inside it, which is where **More** ⋯ and its actions live.
 
@@ -120,11 +149,102 @@ The row is ordered by how recently you **touched** a game — the later of "its 
 played it" — so a card you put in yesterday and never got around to starting still sits near the front.
 The games on the currently inserted card come first, ordered by when you last played them. The history
 keeps 40 games; beyond that the least recently touched are dropped, and the games on the inserted card
-are never evicted.
+are never evicted. To drop one yourself, open it and use **Remove from history** in the More ⋯ menu.
 
 Use `gridImage` in `game.json` to control how a game looks in that row. It expects a **600x900** portrait
 cover — the same format Steam uses, so [SteamGridDB](https://www.steamgriddb.com/) is the easiest place to
 find one. Without it the card is cropped from the first `heroImage`.
+
+### Local games (already installed on this PC)
+
+Not every game lives on a card. A game that is already installed on this machine can be added to the
+launcher as a local game, and from then on it behaves like any other: its own hero art, carousel card,
+music, stats, save sync and Play button — with or without a card inserted. **More ⋯ → Add game** adds
+one from the launcher itself (pick "This PC" as the source); an existing one is edited the same way a
+card game's is, through **More ⋯ → Customize**.
+
+Local games are stored in `%APPDATA%/playhook/pc-games/` (`~/.config/playhook/pc-games/` on Linux,
+`~/Library/Application Support/playhook/pc-games/` on macOS),
+which is laid out exactly like a card: a `game.json`, an `assets/` folder for the art and music you
+pick (they are **copied in**, so moving or deleting the originals doesn't break anything), and a
+`saves/` folder for the save backups. The manifest is the same format, with one extra block and one
+rule of its own:
+
+```jsonc
+{
+  "schemaVersion": 1,
+  "id": "hades",
+  "title": "Hades",
+  // The FULL path to the game on this PC. Only valid here — a card may never name an absolute path.
+  "pc": { "executable": "C:\\Games\\Hades\\Hades.exe" },
+  "heroImage": ["assets/hades-hero.jpg"],
+  "gridImage": "assets/hades-grid.jpg",
+  // For a local game the save path may be absolute too (a card is limited to the %PREFIX% list).
+  "pcSavePath": "C:\\Games\\Hades\\Saves",
+  "watchProcesses": ["Hades.exe"]
+}
+```
+
+- `pc` replaces `executable` and is mutually exclusive with `install` and `steam`; everything else
+  (`args`, `runAsAdmin`, `watchProcesses`, the timeouts, `winetricks`, `umuGameId`, the art and the
+  music) works exactly as it does for a card game.
+
+A local game can also be a **Steam game installed on this PC** — the second launch mode the library
+accepts. Instead of `pc`, give it a `steam` block:
+
+```jsonc
+{
+  "schemaVersion": 1,
+  "id": "hades-steam",
+  "title": "Hades",
+  "steam": { "appid": 1145360 },
+  // Required in steam mode: Playhook cannot see Steam's own process tree, so it watches for these
+  // image names to know the game is running. Take the name from steamapps/common/<game>/ (or the
+  // game's SteamDB page) — it is the .exe even on the Deck, where the game runs under Proton.
+  "watchProcesses": ["Hades.exe"],
+  "heroImage": ["assets/hades-hero.jpg"],
+  // Optional. Under Proton the saves live inside Steam's own prefix, so use the %PREFIX% form here —
+  // Browse fills it in for you after the game has been run once.
+  "pcSavePath": "%APPDATA%/Hades"
+}
+```
+
+- The button follows Steam: **Install** while the game isn't installed (it opens Steam's download),
+  **Play** once it is, and **Uninstall** hands the removal back to Steam. Installing or removing the
+  game in Steam directly is picked up on its own, card or no card.
+- Everything Steam owns stays Steam's: there is no `install` block, no `runAsAdmin`, and no Wine prefix
+  of ours (the game runs in Steam's compatdata).
+- `pc` and `steam` are mutually exclusive — a local game is one or the other.
+- **Saves are backed up by Playhook itself** — there is no card to keep them on, so `saveOnCard` is not
+  allowed and the backup goes to `pc-games/saves/<id>/`. If you later insert a card carrying the same
+  game, the progress you made without it is copied onto the card on insertion.
+- **Deleting the game from your disk doesn't delete it from Playhook.** The card stays in the carousel
+  with its art and stats, the status line reads *Game files not found*, and Play is hidden. Put the game
+  back at the same path and it is playable again, saves included.
+- If a card carries a game with the **same `id`** as a local one, the card wins while it is inserted;
+  the local entry is hidden until the card is removed.
+- Paths here are **not portable**: they are written in this machine's native form, since this library
+  never travels (a card's `game.json`, by contrast, must work on both Windows and the Deck).
+
+**Draft games.** A local game may be saved with no launch method at all — no `pc`, no `steam`. Use this
+to fill in everything else (title, art, music, timings, `watchProcesses`) before you know how the game
+will actually be started. A draft is visible in the carousel and stays fully editable through Customize,
+but it has no dot, no Play button and no status line — the missing Play button says it. Save & Apply is
+still available once you fill in `pc` or `steam`.
+
+**Moving a local game to a card.** **More ⋯ → Move to card…** (a local game only) copies a game's
+metadata, art, music and save backup onto a card you pick, and removes it from the PC library once the
+write succeeds — the game itself, however, is **not** copied: put its files on the card yourself first
+(under whatever relative path you're about to give `executable`), or the move is refused with a message
+saying so. On the Customize screen this shows up as the form growing new fields once you have picked a
+target card (an `executable`/`install` block and, if you want save sync, `saveOnCard` + `pcSavePath`) —
+fill those in and Save the same way you would for an ordinary card game. Nothing is written anywhere
+until you do; backing out (Back, or the popup that closes the launcher screen) leaves both sides exactly
+as they were. If the target card isn't the one currently inserted, the move still succeeds — a
+notification says so, and the game shows up on the carousel once that card is.
+
+On the Steam Deck in **Game Mode** the launcher is started by a card being inserted, so local games are
+reachable there only if you open Playhook's tile yourself.
 
 The empty screen (no card inserted, no history) reuses the same layout over the wallpaper: "Insert a game card",
 no Play button, and **More** offering just the *System* submenu (where *Minimize Playhook* lives).
@@ -133,15 +253,16 @@ When the launcher is hidden you can **hold Start + Back** on the gamepad to re-s
 can be turned off in Settings). It is intentionally ignored **while a game is running** — pulling the
 launcher over a running game only causes focus trouble.
 
-Tray menu: **Show launcher**, **Configure game** (the built-in card editor), **Settings**, **Quit** —
-plus **Add to Steam** / **Remove from Steam** on the Steam Deck. The log folder opens from
-*Settings → Advanced → Open logs*.
+Tray menu: **Show launcher**, **Open logs**, **Open games folder**, **Quit** — plus **Add to Steam** /
+**Remove from Steam** on the Steam Deck. Settings and the manifest editor are screens of the launcher
+itself, reached from **More ⋯**, so they work in Game Mode too.
 
 ---
 
-## Settings and the card editor
+## Settings and Customize
 
-Both windows open from the tray, so they are **Desktop-Mode only** on the Steam Deck.
+Both are SCREENS of the launcher, opened from the **More ⋯** menu — so they work with a gamepad, and on
+the Steam Deck they work in **Game Mode** as well as on the desktop.
 
 ### Settings
 
@@ -160,24 +281,35 @@ Both windows open from the tray, so they are **Desktop-Mode only** on the Steam 
 - **Advanced** — *Open logs*, *Open games folder* (the install-mode directory), *Reset to defaults*.
 
 Settings live in `settings.json` next to the rest of the app state (`%APPDATA%\playhook\` on Windows,
-`~/.config/playhook/` on Linux); a missing or corrupted file falls back to the defaults.
+`~/.config/playhook/` on Linux, `~/Library/Application Support/playhook/` on macOS); a missing or
+corrupted file falls back to the defaults.
 
-### Configure game (card editor)
+### Customize (the manifest editor)
 
-**Configure game** writes the `game.json` onto the inserted card, so you never have to edit JSON by
-hand:
+**More ⋯ → Customize** edits the `game.json` of the game you are looking at — the one on the inserted
+card, or a local one — so you never have to edit JSON by hand. It is offered only for a game that is
+available right now, because that is the only case where there is a file to reach.
 
-- pick the card (any removable drive — a **blank** one can be initialized from scratch);
-- a **form** with sections *Basics / Launch / Images / Saves / Audio / Advanced*, with Browse pickers
-  for the executable, the hero backgrounds (up to 3), the 600x900 carousel card image, the background
-  music and the save folders
-  (a picked PC save folder is converted back into a `%APPDATA%`-style prefix automatically, and a file
-  outside the card is rejected);
-- a **JSON** tab with the raw manifest, live schema validation, error messages and a formatter — the
-  form and the JSON tab are two views of the same document;
-- **Add game** / **Remove current** for a multi-game card;
-- **Save & Apply** writes the file and reloads the launcher immediately (or on the card's next
-  insertion, if a game is running right now); **Reset** re-reads the card and drops your edits.
+- a **form** with sections *Basics / Launch / Artwork / Saves / Audio / Advanced / Linux*, whose rows
+  follow the launch type you pick (a Steam game has no executable, an installer has no "move to PC"
+  checkbox) — and *Linux* is dropped for a game installed on a Windows PC, which is never run through
+  Proton;
+- **Browse** for the executable, the installer, the hero backgrounds (up to 3), the 600x900 carousel
+  card image, the background music and the save folders — through the launcher's own file browser, which
+  a gamepad can drive (a picked PC save folder is converted back into a `%APPDATA%`-style prefix
+  automatically, and a file outside the card is rejected);
+- an **on-screen keyboard** for every text field, with English, Russian and symbol layouts — the Deck's
+  own keyboard is not available to an app outside Steam. The caret goes anywhere in the value (click it,
+  or the ◀ ▶ keys, or the arrows on a real keyboard), **X held** keeps deleting, and **Paste** pulls the
+  system clipboard in (Ctrl+V too), filtered by whatever the field accepts;
+- **live validation**: a problem is shown on the row that owns it, and Save stays unavailable until it
+  is gone. On a multi-game card, a problem in ANOTHER game is reported as a line of its own — and does
+  not block saving yours, since you cannot fix it from here anyway;
+- **Save & Apply** writes the file and reloads the launcher immediately (or after you finish playing, if
+  the game is running right now); **Discard changes** re-reads the file;
+- **Delete game** removes it from the manifest — never its files, and never a local game's save backups.
+  It is hidden while the game is running, and for the last game on a card (which would leave the card
+  with no manifest at all).
 
 ---
 
@@ -196,7 +328,7 @@ The file holds **either one game object** (below) **or an array of them** — a 
 games. The launcher opens on the history carousel and you switch by flipping through it; each game
 keeps its own stats, saves and install state (they are keyed by `id`). One bad entry doesn't sink the
 whole card — it is skipped (with a line in the log) and the rest still load; **duplicate `id`s are
-rejected**, since the id keys the PC-side storage. The Configure editor shows the issue per game.
+rejected**, since the id keys the PC-side storage. Customize reports the problem per game.
 
 ```jsonc
 {
@@ -252,16 +384,19 @@ E:\
   elevated via a UAC prompt (`ShellExecuteEx` `runas`) and monitors it by process HANDLE instead of
   `tasklist` (a non-elevated app can't see an elevated process). Opt-in on purpose — Playhook never
   silently escalates an untrusted card's exe. On the Steam Deck / Linux there is no elevation under
-  Proton, so `runAsAdmin: true` is a **no-op** (logged) rather than an error — the same card stays
-  valid on both platforms.
+  Proton, and macOS has no equivalent either, so `runAsAdmin: true` is a **no-op** (logged) rather than an
+  error there — the same card stays valid on all three platforms.
 - `watchProcesses` — for **launcher / wrapper** games, where `executable` spawns a launcher that
   starts the game in a **separate process** and then exits (so watching the spawned pid would wrongly
   report "closed" the instant the launcher quits). List the **game's own** process image names here:
   Playhook still spawns `executable`, but tracks the session by the **presence** of these names in
   `tasklist`. Playtime starts when a watched process appears and ends when all of them are gone. When
   omitted, behaviour is unchanged (the spawned pid is tracked directly — the default for a
-  self-contained `.exe`). Each entry is a bare `*.exe` name (no quotes, no path separators), matched
-  case-insensitively; 1–16 names. **Caveats:**
+  self-contained `.exe`). Each entry is a bare file name (no quotes, no path separators), matched
+  case-insensitively; 1–16 names. The `.exe` suffix is **optional** — a native macOS process has none —
+  but keep it on a card that travels: macOS matches with and without the suffix, so `game.exe` works on
+  all three OSes, whereas a suffix-less name is only reliable on macOS (see [macOS](#macos)).
+  **Caveats:**
   - **anticheat / elevation** — Steam / EAC / BattlEye often launch the game **elevated or as a
     service**, which a non-elevated `tasklist` can't see (R4) → Playhook reports "didn't start" and
     quietly returns without recording a session. This is a **common** case for launcher games, not a
@@ -545,8 +680,9 @@ These are ignored on Windows, so a dual-platform card can carry them safely:
 ### Game Mode notes
 
 - **No tray in Game Mode.** Playhook is a single window that always shows an empty "Insert a game card"
-  screen when no card is present, and surfaces manifest errors on screen. **Settings and the card editor
-  (Configure) open from the tray, so they are Desktop-Mode only.**
+  screen when no card is present, and surfaces manifest errors on screen. **Settings and Customize are
+  screens of the launcher**, reached from **More ⋯**, so both work here — keyboard and file browser
+  included.
 - **Cards are mounted automatically** — on top of what the session mounts itself, Playhook sweeps for an
   inserted-but-unmounted removable card (see [Preparing a card for the Deck](#preparing-a-card-for-the-deck)),
   so insert and eject just work.
@@ -570,11 +706,62 @@ These are ignored on Windows, so a dual-platform card can carry them safely:
   crash mid-install — this is a Wine/32-bit ceiling, not a Playhook bug, and retrying is a lottery. Use a
   **clean distributive**, or pre-extract the game on Windows and carry the ready folder — as a plain
   Executable card, or with `install.type: "copy"` if it should run from the Deck's internal drive.
-- **Installers in general are unpredictable under Proton** (the Configure editor says so out loud when
-  you pick the Installer type). Prefer a plain Executable card or `install.type: "copy"` on the Deck.
+- **Installers in general are unpredictable under Proton.** Prefer a plain Executable card or
+  `install.type: "copy"` on the Deck.
 - **First run needs network** (GE-Proton / Steam Runtime download).
 - **Save-sync for Windows dictionary paths** only happens once the game's prefix exists (first launch);
   before that there is simply nothing to sync.
+
+---
+
+## macOS
+
+Playhook runs on macOS (**Apple Silicon only** — there is no Intel or universal build). It is a narrower
+port than the Linux one on purpose: there is no Wine/CrossOver here, so macOS is about the games your Mac
+can actually run.
+
+**What works**
+
+- **Local mac games** — add them through *More ⋯ → Add game* → *This PC* and point Playhook at either a
+  plain executable or an **`.app` bundle** (the picker shows a bundle as a single item, the way Finder
+  does). Playhook resolves the real binary inside the bundle and tracks it by pid, so exit detection,
+  playtime and save-sync all work as they do on Windows.
+- **[Steam mode](#steam-mode-launch-and-install-steam-games)** — install, play and uninstall through your
+  local Steam client, exactly as on the other two OSes.
+- **Cards** carrying a `steam` block. Save-sync translates the card's Windows dictionary into the mac
+  profile: `%APPDATA%` / `%LOCALAPPDATA%` / `%LOCALLOW%` → `~/Library/Application Support`,
+  `%USERPROFILE%` → `~`, `%DOCUMENTS%` → `~/Documents`.
+- The tray icon, the power menu, autostart (*System Settings → General → Login Items*) and the whole UI.
+
+**What does not**
+
+- **Windows games.** A card whose `executable` is a `*.exe` refuses to launch with a message saying so —
+  running it would need Wine/CrossOver, which is out of scope.
+- **[Install mode](#install-mode-heavy-games-on-slow-media)** (`install.type: nsis | inno | custom | copy`)
+  — the whole block is unavailable; those cards are rejected when the card is read.
+- **Auto-update.** Squirrel.Mac only updates a code-signed app bundle, and this build is unsigned, so
+  *Settings → Updates* reports updates as unavailable. Download a new dmg by hand when one is released.
+- The global **Start+Back** summon chord (it uses XInput, a Windows API). The gamepad itself works
+  normally inside the launcher.
+
+**Things worth knowing**
+
+- **Gatekeeper, for Playhook itself** — see [Download](#download-for-users): first launch goes through
+  *System Settings → Privacy & Security → Open Anyway*.
+- **Gatekeeper, for YOUR game** — a game binary downloaded from the internet carries a quarantine flag,
+  and macOS kills it the moment Playhook starts it, with no dialog at all. Playhook catches that and says
+  so; the fix is the same *Open Anyway* (open the game once from Finder), or
+  `xattr -dr com.apple.quarantine "/path/to/Game.app"`. Games installed by Steam are not affected.
+- **Many Steam games have no mac build**, or ship an x86_64 one that runs under Rosetta 2. When a game has
+  no macOS depot, `steam://install` opens Steam and Steam refuses — Playhook simply stays on **Install**.
+- **`watchProcesses` names.** A native mac process is not called `*.exe`, so the field accepts a bare name
+  too. Keep the `*.exe` spelling on a card you also use on Windows or the Deck — Playhook matches with and
+  without the suffix on macOS, so one spelling covers all three; a suffix-less name is for a mac-only
+  entry. If a Steam game is not detected as running, its mac binary is simply named differently: fix it in
+  *More ⋯ → Customize → watchProcesses*.
+- **Save paths are a best-effort translation** (see above). If a game keeps its saves somewhere else, the
+  sync reports the folder as missing rather than syncing the wrong one — point `pcSavePath` at the real
+  folder through *Customize*.
 
 ---
 
@@ -582,8 +769,9 @@ These are ignored on Windows, so a dual-platform card can carry them safely:
 
 ### Requirements
 
-- **Windows 10/11 x64**, or **Linux / SteamOS** (for the Steam Deck build — see below).
-- **Node.js 20+** and npm (CI builds on **Node 22** — match it if in doubt).
+- **Windows 10/11 x64**, **Linux / SteamOS** (for the Steam Deck build — see below), or **macOS 13+ on
+  Apple Silicon** (for the mac build — see below).
+- **Node.js 22.12+** and npm (required by electron 43 and @electron/rebuild 4; CI builds on **Node 22**).
 - **Native module build tools** — required to rebuild `drivelist` for Electron:
   - Visual Studio Build Tools with the "Desktop development with C++" component,
   - Python 3.x in `PATH`.
@@ -646,6 +834,28 @@ npm run dist           # build + electron-builder → release/*.AppImage
 for the Electron ABI by `electron-builder install-app-deps` on the Linux runner. `koffi` stays a
 dependency but is never called on Linux (all FFI is behind lazy `win32` guards).
 
+#### macOS build
+
+Build the `.dmg` on an Apple Silicon Mac (or via the [Build macOS](.github/workflows/build-macos.yml) CI
+workflow — `workflow_dispatch` produces an artifact, a `v*` tag publishes to the release):
+
+```bash
+npm ci
+npm run dist           # build + electron-builder → release/*.dmg + *-mac.zip
+```
+
+There is no `build:umu` step (Proton is the Linux path). The `mac` block in
+[`electron-builder.yml`](electron-builder.yml) targets dmg + zip for **arm64 only** — a universal build
+would also need a universal `drivelist`. The app is **ad-hoc signed** (`identity: '-'`) and
+`hardenedRuntime` is off: without the ad-hoc signature an app repacked on Apple Silicon refuses to launch
+at all, and hardened runtime only pays off together with notarization, which needs a Developer ID this
+project does not have. `koffi` stays in the bundle — `gamepad-global.ts` imports it on every OS.
+
+> ⚠️ Build from a real `npm ci` install. If `node_modules` is a **symlink** (e.g. a git worktree sharing
+> the main clone's install), electron-builder cannot resolve transitive dependencies through it and
+> silently packs an app that is missing `graceful-fs`, `js-yaml` and friends — it builds green and then
+> dies on launch with a JavaScript error dialog.
+
 ---
 
 ## Releasing & auto-update
@@ -657,13 +867,14 @@ Release flow:
 
 1. Bump `version` in [`package.json`](package.json) (e.g. `0.1.1` → `0.1.2`).
 2. Commit, then push a matching tag: `git tag v0.1.2 && git push origin v0.1.2`.
-3. The [Build Windows](.github/workflows/build-windows.yml) and [Build Linux](.github/workflows/build-linux.yml)
-   workflows build and upload the Windows installer + `latest.yml` and the Linux `.AppImage` +
-   `latest-linux.yml` to the same **draft** GitHub Release `v0.1.2`.
+3. The [Build Windows](.github/workflows/build-windows.yml), [Build Linux](.github/workflows/build-linux.yml)
+   and [Build macOS](.github/workflows/build-macos.yml) workflows build and upload the Windows installer +
+   `latest.yml`, the Linux `.AppImage` + `latest-linux.yml` and the macOS `.dmg`/`.zip` +
+   `latest-mac.yml` to the same **draft** GitHub Release `v0.1.2`.
 4. **Publish the draft release** on GitHub to make it live (and visible on the Releases page).
 5. Each running app checks on startup and every 6h, downloads the update silently, and installs
    it on the **next quit** (it never interrupts a running game). See `[updater]` lines in the log.
-   The **NSIS** build and the **AppImage** both self-update; the portable `.exe` does not.
+   The **NSIS** build and the **AppImage** both self-update; the portable `.exe` and the **dmg** do not.
 
 That is the default; **Settings → Updates** lets the user pick *download and install automatically*,
 *download automatically, install manually*, or *off (check manually)*, opt into the **pre-release
@@ -675,11 +886,15 @@ Notes:
 - The publish target (`owner` / `repo`) is set in [`electron-builder.yml`](electron-builder.yml) —
   update it if the GitHub repo is renamed.
 - No code signing: the very first install shows a Windows SmartScreen warning, but updates still
-  apply (unlike macOS, Windows auto-update works unsigned).
+  apply (unlike macOS, Windows auto-update works unsigned). That asymmetry is exactly why the macOS
+  target ships without auto-update — Squirrel.Mac refuses to update an unsigned bundle, so the mac build
+  reports updates as unavailable and the user re-downloads the dmg by hand.
 
 ### Autostart
 
-On **Windows** the app registers itself via `app.setLoginItemSettings({ openAtLogin: true })`.
+On **Windows** and **macOS** the app registers itself via
+`app.setLoginItemSettings({ openAtLogin: true })` (on macOS it appears in *System Settings → General →
+Login Items*).
 
 - It always starts hidden in the tray (no flag needed): the window appears only when a valid game
   card is detected — unless *Always show the no-card screen* is enabled in Settings.
@@ -699,7 +914,8 @@ exists while you are in Game Mode; **Remove from Steam** deletes it.
 ## Logs
 
 The main process writes a timestamped log, split **per calendar day** into
-`%APPDATA%\playhook\logs\main-YYYY-MM-DD.log` (`~/.config/playhook/logs/` on Linux); files older than
+`%APPDATA%\playhook\logs\main-YYYY-MM-DD.log` (`~/.config/playhook/logs/` on Linux,
+`~/Library/Application Support/playhook/logs/` on macOS); files older than
 **14 days** are pruned on startup. Open the folder from **Settings → Advanced → Open logs**.
 
 It records card insertions, manifest validation, the stats reconcile / card-copy result, and
@@ -761,9 +977,9 @@ launch/exit — useful when a save or stats copy to the card silently fails.
 ```
 src/
   main/        # all work with the FS/processes/disks (Electron main)
-    platform/  # everything OS-specific (win32 / linux + Proton, umu)
-  preload/     # typed contextBridge bridges (launcher + settings)
-  renderer/    # UI + gamepad/keyboard input (launcher, settings, configure — no Node)
+    platform/  # everything OS-specific (win32 / linux + Proton, umu / darwin)
+  preload/     # the typed contextBridge bridge
+  renderer/    # UI + gamepad/keyboard input (launcher, settings, customize — no Node)
   shared/      # shared contract of types/IPC channels + the i18n dictionaries
 test/          # vitest suites (plain Node, no electron)
 ```
@@ -778,16 +994,16 @@ import graph) live in [`CLAUDE.md`](CLAUDE.md).
 
 PRs welcome. The codebase is **strict TypeScript** (no `any`, no non-null `!`, explicit return types,
 functional style). Please run `npm run typecheck`, `npm run lint` and `npm test` before opening a PR —
-CI runs all three, on Windows **and** Linux.
+CI runs all three, on Windows, Linux **and** macOS.
 
 ---
 
 ## FAQ
 
 - **Do I have to write `game.json` myself?** No, twice over: the [**Playhook Collection**](https://sevenns.github.io/playhook-collection/)
-  hosts ready-made, verified manifests you can browse and drop straight onto a card, and the tray's
-  **Configure game** editor fills one in through a form (with a raw JSON tab and live validation for
-  when you do want to poke at it). Hand-write one only for a game the Collection doesn't cover yet
+  hosts ready-made, verified manifests you can browse and drop straight onto a card, and the launcher's
+  **More ⋯ → Customize** screen edits one through a form, with live validation. Hand-write one only for
+  a game the Collection doesn't cover yet
   (and consider [contributing it back](https://github.com/sevenns/playhook-collection)).
 - **Can one card hold several games?** Yes — put an **array** of game objects in `game.json` and switch
   between them in the history carousel (left/right, then **A**).
@@ -795,7 +1011,10 @@ CI runs all three, on Windows **and** Linux.
   first run. Choose *More info → Run anyway*. Auto-update still works without signing.
 - **Does it run on the Steam Deck / Linux?** **Yes.** The same Windows game cards launch through Proton
   (via umu-launcher) on SteamOS/Linux — see [Steam Deck](#steam-deck-linux--steamos). Native Linux/ELF
-  games and macOS are not supported.
+  games are not a target.
+- **Does it run on macOS?** **Yes, on Apple Silicon** — for what a Mac can actually run: native mac games
+  (including `.app` bundles) and [Steam mode](#steam-mode-launch-and-install-steam-games). Windows `.exe`
+  games and install mode do not work there, and the dmg does not self-update. See [macOS](#macos).
 - **Does it work without a gamepad?** Yes — mouse and keyboard both work. Keyboard: **WASD / arrow keys**
   to move, **Space / Enter** to activate, **Tab / Backspace** (or **Esc**) to go back. Mouse: click a
   card in the row to select it and click it again to open it, the **wheel** flips through the row, and
@@ -810,6 +1029,21 @@ CI runs all three, on Windows **and** Linux.
   theme), and by default the app follows the system language.
 
 ---
+
+## Credits
+
+"Find online" on the Add/Customize screen fetches a game's title, cover, backgrounds and music from
+external sources. Nothing is fetched without an explicit press, and everything applied is downloaded and
+stored next to the game, so a card keeps working offline.
+
+- Titles, descriptions, covers and backgrounds: the [Steam](https://store.steampowered.com/) store.
+- Wallpapers, offered first among the backgrounds: [Wallhaven](https://wallhaven.cc/) — no key needed,
+  SFW only.
+- More wallpapers, especially for recent releases:
+  [Wallpaper Cave](https://wallpapercave.com/) — no key needed.
+- Alternative covers: [SteamGridDB](https://www.steamgriddb.com/) — optional, needs your own API key.
+- Backgrounds for games sold there: [GOG](https://www.gog.com/).
+- Soundtracks: [Khinsider](https://downloads.khinsider.com/).
 
 ## License
 

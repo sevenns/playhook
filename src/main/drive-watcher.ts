@@ -8,6 +8,7 @@ import fse from 'fs-extra';
 import { list } from 'drivelist';
 import { MANIFEST_FILENAME, type DriveCandidate } from '../shared/types';
 import { type Translator } from '../shared/i18n/index';
+import { log } from './logger';
 
 const DEFAULT_INTERVAL_MS = 1000;
 
@@ -70,6 +71,7 @@ export async function listDriveCandidates(
       const { label, signature } = await describeManifest(root, manifestPath, hasManifest, t);
       candidates.push({
         root,
+        kind: 'card',
         label,
         signature,
         hasManifest,
@@ -80,15 +82,34 @@ export async function listDriveCandidates(
   return candidates;
 }
 
-/** What one read of a candidate's game.json yields: its display label and its content signature. */
-interface ManifestDescription {
+/**
+ * Every mounted volume on the machine, as plain paths — the STARTING points the in-launcher file picker
+ * offers in its left column. Deliberately unfiltered, unlike listDriveCandidates: a game is installed
+ * wherever the user installed it (the usual `C:\Program Files (x86)\Steam\steamapps\common\…` is a system
+ * disk by any definition), and where to browse is the user's call, not ours. See the plan, Р5.2.
+ */
+export async function listAllMountpoints(): Promise<readonly string[]> {
+  const drives = await list();
+  const paths: string[] = [];
+  for (const drive of drives) {
+    if (drive.isVirtual === true) continue;
+    for (const mount of drive.mountpoints) {
+      if (typeof mount.path === 'string' && mount.path.length > 0) paths.push(mount.path);
+    }
+  }
+  return [...new Set(paths)].sort();
+}
+
+/** What one read of a candidate's game.json yields: what to say about it, and its content signature. */
+export interface ManifestDescription {
   /**
-   * "E:\ — Hollow Knight" (title from a single-game game.json), "E:\ — 3 games" (a multi-game card: the
-   * individual titles don't fit a one-line label, so it shows the count), "E:\ — invalid game.json" (file
-   * present but unparseable / no title), or "E:\ — blank drive" (no game.json). This is the primary
-   * signature on Windows, where drivelist does not populate a volume label.
+   * The content half of the label, shown after the candidate's name: "Hollow Knight" (title from a
+   * single-game game.json), "3 games" (several of them: the individual titles don't fit a one-line
+   * label, so it shows the count), "invalid game.json" (file present but unparseable / no title), or the
+   * caller's `blank` wording (no game.json). On Windows this is the primary way to tell two cards apart —
+   * drivelist does not populate a volume label.
    */
-  readonly label: string;
+  readonly suffix: string;
   /** The card's identity — see DriveCandidate.signature / gameIdsSignature. */
   readonly signature: string;
 }
@@ -106,17 +127,21 @@ function gameIdsSignature(games: readonly unknown[]): string {
   return [...ids].sort().join('|');
 }
 
-/** Reads a candidate's game.json ONCE and derives both its display label and its content signature. */
-async function describeManifest(
-  root: string,
+/**
+ * Reads a candidate's game.json ONCE and derives what its label says about its CONTENT ("Hollow Knight",
+ * "3 games", "invalid game.json", …) plus the content signature. Split from the label itself because the
+ * same description serves two kinds of candidate: a card, prefixed with its mountpoint, and the PC
+ * library, prefixed with "This PC" (see GameConfigService.candidates). `blank` is the wording for "there
+ * is no game.json" — a blank drive for a card, "no games yet" for the library.
+ */
+export async function describeManifestContent(
   manifestPath: string,
   hasManifest: boolean,
   t: Translator,
+  blank: string,
 ): Promise<ManifestDescription> {
-  // The `root — …` shape and the card title (untrusted) stay literal; only the descriptive suffix is
-  // translated. The picker re-pushes every 2s while visible, so a language change is picked up on its own.
-  if (!hasManifest) return { label: `${root} — ${t('drive.blank')}`, signature: '' };
-  const invalid: ManifestDescription = { label: `${root} — ${t('drive.invalid')}`, signature: 'invalid' };
+  if (!hasManifest) return { suffix: blank, signature: '' };
+  const invalid: ManifestDescription = { suffix: t('drive.invalid'), signature: 'invalid' };
   try {
     const parsed: unknown = await fse.readJson(manifestPath);
     // game.json holds a single game object (legacy) OR a non-empty array of them (multi-game card) — the
@@ -126,10 +151,10 @@ async function describeManifest(
     if (typeof first !== 'object' || first === null) return invalid;
     const signature = gameIdsSignature(games);
     // Several games → the count alone ("3 games"); naming just the first would misrepresent the card.
-    if (games.length > 1) return { label: `${root} — ${t.tp('drive.games', games.length)}`, signature };
+    if (games.length > 1) return { suffix: t.tp('drive.games', games.length), signature };
     if ('title' in first) {
       const title = first.title;
-      if (typeof title === 'string' && title.length > 0) return { label: `${root} — ${title}`, signature };
+      if (typeof title === 'string' && title.length > 0) return { suffix: title, signature };
     }
     return invalid;
   } catch {
@@ -137,11 +162,31 @@ async function describeManifest(
   }
 }
 
+/** The card flavour of the above: the mountpoint, a dash, and what the manifest says. */
+async function describeManifest(
+  root: string,
+  manifestPath: string,
+  hasManifest: boolean,
+  t: Translator,
+): Promise<{ readonly label: string; readonly signature: string }> {
+  // The `root — …` shape and the card title (untrusted) stay literal; only the descriptive suffix is
+  // translated. The picker re-pushes every 2s while visible, so a language change is picked up on its own.
+  const { suffix, signature } = await describeManifestContent(
+    manifestPath,
+    hasManifest,
+    t,
+    t('drive.blank'),
+  );
+  return { label: `${root} — ${suffix}`, signature };
+}
+
 export class DriveWatcher {
   private timer: NodeJS.Timeout | null = null;
   private activeRoot: string | null = null;
   private scanning = false;
   private lastAutomountAt = 0;
+  /** Mountpoints already reported as permission-denied, so the breadcrumb is logged once, not per tick. */
+  private readonly deniedMounts = new Set<string>();
 
   private insertHandler: ((root: string) => void) | null = null;
   private removeHandler: ((root: string) => void) | null = null;
@@ -242,13 +287,35 @@ export class DriveWatcher {
       // A disk may have several partitions/mountpoints — we iterate over all of them.
       for (const mount of drive.mountpoints) {
         if (typeof mount.path !== 'string' || mount.path.length === 0) continue;
-        const manifestPath = path.join(mount.path, MANIFEST_FILENAME);
-        if (await fse.pathExists(manifestPath)) {
+        if (await this.carriesManifest(mount.path)) {
           if (mount.path === this.activeRoot) return mount.path; // keep the active card
           firstFound ??= mount.path;
         }
       }
     }
     return firstFound;
+  }
+
+  /**
+   * Whether this mountpoint carries a `game.json`. A PERMISSION error is not treated like an absent file:
+   * on macOS the first look inside a removable volume raises the "Removable Volumes" privacy prompt, and a
+   * user who declines it makes every card silently invisible — with `pathExists` swallowing the EPERM,
+   * this log line is the only trace of why. Logged once per mountpoint (the scan runs on a timer).
+   */
+  private async carriesManifest(mount: string): Promise<boolean> {
+    try {
+      await fse.access(path.join(mount, MANIFEST_FILENAME));
+      this.deniedMounts.delete(mount); // access was granted (or the prompt was answered) — arm it again
+      return true;
+    } catch (cause) {
+      const code = (cause as NodeJS.ErrnoException).code;
+      if ((code === 'EPERM' || code === 'EACCES') && !this.deniedMounts.has(mount)) {
+        this.deniedMounts.add(mount);
+        log.warn(
+          `[drive-watcher] permission denied reading "${mount}" (${code}) — on macOS, allow removable volumes in System Settings → Privacy & Security → Files and Folders`,
+        );
+      }
+      return false;
+    }
   }
 }

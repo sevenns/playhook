@@ -36,13 +36,19 @@ export function setLogBaseDir(baseDir: string): void {
 
 /**
  * Electron's userData location, reproduced without Electron, for the case where a log line somehow beats
- * setLogBaseDir. Matches app.getPath('userData') on both platforms so logs never split across two folders.
+ * setLogBaseDir. Matches app.getPath('userData') on every platform so logs never split across two folders
+ * (the folder name is the `name` from package.json — there is no productName override).
  */
 function fallbackBaseDir(): string {
   if (process.platform === 'win32') {
     const appData = process.env['APPDATA'];
     const base = appData !== undefined && appData !== '' ? appData : os.homedir();
     return path.join(base, 'playhook');
+  }
+  if (process.platform === 'darwin') {
+    // macOS keeps app data in `~/Library/Application Support/<app>`, NOT in the XDG config root — using
+    // the linux fallback here would scatter the logs into a second, invisible folder.
+    return path.join(os.homedir(), 'Library', 'Application Support', 'playhook');
   }
   const xdg = process.env['XDG_CONFIG_HOME'];
   const base = xdg !== undefined && xdg !== '' ? xdg : path.join(os.homedir(), '.config');

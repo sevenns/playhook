@@ -12,3 +12,13 @@ export function reqQuery<T extends HTMLElement>(selector: string): T {
   if (el === null) throw new Error(`${selector} not found`);
   return el;
 }
+
+/**
+ * A canvas by id, checked rather than cast: `req` would happily hand back a div typed as a canvas, and
+ * the first getContext call would then be the thing that failed — a frame late and far from the cause.
+ */
+export function reqCanvas(id: string): HTMLCanvasElement {
+  const el = req<HTMLElement>(id);
+  if (!(el instanceof HTMLCanvasElement)) throw new Error(`#${id} is not a canvas`);
+  return el;
+}
