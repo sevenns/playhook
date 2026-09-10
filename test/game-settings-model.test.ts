@@ -42,6 +42,7 @@ const baseEnv: GameSettingsEnv = {
   dirty: false,
   canDelete: true,
   canMove: false,
+  hasMoveTarget: true,
   historyMode: false,
 };
 
@@ -291,6 +292,15 @@ describe('the rules that are not visibility', () => {
     const built = ids(model({}, { canMove: true, canDelete: true }));
     expect(built).toContain('move-to-card');
     expect(built.indexOf('move-to-card')).toBeLessThan(built.indexOf('delete'));
+  });
+
+  it('offers "Move to card…" inert while no card is plugged in', () => {
+    const empty = row(model({}, { canMove: true, hasMoveTarget: false }), 'move-to-card');
+    if (empty?.kind !== 'action') throw new Error('unreachable');
+    expect(empty.disabled).toBe(true);
+    const inserted = row(model({}, { canMove: true, hasMoveTarget: true }), 'move-to-card');
+    if (inserted?.kind !== 'action') throw new Error('unreachable');
+    expect(inserted.disabled).toBe(false);
   });
 
   it('disables Save with nothing to save, and while the validator is unhappy', () => {

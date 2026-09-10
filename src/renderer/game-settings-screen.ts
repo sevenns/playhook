@@ -98,6 +98,13 @@ const PRESS_MS = 130;
 const VALIDATE_DEBOUNCE_MS = 400;
 /** Marquee speed for a clipped menu label, in DESIGN px per second (the Settings dropdown's constant). */
 const MARQUEE_SPEED_PX_PER_S = 60;
+/**
+ * How often the screen re-asks whether there is a card to move onto. A poll rather than a push because
+ * nothing announces a BLANK card: main's watcher only reports media carrying a game.json, and an empty
+ * card is a perfectly good move target. Matched to the TTL main caches its candidate listing under, so a
+ * screen left open costs one drive enumeration per tick at most — the same order as the watcher's own.
+ */
+const MOVE_TARGETS_POLL_MS = 2000;
 
 /** What the screen sends to main. A seam, so app.ts owns the window.api wiring. */
 export interface GameSettingsScreenApi {
@@ -444,6 +451,13 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   let validateTimer = 0;
   /** Guards a late answer from a validation whose text is already stale. */
   let validateToken = 0;
+  /**
+   * Whether a card is plugged in for "Move to card…" to reach. Starts false: the row is offered inert
+   * until the first listing says otherwise, which is the honest order — an item that looks pressable
+   * before anything has been read is the very thing that made the action lie about an empty reader.
+   */
+  let moveTargets = false;
+  let moveTargetsTimer = 0;
 
   const menuStack: MenuLevel[] = [];
   let menuButtons: readonly HTMLButtonElement[] = [];
@@ -522,6 +536,33 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     return at.source === 'pc';
   }
 
+  /**
+   * Re-reads whether any card is plugged in, and repaints when the answer changed. Cheap enough to run on
+   * a timer (main caches the listing) and skipped outright whenever the row it feeds is not on screen.
+   */
+  async function refreshMoveTargets(): Promise<void> {
+    if (!open || mode !== 'edit' || pendingMove !== null) return;
+    const list = await deps.api.sources();
+    if (!open || mode !== 'edit') return;
+    const present = list.some((candidate) => candidate.kind === 'card');
+    if (present === moveTargets) return;
+    moveTargets = present;
+    render();
+  }
+
+  /** Starts that poll (once per visit), so a card inserted while the screen is open lights the row up. */
+  function watchMoveTargets(): void {
+    if (moveTargetsTimer !== 0) return;
+    void refreshMoveTargets();
+    moveTargetsTimer = window.setInterval(() => void refreshMoveTargets(), MOVE_TARGETS_POLL_MS);
+  }
+
+  function stopWatchingMoveTargets(): void {
+    if (moveTargetsTimer === 0) return;
+    window.clearInterval(moveTargetsTimer);
+    moveTargetsTimer = 0;
+  }
+
   function canSave(): boolean {
     // A write of this screen's is in flight. Nothing here is idempotent — main's swap guard rejects the
     // second Save of the same signature AFTER the first has already landed, so the user is shown an error
@@ -576,6 +617,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       // to anything, so without this the column would offer "Delete game" on the Add screen.
       canDelete: mode === 'edit' && canDelete(),
       canMove: mode === 'edit' && canMove(),
+      hasMoveTarget: moveTargets,
     });
   }
 
@@ -1756,6 +1798,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       signature: result.signature,
       platform: result.platform,
     };
+    if (result.source === 'pc') watchMoveTargets();
     adoptText(result.text);
     await runValidate();
     baselineOtherIssues = new Set(otherIssues);
@@ -2603,6 +2646,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       window.clearTimeout(validateTimer);
       validateTimer = 0;
     }
+    stopWatchingMoveTargets();
     delete app.dataset['overlay'];
     screen.setAttribute('aria-hidden', 'true');
     deps.onClosed();
@@ -2712,6 +2756,8 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     baselineOtherIssues = new Set();
     baselineOwnIssues = new Set();
     sources = [];
+    stopWatchingMoveTargets();
+    moveTargets = false;
     pendingSource = null;
     adoptingRoot = null;
     form = emptyFormModel(defaultLaunchMode('card'));
