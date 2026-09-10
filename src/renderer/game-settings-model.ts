@@ -162,6 +162,14 @@ export interface GameSettingsEnv {
    */
   readonly canMove: boolean;
   /**
+   * Whether there is a card to move ONTO right now. Separate from `canMove`, which decides whether the
+   * action belongs to this game at all: a local game always has the row (hiding it whenever the reader is
+   * empty would make the action itself look like it does not exist), but with no removable media plugged
+   * in there is nowhere to move to, so the row is offered inert rather than as a press that can only end
+   * in "Insert a card to move this game onto it."
+   */
+  readonly hasMoveTarget: boolean;
+  /**
    * The game is being configured FROM THE HISTORY: its card is not in, and what is edited here reaches
    * that card on its next insertion (see history-config.ts). Every field that names a file on the card
    * is shown with its value but inert — there is nothing to browse, and a path typed blind would only
@@ -707,6 +715,7 @@ export function buildGameSettingsModel(
       kind: 'action',
       id: 'move-to-card',
       label: { key: 'gameSettings.moveToCard' },
+      disabled: !env.hasMoveTarget,
     });
   }
   if (env.canDelete) {

@@ -47,6 +47,16 @@ const ROOT_OK = {
   platform: 'windows',
 } as const;
 
+/** The same game as a LOCAL one — the only kind "Move to card" is offered for. */
+const READ_PC = {
+  ok: true,
+  root: 'C:\\Games\\Hades',
+  source: 'pc',
+  signature: 'a',
+  text: manifest([HADES]),
+  platform: 'windows',
+} as const;
+
 const CARD = {
   root: 'E:\\',
   label: 'Card',
@@ -104,6 +114,14 @@ const menuEntries = (): readonly string[] =>
   );
 
 const status = (): string => req('game-settings-status').textContent ?? '';
+
+const columnEntry = (label: string): HTMLElement => {
+  const entry = [...req('game-settings-nav').children].find(
+    (candidate) => candidate.textContent === label,
+  );
+  if (!(entry instanceof HTMLElement)) throw new Error(`no column entry named ${label}`);
+  return entry;
+};
 
 function createScreen(overrides: Partial<GameSettingsScreenApi> = {}): void {
   api = fakeGameSettingsApi({ read: vi.fn(() => Promise.resolve(READ_OK)), ...overrides });
@@ -205,6 +223,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   for (const instance of live) instance.close();
   live.length = 0;
   vi.unstubAllGlobals();
@@ -628,5 +647,48 @@ describe('customize screen for a game from the history', () => {
 
     expect(sections()).not.toContain('Delete game');
     expect(sections()).not.toContain('Move to card...');
+  });
+});
+
+describe('customize screen move to card', () => {
+  it('offers the action inert while no card is plugged in', async () => {
+    await open({
+      read: vi.fn(() => Promise.resolve(READ_PC)),
+      sources: vi.fn(() => Promise.resolve([])),
+    });
+
+    expect(columnEntry('Move to card').classList.contains('is-disabled')).toBe(true);
+  });
+
+  it('offers it for real once a card answers the listing', async () => {
+    await open({
+      read: vi.fn(() => Promise.resolve(READ_PC)),
+      sources: vi.fn(() => Promise.resolve([CARD])),
+    });
+
+    expect(columnEntry('Move to card').classList.contains('is-disabled')).toBe(false);
+  });
+
+  it('lights it up when a card arrives while the screen is already open', async () => {
+    vi.useFakeTimers();
+    let cards: readonly (typeof CARD)[] = [];
+    await open({
+      read: vi.fn(() => Promise.resolve(READ_PC)),
+      sources: vi.fn(() => Promise.resolve(cards)),
+    });
+    expect(columnEntry('Move to card').classList.contains('is-disabled')).toBe(true);
+
+    cards = [CARD];
+    await vi.advanceTimersByTimeAsync(2000);
+
+    expect(columnEntry('Move to card').classList.contains('is-disabled')).toBe(false);
+    vi.useRealTimers();
+  });
+
+  it('does not offer it at all for a game that already lives on a card', async () => {
+    await open({ sources: vi.fn(() => Promise.resolve([CARD])) });
+
+    expect(sections()).not.toContain('Move to card');
+    expect(api.sources).not.toHaveBeenCalled();
   });
 });
