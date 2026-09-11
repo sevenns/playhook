@@ -43,11 +43,26 @@ function unexpected(name: string): () => never {
   };
 }
 
-/** Yields to the event loop enough times for the chained async work of one action to settle. */
-async function flushAsync(rounds = 30): Promise<void> {
-  for (let i = 0; i < rounds; i += 1) {
-    await new Promise<void>((resolve) => setImmediate(resolve));
+/**
+ * Polls until `condition` holds. The sequences touch the real filesystem, so how many event-loop turns a
+ * step takes depends on the machine — a fixed number of yields passed here and flaked on CI.
+ */
+async function waitFor(condition: () => boolean, what: string): Promise<void> {
+  const deadline = Date.now() + 5000;
+  while (!condition()) {
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
+    await new Promise<void>((resolve) => setTimeout(resolve, 5));
   }
+}
+
+/** Waits until the journal's LAST entry is `last` — the marker each scenario ends on. */
+function settled(journal: readonly string[], last: string): Promise<void> {
+  return waitFor(() => journal.at(-1) === last, `journal to end on ${last}`);
+}
+
+/** Waits until the journal contains `entry` (an intermediate checkpoint of a scenario). */
+function reached(journal: readonly string[], entry: string): Promise<void> {
+  return waitFor(() => journal.includes(entry), `journal to reach ${entry}`);
 }
 
 /** A promise the test releases by hand, that rejects with LaunchAbortedError the moment `signal` fires. */
@@ -273,8 +288,7 @@ async function harness(opts: HarnessOptions): Promise<Harness> {
   };
   const controller = new GameController(deps);
   controller.init();
-  await flushAsync();
-  expect(state.get().kind).toBe('ready');
+  await waitFor(() => state.get().kind === 'ready', 'the initial ready state');
   journal.length = 0;
   return {
     controller,
@@ -313,7 +327,6 @@ describe('GameController sequences', () => {
 
   afterEach(async () => {
     h.controller.shutdown();
-    await flushAsync();
     await fs.rm(h.tmp, { recursive: true, force: true });
     await fs.rm(swapRoot, { recursive: true, force: true });
   });
@@ -322,10 +335,10 @@ describe('GameController sequences', () => {
     it('success: sync-in → launching → running → syncing-out → ready, then the finally releases the process', async () => {
       h = await harness({ mode: 'normal' });
       fire(IPC.actionLaunch);
-      await flushAsync();
+      await reached(h.journal, 'state:running');
       expect(h.journal).toEqual(['state:syncing-in', 'state:launching', 'state:running']);
       h.exit();
-      await flushAsync();
+      await settled(h.journal, 'proc:dispose');
       expect(h.journal).toEqual([
         'state:syncing-in',
         'state:launching',
@@ -343,10 +356,10 @@ describe('GameController sequences', () => {
     it('error in the body: failSequence returns to ready, shows the window and the error, then the finally runs', async () => {
       h = await harness({ mode: 'normal' });
       fire(IPC.actionLaunch);
-      await flushAsync();
+      await reached(h.journal, 'state:running');
       h.failStats = true;
       h.exit();
-      await flushAsync();
+      await settled(h.journal, 'proc:dispose');
       expect(h.journal).toEqual([
         'state:syncing-in',
         'state:launching',
@@ -362,9 +375,9 @@ describe('GameController sequences', () => {
     it('card swap mid-run: no state is set by the aborted sequence; the finally releases the process and replays the insert', async () => {
       h = await harness({ mode: 'normal' });
       fire(IPC.actionLaunch);
-      await flushAsync();
+      await reached(h.journal, 'state:running');
       h.insert(swapRoot);
-      await flushAsync();
+      await settled(h.journal, 'window:hide');
       // The swapped-in root has no game.json, so the replayed insert lands on `error` + hide — proof that
       // onInsert ran AFTER the finally (a deferred insert is refused while launchInFlight holds).
       expect(h.journal).toEqual([
@@ -382,9 +395,9 @@ describe('GameController sequences', () => {
     it('shutdown mid-run: the sequence unwinds silently and leaves the running state alone', async () => {
       h = await harness({ mode: 'normal' });
       fire(IPC.actionLaunch);
-      await flushAsync();
+      await reached(h.journal, 'state:running');
       h.controller.shutdown();
-      await flushAsync();
+      await settled(h.journal, 'proc:dispose');
       expect(h.journal).toEqual([
         'state:syncing-in',
         'state:launching',
@@ -399,12 +412,12 @@ describe('GameController sequences', () => {
     it('success: installing → ready, a game-installed notification, then the window', async () => {
       h = await harness({ mode: 'install' });
       fire(IPC.actionLaunch);
-      await flushAsync();
+      await reached(h.journal, 'state:installing');
       expect(h.journal).toEqual(['state:installing']);
       await fs.mkdir(path.join(h.tmp, 'installed'), { recursive: true });
       await fs.writeFile(path.join(h.tmp, 'installed', 'game.exe'), '');
       h.exit();
-      await flushAsync();
+      await settled(h.journal, 'proc:dispose');
       expect(h.journal).toEqual([
         'state:installing',
         'state:ready',
@@ -417,12 +430,12 @@ describe('GameController sequences', () => {
     it('error in the body: failSequence keeps the game on Install and reports the cause', async () => {
       h = await harness({ mode: 'install' });
       fire(IPC.actionLaunch);
-      await flushAsync();
+      await reached(h.journal, 'state:installing');
       await fs.mkdir(path.join(h.tmp, 'installed'), { recursive: true });
       await fs.writeFile(path.join(h.tmp, 'installed', 'game.exe'), '');
       h.failStats = true;
       h.exit();
-      await flushAsync();
+      await settled(h.journal, 'proc:dispose');
       expect(h.journal).toEqual([
         'state:installing',
         'state:ready',
@@ -436,9 +449,9 @@ describe('GameController sequences', () => {
     it('card swap mid-install: unwinds without touching the state, then replays the insert', async () => {
       h = await harness({ mode: 'install' });
       fire(IPC.actionLaunch);
-      await flushAsync();
+      await reached(h.journal, 'state:installing');
       h.insert(swapRoot);
-      await flushAsync();
+      await settled(h.journal, 'window:hide');
       expect(h.journal).toEqual(['state:installing', 'proc:dispose', 'state:error', 'window:hide']);
     });
   });
@@ -450,7 +463,6 @@ describe('GameController sequences', () => {
       await fs.mkdir(path.join(built.tmp, 'installed'), { recursive: true });
       await fs.writeFile(path.join(built.tmp, 'installed', 'game.exe'), '');
       await built.controller.reloadPcLibrary();
-      await flushAsync();
       expect(built.state.get()).toMatchObject({ kind: 'ready', game: { canUninstall: true } });
       built.journal.length = 0;
       return built;
@@ -459,7 +471,7 @@ describe('GameController sequences', () => {
     it('success: uninstalling → ready, a game-uninstalled notification, then the window', async () => {
       h = await installed();
       fire(IPC.actionUninstall);
-      await flushAsync();
+      await settled(h.journal, 'window:showAndFocus');
       expect(h.journal).toEqual([
         'state:uninstalling',
         'state:ready',
@@ -473,7 +485,7 @@ describe('GameController sequences', () => {
       h = await installed();
       h.failStats = true;
       fire(IPC.actionUninstall);
-      await flushAsync();
+      await settled(h.journal, 'send:error');
       expect(h.journal).toEqual([
         'state:uninstalling',
         'state:ready',
@@ -486,12 +498,11 @@ describe('GameController sequences', () => {
     it('card swap during the directory sweep: the retry loop sees the signal, nothing is set, the insert replays', async () => {
       h = await installed(unremovable(os.tmpdir()));
       fire(IPC.actionUninstall);
-      await flushAsync();
+      await reached(h.journal, 'state:uninstalling');
       expect(h.journal).toEqual(['state:uninstalling']);
       h.insert(swapRoot);
       // The sweep backs off 300 ms between attempts and only then reads the signal.
-      await new Promise<void>((resolve) => setTimeout(resolve, 400));
-      await flushAsync();
+      await settled(h.journal, 'window:hide');
       expect(h.journal).toEqual(['state:uninstalling', 'state:error', 'window:hide']);
     });
   });
@@ -501,7 +512,7 @@ describe('GameController sequences', () => {
       h = await harness({ mode: 'prefix-cleanup' });
       expect(h.state.get()).toMatchObject({ kind: 'ready', game: { prefixCleanupOnly: true } });
       fire(IPC.actionUninstall);
-      await flushAsync();
+      await settled(h.journal, 'window:showAndFocus');
       expect(h.journal).toEqual(['state:uninstalling', 'state:ready', 'window:showAndFocus']);
     });
 
@@ -509,7 +520,7 @@ describe('GameController sequences', () => {
       h = await harness({ mode: 'prefix-cleanup' });
       h.failStats = true;
       fire(IPC.actionUninstall);
-      await flushAsync();
+      await settled(h.journal, 'send:error');
       expect(h.journal).toEqual([
         'state:uninstalling',
         'state:ready',
@@ -521,11 +532,10 @@ describe('GameController sequences', () => {
     it('card swap during the sweep: the retry loop sees the signal, nothing is set, the insert replays', async () => {
       h = await harness({ mode: 'prefix-cleanup', sweepDir: unremovable(os.tmpdir()) });
       fire(IPC.actionUninstall);
-      await flushAsync();
+      await reached(h.journal, 'state:uninstalling');
       expect(h.journal).toEqual(['state:uninstalling']);
       h.insert(swapRoot);
-      await new Promise<void>((resolve) => setTimeout(resolve, 400));
-      await flushAsync();
+      await settled(h.journal, 'window:hide');
       expect(h.journal).toEqual(['state:uninstalling', 'state:error', 'window:hide']);
     });
   });
