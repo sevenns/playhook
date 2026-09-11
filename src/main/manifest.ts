@@ -22,6 +22,8 @@ import {
 } from '../shared/types';
 import { translateIssueMessage, type Translator } from '../shared/i18n/index';
 import { type InstallDirResolver } from './platform/types';
+import { isEnoent } from './json-store';
+import { describe } from './util';
 import { log } from './logger';
 
 // Install-mode block (optional). When present, the card holds an installer and `executable` is
@@ -540,14 +542,6 @@ export interface ManifestReadOptions {
 }
 
 /** True for an "the file isn't there" fs error — the one read failure that is a normal state, not damage. */
-function isNotFound(cause: unknown): boolean {
-  return (
-    typeof cause === 'object' &&
-    cause !== null &&
-    (cause as { code?: unknown }).code === 'ENOENT'
-  );
-}
-
 /**
  * Reads and fully validates ALL games on the card. `game.json` may hold a single object (legacy
  * single-game — behaves exactly as before) or a non-empty array of game objects (multi-game). Reads the
@@ -576,7 +570,7 @@ export async function readManifests(
     // No PC library file yet is the normal first run — an empty library, not a failure. Every OTHER read
     // problem (unparsable JSON, EACCES) stays an error for both sources: silently swallowing corrupted
     // user data is exactly what the error-handling convention forbids.
-    if (source === 'pc' && isNotFound(cause)) return { ok: true, manifests: [] };
+    if (source === 'pc' && isEnoent(cause)) return { ok: true, manifests: [] };
     return {
       ok: false,
       message: t('errors.cannotReadManifest', { file: MANIFEST_FILENAME, cause: describe(cause) }),
@@ -1011,6 +1005,21 @@ function pushGameSemanticIssues(
  * semantic checks (zod's superRefine issues only appear after the base schema passes). The schema stays
  * module-private — only this pure function is exported, so there is a single source of truth.
  */
+/**
+ * The items of a manifest text as the file lists them: the single game object, or every element of the
+ * array form — the one top-level shape game.json takes. Null when the text is not JSON at all. The shape
+ * of each item is NOT checked here; that is the caller's business (validation, a lookup by id, a count).
+ */
+export function parseManifestItems(text: string): readonly unknown[] | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text) as unknown;
+  } catch {
+    return null;
+  }
+  return Array.isArray(parsed) ? (parsed as readonly unknown[]) : [parsed];
+}
+
 export function validateManifestText(
   text: string,
   t: Translator,
@@ -1098,9 +1107,4 @@ export function validateManifestText(
 export function manifestJsonSchema(): unknown {
   const objectSchema = z.toJSONSchema(manifestSchema, { unrepresentable: 'any', io: 'input' });
   return { oneOf: [objectSchema, { type: 'array', items: objectSchema, minItems: 1 }] };
-}
-
-function describe(cause: unknown): string {
-  if (cause instanceof Error) return cause.message;
-  return String(cause);
 }

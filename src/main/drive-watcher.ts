@@ -8,6 +8,7 @@ import fse from 'fs-extra';
 import { list } from 'drivelist';
 import { MANIFEST_FILENAME, type DriveCandidate } from '../shared/types';
 import { type Translator } from '../shared/i18n/index';
+import { parseManifestItems } from './manifest';
 import { log } from './logger';
 
 const DEFAULT_INTERVAL_MS = 1000;
@@ -143,10 +144,10 @@ export async function describeManifestContent(
   if (!hasManifest) return { suffix: blank, signature: '' };
   const invalid: ManifestDescription = { suffix: t('drive.invalid'), signature: 'invalid' };
   try {
-    const parsed: unknown = await fse.readJson(manifestPath);
     // game.json holds a single game object (legacy) OR a non-empty array of them (multi-game card) — the
     // same top-level union readManifests accepts.
-    const games: readonly unknown[] = Array.isArray(parsed) ? parsed : [parsed];
+    const games = parseManifestItems(await fse.readFile(manifestPath, 'utf8'));
+    if (games === null) return invalid;
     const first = games[0];
     if (typeof first !== 'object' || first === null) return invalid;
     const signature = gameIdsSignature(games);

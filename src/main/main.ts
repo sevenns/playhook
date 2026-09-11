@@ -192,8 +192,7 @@ async function bootstrap(): Promise<void> {
     app.getPath('userData'),
     (next) => {
       steamGridDbKey = next.steamGridDbApiKey;
-      const bw = windowRef?.browserWindow ?? null;
-      if (bw !== null && !bw.isDestroyed()) bw.webContents.send(IPC.settingsUpdate, next);
+      windowRef?.send(IPC.settingsUpdate, next);
     },
     // A settings write that fails leaves the user looking at a toggle that flipped back (or a language
     // that did not change) with no explanation — every setter logs its own cause, this says it on screen.
@@ -229,10 +228,7 @@ async function bootstrap(): Promise<void> {
         gameRunning: state.get().kind === 'running',
       };
     },
-    push: (channel, payload) => {
-      const bw = windowRef?.browserWindow ?? null;
-      if (bw !== null && !bw.isDestroyed()) bw.webContents.send(channel, payload);
-    },
+    push: (channel, payload) => windowRef?.send(channel, payload),
   });
   notificationsRef = notifications; // the settings store reports a failed write through it (see above)
   await notifications.init();
@@ -368,10 +364,7 @@ async function bootstrap(): Promise<void> {
     // Game Mode auto-launch toggle (Steam Deck): installs or tears down the watcher unit. Turning it off
     // stops a separate process, so the memory is actually returned — that is the point of the option.
     onSteamAutoLaunchChanged: (enabled) => steamShortcut.applyAutoLaunch(enabled),
-    onVolumesChanged: (volumes) => {
-      const bw = window.browserWindow;
-      if (bw !== null && !bw.isDestroyed()) bw.webContents.send(IPC.volumeUpdate, volumes);
-    },
+    onVolumesChanged: (volumes) => window.send(IPC.volumeUpdate, volumes),
     // The sound-set / ambience / only-global changes are re-read + re-pushed by the controller (it owns the
     // AssetReader and the game window) — the Settings screen only persisted the new value.
     onSoundSetChanged: () => void controller.refreshAudio(),
@@ -582,10 +575,7 @@ async function bootstrap(): Promise<void> {
   const power = createPowerService({
     backend: platform.powerBackend,
     quit: () => quit(),
-    showError: (message) => {
-      const bw = window.browserWindow;
-      if (bw !== null && !bw.isDestroyed()) bw.webContents.send(IPC.errorShow, message);
-    },
+    showError: (message) => window.send(IPC.errorShow, message),
     getTranslator,
   });
   ipcMain.on(IPC.actionShutdown, () => void power.perform('shutdown'));
@@ -602,9 +592,7 @@ async function bootstrap(): Promise<void> {
     localeService.setMode(mode);
     const locale = localeService.current();
     refreshTrayMenu();
-    const gameBw = window.browserWindow;
-    if (gameBw !== null && !gameBw.isDestroyed())
-      gameBw.webContents.send(IPC.languageUpdate, locale);
+    window.send(IPC.languageUpdate, locale);
   }
 
   // Global Start+Back hotkey: re-summon the launcher when it's hidden (e.g. minimized to the tray

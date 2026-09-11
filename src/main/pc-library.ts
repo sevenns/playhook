@@ -14,6 +14,7 @@ import fse from 'fs-extra';
 import { MANIFEST_FILENAME, PC_LIBRARY_DIRNAME, type ResolvedManifest } from '../shared/types';
 import { readManifests, type ManifestEnv } from './manifest';
 import { type InstallDirResolver } from './platform/types';
+import { isEnoent } from './json-store';
 import { log } from './logger';
 import { uniqueAssetFileName } from './asset-file-names';
 import { assertImportableAsset, type ImportKind } from './asset-import';
@@ -120,7 +121,7 @@ export class PcLibraryStore {
     try {
       names = await fse.readdir(this.assetsDir);
     } catch (cause) {
-      if (!isNotFound(cause)) log.warn('[pc-library] cannot list assets for cleanup:', describe(cause));
+      if (!isEnoent(cause)) log.warn('[pc-library] cannot list assets for cleanup:', describe(cause));
       return;
     }
     for (const name of names) {
@@ -139,8 +140,3 @@ export class PcLibraryStore {
 }
 
 /** True for an "it isn't there" fs error — an empty library is a normal state, not a failure. */
-function isNotFound(cause: unknown): boolean {
-  return (
-    typeof cause === 'object' && cause !== null && (cause as { code?: unknown }).code === 'ENOENT'
-  );
-}

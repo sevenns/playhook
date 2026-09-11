@@ -26,7 +26,7 @@ import { nativeImage } from 'electron';
 import { z } from 'zod';
 import type { HeroAssets, ResolvedManifest, Stats } from '../shared/types';
 import { readAudioDataUrl, readImageDataUrl } from './asset-reader';
-import { readJsonValidated, writeFileAtomicEnsuringDir, writeJsonAtomic } from './json-store';
+import { isEnoent, readJsonValidated, writeFileAtomicEnsuringDir, writeJsonAtomic } from './json-store';
 import { uniqueAssetFileName } from './asset-file-names';
 import { assertImportableAsset, type ImportKind } from './asset-import';
 import { slotHash, type GameSlot } from './history-config';
@@ -558,7 +558,7 @@ export class LibraryStore {
     try {
       return await fse.readdir(this.stagedDir(id));
     } catch (cause) {
-      if (!isNotFound(cause)) {
+      if (!isEnoent(cause)) {
         log.warn(`[library] cannot list the staged assets of id=${id}:`, describe(cause));
       }
       return [];
@@ -610,7 +610,7 @@ export class LibraryStore {
     try {
       names = await fse.readdir(gameDir);
     } catch (cause) {
-      if (!isNotFound(cause)) log.warn(`[library] cannot list "${gameDir}":`, describe(cause));
+      if (!isEnoent(cause)) log.warn(`[library] cannot list "${gameDir}":`, describe(cause));
       return;
     }
     for (const name of names) {
@@ -679,16 +679,12 @@ async function readTextFile(filePath: string): Promise<string | null> {
   try {
     return await fse.readFile(filePath, 'utf8');
   } catch (cause) {
-    if (!isNotFound(cause)) log.warn(`[library] cannot read "${filePath}":`, describe(cause));
+    if (!isEnoent(cause)) log.warn(`[library] cannot read "${filePath}":`, describe(cause));
     return null;
   }
 }
 
 /** True for an "it isn't there" fs error — an absent history file is a normal state, not a failure. */
-function isNotFound(cause: unknown): boolean {
-  return typeof cause === 'object' && cause !== null && (cause as { code?: unknown }).code === 'ENOENT';
-}
-
 /**
  * Narrows a validated (mutable) index entry to the domain record. An entry written by an older build may
  * still carry fields this one no longer knows (the `sounds` map of the card-supplied UI sounds, dropped

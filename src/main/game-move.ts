@@ -1,5 +1,5 @@
 // The electron-free half of "Move to card…": moving a local (PC-library) game onto a card. Pure so it
-// can be unit-tested — the transaction itself (GameConfigService.moveToCard) touches fs and cannot be
+// can be unit-tested — the transaction itself (GameMoveTransaction.moveToCard) touches fs and cannot be
 // imported in vitest, the same reason game-config-add.ts was carved out.
 import path from 'node:path';
 import {
@@ -8,6 +8,7 @@ import {
   movedMusicAssetPath,
 } from '../shared/asset-move-names';
 import { type ResolvedManifest } from '../shared/types';
+import { parseManifestItems } from './manifest';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -25,13 +26,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * this function is actually called with (always already schema-validated beforehand).
  */
 export function removeGameFromManifestText(id: string, text: string): string | null {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text) as unknown;
-  } catch {
-    return null;
-  }
-  const items: readonly unknown[] = Array.isArray(parsed) ? parsed : [parsed];
+  const items = parseManifestItems(text);
+  if (items === null) return null;
   const kept = items.filter((item) => !(isRecord(item) && item['id'] === id));
   if (kept.length === 0) return '[]\n';
   const value: unknown = kept.length === 1 ? kept[0] : kept;
@@ -41,13 +37,8 @@ export function removeGameFromManifestText(id: string, text: string): string | n
 /** The raw (already-validated) JSON object for game `id` inside manifest `text` — a single object or one
  * element of an array. Null when `text` is not valid JSON or names no game with that id. */
 export function findGameInText(id: string, text: string): Record<string, unknown> | null {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text) as unknown;
-  } catch {
-    return null;
-  }
-  const items: readonly unknown[] = Array.isArray(parsed) ? parsed : [parsed];
+  const items = parseManifestItems(text);
+  if (items === null) return null;
   const found = items.find((item) => isRecord(item) && item['id'] === id);
   return found !== undefined && isRecord(found) ? found : null;
 }
@@ -78,13 +69,8 @@ export function expectedGameFilePath(raw: Record<string, unknown>): string | nul
 /** How many games in manifest `text` carry `id` — used to detect an id already taken on the target card
  * (our own inserted slot always counts as one; more than one means a genuine collision). */
 export function countGamesWithId(id: string, text: string): number {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text) as unknown;
-  } catch {
-    return 0;
-  }
-  const items: readonly unknown[] = Array.isArray(parsed) ? parsed : [parsed];
+  const items = parseManifestItems(text);
+  if (items === null) return 0;
   return items.filter((item) => isRecord(item) && item['id'] === id).length;
 }
 

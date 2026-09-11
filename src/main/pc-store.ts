@@ -128,25 +128,23 @@ export class PcStore {
       await fse.ensureDir(savesSnapshotDir);
     }
     const meta = { schemaVersion: 1 as const, id, enqueuedAt: new Date().toISOString() };
-    await fse.writeJson(path.join(entryDir, 'meta.json'), meta, { spaces: 2 });
+    await writeJsonAtomic(path.join(entryDir, 'meta.json'), meta);
   }
 
-  /** Returns the deferred flush for game `id`, if it exists and is valid. */
+  /**
+   * Returns the deferred flush for game `id`, if it exists and is valid. A missing entry is the normal
+   * case (nothing queued); a present-but-unreadable one is logged by the shared reader and treated as
+   * absent — the snapshot stays on disk for the next enqueue to overwrite.
+   */
   async getPending(id: string): Promise<PendingFlush | null> {
     const entryDir = this.pendingEntryDir(id);
-    const metaPath = path.join(entryDir, 'meta.json');
-    try {
-      const raw: unknown = await fse.readJson(metaPath);
-      const parsed = pendingMetaSchema.safeParse(raw);
-      if (!parsed.success) return null;
-      return {
-        id: parsed.data.id,
-        enqueuedAt: parsed.data.enqueuedAt,
-        savesSnapshotDir: path.join(entryDir, 'saves'),
-      };
-    } catch {
-      return null;
-    }
+    const meta = await readJsonValidated(path.join(entryDir, 'meta.json'), pendingMetaSchema.nullable(), null);
+    if (meta === null) return null;
+    return {
+      id: meta.id,
+      enqueuedAt: meta.enqueuedAt,
+      savesSnapshotDir: path.join(entryDir, 'saves'),
+    };
   }
 
   async clearPending(id: string): Promise<void> {
@@ -179,22 +177,9 @@ export class PcStore {
    * treated as absent so a damaged file can't wedge sync — the next successful sync rewrites it).
    */
   async readSyncState(id: string, slot: SyncSlot = 'card'): Promise<SyncState | null> {
-    let raw: unknown;
-    try {
-      raw = await fse.readJson(this.syncStatePath(id, slot));
-    } catch (cause) {
-      // ENOENT is the expected first-run case → silent; anything else is a real read anomaly → warn.
-      if (cause instanceof Error && (cause as { code?: unknown }).code !== 'ENOENT') {
-        log.warn(`[sync-state] failed to read baseline for "${id}":`, cause);
-      }
-      return null;
-    }
-    const parsed = syncStateSchema.safeParse(raw);
-    if (!parsed.success) {
-      log.warn(`[sync-state] baseline for "${id}" failed validation, ignoring:`, parsed.error.message);
-      return null;
-    }
-    return parsed.data;
+    // ENOENT is the expected first-run case → silent; anything else is a real read anomaly → the shared
+    // reader warns and answers null.
+    return readJsonValidated(this.syncStatePath(id, slot), syncStateSchema.nullable(), null);
   }
 
   async writeSyncState(id: string, state: SyncState, slot: SyncSlot = 'card'): Promise<void> {

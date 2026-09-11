@@ -29,6 +29,8 @@ import { getSteamPath } from '../registry';
 import { suspendToSleep } from '../power-native';
 import { expandPcSavePath, absoluteToPcSavePath, type ManifestEnv } from '../manifest';
 import { createTranslator } from '../../shared/i18n/index';
+import { log } from '../logger';
+import { describe } from '../util';
 
 const execFileAsync = promisify(execFile);
 
@@ -51,7 +53,10 @@ function createProcessMonitor(): ProcessMonitor {
       try {
         const { stdout } = await execFileAsync('tasklist', ['/NH', '/FO', 'CSV'], { windowsHide: true });
         return makeWin32Snapshot(stdout.toLowerCase());
-      } catch {
+      } catch (cause) {
+        // An empty snapshot reads as "everything exited" to the waits, so a tasklist failure must at
+        // least leave a trace — a game that quietly "ended" is otherwise impossible to diagnose.
+        log.warn('[process-monitor] tasklist failed — empty snapshot:', describe(cause));
         return makeWin32Snapshot('');
       }
     },
