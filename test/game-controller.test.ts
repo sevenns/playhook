@@ -11,7 +11,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ipcMain } from './stubs/electron';
-import { GameController } from '../src/main/ipc';
+import { GameController } from '../src/main/game-controller';
 import {
   type ControllerDeps,
   type ControllerLibrary,

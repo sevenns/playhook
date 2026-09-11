@@ -13,7 +13,7 @@ import { StatsService } from './stats';
 import { LibraryStore } from './library-store';
 import { PcLibraryStore } from './pc-library';
 import { DriveWatcher } from './drive-watcher';
-import { GameController } from './ipc';
+import { GameController } from './game-controller';
 import {
   killImagesElevated,
   waitForExit,

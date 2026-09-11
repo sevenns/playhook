@@ -1,8 +1,8 @@
-// Flow orchestrator + IPC registration.
-// This is where the state machine lives: the controller listens to drive-watcher, reacts to
-// the "Launch" action from the renderer, runs the sequence sync→spawn→wait→sync
-// and replicates AppState to the window. All FS/process work happens only here (in main).
-import path from 'node:path';
+// The card session + IPC registration.
+// This is where the state machine lives: the controller listens to drive-watcher, reads the inserted
+// card and the PC library, replicates AppState to the window, and dispatches the "Launch" / "Uninstall"
+// actions from the renderer to GameSequences (sync→spawn→wait→sync lives there). What the window shows
+// is held and pushed by BrowsePresenter. All FS/process work happens only in main.
 import fse from 'fs-extra';
 import { app, clipboard, ipcMain } from 'electron';
 import {
@@ -16,13 +16,11 @@ import {
   type GameInfo,
   type GameLibrary,
   type HeroAssets,
-  type ResolvedCopyInstall,
   type ManifestSource,
   type ResolvedManifest,
   type Stats,
 } from '../shared/types';
 import { type Translator } from '../shared/i18n/index';
-import { acceptsPendingFlush, type SyncSlot } from './pc-store';
 import { byRecentlyPlayed } from './library-index';
 import {
   commitHistorySync,
@@ -32,39 +30,17 @@ import {
 } from './history-sync';
 import { localGameGoesAfterMerge } from './history-config';
 import { sweepAtomicTemps } from './json-store';
-import { readManifests, findCaseInsensitiveName, isSafeGameId, type ManifestEnv } from './manifest';
-import { syncDir, syncByChange, snapshotTree } from './save-sync';
-import { LaunchAbortedError } from './launch-errors';
-import { type GameProcess } from './game-launcher';
-import { removeWithRetry, resolveUninstaller } from './uninstaller.win32';
+import { readManifests, isSafeGameId, type ManifestEnv } from './manifest';
 import { type CollisionResolver, type ControllerDeps } from './controller-deps';
 import { steamInstallStatus } from './steam';
 import { openSteamUri } from './steam-uri';
-import { type PcSaveLocation, type Platform, type ProcessMonitor } from './platform';
 import { AssetReader } from './asset-reader';
 import { BrowsePresenter } from './browse-presenter';
-import { normalizeImageNames } from './image-names';
+import { GameSequences } from './game-sequences';
+import { SaveSyncFlow } from './save-sync-flow';
 import { SteamInstallWatch } from './steam-install-watch';
-import { describe, delay } from './util';
+import { describe } from './util';
 import { log } from './logger';
-
-// Grace-poll cadence after the installer exits, waiting for the game executable to appear.
-const INSTALL_POLL_INTERVAL_MS = 1000;
-
-// Force-close verification: after issuing the kills, a `taskkill /F` (or TerminateProcess) returns
-// BEFORE the process actually leaves tasklist — a killed process in teardown still shows for a beat, and
-// a launcher/wrapper can take longer (the very reason the exit waiters debounce). So we don't judge on a
-// single instant snapshot: poll the targets over a window bounded by the manifest's killTimeoutSec
-// (default 60s), succeeding as soon as they're all gone, and only reporting killFailed if something is
-// STILL alive when the window elapses (a genuine failure, e.g. an elevated handle without
-// PROCESS_TERMINATE rights). The poll cadence between snapshots:
-const KILL_VERIFY_INTERVAL_MS = 500;
-
-// For a runAsAdmin (elevated) game, the non-elevated kill can't touch its high-integrity processes. We
-// give that first attempt a short grace to prove itself (a normal game dies well within this), and only
-// if the targets survive it do we escalate to an elevated taskkill (one UAC prompt). Kept short so the
-// UAC prompt isn't needlessly delayed for a game that genuinely needs it.
-const KILL_ELEVATE_GRACE_SEC = 3;
 
 /**
  * The root-relative asset paths one manifest references (art + music), as written in game.json. Used to
@@ -88,9 +64,6 @@ export class GameController {
   // The SELECTION is by id, not by index: with two sources the list is rebuilt from both (a card comes and
   // goes underneath it), and an index would silently point at a different game every time it changed.
   private selectedId: string | null = null;
-  // True while a game is launching/running: main is "locked" on that game — a game switch is refused and
-  // the carousel cannot enter another game's detail as actionable (its guard is `kind==='ready'`).
-  private locked = false;
   private cardPresent = false;
   // True for the whole body of loadCard. A game on the card being read right now is about to become
   // available, so save-from-history must refuse: an invoke that slipped in after the sync step and before
@@ -108,35 +81,12 @@ export class GameController {
   // Initialized to the SCHEMA's default so the sliver between constructing this controller and the seed
   // behaves like the setting it mirrors — keep the two in step if that default ever changes.
   private keepOpenWithoutCard = true;
-  private launchInFlight = false;
   // A manifest reload from the Customize screen is in flight. Unlike launchInFlight it does NOT
   // gate on state kind (the reload runs from `ready`), so onLaunchRequested/onUninstallRequested check
   // it explicitly: during the reload's awaits (readManifest + hero/audio on a slow SD — hundreds of ms)
   // the state stays `ready`, and a gamepad Play would otherwise start a game mid-reload (enterReady over
   // launching). Only the reload path is raced like this — an ordinary insert never is.
   private reloadInFlight = false;
-  private abort: AbortController | null = null;
-  // A card swapped in WHILE a launch/install was in flight: DriveWatcher can swap without an
-  // empty tick, so we stash the new root, abort the in-flight sequence, and replay onInsert from its
-  // finally (after launchInFlight clears) — otherwise the aborted sequence could set state over the new card.
-  private pendingRoot: string | null = null;
-  // Image names (lower-case *.exe basenames) of the currently-running game, captured on entry to
-  // `running` so a Play press in that state can find and raise the game's window (return-to-game). Null
-  // whenever no game is running; reset in the launch sequence's finally. Matched by image name rather than
-  // pid so it covers all backends uniformly, incl. elevated games a non-elevated tasklist can't see.
-  private runningImageNames: readonly string[] | null = null;
-  // The owned GameProcess of the currently-running game, kept so a force-close can terminate it directly:
-  // the elevated HANDLE (invisible to taskkill) or the normal pid tree. A REFERENCE to the same object
-  // disposed in the launch sequence's finally (the single owner) — set alongside runningImageNames on
-  // entry to `running` (normal/elevated + watched branches; null for steam, which owns no process),
-  // cleared in that same finally. Never disposed from here.
-  private runningProc: GameProcess | null = null;
-  // A force-close (onKillRequested) is underway. Local try/finally flag (mirrors reloadInFlight, NOT the
-  // launch sequence's finally — a kill has its own short-lived lifecycle) so a double Yes / repeat is a no-op.
-  private killInFlight = false;
-  // The installing/launching state to restore once winetricks provisioning ends. Null when not
-  // provisioning. The "Configuring Proton" screen + its rotating funny suffix are the renderer's job.
-  private protonConfigPriorState: AppState | null = null;
   // The renderer parked the cursor on one of the launcher's own cards (browse:game with null). While it
   // holds, main NEVER moves the cursor on its own — a card inserted, a session finished, a library
   // reloaded: the row stays where the user left it (see browseToUnlessPinned). Only the renderer clears
@@ -164,9 +114,9 @@ export class GameController {
   });
   // Steam-mode background re-detect poller (timer + tick + optimistic uninstall request), extracted from
   // this controller. Reaches back only through the narrow accessor seam below.
-  private readonly steamWatch = new SteamInstallWatch({
+  private readonly steamWatch: SteamInstallWatch = new SteamInstallWatch({
     getManifest: () => this.current(),
-    isLaunchInFlight: () => this.launchInFlight,
+    isLaunchInFlight: () => this.sequences.inFlight,
     getState: () => this.deps.state.get(),
     isSourceAvailable: () => this.currentSourceAvailable(),
     enterReady: (info) => this.enterReady(info),
@@ -184,45 +134,54 @@ export class GameController {
       }),
     steamLocator: () => this.deps.platform.steamLocator,
   });
+  // The process lifecycle (launch / install / uninstall / prefix cleanup, force-close, the save sync
+  // around a session) — see game-sequences.ts. Dispatched to from the renderer's actions below; it
+  // reaches back through the SequenceHost seam for the card session's answers and transitions.
+  private readonly sequences: GameSequences;
+  // The card↔PC save sync: the deferred flush on insert (used here) and the sync-in / sync-out the launch
+  // sequence brackets a game with — see save-sync-flow.ts.
+  private readonly saveSync: SaveSyncFlow;
 
-  constructor(private readonly deps: ControllerDeps) {}
+  constructor(private readonly deps: ControllerDeps) {
+    this.saveSync = new SaveSyncFlow({
+      store: this.deps.store,
+      stats: this.deps.stats,
+      savePathResolver: this.deps.platform.savePathResolver,
+      sourceAvailable: (manifest) => this.sourceAvailable(manifest),
+    });
+    this.sequences = new GameSequences({
+      state: this.deps.state,
+      window: this.deps.window,
+      stats: this.deps.stats,
+      store: this.deps.store,
+      library: this.deps.library,
+      settings: this.deps.settings,
+      notifications: this.deps.notifications,
+      platform: this.deps.platform,
+      processControl: this.deps.processControl,
+      getTranslator: this.deps.getTranslator,
+      steamWatch: this.steamWatch,
+      saveSync: this.saveSync,
+      host: {
+        current: () => this.current(),
+        buildGameInfo: (manifest, stats) => this.buildGameInfo(manifest, stats),
+        enterReady: (info) => this.enterReady(info),
+        sourceAvailable: (manifest) => this.sourceAvailable(manifest),
+        currentSourceAvailable: () => this.currentSourceAvailable(),
+        sourceAvailableFor: (id) => this.sourceAvailableFor(id),
+        cardGoneAfterSequence: () => this.cardGoneAfterSequence(),
+        browseToUnlessPinned: (id) => this.browseToUnlessPinned(id),
+        refreshLibrary: () => this.refreshLibrary(),
+        rememberStats: (id, stats) => this.statsById.set(id, stats),
+        sendError: (message) => this.sendError(message),
+        onInsert: (root) => this.onInsert(root),
+      },
+    });
+  }
 
   /** The current translator (a message is fixed at the language of the moment it is generated). */
   private get t(): Translator {
     return this.deps.getTranslator();
-  }
-
-  /** The platform process monitor (win32 tasklist / linux /proc), threaded into the launcher + waits. */
-  private get monitor(): ProcessMonitor {
-    return this.deps.platform.processMonitor;
-  }
-
-  /** The platform game launcher (win32 spawn/ShellExecuteEx / linux umu-run/Proton). */
-  private get launcher(): Platform['gameLauncher'] {
-    return this.deps.platform.gameLauncher;
-  }
-
-  /**
-   * Linux prefix provisioning (winetricks) started/finished — the launcher's onProvisioning callback
-   * On start: stash the current installing/launching state and show the rotating "Configuring
-   * Proton" screen. On finish: stop the rotation and restore the stashed state (the launch/install
-   * sequence then continues from where it was). No-op on win32 (the launcher never fires this).
-   */
-  private setProvisioning(active: boolean, game: GameInfo): void {
-    if (active) {
-      this.protonConfigPriorState = this.deps.state.get();
-      this.deps.state.set({ kind: 'configuringProton', game });
-    } else if (this.protonConfigPriorState !== null) {
-      this.deps.state.set(this.protonConfigPriorState);
-      this.protonConfigPriorState = null;
-    }
-  }
-
-  /** True if any of the given image names is currently running (fresh snapshot; empty list → false). */
-  private async anyTargetAlive(targets: readonly string[]): Promise<boolean> {
-    if (targets.length === 0) return false;
-    const snapshot = await this.monitor.snapshot();
-    return targets.some((name) => snapshot.hasImageName(name));
   }
 
   /**
@@ -325,7 +284,7 @@ export class GameController {
     this.cardGames = [];
     // The selection falls back to whatever is still there (a local game), or to nothing — see current().
     this.selectedId = null;
-    this.locked = false;
+    this.sequences.unlock();
     this.forgetCardStats();
     // Music is card-only, so there is none on the empty screen. UI sounds are unaffected: they come from
     // the bundled set on its own channel, which no card ever touched.
@@ -412,7 +371,7 @@ export class GameController {
       if (!this.deps.isGamescope) this.deps.window.hide();
     });
     ipcMain.on(IPC.actionOpenSteamDownloads, () => void this.onOpenSteamDownloads());
-    ipcMain.on(IPC.actionKill, () => void this.onKillRequested());
+    ipcMain.on(IPC.actionKill, () => void this.sequences.onKillRequested());
     ipcMain.on(IPC.actionSelect, (_event, id: unknown) => void this.onSelectRequested(id));
 
     void this.warmSfxSet();
@@ -452,7 +411,7 @@ export class GameController {
   /** Stops the process waits and the watcher (on application exit). */
   shutdown(): void {
     this.presenter.dispose();
-    this.abort?.abort();
+    this.sequences.abortInFlight();
     this.steamWatch.stop();
     this.steamWatch.clearUninstallRequest();
     this.deps.watcher.stop();
@@ -503,10 +462,9 @@ export class GameController {
   private async onInsert(root: string): Promise<void> {
     // A card was swapped in mid-flight (no empty tick). Don't process it now — that would race the
     // in-flight sequence. Stash it, abort the current flow; its finally replays this once it unwinds.
-    if (this.launchInFlight) {
+    if (this.sequences.inFlight) {
       log.info(`[insert] card swapped during launch/install — deferring root="${root}"`);
-      this.pendingRoot = root;
-      this.abort?.abort();
+      this.sequences.deferInsert(root);
       return;
     }
     await this.loadCard(root, { focus: true });
@@ -590,7 +548,7 @@ export class GameController {
     this.cardGames = manifests;
     if (!keepSelection) this.selectedId = manifests[0]?.raw.id ?? null;
     this.warnShadowedLocalGames();
-    this.locked = false;
+    this.sequences.unlock();
     log.info(`[insert] manifest ok games=${manifests.length} ids=[${manifests.map((m) => m.raw.id).join(',')}] root="${root}"`);
 
     // Read the card's traveling stats ONCE to detect the pre-multi-game bare-Stats format. Attribution of
@@ -618,7 +576,7 @@ export class GameController {
     // some future insert). Runs AFTER all reconciles so each flush's stats copy uses the merged value.
     for (const manifest of manifests) {
       try {
-        await this.flushPendingIfAny(manifest);
+        await this.saveSync.flushPendingIfAny(manifest);
       } catch (cause) {
         log.warn(`[pending-flush] failed on insert for id=${manifest.raw.id}:`, describe(cause));
       }
@@ -695,7 +653,7 @@ export class GameController {
     this.refreshLibrary();
     // With no card in, the local games are what the launcher has to show: leave `idle` for the first of
     // them instead of the empty screen. A card (or any activity) present → don't touch the state machine.
-    if (!this.cardPresent && this.deps.state.get().kind === 'idle' && !this.launchInFlight) {
+    if (!this.cardPresent && this.deps.state.get().kind === 'idle' && !this.sequences.inFlight) {
       // The row's first card, not the library file's first entry — see firstCarouselGame. refreshLibrary
       // above has already built the row this reads, so the two can't disagree.
       const selected = this.firstCarouselGame();
@@ -743,7 +701,7 @@ export class GameController {
    */
   async reloadPcLibrary(): Promise<{ ok: true } | { ok: false; message: string }> {
     const kind = this.deps.state.get().kind;
-    if ((kind !== 'ready' && kind !== 'error' && kind !== 'idle') || this.launchInFlight) {
+    if ((kind !== 'ready' && kind !== 'error' && kind !== 'idle') || this.sequences.inFlight) {
       return { ok: false, message: this.t('errors.finishBeforeApply') };
     }
     if (this.reloadInFlight) return { ok: false, message: this.t('errors.reloadInProgress') };
@@ -955,7 +913,7 @@ export class GameController {
    */
   async reloadManifest(root: string): Promise<{ ok: true } | { ok: false; message: string }> {
     const kind = this.deps.state.get().kind;
-    if ((kind !== 'ready' && kind !== 'error' && kind !== 'idle') || this.launchInFlight) {
+    if ((kind !== 'ready' && kind !== 'error' && kind !== 'idle') || this.sequences.inFlight) {
       return { ok: false, message: this.t('errors.finishBeforeApply') };
     }
     if (this.reloadInFlight) return { ok: false, message: this.t('errors.reloadInProgress') };
@@ -965,55 +923,6 @@ export class GameController {
     } finally {
       this.reloadInFlight = false;
     }
-  }
-
-  private async flushPendingIfAny(manifest: ResolvedManifest): Promise<void> {
-    // Enforced by the predicate rather than by "we only call this from loadCard": a local game HAS a
-    // saveOnCardPath (its own backup), so a future symmetrical call from the PC-library path would
-    // otherwise empty the queue into that backup and lose the progress meant for the card.
-    const cardPath = manifest.saveOnCardPath;
-    if (!acceptsPendingFlush(manifest) || cardPath === undefined) return;
-    const pending = await this.deps.store.getPending(manifest.raw.id);
-    if (pending === null) return;
-    // Direct, NOT change-based (deliberate): the snapshot exists precisely because
-    // the card was yanked mid-game and we are OBLIGED to top up the promised PC progress onto the card.
-    // LWW here would silently drop that flush if the card looked "unchanged"/newer, so keep it a plain
-    // snapshot→card replace.
-    await syncDir(pending.savesSnapshotDir, cardPath);
-    const stats = await this.deps.stats.read(manifest.raw.id);
-    await this.deps.stats.copyToCard(manifest.root, manifest.raw.id, stats);
-    await this.deps.store.clearPending(manifest.raw.id);
-    // The card now holds the flushed progress, so both sides are back in sync. Rebase the baseline from
-    // the real folders (each in its own mtime scale) so the next launch sees them as synced, not as a
-    // spurious card-side change that would trigger a needless card→PC.
-    await this.rebaseSyncStateAfterFlush(manifest);
-  }
-
-  /**
-   * Resolves the manifest's DEFERRED pcSavePath to this game's save location via the platform
-   * SavePathResolver, or null when there's nothing to sync (no pcSavePath declared, or a steam game with
-   * no compatdata yet). win32 keeps the exact env-based expansion the manifest used to do eagerly; linux
-   * maps inside the game's prefix. `containerExists` tells whether that prefix is actually there — see
-   * runSaveSync for why that matters.
-   */
-  private async resolvePcSavePath(manifest: ResolvedManifest): Promise<PcSaveLocation | null> {
-    if (manifest.pcSavePath === undefined) return null;
-    return this.deps.platform.savePathResolver.resolvePcSavePath(manifest, manifest.pcSavePath);
-  }
-
-  /** Records a fresh sync baseline from both real save folders (used after a direct pending-flush). */
-  private async rebaseSyncStateAfterFlush(manifest: ResolvedManifest): Promise<void> {
-    const cardPath = manifest.saveOnCardPath;
-    if (cardPath === undefined || manifest.pcSavePath === undefined) return;
-    const pcSave = await this.resolvePcSavePath(manifest);
-    // No prefix → no PC half worth recording: a baseline whose `pc` describes a non-existent container is
-    // exactly what makes the next sync-in mistake "prefix wiped" for "saves deleted" (see runSaveSync).
-    if (pcSave === null || !pcSave.containerExists) return;
-    await this.deps.store.writeSyncState(manifest.raw.id, {
-      card: await snapshotTree(cardPath),
-      pc: await snapshotTree(pcSave.path),
-      syncedAt: Date.now(),
-    });
   }
 
   // ── Reaction to card removal ─────────────────────────────────────────────
@@ -1096,7 +1005,7 @@ export class GameController {
     }
     // Ignore input outside the ready state — this is the "ignore-gamepad" during play
     // (harmless under any interpretation of the Gamepad API focus bug).
-    if (snapshot.kind !== 'ready' || this.launchInFlight || this.reloadInFlight) return;
+    if (snapshot.kind !== 'ready' || this.sequences.inFlight || this.reloadInFlight) return;
     const manifest = this.current();
     if (manifest === null) return;
     // A local game whose .exe is gone (deleted, or an external drive unplugged). The renderer already
@@ -1126,18 +1035,18 @@ export class GameController {
     // steam://rungameid. Both inside runSteamInstall / runLaunchSequence's steam branch.
     if (manifest.steam !== undefined) {
       if (snapshot.game.requiresInstall) {
-        void this.runSteamInstall(manifest, snapshot.game);
+        void this.sequences.runSteamInstall(manifest, snapshot.game);
       } else {
-        void this.runLaunchSequence(manifest, snapshot.game);
+        void this.sequences.runLaunchSequence(manifest, snapshot.game);
       }
       return;
     }
     // Card-install mode + not yet installed → run the installer; otherwise it's an ordinary launch
     // (this includes a fully-installed game, whose executable now exists → requiresInstall=false).
     if (manifest.install !== undefined && snapshot.game.requiresInstall) {
-      void this.runInstallSequence(manifest, snapshot.game);
+      void this.sequences.runInstallSequence(manifest, snapshot.game);
     } else {
-      void this.runLaunchSequence(manifest, snapshot.game);
+      void this.sequences.runLaunchSequence(manifest, snapshot.game);
     }
   }
 
@@ -1147,7 +1056,7 @@ export class GameController {
    * waitForExit) it's a silent no-op; the state machine will move to syncing-out → ready on its own.
    */
   private resumeRunningGame(): void {
-    const names = this.runningImageNames;
+    const names = this.sequences.runningGameImageNames;
     if (names === null) return;
     if (!this.deps.processControl.focusGameWindow(names)) {
       log.info('[resume] running game window not found — no-op (it may be closing)');
@@ -1164,7 +1073,7 @@ export class GameController {
   private async onSelectRequested(idRaw: unknown): Promise<void> {
     if (typeof idRaw !== 'string') return;
     const snapshot = this.deps.state.get();
-    if (snapshot.kind !== 'ready' || this.locked || this.launchInFlight || this.reloadInFlight) return;
+    if (snapshot.kind !== 'ready' || this.sequences.isLocked || this.sequences.inFlight || this.reloadInFlight) return;
     const manifest = this.games.find((m) => m.raw.id === idRaw);
     if (manifest === undefined) {
       log.warn(`[select] no game with id="${idRaw}" on the current card or in the PC library — ignoring`);
@@ -1181,232 +1090,27 @@ export class GameController {
     await this.browseToUnlessPinned(manifest.raw.id);
   }
 
-  /**
-   * Force-close the running game (More → Force close → confirmed Yes). Flips the running snapshot into its
-   * `killing` sub-state (the launcher shows "Force closing…" and hides the Force close button), kills the
-   * main executable AND every watchProcess, then lets the EXISTING exit waiters (waitForExit /
-   * waitForWatchedExit) notice the processes vanish and carry the flow through syncing-out → sync → ready
-   * — no state machine of its own. Guarded by the running state + a killInFlight flag (double Yes /
-   * repeat is a no-op).
-   *
-   * A non-elevated launcher can't terminate a runAsAdmin game's high-integrity processes (taskkill →
-   * ACCESS_DENIED, the ShellExecuteEx HANDLE lacks PROCESS_TERMINATE). So for a runAsAdmin game, if the
-   * targets survive a short grace, we escalate to ONE elevated `taskkill /F /T /IM …` (a single UAC
-   * prompt). Non-elevated games never trigger UAC.
-   *
-   * Success is judged by FACT, not command exit codes: a "not found" from taskkill just means the target
-   * is already dead (success). After the kills we verify over a WINDOW bounded by killTimeoutSec (a killed
-   * process lingers in tasklist for a beat, so a single instant snapshot would false-positive): success as
-   * soon as the targets are gone (the `killing` indicator stays until an exit waiter advances the flow).
-   * If something is still alive when the window elapses, we DROP back to plain running (the game is still
-   * up) and surface a soft errors.killFailed.
-   */
-  private async onKillRequested(): Promise<void> {
-    const snapshot = this.deps.state.get();
-    if (snapshot.kind !== 'running') return; // only meaningful while a game is running
-    if (this.killInFlight) return; // a force-close is already underway (double Yes / repeat)
-    const manifest = this.current();
-    if (manifest === null) return; // defensive: `running` always has a current manifest
-    this.killInFlight = true;
-    // Show "Force closing…" and hide the Force close button immediately (cleared back on failure).
-    this.deps.state.set({ ...snapshot, killing: true });
-    try {
-      // Steam mode is tracked/killed by SteamAppId (native + Proton games), with no owned pid and no
-      // elevation (the schema forbids runAsAdmin there). Every other mode kills the owned process + the
-      // target image names, escalating to an elevated taskkill for a runAsAdmin game. Both end in the same
-      // fact-based verdict below (stillAlive).
-      let stillAlive: boolean;
-      if (manifest.steam !== undefined) {
-        const appid = manifest.steam.appid;
-        const names = manifest.raw.watchProcesses ?? [];
-        log.info(`[kill] force-close requested id=${manifest.raw.id} steam appid=${appid}`);
-        await this.monitor.killSteamGame(appid, names);
-        stillAlive = await this.steamGameStillAlive(appid, names, manifest.raw.killTimeoutSec);
-      } else {
-        // Targets are computed HERE from this.current, leaving runningImageNames untouched: a union there
-        // would regress return-to-game (focusGameWindow picks the first Z-order match — the launcher name
-        // could steal focus from the game).
-        const targets = normalizeImageNames([
-          manifest.executablePath,
-          ...(manifest.raw.watchProcesses ?? []),
-        ]);
-        log.info(`[kill] force-close requested id=${manifest.raw.id} targets=[${targets.join(',')}]`);
-
-        // 1. Terminate the owned process (elevated HANDLE, or the normal pid tree with an isAlive re-check
-        //    inside kill()). In the watched path this is usually the already-dead launcher — its "not
-        //    found" is normal, not an error.
-        const proc = this.runningProc;
-        if (proc !== null) {
-          try {
-            await proc.kill();
-          } catch (cause) {
-            log.warn('[kill] owned-process kill failed (continuing to kill by name):', describe(cause));
-          }
-        }
-
-        // 2. Kill each target image by name (non-elevated): win32 `taskkill /F /IM`, linux SIGTERM/SIGKILL
-        //    to every /proc match. Failures are normal ("not found" = already dead).
-        await this.monitor.killByName(targets);
-
-        // 2b. Elevated escalation (runAsAdmin games only). A non-elevated taskkill / the ShellExecuteEx
-        //     HANDLE can't terminate high-integrity processes, so if the targets survive a short grace we
-        //     run ONE elevated `taskkill /F /T /IM …` (a single UAC prompt). Non-elevated games never reach
-        //     here (no UAC for them). A declined UAC just leaves the targets up → killFailed below.
-        if (manifest.raw.runAsAdmin && (await this.killTargetsStillAlive(targets, proc, KILL_ELEVATE_GRACE_SEC))) {
-          log.info(`[kill] elevated game survived non-elevated kill id=${manifest.raw.id} — escalating to elevated taskkill (UAC)`);
-          this.deps.processControl.killImagesElevated(targets);
-        }
-
-        // 3. Fact-based verdict over a window bounded by killTimeoutSec (a killed process lingers for a
-        //    beat — a single instant snapshot would false-positive).
-        stillAlive = await this.killTargetsStillAlive(targets, proc, manifest.raw.killTimeoutSec);
-      }
-
-      // killFailed only if something is STILL alive when the window elapsed.
-      if (stillAlive) {
-        log.warn(`[kill] targets still alive after force-close id=${manifest.raw.id} — reporting killFailed`);
-        // The game is still up → back to plain running (status "Running…", Force close button returns),
-        // then surface the error. Re-read in case a waiter advanced the state (then leave it be).
-        const current = this.deps.state.get();
-        if (current.kind === 'running') this.deps.state.set({ ...current, killing: false });
-        this.sendError(this.t('errors.killFailed'));
-      } else {
-        log.info(`[kill] force-close done id=${manifest.raw.id} — exit waiters will finish the flow`);
-      }
-    } finally {
-      this.killInFlight = false;
-    }
-  }
-
-  /**
-   * Polls the kill targets for up to `timeoutSec`, returning false (success — everything is gone) as soon
-   * as no target image is present AND the owned process (elevated HANDLE / normal pid) is dead, OR once an
-   * exit waiter has already advanced the state out of `running` (it saw the exit → definitely killed).
-   * Returns true only if something is still alive when the window elapses — a genuine failure.
-   */
-  private async killTargetsStillAlive(
-    targets: readonly string[],
-    proc: GameProcess | null,
-    timeoutSec: number,
-  ): Promise<boolean> {
-    const deadline = Date.now() + timeoutSec * 1000;
-    for (;;) {
-      // An exit waiter that already left `running` proves the process is gone — treat as killed.
-      if (this.deps.state.get().kind !== 'running') return false;
-      const ownedAlive = proc !== null && (await proc.isAlive());
-      if (!ownedAlive && !(await this.anyTargetAlive(targets))) return false;
-      if (Date.now() >= deadline) return true; // window elapsed and something is still alive → real fail
-      await delay(KILL_VERIFY_INTERVAL_MS);
-    }
-  }
-
-  /**
-   * Steam-mode analogue of killTargetsStillAlive: polls the monitor's SteamAppId signal (linux) / watch
-   * names (win32) until the game is gone or the window elapses. Returns true only if it is STILL running.
-   */
-  private async steamGameStillAlive(
-    appid: number,
-    watchNames: readonly string[],
-    timeoutSec: number,
-  ): Promise<boolean> {
-    const deadline = Date.now() + timeoutSec * 1000;
-    for (;;) {
-      if (this.deps.state.get().kind !== 'running') return false; // an exit waiter already left `running`
-      if (!(await this.monitor.isSteamGameRunning(appid, watchNames))) return false;
-      if (Date.now() >= deadline) return true;
-      await delay(KILL_VERIFY_INTERVAL_MS);
-    }
-  }
-
   /** "Uninstall" action (the user confirmed in the popup). Only for an installed install-mode game. */
   private onUninstallRequested(): void {
     const snapshot = this.deps.state.get();
-    if (snapshot.kind !== 'ready' || this.launchInFlight || this.reloadInFlight) return;
+    if (snapshot.kind !== 'ready' || this.sequences.inFlight || this.reloadInFlight) return;
     const manifest = this.current();
     if (manifest === null) return;
     if (!snapshot.game.canUninstall) return; // nothing installed to remove
     // Steam: delegate removal to Steam (steam://uninstall) — fire-and-forget, the poller flips to Install.
     if (manifest.steam !== undefined) {
-      void this.runSteamUninstall(manifest, snapshot.game);
+      void this.sequences.runSteamUninstall(manifest, snapshot.game);
       return;
     }
     if (manifest.install === undefined) {
       // Normal executable game: the only "uninstall" is clearing its Wine prefix (Linux; the game stays on
       // the card). canUninstall is set only when that prefix exists — see buildGameInfo / prefixCleanupOnly.
       if (snapshot.game.prefixCleanupOnly === true) {
-        void this.runPrefixCleanupSequence(manifest, snapshot.game);
+        void this.sequences.runPrefixCleanupSequence(manifest, snapshot.game);
       }
       return;
     }
-    void this.runUninstallSequence(manifest, snapshot.game);
-  }
-
-  /**
-   * Clears a normal executable game's Wine prefix (Linux). No installer/uninstaller is involved — the game
-   * lives on the card, its only PC footprint is the prefix — so this is just the directory sweep + the same
-   * card-swap / rebuild-info handling as runUninstallSequence, minus the uninstaller run.
-   */
-  private async runPrefixCleanupSequence(manifest: ResolvedManifest, info: GameInfo): Promise<void> {
-    const dir = await this.deps.platform.gameLauncher.prefixCleanupDir(manifest.raw.id);
-    if (dir === null) return; // defensive: canUninstall was set only when the prefix existed
-    const { state, window, stats } = this.deps;
-    this.launchInFlight = true;
-    const abort = new AbortController();
-    this.abort = abort;
-    try {
-      state.set({ kind: 'uninstalling', game: info });
-      await removeWithRetry(dir, abort.signal);
-      if (abort.signal.aborted) return;
-      // Card yanked mid-cleanup (this targets the PC, so it completed): idle + hide, like runUninstall.
-      // A local game's source cannot go away, so it always continues to the rebuild below.
-      if (!this.sourceAvailable(manifest)) {
-        this.cardGoneAfterSequence();
-        return;
-      }
-      // Prefix gone → prefixCleanupDir now returns null → canUninstall recomputes false → "Uninstall"
-      // disappears, leaving just "Play".
-      const currentStats = await stats.read(manifest.raw.id);
-      const updatedInfo = await this.buildGameInfo(manifest, currentStats);
-      log.info(`[prefix-cleanup] removed "${dir}" id=${manifest.raw.id}`);
-      this.enterReady(updatedInfo);
-      window.showAndFocus();
-    } catch (cause) {
-      if (cause instanceof LaunchAbortedError) return; // aborted by shutdown or a card swap
-      this.failSequence('uninstall', info, describe(cause));
-    } finally {
-      this.launchInFlight = false;
-      this.abort = null;
-      this.resumePendingInsert();
-    }
-  }
-
-  /**
-   * Steam install action: fire-and-forget. Opens `steam://install/<appid>` (Steam shows its own dialog
-   * and the download — possibly hours/GBs) and returns WITHOUT entering a blocking `installing` state.
-   * We stay on the `ready` ("Install") screen; the background re-detect poller (started by enterReady)
-   * flips the button to "Play" once Steam's .acf reports the game fully installed. Steam itself collapses
-   * repeated `steam://install` calls, so no debounce is needed. Pre-checks `steamLocator.locateSteam()`: openExternal
-   * doesn't reliably reject when steam:// is unregistered.
-   */
-  private async runSteamInstall(manifest: ResolvedManifest, info: GameInfo): Promise<void> {
-    const appid = manifest.steam?.appid;
-    if (appid === undefined) return; // defensive: onLaunchRequested only calls this in steam mode
-    if ((await this.deps.platform.steamLocator.locateSteam()) === null) {
-      this.sendError(this.t('errors.steamNotInstalled'));
-      return;
-    }
-    try {
-      await openSteamUri(`steam://install/${appid}`);
-      log.info(`[steam-install] opened steam://install/${appid} id=${manifest.raw.id}`);
-    } catch (cause) {
-      this.sendError(this.t('errors.steamOpenInstall', { cause: describe(cause) }));
-      return;
-    }
-    // Ensure the re-detect poller is running so the button flips to "Play" when the download completes
-    // (no-op if already running; info confirms this is a steam game still requiring install).
-    if (info.installVia === 'steam' && info.requiresInstall && this.sourceAvailableFor(info.id)) {
-      this.steamWatch.start();
-    }
+    void this.sequences.runUninstallSequence(manifest, snapshot.game);
   }
 
   /**
@@ -1420,624 +1124,6 @@ export class GameController {
     } catch (cause) {
       this.sendError(this.t('errors.steamOpenDownloads', { cause: describe(cause) }));
     }
-  }
-
-  /**
-   * Steam uninstall action: fire-and-forget, mirroring runSteamInstall. Opens `steam://uninstall/<appid>`
-   * (Steam shows its own confirmation/removal UI) and returns WITHOUT a blocking `uninstalling` state. We
-   * stay on the `ready` ("Play"/"Uninstall") screen; the background poller flips the button back to
-   * "Install" once Steam removes the .acf. Pre-checks `steamLocator.locateSteam()`.
-   */
-  private async runSteamUninstall(manifest: ResolvedManifest, info: GameInfo): Promise<void> {
-    const appid = manifest.steam?.appid;
-    if (appid === undefined) return; // defensive: onUninstallRequested only calls this in steam mode
-    if ((await this.deps.platform.steamLocator.locateSteam()) === null) {
-      this.sendError(this.t('errors.steamNotInstalled'));
-      return;
-    }
-    try {
-      await openSteamUri(`steam://uninstall/${appid}`);
-      log.info(`[steam-uninstall] opened steam://uninstall/${appid} id=${manifest.raw.id}`);
-    } catch (cause) {
-      this.sendError(this.t('errors.steamOpenUninstall', { cause: describe(cause) }));
-      return;
-    }
-    // Optimistically show "Uninstalling…": record the request and flip the UI. The poller clears it when
-    // the .acf is gone (→ Install) or on timeout (assumed cancel → back to Play/Uninstall). enterReady
-    // (re)arms the poller for the inserted steam card.
-    this.steamWatch.requestUninstall(appid);
-    this.enterReady({ ...info, steamUninstalling: true, canUninstall: false });
-  }
-
-  private async runLaunchSequence(manifest: ResolvedManifest, info: GameInfo): Promise<void> {
-    const { state, window, stats } = this.deps;
-    this.launchInFlight = true;
-    // Lock the launcher on this game for the launching→running span: a game switch is refused and the
-    // switching the card's game is refused. Cleared in the finally alongside the other running-scoped fields.
-    this.locked = true;
-    const abort = new AbortController();
-    this.abort = abort;
-    // Declared before the try so `finally` can dispose the kept HANDLE (elevated path).
-    let proc: GameProcess | null = null;
-    try {
-      // 1. Change-based sync before the game (phase = sync-in). No longer a blind card→PC: if the PC
-      // saves changed since the last sync (e.g. played on another PC last, or this PC is newer) they are
-      // NOT overwritten — the changed side wins (see save-sync change-detection). The old card→PC is only
-      // the first-run fallback (no baseline yet).
-      state.set({ kind: 'syncing-in', game: info });
-      if (manifest.pcSavePath !== undefined && manifest.saveOnCardPath !== undefined) {
-        // Resolve the deferred pcSavePath to this game's save location. null → nothing to sync
-        // with at all (a steam game with no compatdata) — a logged no-op.
-        const pcSave = await this.resolvePcSavePath(manifest);
-        if (pcSave === null) {
-          log.info(
-            `[sync-in] pcSavePath "${manifest.pcSavePath}" not resolvable yet — skipping sync`,
-          );
-        } else {
-          // A MISSING prefix is not a reason to skip: the launch below creates it, and the card's saves
-          // must be in place before the game reads them (e.g. after an uninstall wiped the prefix). The
-          // copy targets the prefix path directly — launchGame ensureDir's that prefix anyway — and
-          // runSaveSync drops the stale baseline so the empty PC side can't erase the card.
-          try {
-            log.info(
-              `[sync-in] change-based sync between card "${manifest.saveOnCardPath}" and PC "${pcSave.path}"${pcSave.containerExists ? '' : ' (prefix absent — restoring from card)'}`,
-            );
-            // Soft catch: sync-in can now WRITE to the card (change-detection may pick PC→card) — a new
-            // failure point BEFORE launch (a full / write-protected / slow card). The launch never depended
-            // on a card write before, so keep it that way: log and start the game regardless (mirrors sync-out).
-            await this.runSaveSync(
-              manifest,
-              manifest.saveOnCardPath,
-              pcSave.path,
-              'card-to-pc',
-              pcSave.containerExists,
-            );
-          } catch (cause) {
-            log.warn('[sync-in] change-based sync failed, launching anyway:', describe(cause));
-          }
-        }
-      }
-
-      // 2/3/4. launch, then wait for the game to appear and to exit. THREE backends:
-      //  - steam: open steam://rungameid (no proc of ours); wait by watched names only (launcherPid=null).
-      //  - watched (launcher/wrapper, manifest.watchProcesses): the game is a SEPARATE process; we wait
-      //    for one of the watched image names to appear (HANDOFF — the launcher may live on in its menu),
-      //    then track that process's presence for exit.
-      //  - normal: the spawned pid IS the game; wait for that pid to appear, then disappear.
-      // Running-phase note (all paths): gamepad input is ignored (outside ready). The window stays put —
-      // the game takes the foreground on its own and simply covers the launcher, which avoids the jerky
-      // hide/show flash. We grab the foreground back in step 6 once the game exits. The global Start+Back
-      // hotkey is intentionally a no-op while running, so there's nothing to re-summon.
-      const watchProcesses = manifest.raw.watchProcesses;
-      let since: number;
-      if (manifest.steam !== undefined) {
-        state.set({ kind: 'launching', game: info });
-        // Pre-check: openExternal doesn't reliably reject when steam:// is unregistered, so gate the
-        // launch on Steam actually being installed instead of relying on a reject.
-        if ((await this.deps.platform.steamLocator.locateSteam()) === null) {
-          this.failSequence('launch', info, this.t('errors.steamNotInstalled'));
-          return;
-        }
-        try {
-          await openSteamUri(`steam://rungameid/${manifest.steam.appid}`);
-        } catch (cause) {
-          this.failSequence('launch', info, this.t('errors.launchViaSteam', { cause: describe(cause) }));
-          return;
-        }
-        // Track by SteamAppId (via the monitor): on linux that reads /proc environ, so native-Linux AND
-        // Proton games are detected regardless of their binary name; on win32 it maps to the watch names.
-        const { started } = await this.deps.processControl.waitForSteamStart(
-          manifest.steam.appid,
-          watchProcesses ?? [],
-          manifest.raw.launchTimeoutSec,
-          this.monitor,
-          abort.signal,
-        );
-        if (!started) {
-          // Known MVP limitation: a Steam cold-start or an auto-update before launch may not fit
-          // launchTimeoutSec → the game-process never appears in the window. We can't tell that apart
-          // from "didn't start", so we return quietly (recommend a larger launchTimeoutSec).
-          log.info(
-            `[launch] steam game never appeared within ${manifest.raw.launchTimeoutSec}s id=${manifest.raw.id} (cold-start/update?)`,
-          );
-          this.abandonWatchedLaunch(info);
-          return;
-        }
-        since = Date.now();
-        this.runningImageNames = normalizeImageNames(watchProcesses ?? []);
-        // Steam owns no process of ours (steam://rungameid returns instantly) — a force-close relies on
-        // taskkill /IM over the watchProcesses alone.
-        this.runningProc = null;
-        state.set({ kind: 'running', game: info, since });
-        log.info(`[launch] running (steam) id=${manifest.raw.id} appid=${manifest.steam.appid}`);
-        await this.deps.processControl.waitForSteamExit(manifest.steam.appid, watchProcesses ?? [], this.monitor, abort.signal);
-        log.info(`[launch] exited (steam) id=${manifest.raw.id}`);
-      } else {
-        // 2. launch → GameProcess (spawn, or elevated ShellExecuteEx per manifest.runAsAdmin)
-        state.set({ kind: 'launching', game: info });
-        try {
-          proc = await this.launcher.launchGame(manifest, (active) => this.setProvisioning(active, info));
-        } catch (cause) {
-          this.failSequence('launch', info, this.t('errors.launchGame', { cause: describe(cause) }));
-          return;
-        }
-        if (watchProcesses !== undefined && watchProcesses.length > 0) {
-          const { started } = await this.deps.processControl.waitForWatchedStart(
-            proc.pid,
-            watchProcesses,
-            manifest.raw.launchTimeoutSec,
-            this.monitor,
-            abort.signal,
-          );
-          if (!started) {
-            // The user closed the launcher without playing, or the game never became visible (often an
-            // elevated/anticheat launcher — see README). Neither a failure nor a play session.
-            this.abandonWatchedLaunch(info);
-            return;
-          }
-          // The watched game is up: start the clock now (more accurate than the launcher's spawn time).
-          since = Date.now();
-          this.runningImageNames = normalizeImageNames(watchProcesses);
-          // The spawned launcher (proc) — usually already dead here; kept so a force-close can also take
-          // down its pid tree. The game itself is killed by taskkill /IM over the watchProcesses.
-          this.runningProc = proc;
-          state.set({ kind: 'running', game: info, since });
-          log.info(`[launch] running (watched) id=${manifest.raw.id} watch=${watchProcesses.join(',')}`);
-          await this.deps.processControl.waitForWatchedExit(watchProcesses, this.monitor, abort.signal);
-          log.info(`[launch] exited (watched) id=${manifest.raw.id}`);
-        } else {
-          const started = await this.deps.processControl.waitForStart(proc, manifest.raw.launchTimeoutSec, abort.signal);
-          if (!started) {
-            this.failSequence('launch', info, this.t('errors.gameDidNotStart'));
-            return;
-          }
-          since = Date.now();
-          // normal AND elevated share this branch (differing only by manifest.raw.runAsAdmin): the game
-          // IS the spawned exe, so its image name is the executable's basename.
-          this.runningImageNames = normalizeImageNames([manifest.executablePath]);
-          // The game process itself — a force-close terminates it directly (elevated: via the HANDLE
-          // invisible to taskkill; normal: its pid tree with an isAlive re-check inside kill()).
-          this.runningProc = proc;
-          state.set({ kind: 'running', game: info, since });
-          log.info(`[launch] running id=${manifest.raw.id} pid=${proc.pid}`);
-          await this.deps.processControl.waitForExit(proc, abort.signal);
-          log.info(`[launch] exited id=${manifest.raw.id} pid=${proc.pid}`);
-        }
-      }
-
-      // 5. game closed → write stats to the PC (source of truth)
-      const playSeconds = (Date.now() - since) / 1000;
-      const updatedStats = await stats.recordPlay(manifest.raw.id, playSeconds);
-      const updatedInfo = await this.buildGameInfo(manifest, updatedStats);
-      // The history's cached stats follow the authority, and the game may have just EARNED its place in
-      // the carousel (an inserted-but-never-played game is not listed until now).
-      await this.deps.library.noteLaunch(manifest.raw.id, updatedStats);
-      // Before the refresh, not after: the card's own games are ordered by these very dates, and this
-      // game has just become the most recently played one.
-      this.statsById.set(manifest.raw.id, updatedStats);
-      this.refreshLibrary();
-
-      // 6. PC→SD + stats copy (or pending-flush, if the card is already gone). The game just exited,
-      // so reclaim the foreground (forceForeground) to surface the launcher over Steam/desktop.
-      state.set({ kind: 'syncing-out', game: updatedInfo });
-      window.showAndFocus(true);
-      await this.performSyncOut(manifest, updatedStats);
-
-      // 7. done
-      this.enterReady(updatedInfo);
-      // Refresh what's on screen too: the play time / launch count the detail screen shows just changed.
-      await this.browseToUnlessPinned(manifest.raw.id);
-      window.showAndFocus();
-    } catch (cause) {
-      if (cause instanceof LaunchAbortedError) return; // application is shutting down
-      this.failSequence('launch', info, describe(cause));
-    } finally {
-      // Release the elevated HANDLE (no-op for the normal spawn path).
-      proc?.dispose();
-      this.launchInFlight = false;
-      // The game is done → unlock (switching the card's game is allowed again).
-      this.locked = false;
-      this.abort = null;
-      // The game is no longer running → forget its image names (return-to-game only applies while running).
-      this.runningImageNames = null;
-      // Drop the owned-process reference (proc.dispose() above is the single owner-side release; this is
-      // just the reference the force-close used while running).
-      this.runningProc = null;
-      // Replay a card that was swapped in mid-flight, now that launchInFlight has cleared.
-      this.resumePendingInsert();
-    }
-  }
-
-  /**
-   * Runs the installer for an install-mode game that isn't installed yet (mirrors runLaunchSequence's
-   * infrastructure: launchInFlight/abort, the LaunchAbortedError guard, the pendingRoot replay).
-   * Pre-cleans the install dir, runs the installer silently, then grace-polls for the executable —
-   * on success the button becomes "Play"; otherwise we stay on "Install" and surface the reason.
-   */
-  private async runInstallSequence(manifest: ResolvedManifest, info: GameInfo): Promise<void> {
-    const install = manifest.install;
-    if (install === undefined) return; // defensive: onLaunchRequested only calls this in install mode
-    const { state, window, stats } = this.deps;
-    this.launchInFlight = true; // set/cleared explicitly, like runLaunchSequence
-    const abort = new AbortController();
-    this.abort = abort;
-    let proc: GameProcess | null = null;
-    try {
-      state.set({ kind: 'installing', game: info });
-
-      // Pre-clean: a partial install left by a previous failed attempt could carry a stale <exe> →
-      // a bogus "Play". We're (re)installing anyway, so a clean directory is safe.
-      await fse.remove(install.dir);
-
-      if (install.type === 'copy') {
-        // "Move game to PC": no installer to run — copy the card's game directory into the install dir.
-        if (!(await this.runCopyInstall(install, manifest, info, abort))) return;
-      } else {
-        // Silent by default; a user who enabled "disable silent installer mode" gets the visible wizard
-        // (needed for repacks that skip a crack/patch step under silent — `skipifsilent`).
-        const silent = !(await this.deps.settings.read()).disableSilentInstall;
-        try {
-          proc = await this.launcher.launchInstaller(install, silent, (active) =>
-            this.setProvisioning(active, info),
-          );
-        } catch (cause) {
-          this.failSequence('install', info, this.t('errors.startInstaller', { cause: describe(cause) }));
-          return;
-        }
-
-        // Wait for the installer to exit, then grace-poll for the executable: some installers (often
-        // custom wrappers) fork a child and exit early, so <exe> may appear shortly AFTER waitForExit.
-        await this.deps.processControl.waitForExit(proc, abort.signal);
-        const installed = await this.pollForExecutable(
-          manifest.executablePath,
-          manifest.raw.launchTimeoutSec,
-          abort.signal,
-        );
-        if (!installed) {
-          this.failSequence('install', info, this.t('errors.installIncomplete'));
-          return;
-        }
-      }
-
-      // Installed: rebuild GameInfo so requiresInstall recomputes to false (the executable now exists),
-      // flipping the button back to "Play". The next press launches normally from the install dir.
-      const currentStats = await stats.read(manifest.raw.id);
-      const installedInfo = await this.buildGameInfo(manifest, currentStats);
-      log.info(`[install] completed id=${manifest.raw.id} dir="${install.dir}"`);
-      this.enterReady(installedInfo);
-      // The "install finished" cue belongs to the notification now (its own `notify` sound). It used to
-      // be a bare "play" sound pushed straight to the renderer from here — two sounds would now land on
-      // the same moment, and that one also chirped from a hidden window while a game was running.
-      this.deps.notifications.notify({
-        kind: 'game-installed',
-        gameId: manifest.raw.id,
-        gameTitle: installedInfo.title,
-      });
-      window.showAndFocus();
-    } catch (cause) {
-      if (cause instanceof LaunchAbortedError) return; // aborted by shutdown or a card swap
-      this.failSequence('install', info, describe(cause));
-    } finally {
-      proc?.dispose();
-      this.launchInFlight = false;
-      this.abort = null;
-      this.resumePendingInsert();
-    }
-  }
-
-  /**
-   * The `copy` install type ("move game to PC"): instead of running an installer, copy the game
-   * directory from the card into the app-controlled install dir. Called by runInstallSequence, which
-   * owns the state/abort infrastructure and the shared tail — this only covers copy's own steps.
-   *
-   * Returns true when the game is in place and the caller should finish the sequence; false when it must
-   * stop (a failure was already surfaced, or the sequence was aborted and must unwind silently).
-   */
-  private async runCopyInstall(
-    install: ResolvedCopyInstall,
-    manifest: ResolvedManifest,
-    info: GameInfo,
-    abort: AbortController,
-  ): Promise<boolean> {
-    // Prepare the destination's environment BEFORE the files land in it (linux: create + provision the
-    // Wine prefix; win32: no-op). This is what launchInstaller does implicitly on the installer path —
-    // without it a copied game would sit in a bare prefix with none of the baseline runtimes that the
-    // installer it originally came from would have pulled in. A failure here propagates to the caller's
-    // catch (it is an environment fault, like a failed installer launch).
-    await this.launcher.prepareInstallDir(install, (active) => this.setProvisioning(active, info));
-
-    try {
-      // `dereference: false` — copy symlinks as symlinks (a game's own internal links stay internal).
-      await fse.copy(install.installerPath, install.dir, { dereference: false });
-    } catch (cause) {
-      // fse.copy takes no AbortSignal, so a card swap mid-copy surfaces as a plain ENOENT (the source
-      // vanished) rather than a LaunchAbortedError. Check the flag before reporting: the new card is
-      // already on screen, and an error popup about the old one over it would be nonsense.
-      if (abort.signal.aborted) return false;
-      this.failSequence('install', info, this.t('errors.copyGameFailed', { cause: describe(cause) }));
-      return false;
-    }
-
-    // Same reason as in runUninstallSequence: the copy itself isn't interruptible, so check the abort
-    // flag manually before touching any state.
-    if (abort.signal.aborted) return false;
-
-    // A single existence check, not pollForExecutable: the grace-poll exists for installers that fork a
-    // child and exit early, whereas fse.copy is done when it resolves. Polling would only add
-    // launchTimeoutSec of waiting on an already-known-bad path.
-    if (!(await fse.pathExists(manifest.executablePath))) {
-      // The usual cause is a wrong source root: `executable` is card-relative in the form, but here it
-      // resolves inside the copied directory. Second most likely on linux: a Windows-authored card whose
-      // exe case doesn't match the files copied onto a case-sensitive FS — say so instead of "not found".
-      const shown = manifest.raw.executable ?? path.basename(manifest.executablePath);
-      const found = await findCaseInsensitiveName(manifest.executablePath);
-      this.failSequence(
-        'install',
-        info,
-        found !== null
-          ? this.t('errors.copyExeNotFoundCase', { path: shown, found })
-          : this.t('errors.copyExeNotFound', { path: shown }),
-      );
-      return false;
-    }
-
-    log.info(
-      `[install] copied id=${manifest.raw.id} from="${install.installerPath}" to="${install.dir}"`,
-    );
-    return true;
-  }
-
-  /**
-   * Polls for the game executable to appear within `timeoutSec` (grace window after the installer
-   * exits). Throws LaunchAbortedError if aborted, so a mid-install card swap unwinds WITHOUT
-   * setting state over the new card — never returns false on abort.
-   */
-  private async pollForExecutable(
-    executablePath: string,
-    timeoutSec: number,
-    signal: AbortSignal,
-  ): Promise<boolean> {
-    const deadline = Date.now() + timeoutSec * 1000;
-    for (;;) {
-      if (signal.aborted) throw new LaunchAbortedError();
-      if (await fse.pathExists(executablePath)) return true;
-      if (Date.now() >= deadline) return false;
-      await delay(INSTALL_POLL_INTERVAL_MS);
-    }
-  }
-
-  /**
-   * Uninstalls an installed install-mode game (mirrors runInstallSequence's infrastructure:
-   * launchInFlight/abort, the LaunchAbortedError guard, the pendingRoot replay). Runs the game's own
-   * uninstaller (best-effort — it cleans the registry/shortcuts), then ALWAYS sweeps the app-controlled
-   * install dir, so on success the executable is gone → requiresInstall recomputes true → "Install".
-   */
-  private async runUninstallSequence(manifest: ResolvedManifest, info: GameInfo): Promise<void> {
-    const install = manifest.install;
-    if (install === undefined) return; // defensive: onUninstallRequested only calls this in install mode
-    const { state, window, stats } = this.deps;
-    this.launchInFlight = true; // set/cleared explicitly, like runInstallSequence
-    const abort = new AbortController();
-    this.abort = abort;
-    let proc: GameProcess | null = null;
-    try {
-      state.set({ kind: 'uninstalling', game: info });
-
-      // Run the game's own uninstaller if we can resolve one (FS search → registry fallback). Any
-      // launch/wait failure is NON-fatal: we log it and fall through to the directory sweep. Only a
-      // LaunchAbortedError (from waitForExit on a card swap) propagates to unwind cleanly.
-      //
-      // `copy` is skipped entirely: nothing was installed, so there is no uninstaller of OURS to run.
-      // A copied game directory is one that was installed on some OTHER machine, so any `unins*.exe`
-      // inside it belongs to that install — running it would clean a foreign registry and might pop a
-      // wizard. Straight to the sweep instead (which is the whole uninstall for copy).
-      if (install.type !== 'copy') {
-        const target = await resolveUninstaller(install);
-        if (target !== null) {
-          try {
-            proc = await this.launcher.launchUninstaller(target);
-            await this.deps.processControl.waitForExit(proc, abort.signal);
-          } catch (cause) {
-            if (cause instanceof LaunchAbortedError) throw cause;
-            log.warn(`[uninstall] uninstaller failed, continuing to cleanup: ${describe(cause)}`);
-          }
-        }
-      }
-
-      // Sweep the platform's uninstall target — after the uninstaller, and as the fallback when no target
-      // was resolved (custom / nothing found). win32: the install dir. linux: the whole per-game Wine
-      // prefix (game files + provisioned runtimes), so the full disk footprint is reclaimed.
-      const uninstallDir = this.launcher.uninstallDir(install);
-      await removeWithRetry(uninstallDir, abort.signal);
-
-      // fse.remove is NOT interrupted by the signal (unlike waitForExit), so check the abort flag
-      // manually — strictly BEFORE reading cardPresent / rebuilding info — so a mid-uninstall card swap
-      // doesn't set state over the new card (the finally → resumePendingInsert handles it).
-      if (abort.signal.aborted) return;
-
-      // The card may have been yanked during the uninstall (it targets the PC, so it completed): no card
-      // → idle + hide, mirroring abandonWatchedLaunch / onRemove's cleanup.
-      if (!this.sourceAvailable(manifest)) {
-        this.cardGoneAfterSequence();
-        return;
-      }
-
-      // Done: rebuild GameInfo so requiresInstall recomputes true and canUninstall false (the executable
-      // is gone) → the button flips back to "Install" and "Uninstall" disappears.
-      const currentStats = await stats.read(manifest.raw.id);
-      const updatedInfo = await this.buildGameInfo(manifest, currentStats);
-      log.info(`[uninstall] completed id=${manifest.raw.id} removed="${uninstallDir}"`);
-      this.enterReady(updatedInfo);
-      this.deps.notifications.notify({
-        kind: 'game-uninstalled',
-        gameId: manifest.raw.id,
-        gameTitle: updatedInfo.title,
-      });
-      window.showAndFocus();
-    } catch (cause) {
-      if (cause instanceof LaunchAbortedError) return; // aborted by shutdown or a card swap
-      this.failSequence('uninstall', info, describe(cause));
-    } finally {
-      proc?.dispose();
-      this.launchInFlight = false;
-      this.abort = null;
-      this.resumePendingInsert();
-    }
-  }
-
-  /** Replays a card insertion deferred during an in-flight launch/install. No-op if none pending. */
-  private resumePendingInsert(): void {
-    const root = this.pendingRoot;
-    if (root === null) return;
-    this.pendingRoot = null;
-    void this.onInsert(root);
-  }
-
-  /**
-   * A launch/install/uninstall attempt failed: return to the 'ready' screen with the SAME info and
-   * surface the reason in the error popup. The info is unchanged, so the flags recompute to the pre-attempt
-   * button (launch → "Play", failed install → still "Install", failed uninstall → still "Uninstall"); the
-   * user can read the error, close it (B / veil) and retry. Only the log prefix differs per phase.
-   */
-  private failSequence(phase: 'launch' | 'install' | 'uninstall', game: GameInfo, message: string): void {
-    log.warn(`[${phase}] failed: ${message}`);
-    this.enterReady(game);
-    this.deps.window.showAndFocus();
-    this.sendError(message);
-  }
-
-  /**
-   * The watched-launcher path ended without the game ever becoming visible: the user closed the launcher
-   * without playing, or the game runs elevated / as a service and `tasklist` can't see it. This is
-   * neither a failure nor a play session — we do NOT call stats.recordPlay (it would bump launchCount and
-   * lastPlayedAt for a 0s session) and we do NOT surface an error popup. Back to the normal screen; if the
-   * card is already gone, go idle and hide, mirroring onRemove's cleanup.
-   */
-  private abandonWatchedLaunch(game: GameInfo): void {
-    log.info('[launch] watched game never appeared — returning without recording a session');
-    if (!this.currentSourceAvailable()) {
-      this.steamWatch.stop();
-      this.cardGoneAfterSequence();
-      return;
-    }
-    this.enterReady(game);
-    this.deps.window.showAndFocus();
-  }
-
-  /**
-   * Runs a bidirectional, change-based save sync (syncByChange) and persists the new baseline. The
-   * `fallback` direction is used only on the FIRST run (no baseline yet): 'card-to-pc' for sync-in,
-   * 'pc-to-card' for sync-out — i.e. the phase's old deterministic direction. Otherwise the direction is
-   * chosen by which side changed since the last sync. A conflict (both changed) and a fallback are logged.
-   * Throws propagate to the caller (sync-in swallows them softly; sync-out defers to pending-flush).
-   */
-  /**
-   * Runs one change-detected sync between the card and this game's PC save folder.
-   *
-   * `containerExists=false` (linux: the game's Wine prefix is gone — never created, or wiped by an
-   * uninstall) DISCARDS the baseline. That is a data-integrity rule, not an optimisation: change-detection
-   * reads an empty PC side against a baseline that lists files as "every save was deleted here" and would
-   * replicate that deletion onto the card — destroying the only surviving copy. The container being absent
-   * means the PC side has no authority at all, so the baseline describes a world that no longer exists;
-   * dropping it falls back to the phase direction (card→PC on sync-in), which restores the card's saves.
-   */
-  private async runSaveSync(
-    manifest: ResolvedManifest,
-    cardPath: string,
-    pcPath: string,
-    fallback: 'card-to-pc' | 'pc-to-card',
-    containerExists: boolean,
-  ): Promise<void> {
-    const id = manifest.raw.id;
-    // A local game syncs against its own backup, not against a card, so it keeps its baseline in its own
-    // slot: one shared baseline for both pairings would make each sync see the other's changes as a
-    // conflict (see PcStore.syncStatePath).
-    const slot: SyncSlot = manifest.source === 'pc' ? 'pc' : 'card';
-    const baseline = containerExists ? await this.deps.store.readSyncState(id, slot) : null;
-    if (!containerExists) {
-      log.info(`[save-sync] id=${id} PC container absent → baseline discarded, card is authoritative`);
-    }
-    const result = await syncByChange(cardPath, pcPath, baseline, fallback);
-    if (result.conflict) {
-      // The only branch that can lose data: both sides changed, LWW picked one. The losing side survives
-      // only as syncDir's `<dest>.bak`. Logged loudly so it's visible in the diagnostics.
-      log.warn(
-        `[save-sync] CONFLICT id=${id}: both sides changed since last sync → ${result.direction} by LWW (losing side kept as <dest>.bak)`,
-      );
-    }
-    log.info(
-      `[save-sync] id=${id} direction=${result.direction}${result.usedFallback ? ' (fallback: no baseline)' : ''}`,
-    );
-    await this.deps.store.writeSyncState(id, result.state, slot);
-  }
-
-  private async performSyncOut(manifest: ResolvedManifest, stats: Stats): Promise<void> {
-    const id = manifest.raw.id;
-    // Resolve the deferred pcSavePath once for this game. The game just ran, so its prefix exists
-    // and (on win32) the env expansion always succeeds — this matches the pre-port physical path exactly.
-    // A prefix that is somehow absent here means the game wrote nothing we could carry back: there is no
-    // source to copy from, so treat it as "no PC side" rather than syncing an emptiness onto the card.
-    const resolved = await this.resolvePcSavePath(manifest);
-    const pcPath = resolved !== null && resolved.containerExists ? resolved.path : null;
-    if (resolved !== null && !resolved.containerExists) {
-      log.warn(`[sync-out] the Wine prefix for id=${id} is gone — nothing to copy back to the card`);
-    }
-    // The card is already removed (the expected scenario) → defer PC→SD into pending-flush. A local game
-    // is never "removed", so it always takes the sync path below (its backup is always reachable).
-    if (!this.sourceAvailable(manifest)) {
-      if (pcPath !== null) {
-        await this.deps.store.enqueuePcToSd(id, pcPath);
-      }
-      return;
-    }
-    if (pcPath !== null && manifest.saveOnCardPath !== undefined) {
-      // Diagnostic (silent-failure guard): syncDir no-ops when the source is missing. If the PC save
-      // folder doesn't exist after a play session, pcSavePath is almost certainly wrong in game.json
-      // (e.g. %APPDATA% used for an AppData\LocalLow path) — warn instead of failing silently.
-      if (!(await fse.pathExists(pcPath))) {
-        log.warn(
-          `[sync-out] pcSavePath does not exist — nothing copied to the card. Check the manifest path: "${manifest.pcSavePath}" (resolved: "${pcPath}")`,
-        );
-      } else {
-        try {
-          // Change-based sync after the game (phase = sync-out). The old blind PC→card is only the
-          // first-run fallback; normally the changed side wins (this PC just played → usually PC→card).
-          log.info(
-            `[sync-out] change-based sync between PC "${pcPath}" and card "${manifest.saveOnCardPath}"`,
-          );
-          // containerExists is true here by construction (pcPath is null otherwise), so the baseline is
-          // honoured exactly as before — sync-out semantics are unchanged.
-          await this.runSaveSync(manifest, manifest.saveOnCardPath, pcPath, 'pc-to-card', true);
-          if (manifest.source === 'pc') await this.queueLocalProgressForCard(manifest, pcPath);
-        } catch (cause) {
-          // The card may have been yanked during the sync → saves.bak is intact, we'll finish on insertion.
-          log.warn('[sync-out] failed, deferring to pending-flush:', describe(cause));
-          await this.deps.store.enqueuePcToSd(id, pcPath);
-          return;
-        }
-      }
-    }
-    // A local game's stats mirror lives on the PC and is the only copy there is — there is no card to
-    // write a travelling stats.json to, and writing one into userData would mean nothing.
-    if (manifest.source === 'card') {
-      await this.deps.stats.copyToCard(manifest.root, manifest.raw.id, stats);
-    }
-  }
-
-  /**
-   * "The saves move to the card": after a local game's session, ALSO queue a PC→SD flush, so inserting a
-   * card that carries the same game tops it up with the progress made without it (the existing
-   * flushPendingIfAny on insert does the actual copy).
-   *
-   * Only when a CARD baseline exists for this id — i.e. that card has been seen on this machine before.
-   * Without that condition every local session would leave a third full copy of the saves behind, growing
-   * on disk forever, for a card that may never exist.
-   */
-  private async queueLocalProgressForCard(manifest: ResolvedManifest, pcPath: string): Promise<void> {
-    const id = manifest.raw.id;
-    if (!(await this.deps.store.hasCardSyncState(id))) return;
-    await this.deps.store.enqueuePcToSd(id, pcPath);
-    log.info(`[sync-out] id=${id} local session queued for the card it was last synced with`);
   }
 
   // ── Building GameInfo for the UI ─────────────────────────────────────────

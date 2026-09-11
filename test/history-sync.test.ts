@@ -68,7 +68,7 @@ async function seed(cardSlot: Record<string, unknown> = slot()): Promise<void> {
 
 /**
  * One insertion's worth of the sync: the card write, then the history-side commit the caller runs once the
- * card has read back (see ipc.ts loadCardBody). Split in the source, so it is split here too — the tests
+ * card has read back (see game-controller.ts loadCardBody). Split in the source, so it is split here too — the tests
  * that care about the SPLIT call the two halves themselves.
  */
 const sync = async (): Promise<HistorySyncResult> => {

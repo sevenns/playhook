@@ -65,7 +65,7 @@ The channel literal lives in **one** source of truth and is bridged with compile
 3. Add the literal to `src/preload/preload.ts`'s `CHANNELS` map. It is `satisfies typeof IPC`, so a
    wrong value, a typo'd key AND a forgotten channel are all compile errors — there is one window and one
    preload, so the map has to be complete.
-4. Wire the handler in `ipc.ts` (main) and consume it in the renderer.
+4. Wire the handler in `game-controller.ts` (main) and consume it in the renderer.
 
 The `test/ipc-channels.test.ts` suite guards the same invariant from the outside (it reads the preload
 sources as text) and would still catch it if a second window — and a second preload, back to

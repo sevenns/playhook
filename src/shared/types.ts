@@ -1530,7 +1530,7 @@ export interface RendererApi {
    * (hero images, music) is read at once instead of waiting out main's debounce.
    *
    * `null` is the carousel standing on one of the launcher's own cards: nothing is on screen, and main
-   * answers with an empty browse (and pins the cursor there — see the browse section in ipc.ts).
+   * answers with an empty browse (and pins the cursor there — see the browse section in game-controller.ts).
    */
   browseGame(id: string | null, immediate?: boolean): void;
   /** Drop a game from the play history. Refused by main for a game that is available right now (on the
