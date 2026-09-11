@@ -254,7 +254,9 @@ export class GameSequences {
           manifest.executablePath,
           ...(manifest.raw.watchProcesses ?? []),
         ]);
-        log.info(`[kill] force-close requested id=${manifest.raw.id} targets=[${targets.join(',')}]`);
+        log.info(
+          `[kill] force-close requested id=${manifest.raw.id} targets=[${targets.join(',')}]`,
+        );
 
         // 1. Terminate the owned process (elevated HANDLE, or the normal pid tree with an isAlive re-check
         //    inside kill()). In the watched path this is usually the already-dead launcher — its "not
@@ -264,7 +266,10 @@ export class GameSequences {
           try {
             await proc.kill();
           } catch (cause) {
-            log.warn('[kill] owned-process kill failed (continuing to kill by name):', describe(cause));
+            log.warn(
+              '[kill] owned-process kill failed (continuing to kill by name):',
+              describe(cause),
+            );
           }
         }
 
@@ -276,8 +281,13 @@ export class GameSequences {
         //     HANDLE can't terminate high-integrity processes, so if the targets survive a short grace we
         //     run ONE elevated `taskkill /F /T /IM …` (a single UAC prompt). Non-elevated games never reach
         //     here (no UAC for them). A declined UAC just leaves the targets up → killFailed below.
-        if (manifest.raw.runAsAdmin && (await this.killTargetsStillAlive(targets, proc, KILL_ELEVATE_GRACE_SEC))) {
-          log.info(`[kill] elevated game survived non-elevated kill id=${manifest.raw.id} — escalating to elevated taskkill (UAC)`);
+        if (
+          manifest.raw.runAsAdmin &&
+          (await this.killTargetsStillAlive(targets, proc, KILL_ELEVATE_GRACE_SEC))
+        ) {
+          log.info(
+            `[kill] elevated game survived non-elevated kill id=${manifest.raw.id} — escalating to elevated taskkill (UAC)`,
+          );
           this.monitor.killImagesElevated(targets);
         }
 
@@ -288,14 +298,18 @@ export class GameSequences {
 
       // killFailed only if something is STILL alive when the window elapsed.
       if (stillAlive) {
-        log.warn(`[kill] targets still alive after force-close id=${manifest.raw.id} — reporting killFailed`);
+        log.warn(
+          `[kill] targets still alive after force-close id=${manifest.raw.id} — reporting killFailed`,
+        );
         // The game is still up → back to plain running (status "Running…", Force close button returns),
         // then surface the error. Re-read in case a waiter advanced the state (then leave it be).
         const current = this.deps.state.get();
         if (current.kind === 'running') this.deps.state.set({ ...current, killing: false });
         this.host.sendError(this.t('errors.killFailed'));
       } else {
-        log.info(`[kill] force-close done id=${manifest.raw.id} — exit waiters will finish the flow`);
+        log.info(
+          `[kill] force-close done id=${manifest.raw.id} — exit waiters will finish the flow`,
+        );
       }
     } finally {
       this.killInFlight = false;
@@ -368,7 +382,11 @@ export class GameSequences {
     }
     // Ensure the re-detect poller is running so the button flips to "Play" when the download completes
     // (no-op if already running; info confirms this is a steam game still requiring install).
-    if (info.installVia === 'steam' && info.requiresInstall && this.host.sourceAvailableFor(info.id)) {
+    if (
+      info.installVia === 'steam' &&
+      info.requiresInstall &&
+      this.host.sourceAvailableFor(info.id)
+    ) {
       this.deps.steamWatch.start();
     }
   }
@@ -535,7 +553,11 @@ export class GameSequences {
           try {
             await openSteamUri(`steam://rungameid/${manifest.steam.appid}`);
           } catch (cause) {
-            this.failSequence('launch', info, this.t('errors.launchViaSteam', { cause: describe(cause) }));
+            this.failSequence(
+              'launch',
+              info,
+              this.t('errors.launchViaSteam', { cause: describe(cause) }),
+            );
             return;
           }
           // Track by SteamAppId (via the monitor): on linux that reads /proc environ, so native-Linux AND
@@ -564,16 +586,27 @@ export class GameSequences {
           this.runningProc = null;
           state.set({ kind: 'running', game: info, since });
           log.info(`[launch] running (steam) id=${manifest.raw.id} appid=${manifest.steam.appid}`);
-          await this.deps.processControl.waitForSteamExit(manifest.steam.appid, watchProcesses ?? [], this.monitor, abort.signal);
+          await this.deps.processControl.waitForSteamExit(
+            manifest.steam.appid,
+            watchProcesses ?? [],
+            this.monitor,
+            abort.signal,
+          );
           log.info(`[launch] exited (steam) id=${manifest.raw.id}`);
         } else {
           // 2. launch → GameProcess (spawn, or elevated ShellExecuteEx per manifest.runAsAdmin)
           state.set({ kind: 'launching', game: info });
           let proc: GameProcess;
           try {
-            proc = await this.launcher.launchGame(manifest, (active) => this.setProvisioning(active, info));
+            proc = await this.launcher.launchGame(manifest, (active) =>
+              this.setProvisioning(active, info),
+            );
           } catch (cause) {
-            this.failSequence('launch', info, this.t('errors.launchGame', { cause: describe(cause) }));
+            this.failSequence(
+              'launch',
+              info,
+              this.t('errors.launchGame', { cause: describe(cause) }),
+            );
             return;
           }
           // Handed to the scaffold so `finally` can dispose the kept HANDLE (elevated path).
@@ -599,11 +632,21 @@ export class GameSequences {
             // down its pid tree. The game itself is killed by taskkill /IM over the watchProcesses.
             this.runningProc = proc;
             state.set({ kind: 'running', game: info, since });
-            log.info(`[launch] running (watched) id=${manifest.raw.id} watch=${watchProcesses.join(',')}`);
-            await this.deps.processControl.waitForWatchedExit(watchProcesses, this.monitor, abort.signal);
+            log.info(
+              `[launch] running (watched) id=${manifest.raw.id} watch=${watchProcesses.join(',')}`,
+            );
+            await this.deps.processControl.waitForWatchedExit(
+              watchProcesses,
+              this.monitor,
+              abort.signal,
+            );
             log.info(`[launch] exited (watched) id=${manifest.raw.id}`);
           } else {
-            const started = await this.deps.processControl.waitForStart(proc, manifest.raw.launchTimeoutSec, abort.signal);
+            const started = await this.deps.processControl.waitForStart(
+              proc,
+              manifest.raw.launchTimeoutSec,
+              abort.signal,
+            );
             if (!started) {
               this.failSequence('launch', info, this.t('errors.gameDidNotStart'));
               return;
@@ -686,7 +729,11 @@ export class GameSequences {
             this.setProvisioning(active, info),
           );
         } catch (cause) {
-          this.failSequence('install', info, this.t('errors.startInstaller', { cause: describe(cause) }));
+          this.failSequence(
+            'install',
+            info,
+            this.t('errors.startInstaller', { cause: describe(cause) }),
+          );
           return;
         }
         owned.proc = proc;
@@ -752,7 +799,11 @@ export class GameSequences {
       // vanished) rather than a LaunchAbortedError. Check the flag before reporting: the new card is
       // already on screen, and an error popup about the old one over it would be nonsense.
       if (abort.signal.aborted) return false;
-      this.failSequence('install', info, this.t('errors.copyGameFailed', { cause: describe(cause) }));
+      this.failSequence(
+        'install',
+        info,
+        this.t('errors.copyGameFailed', { cause: describe(cause) }),
+      );
       return false;
     }
 
@@ -884,7 +935,11 @@ export class GameSequences {
    * button (launch → "Play", failed install → still "Install", failed uninstall → still "Uninstall"); the
    * user can read the error, close it (B / veil) and retry. Only the log prefix differs per phase.
    */
-  private failSequence(phase: 'launch' | 'install' | 'uninstall', game: GameInfo, message: string): void {
+  private failSequence(
+    phase: 'launch' | 'install' | 'uninstall',
+    game: GameInfo,
+    message: string,
+  ): void {
     log.warn(`[${phase}] failed: ${message}`);
     this.host.enterReady(game);
     this.deps.window.showAndFocus();

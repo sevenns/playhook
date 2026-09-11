@@ -1,10 +1,7 @@
 // The controller's seams: what it needs from each collaborator, as interfaces rather than the classes
 // (a unit test stands in a fake per seam — see test/game-controller.test.ts), plus the process waits and
 // the koffi-bound helpers it drives. Type-only, next to the controller that consumes them.
-import {
-  type ConfigSaveResult,
-  type GameCollisionAnswer,
-} from '../shared/types';
+import { type ConfigSaveResult, type GameCollisionAnswer } from '../shared/types';
 import { type Translator } from '../shared/i18n/index';
 import { type StateManager } from './state';
 import { type GameWindow } from './window';
@@ -63,7 +60,12 @@ export type ControllerState = Pick<StateManager, 'get' | 'set' | 'subscribe'>;
 export type ControllerWindow = Pick<GameWindow, 'send' | 'showAndFocus' | 'hide' | 'isShown'>;
 export type ControllerStore = Pick<
   PcStore,
-  'getPending' | 'clearPending' | 'readSyncState' | 'writeSyncState' | 'enqueuePcToSd' | 'hasCardSyncState'
+  | 'getPending'
+  | 'clearPending'
+  | 'readSyncState'
+  | 'writeSyncState'
+  | 'enqueuePcToSd'
+  | 'hasCardSyncState'
 >;
 export type ControllerStats = Pick<
   StatsService,

@@ -101,7 +101,9 @@ export class SaveSyncFlow {
     const slot: SyncSlot = manifest.source === 'pc' ? 'pc' : 'card';
     const baseline = containerExists ? await this.deps.store.readSyncState(id, slot) : null;
     if (!containerExists) {
-      log.info(`[save-sync] id=${id} PC container absent → baseline discarded, card is authoritative`);
+      log.info(
+        `[save-sync] id=${id} PC container absent → baseline discarded, card is authoritative`,
+      );
     }
     const result = await syncByChange(cardPath, pcPath, baseline, fallback);
     if (result.conflict) {
@@ -126,7 +128,9 @@ export class SaveSyncFlow {
     const resolved = await this.resolvePcSavePath(manifest);
     const pcPath = resolved !== null && resolved.containerExists ? resolved.path : null;
     if (resolved !== null && !resolved.containerExists) {
-      log.warn(`[sync-out] the Wine prefix for id=${id} is gone — nothing to copy back to the card`);
+      log.warn(
+        `[sync-out] the Wine prefix for id=${id} is gone — nothing to copy back to the card`,
+      );
     }
     // The card is already removed (the expected scenario) → defer PC→SD into pending-flush. A local game
     // is never "removed", so it always takes the sync path below (its backup is always reachable).
@@ -179,7 +183,10 @@ export class SaveSyncFlow {
    * Without that condition every local session would leave a third full copy of the saves behind, growing
    * on disk forever, for a card that may never exist.
    */
-  private async queueLocalProgressForCard(manifest: ResolvedManifest, pcPath: string): Promise<void> {
+  private async queueLocalProgressForCard(
+    manifest: ResolvedManifest,
+    pcPath: string,
+  ): Promise<void> {
     const id = manifest.raw.id;
     if (!(await this.deps.store.hasCardSyncState(id))) return;
     await this.deps.store.enqueuePcToSd(id, pcPath);

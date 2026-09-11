@@ -30,7 +30,12 @@ import type { GameProcess, Platform } from '../src/main/platform/types';
 import { IPC, type Stats } from '../src/shared/types';
 import type { ResolvedManifest } from '../src/main/manifest-types';
 
-const ZERO_STATS: Stats = { schemaVersion: 1, totalPlaySeconds: 0, lastPlayedAt: null, launchCount: 0 };
+const ZERO_STATS: Stats = {
+  schemaVersion: 1,
+  totalPlaySeconds: 0,
+  lastPlayedAt: null,
+  launchCount: 0,
+};
 
 function unexpected(name: string): () => never {
   return () => {
@@ -380,7 +385,12 @@ describe('GameController sequences', () => {
       await flushAsync();
       h.controller.shutdown();
       await flushAsync();
-      expect(h.journal).toEqual(['state:syncing-in', 'state:launching', 'state:running', 'proc:dispose']);
+      expect(h.journal).toEqual([
+        'state:syncing-in',
+        'state:launching',
+        'state:running',
+        'proc:dispose',
+      ]);
       expect(h.state.get().kind).toBe('running');
     });
   });
@@ -464,7 +474,12 @@ describe('GameController sequences', () => {
       h.failStats = true;
       fire(IPC.actionUninstall);
       await flushAsync();
-      expect(h.journal).toEqual(['state:uninstalling', 'state:ready', 'window:showAndFocus', 'send:error']);
+      expect(h.journal).toEqual([
+        'state:uninstalling',
+        'state:ready',
+        'window:showAndFocus',
+        'send:error',
+      ]);
       expect(h.state.get()).toMatchObject({ kind: 'ready', game: { canUninstall: true } });
     });
 
@@ -495,7 +510,12 @@ describe('GameController sequences', () => {
       h.failStats = true;
       fire(IPC.actionUninstall);
       await flushAsync();
-      expect(h.journal).toEqual(['state:uninstalling', 'state:ready', 'window:showAndFocus', 'send:error']);
+      expect(h.journal).toEqual([
+        'state:uninstalling',
+        'state:ready',
+        'window:showAndFocus',
+        'send:error',
+      ]);
     });
 
     it('card swap during the sweep: the retry loop sees the signal, nothing is set, the insert replays', async () => {

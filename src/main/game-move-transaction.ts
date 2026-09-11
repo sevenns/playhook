@@ -7,11 +7,7 @@
 import path from 'node:path';
 import fse from 'fs-extra';
 import { ipcMain } from 'electron';
-import {
-  IPC,
-  type ConfigMoveResult,
-  type GameMoveRequest,
-} from '../shared/types';
+import { IPC, type ConfigMoveResult, type GameMoveRequest } from '../shared/types';
 import { MANIFEST_FILENAME, type ResolvedManifest } from './manifest-types';
 import { type Translator } from '../shared/i18n/index';
 import { type ConfigReadResult } from './game-config';

@@ -85,9 +85,9 @@ export interface FilePickerDeps {
 
 /** Whether one picked path may be used for `kind`; a localized reason when it may not, else null. */
 export async function describePickRejection(
-absolute: string,
-kind: ConfigPickKind,
-t: Translator,
+  absolute: string,
+  kind: ConfigPickKind,
+  t: Translator,
 ): Promise<string | null> {
   let stat: Parameters<typeof checkPickedType>[2] = null;
   try {
@@ -240,7 +240,8 @@ export class FilePickerService {
           homeDir: os.homedir(),
           appDataDir: app.getPath('appData'),
           downloadsDir: app.getPath('downloads'),
-          rootIsCard: request.root !== undefined && this.deps.config.sourceOf(request.root) === 'card',
+          rootIsCard:
+            request.root !== undefined && this.deps.config.sourceOf(request.root) === 'card',
         },
       );
     let names: readonly string[];

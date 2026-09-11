@@ -123,7 +123,9 @@ export function parseCommandLine(command: string): string[] {
  * rare nonstandard NSIS uninstaller name. Returns null → the caller does a plain directory removal.
  * win32-only: the linux side never runs an in-prefix uninstaller (see GameProcessLauncher.resolveUninstaller).
  */
-export async function resolveUninstaller(install: ResolvedInstallerRun): Promise<LaunchTarget | null> {
+export async function resolveUninstaller(
+  install: ResolvedInstallerRun,
+): Promise<LaunchTarget | null> {
   // Step 1: FS search in the install dir, with self-built silent flags.
   const found = await findUninstallerInDir(install.dir, install.type);
   if (found !== null) {
@@ -147,7 +149,9 @@ export async function resolveUninstaller(install: ResolvedInstallerRun): Promise
   const rest = tokens.slice(1);
   // QuietUninstallString is already silent; a plain UninstallString needs the family's silent flag.
   const args =
-    entry.quietUninstallString !== undefined ? rest : [...rest, ...silentUninstallArgs(install.type)];
+    entry.quietUninstallString !== undefined
+      ? rest
+      : [...rest, ...silentUninstallArgs(install.type)];
   return {
     file,
     args,
