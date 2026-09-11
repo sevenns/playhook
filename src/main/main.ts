@@ -19,6 +19,7 @@ import { createTray, buildTrayMenu, type TrayCallbacks, type TraySteamState } fr
 import { createSteamShortcutService } from './steam-shortcut';
 import { installDaemonUnit, removeDaemonUnit } from './daemon-unit';
 import { UpdaterService } from './updater';
+import { SettingsService } from './settings-service';
 import { NotificationsService } from './notifications';
 import { NotificationsStore } from './notifications-store';
 import { GameConfigService } from './game-config';
@@ -324,6 +325,18 @@ async function bootstrap(): Promise<void> {
       quitting = true;
       window.allowClose();
     },
+    getTranslator,
+  });
+
+  // The Settings screen's backend: persists every settings:* write and hands each live side effect to
+  // the service that owns it (below). The two update-related settings reach electron-updater through
+  // the updater's guarded setters, so the updater no longer owns any settings channel itself.
+  const settingsService = new SettingsService({
+    settings,
+    appVersion: () => app.getVersion(),
+    isSteamAvailable: () => steamShortcut.isAvailable(),
+    onAutoUpdateModeChanged: (mode) => updater.applyAutoUpdateMode(mode),
+    onPrereleaseChanged: (on) => updater.setAllowPrerelease(on),
     onSummonHotkeyChanged: (enabled) => {
       summonHotkeyEnabled = enabled;
     },
@@ -335,7 +348,6 @@ async function bootstrap(): Promise<void> {
     // Game Mode auto-launch toggle (Steam Deck): installs or tears down the watcher unit. Turning it off
     // stops a separate process, so the memory is actually returned — that is the point of the option.
     onSteamAutoLaunchChanged: (enabled) => steamShortcut.applyAutoLaunch(enabled),
-    isSteamAvailable: () => steamShortcut.isAvailable(),
     onVolumesChanged: (volumes) => {
       const bw = window.browserWindow;
       if (bw !== null && !bw.isDestroyed()) bw.webContents.send(IPC.volumeUpdate, volumes);
@@ -346,7 +358,6 @@ async function bootstrap(): Promise<void> {
     onAudioScopeChanged: () => void controller.refreshAudio(),
     onAmbientChanged: (track) => void controller.setAmbientTrack(track),
     onLanguageChanged: (mode) => applyLanguage(mode),
-    getTranslator,
   });
 
   // Backend of the launcher's Customize screen. getActiveRoot / reloadManifest / findGameSource come
@@ -524,7 +535,7 @@ async function bootstrap(): Promise<void> {
   }
 
   // UI-locale wiring. The launcher seeds via an invoke (effective Locale) and receives live pushes; the
-  // set-language SEND lives in UpdaterService (with the other settings:* writes). No did-finish-load hook
+  // set-language SEND lives in SettingsService (with the other settings:* writes). No did-finish-load hook
   // — the invoke-seed covers startup instead.
   ipcMain.handle(IPC.languageRequest, (): Locale => localeService.current());
 
@@ -549,7 +560,7 @@ async function bootstrap(): Promise<void> {
 
   // Applies a language change everywhere: re-resolve the locale, rebuild the tray menu, re-title the
   // window and push the effective locale to the launcher.
-  // Called from the settings set-language handler and from resetSettings (both via UpdaterService deps).
+  // Called from the settings set-language handler and from resetSettings (both via SettingsService deps).
   function applyLanguage(mode: typeof initialSettings.language): void {
     localeService.setMode(mode);
     const locale = localeService.current();
@@ -572,8 +583,9 @@ async function bootstrap(): Promise<void> {
 
   watcher.start();
   configureAutoLaunch();
-  // Registers all update:* / settings:* / app:version IPC synchronously, then (packaged only) wires
-  // autoUpdater + the periodic timer per the persisted auto-update mode.
+  // Registers the settings:* / app:version IPC, then the update:* IPC; the updater then (packaged only)
+  // wires autoUpdater + the periodic timer per the persisted auto-update mode.
+  settingsService.init();
   updater.init().catch((cause: unknown) => log.error('[updater] init failed:', cause));
 }
 
