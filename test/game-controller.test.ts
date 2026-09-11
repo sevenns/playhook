@@ -100,6 +100,11 @@ interface Harness {
   readonly tmp: string;
   /** The path the fake `stats.read` / `recordPlay` throw on once set — the "error in the body" hook. */
   failStats: boolean;
+  /**
+   * Makes the fake installer put the game's executable in place — the way a real one does, AFTER the
+   * sequence's pre-clean of the install dir (a file written from the test races that clean).
+   */
+  installerWritesExe: boolean;
 }
 
 type Mode = 'normal' | 'install' | 'prefix-cleanup';
@@ -155,11 +160,13 @@ async function harness(opts: HarnessOptions): Promise<Harness> {
   const h: {
     failStats: boolean;
     exitRequested: boolean;
+    installerWritesExe: boolean;
     release: (() => void) | null;
     insert: (root: string) => void;
   } = {
     failStats: false,
     exitRequested: false,
+    installerWritesExe: false,
     release: null,
     insert: () => undefined,
   };
@@ -249,7 +256,13 @@ async function harness(opts: HarnessOptions): Promise<Harness> {
     },
     gameLauncher: {
       launchGame: () => Promise.resolve(proc),
-      launchInstaller: () => Promise.resolve(proc),
+      launchInstaller: async () => {
+        if (h.installerWritesExe) {
+          await fs.mkdir(installDir, { recursive: true });
+          await fs.writeFile(executablePath, '');
+        }
+        return proc;
+      },
       prepareInstallDir: () => Promise.resolve(),
       launchUninstaller: unexpected('launchUninstaller'),
       resolveUninstaller: () => Promise.resolve(null),
@@ -311,6 +324,12 @@ async function harness(opts: HarnessOptions): Promise<Harness> {
     },
     set failStats(value: boolean) {
       h.failStats = value;
+    },
+    get installerWritesExe() {
+      return h.installerWritesExe;
+    },
+    set installerWritesExe(value: boolean) {
+      h.installerWritesExe = value;
     },
     exit: () => {
       h.exitRequested = true;
@@ -425,11 +444,10 @@ describe('GameController sequences', () => {
   describe('install', () => {
     it('success: installing → ready, a game-installed notification, then the window', async () => {
       h = await harness({ mode: 'install' });
+      h.installerWritesExe = true;
       fire(IPC.actionLaunch);
       await reached(h.journal, 'state:installing');
       expect(h.journal).toEqual(['state:installing']);
-      await fs.mkdir(path.join(h.tmp, 'installed'), { recursive: true });
-      await fs.writeFile(path.join(h.tmp, 'installed', 'game.exe'), '');
       h.exit();
       await settled(h.journal, 'proc:dispose');
       expect(h.journal).toEqual([
@@ -443,10 +461,9 @@ describe('GameController sequences', () => {
 
     it('error in the body: failSequence keeps the game on Install and reports the cause', async () => {
       h = await harness({ mode: 'install' });
+      h.installerWritesExe = true;
       fire(IPC.actionLaunch);
       await reached(h.journal, 'state:installing');
-      await fs.mkdir(path.join(h.tmp, 'installed'), { recursive: true });
-      await fs.writeFile(path.join(h.tmp, 'installed', 'game.exe'), '');
       h.failStats = true;
       h.exit();
       await settled(h.journal, 'proc:dispose');
