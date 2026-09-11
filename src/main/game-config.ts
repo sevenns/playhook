@@ -21,7 +21,7 @@
 // A third stance arrived with the in-launcher file browser, which replaced the native dialog. That dialog
 // used to be the CONSENT GATE: an absolute path could only reach this file because the OS handed it over.
 // Now the renderer names it, so acceptPickedPaths re-checks what the dialog used to guarantee — the path
-// exists, is not a symlink, and its type matches the field (see the plan, Р5.1).
+// exists, is not a symlink, and its type matches the field.
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -241,7 +241,7 @@ export interface GameConfigDeps {
   readonly getTranslator: () => Translator;
   /**
    * Reverse-maps an absolute PC folder (from the pcSavePath browse) to a `%PREFIX%/…` manifest
-   * string via the platform SavePathResolver (Р5), or null when it lives under none of the allowed bases.
+   * string via the platform SavePathResolver, or null when it lives under none of the allowed bases.
    * win32 uses the env-based table; linux returns null (the user types the Windows-dictionary string).
    */
   readonly toManifestPcSavePath: (absolute: string) => string | null;
@@ -249,7 +249,7 @@ export interface GameConfigDeps {
    * Where one game's manifest lives, BY ID (GameController.findGameSource) — the bridge from what the
    * carousel shows to the file the Customize screen edits. An index is deliberately not part of the
    * answer: the controller's list is a filtered, reordered union of two sources, so its position says
-   * nothing about the slot's position in the text (see the plan, Р2).
+   * nothing about the slot's position in the text.
    */
   readonly findGameSource: (
     id: string,
@@ -269,11 +269,11 @@ export interface GameConfigDeps {
   readonly resolveManifest: (id: string) => ResolvedManifest | null;
   /**
    * Whether ANY game is currently running/installing/uninstalling (GameController.isBusy) — moveToCard's
-   * own re-check of the guard the "Move to card…" menu item already applies in the renderer (Р2.5).
+   * own re-check of the guard the "Move to card…" menu item already applies in the renderer.
    */
   readonly isBusy: () => boolean;
   /** Drops a game's sync-state baseline (PcStore.removeSyncState) — moveToCard clears the "pc" slot once
-   * a game leaves the library (Р2.5/Р2.7): the local backup ↔ save-folder pairing it described is gone. */
+   * a game leaves the library: the local backup ↔ save-folder pairing it described is gone. */
   readonly pcStore: Pick<PcStore, 'removeSyncState'>;
   /**
    * The game HISTORY — where a game with no card in gets its stored manifest, its pending edits and its
@@ -295,7 +295,7 @@ export interface GameConfigDeps {
   readonly refreshLibrary: () => void;
   /** Resolves a manifest's `pcSavePath` to the LIVE save folder on this machine (platform.savePathResolver)
    * — moveToCard copies from there, not from the PC-library backup, so a stale backup can never
-   * overwrite a fresher save (see the plan, Р2.5 step 3). */
+   * overwrite a fresher save. */
   readonly savePathResolver: Pick<SavePathResolver, 'resolvePcSavePath'>;
 }
 
@@ -643,7 +643,7 @@ export class GameConfigService {
   /**
    * The media's identity — the same sorted-ids signature a DriveCandidate carries. It answers the one
    * question `isAllowedRoot` cannot: a card swapped into the same mountpoint keeps the root valid while
-   * the FILE underneath is someone else's (see the plan, Р6.2). Our own edits do not move it (the ids
+   * the FILE underneath is someone else's. Our own edits do not move it (the ids
    * stay), so a second save after the first still goes through.
    */
   private async signatureOf(root: string): Promise<string> {
@@ -882,7 +882,7 @@ export class GameConfigService {
     return this.savePcLibrary(without, t);
   }
 
-  // ── Move to card (Р2.5): a local game leaves the PC library and lands on a card, in one transaction ──
+  // ── Move to card: a local game leaves the PC library and lands on a card, in one transaction ───────
   // Two writes (the card's game.json, the library's) cannot be two separate gameConfig:save calls from the
   // renderer without a window where the game exists in both places or neither — so the whole thing runs
   // here. Order: checks (nothing written) → copy assets → copy saves → write the card → write the
@@ -955,7 +955,7 @@ export class GameConfigService {
     const targetRaw = findGameInText(request.id, request.toText);
     if (targetRaw === null) return { moved: false, message: t('errors.gameNotFound') };
     // The game's OWN files (its exe) must already be on the card — otherwise the card would read as
-    // having an invalid game.json the instant it is inserted (see the plan, Р2.6).
+    // having an invalid game.json the instant it is inserted.
     const expectedFile = expectedGameFilePath(targetRaw);
     if (expectedFile !== null) {
       const resolvedFile = resolveInside(request.toRoot, expectedFile);
@@ -1070,8 +1070,7 @@ export class GameConfigService {
     }
 
     // 5. Write the library. A failure here triggers a best-effort rollback of the card (step 4) back to
-    // its pre-move bytes — `fromText` is NEVER applied when this happens (see the plan, Р2.5's rollback
-    // note): applying it would make the game disappear from the PC library without landing on the card,
+    // its pre-move bytes — `fromText` is NEVER applied when this happens: applying it would make the game disappear from the PC library without landing on the card,
     // which is worse than the duplicate a failed rollback leaves behind.
     const fromWrite = await this.writePcLibraryText(fromText, t);
     if (!fromWrite.ok) {
@@ -1265,7 +1264,7 @@ export class GameConfigService {
    * The dialog used to be the consent gate for all of this: an absolute path could only arrive because
    * the OS handed it over, which is why this file could say "main never trusts the renderer's path" and
    * still copy whatever it was given. The in-launcher picker takes that gate away, so the checks are
-   * stated here instead (see the plan, Р5.1) — the root must be a live candidate, the path must exist and
+   * stated here instead — the root must be a live candidate, the path must exist and
    * not be a symlink, and its TYPE must match the field: an `~/.ssh/id_rsa` offered as a hero image is
    * refused before anything reads or copies it.
    */

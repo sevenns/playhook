@@ -1,8 +1,8 @@
 // Platform abstraction layer (interface-DI). The launcher's OS-specific behaviour — process
 // monitoring, Steam discovery, game/installer spawning, save-path resolution and power actions — lives
 // behind these interfaces so a win32 and a linux (SteamOS/Proton) implementation can be swapped wholesale
-// by createPlatform(process.platform). See the SteamOS port plan (decisions Р3/Р4/Р5/Р9) and CLAUDE.md
-// ("Adding a new service": interface-DI is the testable shape).
+// by createPlatform(process.platform). See CLAUDE.md ("Adding a new service": interface-DI is the
+// testable shape).
 //
 // Types only — no koffi/electron here, so this file is import-safe from anywhere (incl. unit tests). The
 // concrete win32/linux implementations (which DO pull koffi on Windows) live in ./win32 and ./linux and
@@ -33,7 +33,7 @@ export interface ProcessSnapshot {
 
 /**
  * Platform process control: the snapshot-based watched-process tracking plus targeted liveness and
- * force-kill. win32 wraps `tasklist`/`taskkill`; linux walks `/proc` and sends signals (Р3).
+ * force-kill. win32 wraps `tasklist`/`taskkill`; linux walks `/proc` and sends signals.
  */
 export interface ProcessMonitor {
   /** One atomic snapshot of all visible processes. */
@@ -63,7 +63,7 @@ export interface SteamLocator {
   /**
    * The Steam install root (the dir containing `steamapps/`), or null when Steam isn't found. On win32
    * this reads the registry (Valve\Steam); on linux it probes the well-known data dirs — native,
-   * flatpak, snap (Р4). Best-effort: any error → null.
+   * flatpak, snap. Best-effort: any error → null.
    */
   locateSteam(): Promise<string | null>;
 }
@@ -71,7 +71,7 @@ export interface SteamLocator {
 /**
  * Spawns the game / installer / uninstaller. win32 dispatches to a direct `spawn` or an elevated
  * ShellExecuteEx per manifest.runAsAdmin; linux runs everything through umu-run in the game's Wine
- * prefix (Р1/Р7) with no elevation (runAsAdmin is a no-op there — Р6).
+ * prefix with no elevation (runAsAdmin is a no-op there).
  */
 export interface GameProcessLauncher {
   /**
@@ -109,7 +109,7 @@ export interface GameProcessLauncher {
   /** Launches a resolved uninstaller target silently. Throws on failure. */
   launchUninstaller(target: LaunchTarget): Promise<GameProcess>;
   /**
-   * The directory whose removal fully uninstalls the game (removed best-effort by the controller — Р7f).
+   * The directory whose removal fully uninstalls the game (removed best-effort by the controller).
    * win32: the app-controlled install dir. linux: the WHOLE per-game Wine prefix — it holds the install
    * dir AND the game's provisioned runtimes (dotnet/GE-Proton env), so uninstall reclaims all of it.
    */
@@ -124,7 +124,7 @@ export interface GameProcessLauncher {
 }
 
 /**
- * Resolves the Windows-dictionary `pcSavePath` to a physical folder for THIS game (Р5). The moment of
+ * Resolves the Windows-dictionary `pcSavePath` to a physical folder for THIS game. The moment of
  * resolution moved from manifest-read to sync-time so an unresolvable location (a Wine/compatdata prefix
  * that doesn't exist yet) is a no-op sync, not a rejected card. win32 keeps the env-based mapping; linux
  * maps every prefix inside the game's Wine prefix (exe/install) or the Steam compatdata prefix (steam).
@@ -161,8 +161,8 @@ export interface SavePathResolver {
 }
 
 /**
- * Executes the OS power actions behind the launcher's Shutdown/Reboot/Sleep menu (Р9). win32 uses the
- * `shutdown` command + the powrprof SetSuspendState FFI; linux uses logind via `systemctl` (Э7). The
+ * Executes the OS power actions behind the launcher's Shutdown/Reboot/Sleep menu. win32 uses the
+ * `shutdown` command + the powrprof SetSuspendState FFI; linux uses logind via `systemctl`. The
  * PowerService (power.ts) owns the user-facing flow (confirm, quit, error copy) — this is only the OS bit.
  */
 export interface PowerBackend {
@@ -175,7 +175,7 @@ export interface PowerBackend {
 }
 
 /**
- * Mounts inserted-but-unmounted removable volumes so the drive watcher can see them (Р10). Only SteamOS
+ * Mounts inserted-but-unmounted removable volumes so the drive watcher can see them. Only SteamOS
  * **Game Mode** wires this, as a safety net: the session normally mounts the card itself, but one that
  * lands there unmounted is just a block device with no mountpoint, and `scan()` (which walks mountpoints)
  * can never find it. win32 and the KDE desktop session mount on their own → no-op there. The caller
@@ -268,7 +268,7 @@ export interface Platform {
   readonly powerBackend: PowerBackend;
   readonly removableMounter: RemovableMounter;
   /**
-   * Resolves the app-controlled install directory for an install-mode game id (Р7), injected into
+   * Resolves the app-controlled install directory for an install-mode game id, injected into
    * readManifests. win32 derives `%LOCALAPPDATA%\playhook\games\<id>`; linux the game's Wine prefix.
    */
   readonly resolveInstallDir: InstallDirResolver;
@@ -280,7 +280,7 @@ export interface PlatformDeps {
   readonly getDocuments: () => string;
   /** app.getPath('userData') — the base for per-game Wine prefixes on linux (`<userData>/prefixes/<id>`). */
   readonly userData: string;
-  /** Absolute path to the bundled umu-run zipapp (extraResources), run via system python3 on linux (Р1).
+  /** Absolute path to the bundled umu-run zipapp (extraResources), run via system python3 on linux.
    * Unused on win32. */
   readonly umuRunPath: string;
   /**

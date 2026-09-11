@@ -43,7 +43,7 @@ export function buildParameters(args: readonly string[]): string {
  * - `nsis`  → `/S` … `/D=<dir>` — `/D=` MUST be last and always UNQUOTED (NSIS reads everything after
  *   it, to end of line, as the path — even with spaces), on both platforms.
  * - `inno`  → `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR=<dir>` … — Inno's `/DIR=` quoting is the
- *   ONLY platform-varying piece (Р7): see `quoteDir`.
+ *   ONLY platform-varying piece: see `quoteDir`.
  * - `custom`→ the card author's own args, with `{dir}` substituted; they own the quoting/flags.
  * Extra `customArgs` for nsis/inno are appended (after the silent flags, before the trailing `/D=` for nsis).
  *

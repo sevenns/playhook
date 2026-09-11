@@ -1,6 +1,5 @@
 // The file name an asset picked from the user's filesystem gets INSIDE the app's own storage — the PC
-// library's `assets/`, and the history staging directory that reuses the same rules (see the
-// history-config plan, Р9).
+// library's `assets/`, and the history staging directory that reuses the same rules.
 //
 // Two properties matter and they pull against each other. The name comes from a foreign filesystem, so
 // everything outside a conservative ASCII set must go (traversal, leading dots, exFAT-hostile characters

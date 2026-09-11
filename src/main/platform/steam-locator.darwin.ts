@@ -1,4 +1,4 @@
-// macOS SteamLocator (Д8): Steam keeps its data under `~/Library/Application Support/Steam`, and the
+// macOS SteamLocator: Steam keeps its data under `~/Library/Application Support/Steam`, and the
 // validity check is the same one the linux locator uses — the presence of `steamapps/libraryfolders.vdf`,
 // Steam's own library index (the file the `.acf` walk in steam.ts reads). There is only one candidate on
 // macOS: no flatpak, no snap, and the App Store carries no Steam.

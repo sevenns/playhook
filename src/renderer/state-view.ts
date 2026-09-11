@@ -34,7 +34,7 @@ export function statusOf(state: AppState, t: Translator): string {
     case 'uninstalling':
       return t('launcher.state.uninstalling');
     case 'configuringProton':
-      // Base label; the renderer appends a rotating funny suffix after a minute (Р7j).
+      // Base label; the renderer appends a rotating funny suffix after a minute.
       return t('launcher.protonConfig1');
     case 'syncing-in':
       return t('launcher.state.syncingIn');

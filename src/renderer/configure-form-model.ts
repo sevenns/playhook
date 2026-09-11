@@ -64,7 +64,7 @@ export interface InstallModel {
   readonly type: InstallType;
   readonly runAsAdmin: boolean;
   readonly args: readonly string[];
-  /** Extra winetricks verbs provisioned into the prefix before the installer runs (Linux; Р7b). */
+  /** Extra winetricks verbs provisioned into the prefix before the installer runs (Linux). */
   readonly winetricks: readonly string[];
   readonly rest: Readonly<Record<string, unknown>>;
 }
@@ -103,9 +103,9 @@ export interface ManifestFormModel {
   readonly launchTimeoutSec: string;
   readonly killTimeoutSec: string;
   readonly backgroundMusic: string;
-  /** Extra winetricks verbs provisioned into the prefix before the GAME launches (Linux; Р7b). */
+  /** Extra winetricks verbs provisioned into the prefix before the GAME launches (Linux). */
   readonly winetricks: readonly string[];
-  /** umu GAMEID for launch — a Steam appid or custom UMU_ID (Linux; Р7i). '' = default `umu-default`. */
+  /** umu GAMEID for launch — a Steam appid or custom UMU_ID (Linux). '' = default `umu-default`. */
   readonly umuGameId: string;
   /** The `install` block for INSTALLER mode (types nsis/inno/custom). Never holds `copy`. */
   readonly install: InstallModel;
@@ -584,11 +584,11 @@ function buildManifestObject(
     // Executable checkbox a `type: 'copy'` one (its `installer` being the game directory to copy).
     if (model.launchMode === 'installer') out.install = buildInstall(model.install);
     else if (model.copyToPc) out.install = buildInstall(model.copyInstall);
-    // Game-launch prefix provisioning (Linux; Р7b) — applies to our own prefix (executable/installer
+    // Game-launch prefix provisioning (Linux) — applies to our own prefix (executable/installer
     // modes), not steam (which runs in Steam's compatdata).
     const winetricks = nonEmpty(model.winetricks);
     if (winetricks.length > 0) out.winetricks = winetricks;
-    // umu GAMEID for the launch (Linux; Р7i) — same scope: our own umu-run, not steam://.
+    // umu GAMEID for the launch (Linux) — same scope: our own umu-run, not steam://.
     if (model.umuGameId !== '') out.umuGameId = model.umuGameId;
   }
 
@@ -639,7 +639,7 @@ export interface FormGameSlot {
  * may carry several games, `readManifests` SKIPS the ones that do not resolve, and the rest stay
  * perfectly playable — so the user edits game B while game A sits in the same file, unrepresentable. With
  * only `FormGameSlot` to serialize from, saving B would have to drop A. Preserving it verbatim is not a
- * nicety; it is the difference between editing a game and destroying its neighbour (see the plan, Р2).
+ * nicety; it is the difference between editing a game and destroying its neighbour.
  */
 export interface RawGameSlot {
   readonly raw: unknown;
@@ -734,7 +734,7 @@ export function slotsWithNewGame(text: string | null, launchMode: LaunchMode): N
 
 /**
  * Serializes a LIST of game form states back to manifest TEXT: exactly one game → a single object (legacy
- * shape, maximal backwards compatibility), more than one → an array (see the plan, decision 2).
+ * shape, maximal backwards compatibility), more than one → an array.
  *
  * An EMPTY list serializes to `[]` — the PC library's "there are no local games any more", which main
  * turns into deleting game.json. A card never reaches this (its last game cannot be removed).

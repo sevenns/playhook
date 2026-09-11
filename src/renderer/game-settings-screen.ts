@@ -6,8 +6,8 @@
 // Three things are worth knowing before reading the rest:
 //
 //  • THE FILE IS THE UNIT, THE GAME IS THE SLOT. gameConfig:read hands over the whole game.json text; the
-//    screen finds ITS slot by `id` (never by an index from main — see the plan, Р2), edits that one, and
-//    serializes every slot back. A neighbour the form cannot represent is carried through verbatim as a
+//    screen finds ITS slot by `id` (never by an index from main: the file can change under it), edits
+//    that one, and serializes every slot back. A neighbour the form cannot represent is carried through verbatim as a
 //    raw slot, so saving one game never destroys another.
 //
 //  • SAVING IS EXPLICIT. Unlike Settings, a value change writes nothing: every keystroke would mean a
@@ -134,7 +134,7 @@ export interface GameSettingsScreenApi {
    * ever sent after the game has left the manifest: main refuses to forget a game that is available.
    */
   forgetHistory(id: string): void;
-  /** Moves a local (PC-library) game onto a card in one transaction (see the plan, Р2.5). */
+  /** Moves a local (PC-library) game onto a card in one transaction. */
   moveToCard(request: GameMoveRequest): Promise<ConfigMoveResult>;
   /** The same conversion the in-launcher picker uses (main re-checks/converts a picked path) — used
    * outside a Browse to carry an absolute PC-side pcSavePath over as a %PREFIX% string when moving a
@@ -210,9 +210,9 @@ export interface GameSettingsScreenDeps {
   readonly audio: AudioController;
   getTranslator(): Translator;
   readonly api: GameSettingsScreenApi;
-  /** The on-screen keyboard — without it there is no way to type on a gamepad (see the plan, Р4). */
+  /** The on-screen keyboard — without it there is no way to type on a gamepad. */
   readonly keyboard: TextEntrySurface;
-  /** The in-launcher file browser — the native dialog cannot be driven in Game Mode (Р5). */
+  /** The in-launcher file browser — the native dialog cannot be driven in Game Mode. */
   readonly picker: FilePickerSurface;
   /** The online artwork gallery — the surface "Find online" picks a cover or a background in. */
   readonly onlinePicker: OnlinePickerSurface;
@@ -225,7 +225,7 @@ export interface GameSettingsScreenDeps {
    * title with X?" is about a candidate the popup has never heard of.
    */
   onConfirmRequested(kind: GameSettingsConfirm, options?: { readonly title?: string }): void;
-  /** Whether the game is running / installing / being force-closed — Delete is hidden then (Р3). */
+  /** Whether the game is running / installing / being force-closed — Delete is hidden then. */
   isBusy(): boolean;
   /** A game was added AND applied: the launcher's library has it now, so the carousel goes to it. */
   onAdded(id: string): void;
@@ -251,7 +251,7 @@ export interface GameSettingsScreen extends NavSurface {
   /** Opens the same screen with no game behind it — the form CREATES one (see `mode`). */
   openNew(): void;
   close(): void;
-  /** browse:update arrived: the screen closes when its game is gone or no longer playable (Р6.2). */
+  /** browse:update arrived: the screen closes when its game is gone or no longer playable. */
   applyBrowse(browse: BrowseInfo | null): void;
   /** The confirm popup answered yes for `kind`. */
   confirmAccepted(kind: GameSettingsConfirm): void;
@@ -308,7 +308,7 @@ interface MenuEntry {
   readonly current?: boolean;
   /** Which sound this entry makes. One runner plays it, so a press and a click sound identical.
    *  'none' is for an entry whose own surface speaks for it — opening the file browser or the lightbox,
-   *  where the primitive plays popup-open (Р5). */
+   *  where the primitive plays popup-open. */
   readonly sound?: SfxName | 'none';
   readonly run: () => void;
 }
@@ -357,7 +357,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
    * reach:
    *
    *   `media`   — the ordinary case: a real root (a card, or the PC library) plus the content signature
-   *               it was read against, which is the swap guard every save is checked against (Р6.2).
+   *               it was read against, which is the swap guard every save is checked against.
    *   `history` — a game whose card is NOT in. There is no root to browse, no signature to guard and no
    *               file to write; everything is addressed by the game's ID instead, and the edits are
    *               stored on this PC until that card comes back (see history-config.ts).
@@ -386,7 +386,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   let slotIndex = -1;
   /**
    * A SECOND, PARALLEL set of "which file, which slot" — active only while moving a local game onto a
-   * card (Р2.2). The screen still works against one file at a time, but which one flips: `currentText` /
+   * card. The screen still works against one file at a time, but which one flips: `currentText` /
    * `runValidate` / `canSave` all read `pendingMove` first and fall back to `origin`/`slots`/`slotIndex`
    * only when it is null. Nothing is written to disk while this is set — see beginMove/adoptMoveTarget.
    */
@@ -428,7 +428,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   /**
    * The problems that were ALREADY in the other games' slots when the screen opened. Save is allowed
    * while they are there — the file is not ours to fix from a per-game screen, and a game that failed to
-   * resolve is not even in the carousel — but a NEW one means we introduced it (see the plan, Э4).
+   * resolve is not even in the carousel — but a NEW one means we introduced it.
    */
   let baselineOtherIssues: ReadonlySet<string> = new Set();
   /**
@@ -600,7 +600,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
           ? move.target.label
           : (sources.find((candidate) => candidate.root === at)?.label ?? null),
       // While a move is pending the form is edited AS THE TARGET CARD would read it — the whole point of
-      // "the form expands" (see the plan, Р2.2/Р2.3): rows, launch modes and pickers all key off this.
+      // "the form expands": rows, launch modes and pickers all key off this.
       // A history game is a card's game by definition — its manifest came off one.
       source: move !== null || media === null ? 'card' : media.source,
       platform: where.platform,
@@ -1133,7 +1133,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
 
   function pushMenu(level: MenuLevel): void {
     hover.arm();
-    // Only the FIRST level is a surface appearing; going deeper is a step inside one already open (Р4).
+    // Only the FIRST level is a surface appearing; going deeper is a step inside one already open.
     if (menuStack.length === 0) deps.audio.play('popup-open');
     menuStack.push(level);
     paintMenu();
@@ -1160,7 +1160,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   }
 
   function closeMenus(options?: { readonly silent?: boolean }): void {
-    // `silent` for a cascade — the screen closing, or a surface that already played its own close (Р5).
+    // `silent` for a cascade — the screen closing, or a surface that already played its own close.
     if (menuStack.length > 0 && options?.silent !== true) deps.audio.play('popup-close');
     menuStack.length = 0;
     stopMetadataWork();
@@ -1839,7 +1839,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   }
 
   /**
-   * "Move to card…" (Р2.1): lists the cards a local game may move to and lets the user pick one. Called
+   * "Move to card…": lists the cards a local game may move to and lets the user pick one. Called
    * once `load` has landed — re-checks the source itself, since the menu item's own visibility rule
    * (controls.ts) can go stale between the press and the read completing.
    */
@@ -2088,7 +2088,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     baseline = text;
     // A save while the game is RUNNING writes the file but cannot reload the manifest (the launcher
     // refuses mid-play). That is not a failure — the file on disk is already right and the launcher picks
-    // it up on the next read — so it is reported as what it is (see the plan, Р3).
+    // it up on the next read — so it is reported as what it is.
     if (result.applied === 'applied') notifyDone(t()('gameSettings.savedApplied'));
     else if (result.applied === 'deferred') notifyDone(t()('gameSettings.savedDeferred'));
     else notifyDone(t()('gameSettings.savedNotApplied'));
@@ -2096,7 +2096,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   }
 
   /**
-   * The Save button while a move is pending (Р2.5) — one IPC, the whole transaction runs in main (see
+   * The Save button while a move is pending — one IPC, the whole transaction runs in main (see
    * GameConfigService.moveToCard). Closes on success exactly like `runAdd`: the game left the PC library,
    * so there is nothing here to keep editing. `deferred`/a skipped save folder are reported to the user as
    * NOTIFICATIONS main files itself (game-moved-deferred / game-move-save-skipped), not as screen status —
@@ -2324,7 +2324,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
    * Fills the manifest's non-picture facts in the background: the description, and the genres, release
    * date and platforms a future library view will sort by. main deliberately never writes them itself —
    * the manifest TEXT belongs to this form while the screen is open, so a write from the other side
-   * would be overwritten by the next Save (see configure-form-model.ts and 4.5 of the plan).
+   * would be overwritten by the next Save (see configure-form-model.ts).
    */
   async function fetchMetadataDescriptions(candidate: GameCandidate): Promise<void> {
     const token = metadataToken;
@@ -2631,7 +2631,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     adoptToken += 1;
     pendingMove = null;
     deps.audio.play('back');
-    // The lightbox, the menu and the keyboard go WITH the screen — one close, one sound (Р5).
+    // The lightbox, the menu and the keyboard go WITH the screen — one close, one sound.
     closeImage({ silent: true });
     closeMenus({ silent: true });
     deps.keyboard.close();
@@ -2890,7 +2890,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       if (origin?.kind === 'history') return;
       // The card was pulled, or swapped, or the game stopped being playable: the screen is about a file
       // that is no longer reachable, and everything under it (the carousel, the detail screen) has been
-      // rebuilt already. Leaving would be worse than closing, so it closes — see the plan, Р6.2.
+      // rebuilt already. Leaving would be worse than closing, so it closes.
       if (browse !== null && browse.id === gameId && browse.active) return;
       close();
     },

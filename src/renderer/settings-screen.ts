@@ -1,4 +1,4 @@
-// The Settings screen's controller: the fourth surface of the launcher (see the plan §3). It owns its
+// The Settings screen's controller: the fourth surface of the launcher. It owns its
 // own state (the last AppSettings snapshot, the update status, the environment), the row focus, the
 // expanded dropdown and the slider drag — and exposes the SAME six navigation primitives the rest of the
 // UI uses, so controls.ts only has to route to it. Everything that decides WHAT is on screen lives in
@@ -661,7 +661,7 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
 
   function closeOptions(options?: { readonly silent?: boolean }): void {
     if (openSelect === null) return;
-    // `silent` for the cascade out of close(): the screen going away is one popup-close, not two (Р5).
+    // `silent` for the cascade out of close(): the screen going away is one popup-close, not two.
     if (options?.silent !== true) deps.audio.play('popup-close');
     openSelect = null;
     screen.classList.remove('is-options-open');
@@ -995,7 +995,7 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
     if (entry === undefined || entry.row.kind !== 'slider') return;
     focusIndex = index;
     applyRowFocus();
-    // No transition while the knob follows the cursor — see the plan §3.6.
+    // No transition while the knob follows the cursor: it would lag behind the pointer.
     track.closest('.setting-slider')?.classList.add('is-dragging');
     dragging = { rowIndex: index, track, pointerId: event.pointerId };
     track.setPointerCapture(event.pointerId);

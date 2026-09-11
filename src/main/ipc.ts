@@ -102,7 +102,7 @@ export interface ControllerDeps {
   readonly platform: Platform;
   /**
    * Whether this is a SteamOS Game Mode (gamescope) session. In Game Mode there is no tray, so every path
-   * that would hide the window to the tray instead keeps the empty/error screen up (Р8). Always false on
+   * that would hide the window to the tray instead keeps the empty/error screen up. Always false on
    * Windows/desktop, so their behaviour is unchanged.
    */
   readonly isGamescope: boolean;
@@ -255,7 +255,7 @@ function parseCommandLine(command: string): string[] {
  * rare nonstandard NSIS uninstaller name. Returns null → the caller does a plain directory removal.
  */
 async function resolveUninstaller(install: ResolvedInstallerRun): Promise<LaunchTarget | null> {
-  // Linux (Р7f): uninstall removes the WHOLE per-game Wine prefix (see GameProcessLauncher.uninstallDir),
+  // Linux: uninstall removes the WHOLE per-game Wine prefix (see GameProcessLauncher.uninstallDir),
   // so running the game's own in-prefix uninstaller first is pointless (its registry/shortcut cleanup
   // lives in the prefix we're about to delete). Skip it — win32 still runs it (no prefix; it must clean
   // the shared system before the install dir is removed).
@@ -382,8 +382,8 @@ export class GameController {
   // A force-close (onKillRequested) is underway. Local try/finally flag (mirrors reloadInFlight, NOT the
   // launch sequence's finally — a kill has its own short-lived lifecycle) so a double Yes / repeat is a no-op.
   private killInFlight = false;
-  // The installing/launching state to restore once winetricks provisioning ends (Р7g). Null when not
-  // provisioning. The "Configuring Proton" screen + its rotating funny suffix are the renderer's job (Р7j).
+  // The installing/launching state to restore once winetricks provisioning ends. Null when not
+  // provisioning. The "Configuring Proton" screen + its rotating funny suffix are the renderer's job.
   private protonConfigPriorState: AppState | null = null;
   // The inserted card's background music, sent on its own channel (not on every AppState) — it is the
   // card's only audio contribution. Null when there is no card, or when "only global ambience" mutes it.
@@ -466,7 +466,7 @@ export class GameController {
 
   /**
    * Linux prefix provisioning (winetricks) started/finished — the launcher's onProvisioning callback
-   * (Р7g). On start: stash the current installing/launching state and show the rotating "Configuring
+   * On start: stash the current installing/launching state and show the rotating "Configuring
    * Proton" screen. On finish: stop the rotation and restore the stashed state (the launch/install
    * sequence then continues from where it was). No-op on win32 (the launcher never fires this).
    */
@@ -615,7 +615,7 @@ export class GameController {
 
   /**
    * Hides the launcher to the tray (the background-app default), OR — in SteamOS Game Mode, where there is
-   * no tray to hide into — keeps the empty "insert a card" screen up instead (Р8). Used at every "no card"
+   * no tray to hide into — keeps the empty "insert a card" screen up instead. Used at every "no card"
    * exit point. On Windows/desktop this is a plain hide (unchanged behaviour).
    */
   private hideToTrayOrKeepEmpty(): void {
@@ -651,7 +651,7 @@ export class GameController {
     // field will accept is the keyboard's own rule (osk-text.ts sanitize), and it differs per field.
     ipcMain.handle(IPC.clipboardRead, (): string => clipboard.readText());
     // The carousel asks for one card's artwork at a time, only for what is on screen, and caches it by id
-    // — that is what keeps the list channel light enough to re-push on every change (Р5).
+    // — that is what keeps the list channel light enough to re-push on every change.
     ipcMain.handle(IPC.libraryGridRequest, (_event, id: unknown): Promise<string | null> => {
       if (typeof id !== 'string') return Promise.resolve(null);
       return this.deps.library.readGridThumb(id);
@@ -762,7 +762,7 @@ export class GameController {
     // uninstall completion (Play→Install) — incl. an uninstall the user triggers in Steam directly — and
     // download progress. A LOCAL steam game's source is always available, so this poll is no longer bounded
     // by how long a card stays in: the launcher sitting on such a game polls it for as long as it is shown.
-    // The .acf read is cheap enough for that to be an acceptable price (see the plan, §9.3).
+    // The .acf read is cheap enough for that to be an acceptable price.
     if (info.installVia === 'steam' && this.sourceAvailableFor(info.id)) {
       this.steamWatch.start();
     } else {
@@ -849,7 +849,7 @@ export class GameController {
       this.deps.state.set({ kind: 'error', message: result.message });
       // Desktop/Windows: keep the window hidden (background app — the error is in the log and only shows
       // if the user summons the window). Game Mode: there is no tray to hide into, so surface the manifest
-      // error on screen instead of hiding (Р8, point 1).
+      // error on screen instead of hiding.
       if (this.deps.isGamescope) this.deps.window.showAndFocus();
       else this.deps.window.hide();
       return { ok: false, message: result.message };
@@ -1083,7 +1083,7 @@ export class GameController {
    * The INDEX is deliberately not part of the answer: `games` is a filtered, reordered union of the card
    * and the library (a shadowed local game is hidden, the carousel order is applied elsewhere), so a
    * position here says nothing about the slot's position inside game.json. The screen finds its slot by
-   * `id` instead — see the plan, Р2.
+   * `id` instead.
    */
   findGameSource(id: string): { readonly root: string; readonly source: ManifestSource } | null {
     const manifest = this.games.find((game) => game.raw.id === id);
@@ -1100,7 +1100,7 @@ export class GameController {
   /**
    * Whether ANY game is currently running/installing/uninstalling (incl. a Steam op in flight) —
    * main's server-side mirror of the renderer's own isBusy (app.ts), which gates Delete on the Customize
-   * screen and — new here — Move to card (GameConfigService.moveToCard, Р2.5): a move started while the
+   * screen and — new here — Move to card (GameConfigService.moveToCard): a move started while the
    * game is mid-launch would race the launcher's own manifest handling.
    */
   isBusy(): boolean {
@@ -1124,7 +1124,7 @@ export class GameController {
     this.collisionResolver = resolver;
   }
 
-  /** The PC library's own manifest for `id`, even while a card of the same id shadows it (Р10). */
+  /** The PC library's own manifest for `id`, even while a card of the same id shadows it. */
   findPcManifest(id: string): ResolvedManifest | null {
     return this.pcGames.find((manifest) => manifest.raw.id === id) ?? null;
   }
@@ -1250,7 +1250,7 @@ export class GameController {
     if (!acceptsPendingFlush(manifest) || cardPath === undefined) return;
     const pending = await this.deps.store.getPending(manifest.raw.id);
     if (pending === null) return;
-    // Direct, NOT change-based (deliberate — see the plan, part B): the snapshot exists precisely because
+    // Direct, NOT change-based (deliberate): the snapshot exists precisely because
     // the card was yanked mid-game and we are OBLIGED to top up the promised PC progress onto the card.
     // LWW here would silently drop that flush if the card looked "unchanged"/newer, so keep it a plain
     // snapshot→card replace.
@@ -1265,7 +1265,7 @@ export class GameController {
   }
 
   /**
-   * Resolves the manifest's DEFERRED pcSavePath (Р5/Э6) to this game's save location via the platform
+   * Resolves the manifest's DEFERRED pcSavePath to this game's save location via the platform
    * SavePathResolver, or null when there's nothing to sync (no pcSavePath declared, or a steam game with
    * no compatdata yet). win32 keeps the exact env-based expansion the manifest used to do eagerly; linux
    * maps inside the game's prefix. `containerExists` tells whether that prefix is actually there — see
@@ -1461,7 +1461,7 @@ export class GameController {
    * `killing` sub-state (the launcher shows "Force closing…" and hides the Force close button), kills the
    * main executable AND every watchProcess, then lets the EXISTING exit waiters (waitForExit /
    * waitForWatchedExit) notice the processes vanish and carry the flow through syncing-out → sync → ready
-   * (K-Д3) — no state machine of its own. Guarded by the running state + a killInFlight flag (double Yes /
+   * — no state machine of its own. Guarded by the running state + a killInFlight flag (double Yes /
    * repeat is a no-op).
    *
    * A non-elevated launcher can't terminate a runAsAdmin game's high-integrity processes (taskkill →
@@ -1741,7 +1741,7 @@ export class GameController {
       // the first-run fallback (no baseline yet).
       state.set({ kind: 'syncing-in', game: info });
       if (manifest.pcSavePath !== undefined && manifest.saveOnCardPath !== undefined) {
-        // Resolve the deferred pcSavePath to this game's save location (Р5/Э6). null → nothing to sync
+        // Resolve the deferred pcSavePath to this game's save location. null → nothing to sync
         // with at all (a steam game with no compatdata) — a logged no-op.
         const pcSave = await this.resolvePcSavePath(manifest);
         if (pcSave === null) {
@@ -2121,7 +2121,7 @@ export class GameController {
 
       // Sweep the platform's uninstall target — after the uninstaller, and as the fallback when no target
       // was resolved (custom / nothing found). win32: the install dir. linux: the whole per-game Wine
-      // prefix (game files + provisioned runtimes), so the full disk footprint is reclaimed (Р7f).
+      // prefix (game files + provisioned runtimes), so the full disk footprint is reclaimed.
       const uninstallDir = this.launcher.uninstallDir(install);
       await removeWithRetry(uninstallDir, abort.signal);
 
@@ -2248,7 +2248,7 @@ export class GameController {
 
   private async performSyncOut(manifest: ResolvedManifest, stats: Stats): Promise<void> {
     const id = manifest.raw.id;
-    // Resolve the deferred pcSavePath once for this game (Р5/Э6). The game just ran, so its prefix exists
+    // Resolve the deferred pcSavePath once for this game. The game just ran, so its prefix exists
     // and (on win32) the env expansion always succeeds — this matches the pre-port physical path exactly.
     // A prefix that is somehow absent here means the game wrote nothing we could carry back: there is no
     // source to copy from, so treat it as "no PC side" rather than syncing an emptiness onto the card.
@@ -2380,7 +2380,7 @@ export class GameController {
       launchCount: stats.launchCount,
       requiresInstall,
       canUninstall,
-      // Installer-view dir (Р7): on linux this is the `C:\playhook\games\<id>` the user would paste into a
+      // Installer-view dir: on linux this is the `C:\playhook\games\<id>` the user would paste into a
       // non-silent Wine picker; on win32 it equals the host dir.
       ...(manifest.install !== undefined ? { installDir: manifest.install.installerDir } : {}),
       ...(installVia !== undefined ? { installVia } : {}),
@@ -2504,7 +2504,7 @@ export class GameController {
   /**
    * Rebuilds and pushes the carousel list: the inserted card's games first (they are the ones that can be
    * launched right now), then the played history — each group most recently played first. No stats are
-   * read from disk here: the index caches launchCount/lastPlayedAt for exactly this (Р1), and the card's
+   * read from disk here: the index caches launchCount/lastPlayedAt for exactly this, and the card's
    * own games use the reconciled stats already in memory (statsById), falling back to the index for a
    * game whose reconcile hasn't happened yet.
    *

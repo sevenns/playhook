@@ -1,4 +1,4 @@
-// Automounting removable cards in SteamOS Game Mode (Р10). A SAFETY NET, not the primary path: current
+// Automounting removable cards in SteamOS Game Mode. A SAFETY NET, not the primary path: current
 // SteamOS mounts an inserted card itself (exFAT included), and this sweep only covers the case where one
 // arrives WITHOUT a mountpoint — an older/other gamescope session, a filesystem the session skips, or a
 // card the automounter simply didn't pick up. Such a card is enumerated as a block device with no

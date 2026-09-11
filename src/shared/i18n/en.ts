@@ -251,7 +251,7 @@ export const en = {
   'gameConfig.pickNeedsFile': 'Pick a file for this field.',
   'gameConfig.pickWrongType': 'That file type does not fit this field.',
   'gameConfig.listFailed': 'This folder could not be opened.',
-  // Move to card (Р2.5) — GameConfigService.moveToCard.
+  // Move to card — GameConfigService.moveToCard.
   'gameConfig.moveGameBusy': 'Wait for the current install or launch to finish, then try again.',
   'gameConfig.moveIdTaken': 'This card already has a game with the same id.',
   'gameConfig.moveIdChanged':

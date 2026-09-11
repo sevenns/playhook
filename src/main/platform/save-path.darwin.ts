@@ -1,4 +1,4 @@
-// macOS SavePathResolver (Д3): maps the card's Windows-dictionary `pcSavePath` onto a real folder in the
+// macOS SavePathResolver: maps the card's Windows-dictionary `pcSavePath` onto a real folder in the
 // user's home. There is no Wine prefix here — a mac game writes into the mac profile — so the mapping is a
 // best-effort translation of the Windows known folders:
 //
@@ -8,7 +8,7 @@
 //
 // The three AppData prefixes collapsing onto one base is deliberate: Unity on macOS writes to
 // `~/Library/Application Support/<Company>/<Product>`, which is exactly what it puts in LocalLow on
-// Windows, and for everything else this is the closest approximation available. Р2: when a game keeps its
+// Windows, and for everything else this is the closest approximation available. When a game keeps its
 // saves elsewhere, the sync simply reports a missing folder — nothing destructive.
 //
 // The REVERSE mapping is therefore ambiguous, and that ambiguity is contained rather than papered over:

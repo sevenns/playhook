@@ -204,7 +204,7 @@ export class PcStore {
   }
 
   /**
-   * Drops a game's sync baseline. Used when a local game moves to a card (Р2.5): its `pc` baseline
+   * Drops a game's sync baseline. Used when a local game moves to a card: its `pc` baseline
    * partnered the PC-library backup with the local save folder, and that pairing no longer exists once
    * the game leaves the library — keeping it would read as a stale baseline and could report a false
    * conflict if the game is ever moved back to the PC. Silent on an already-absent file (the normal case

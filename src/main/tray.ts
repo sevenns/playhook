@@ -83,7 +83,7 @@ function menuBarImage(source: NativeImage): NativeImage {
 export function createTray(t: Translator, callbacks: TrayCallbacks, steam: TraySteamState): Tray {
   // The app icon doubles as the tray icon (the separate icon-tray.* files are gone), copied into dist by
   // copy-assets. Windows uses the .ico; Linux (Desktop Mode/KDE) and macOS need a PNG — a .ico yields an
-  // empty image via nativeImage there (Р8). Falls back to an empty image if the file is missing.
+  // empty image via nativeImage there. Falls back to an empty image if the file is missing.
   const iconFile = process.platform === 'win32' ? '../icon.ico' : '../icon.png';
   const iconPath = path.join(__dirname, iconFile);
   const loaded = nativeImage.createFromPath(iconPath);

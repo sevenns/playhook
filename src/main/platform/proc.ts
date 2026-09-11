@@ -1,4 +1,4 @@
-// Linux ProcessMonitor backed by /proc (Р3). Watched-game tracking on Linux can't use `comm`
+// Linux ProcessMonitor backed by /proc. Watched-game tracking on Linux can't use `comm`
 // (/proc/<pid>/comm is truncated to 15 chars, and names like `Game-Win64-Shipping.exe` are longer), so we
 // read /proc/<pid>/cmdline and take the basename of argv[0]. A Proton/Wine process shows its exe path there
 // (often `Z:\...\Game.exe` or `C:\...`), so we split on BOTH separators and match the bare `*.exe` name
@@ -6,7 +6,7 @@
 //
 // The pure parsing/matching helpers below carry no electron/koffi/fs-at-import baggage, so they are unit-
 // tested directly (test/proc.test.ts). The /proc read (scanProc) and the ProcessMonitor it powers use
-// node:fs + process signals and are exercised on the device (smoke test — Р3, допущение §5.9).
+// node:fs + process signals and are exercised on the device (smoke test).
 import fs from 'node:fs/promises';
 import type { ProcessMonitor, ProcessSnapshot } from './types';
 
@@ -80,7 +80,7 @@ export function buildProcIndex(entries: readonly ProcEntry[]): {
 }
 
 /** Builds a ProcessSnapshot from indexed processes. A watched name matches by exact (case-insensitive)
- * basename — more precise than the win32 substring match, on purpose (Р3). Pure so it is unit-tested. */
+ * basename — more precise than the win32 substring match, on purpose. Pure so it is unit-tested. */
 export function snapshotFromEntries(entries: readonly ProcEntry[]): ProcessSnapshot {
   const { names, pids } = buildProcIndex(entries);
   return {
@@ -173,7 +173,7 @@ export function createLinuxProcessMonitor(): ProcessMonitor {
       }
     },
     killTree(pid): Promise<void> {
-      // Best-effort group kill (Р3): a child spawned with detached:true is its own process-group leader, so
+      // Best-effort group kill: a child spawned with detached:true is its own process-group leader, so
       // `-pid` hits the group. wineserver does setsid and escapes the group, so the by-name sweep
       // (killByName) is the real mechanism; this is the cheap first step. Also signal the pid directly.
       for (const signal of KILL_SIGNALS) {

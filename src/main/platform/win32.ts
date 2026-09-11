@@ -1,7 +1,7 @@
 // Windows implementations of the platform services. These wrap the existing win32 code (tasklist/taskkill
 // process control, the registry Steam lookup, the spawn/ShellExecuteEx launchers, the env-based save-path
 // mapping, the `shutdown` command + powrprof suspend). Behaviour is 1:1 with the pre-port code — the port
-// only routes it through the interfaces so a linux implementation can take its place (Р3/Р4/Р5/Р9).
+// only routes it through the interfaces so a linux implementation can take its place.
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -141,7 +141,7 @@ function createGameLauncher(monitor: ProcessMonitor): GameProcessLauncher {
 }
 
 // ── SavePathResolver (env-based %PREFIX% mapping) ────────────────────────────
-// Reuses the existing pure expanders. The resolver contract returns null on failure (Р5: "nothing to
+// Reuses the existing pure expanders. The resolver contract returns null on failure ("nothing to
 // sync"), so the translator only matters for messages we never surface here — a fixed 'en' one suffices.
 
 const noopTranslator = createTranslator('en');

@@ -77,7 +77,7 @@ export interface InstallManifest {
    */
   readonly args: readonly string[];
   /**
-   * Linux-only (Р7b): extra winetricks verbs provisioned into the game's Wine prefix before the installer
+   * Linux-only: extra winetricks verbs provisioned into the game's Wine prefix before the installer
    * runs, on top of the app's baseline set (e.g. a skinned Inno installer needing `mfc42`/`gdiplus`, or a
    * game needing `dotnet48`). Ignored on Windows. Empty by default (schema `.default([])`).
    */
@@ -99,19 +99,19 @@ interface ResolvedInstallBase {
   readonly runAsAdmin: boolean;
   readonly args: readonly string[];
   /**
-   * Extra winetricks verbs (Р7b) provisioned into the game's Wine prefix before install, on top of the
+   * Extra winetricks verbs provisioned into the game's Wine prefix before install, on top of the
    * linux baseline set. Linux-only; ignored on Windows. Empty by default.
    */
   readonly winetricks: readonly string[];
   /**
    * Host-view of the app-controlled install directory: every fs op (pre-clean, uninstaller search,
    * sweep) and the resolved `executable` live under it. win32: `%LOCALAPPDATA%\playhook\games\<id>`;
-   * linux: `<pfx>/drive_c/playhook/games/<id>` (inside the game's Wine prefix — Р7).
+   * linux: `<pfx>/drive_c/playhook/games/<id>` (inside the game's Wine prefix).
    */
   readonly dir: string;
   /**
    * Installer-view of the SAME directory, fed to the silent dir-arg (`/DIR=` / `/D=`). win32: identical
-   * to `dir`; linux: `C:\playhook\games\<id>` — the path the installer sees under Wine (Р7).
+   * to `dir`; linux: `C:\playhook\games\<id>` — the path the installer sees under Wine.
    */
   readonly installerDir: string;
 }
@@ -240,13 +240,13 @@ export interface GameManifest {
   /** Platforms the store states native support for. Stored now, shown later. */
   readonly platforms?: readonly GamePlatform[];
   /**
-   * Linux-only (Р7b): extra winetricks verbs provisioned into the game's Wine prefix before the game
+   * Linux-only: extra winetricks verbs provisioned into the game's Wine prefix before the game
    * launches, on top of the app's baseline set (e.g. `d3dx9` for an old DX9 title). Ignored on Windows.
    * Empty by default (schema `.default([])`).
    */
   readonly winetricks: readonly string[];
   /**
-   * Linux-only (Р7i): the umu `GAMEID` used when launching the game — a Steam appid or a custom UMU_ID —
+   * Linux-only: the umu `GAMEID` used when launching the game — a Steam appid or a custom UMU_ID —
    * so umu applies that game's protonfix instead of the generic `umu-default`. Absent → `umu-default`.
    * Ignored on Windows.
    */
@@ -302,7 +302,7 @@ export interface ResolvedManifest {
   readonly gridImagePath?: string;
   readonly saveOnCardPath?: string;
   /**
-   * The Windows-dictionary save location (`%APPDATA%\…`), stored VERBATIM — a DEFERRED field (Р5/Э6).
+   * The Windows-dictionary save location (`%APPDATA%\…`), stored VERBATIM — a DEFERRED field.
    * Only its syntax is validated at read time (prefix allowlist + no traversal); the physical folder is
    * resolved per-game at sync time via the platform SavePathResolver. This matters on Linux, where the
    * real location lives inside the game's Wine prefix / Steam compatdata and may not exist until the first
@@ -359,7 +359,7 @@ export interface HeroAssets {
  * One card in the launcher's history carousel: a game on the inserted card (`active` — launchable right
  * now) or one that was played on this device before. Deliberately LIGHT ({id,title,active}) so main can
  * re-push the whole list on every insert/removal/play; the artwork travels one card at a time, on demand,
- * over `library:grid-request` (see Р5).
+ * over `library:grid-request`.
  */
 export interface LibraryEntry {
   readonly id: string;
@@ -538,9 +538,9 @@ export type AppState =
   | { readonly kind: 'installing'; readonly game: GameInfo }
   | { readonly kind: 'uninstalling'; readonly game: GameInfo }
   /**
-   * Linux-only (Р7g): the game's Wine prefix is being provisioned (winetricks) before the installer/game
+   * Linux-only: the game's Wine prefix is being provisioned (winetricks) before the installer/game
    * runs. A transient screen shown WITHIN installing/launching; the renderer shows "Configuring Proton..."
-   * and appends a rotating funny suffix after a minute (Р7j). Reverts to the prior state when done.
+   * and appends a rotating funny suffix after a minute. Reverts to the prior state when done.
    */
   | { readonly kind: 'configuringProton'; readonly game: GameInfo }
   | { readonly kind: 'syncing-in'; readonly game: GameInfo }
@@ -728,7 +728,7 @@ export type AppNotification =
    * on purpose — the id names nothing the launcher can open, so pressing this entry only dismisses it.
    */
   | (NotificationBase & { readonly kind: 'game-added-deferred'; readonly gameTitle: string })
-  /** Same as `game-added-deferred`, but for a local game MOVED onto a card that is not active (Р2.5). */
+  /** Same as `game-added-deferred`, but for a local game MOVED onto a card that is not active. */
   | (NotificationBase & { readonly kind: 'game-moved-deferred'; readonly gameTitle: string })
   /**
    * A move to card succeeded, but its save folder already existed and was NOT empty on the card — the
@@ -964,7 +964,7 @@ export const IPC = {
   gameConfigReadRoot: 'gameConfig:read-root',
   /** game-renderer → main (invoke): moves a local (PC-library) game onto a card in one transaction — the
    * whole point being that the renderer cannot do "write the card, then write the library" as two
-   * gameConfig:save calls without a window where the game exists twice or nowhere (see the plan, Р2.5).
+   * gameConfig:save calls without a window where the game exists twice or nowhere.
    * Payload GameMoveRequest; answers with ConfigMoveResult. */
   gameConfigMoveToCard: 'gameConfig:move-to-card',
   /** game-renderer → main (invoke): the stored manifest text of a game from the HISTORY — the user's
@@ -1185,7 +1185,7 @@ export type ConfigRootReadResult =
 /**
  * What `gameConfig:read-history` answers with: the stored slot text for a game whose card is not in.
  * There is no root and no signature — the card the edits are for may be anywhere, or nowhere — so the
- * screen addresses everything by id instead (see the plan, Р6).
+ * screen addresses everything by id instead.
  */
 export type HistoryConfigReadResult =
   | {
@@ -1219,7 +1219,7 @@ export interface GameConfigSaveRequest {
 }
 
 /**
- * Payload for gameConfig:move-to-card — moving a local (PC-library) game onto a card (see the plan Р2.5).
+ * Payload for gameConfig:move-to-card — moving a local (PC-library) game onto a card.
  * `fromText` is deliberately NOT part of this payload: main derives the PC library's post-move text
  * itself, from a fresh read, by removing the game being moved (see game-move.ts) — the same
  * never-trust-the-renderer's-derived-text stance the rest of this file takes for the writable side of a
@@ -1235,8 +1235,8 @@ export interface GameMoveRequest {
    * Separate from `id` on purpose: `id` comes from an editable form field, so the two can disagree, and
    * addressing the library by the EDITED value would remove — and copy the assets and saves of — whichever
    * other local game happens to answer to it. main additionally refuses a move where they differ at all:
-   * a rename would orphan everything keyed by the old id (stats, history, pending-flush) — see the plan's
-   * assumption 4 — so the rename belongs in a separate Save, before or after the move.
+   * a rename would orphan everything keyed by the old id (stats, history, pending-flush) — so the rename
+   * belongs in a separate Save, before or after the move.
    */
   readonly fromId: string;
   readonly fromRoot: string;
@@ -1292,7 +1292,7 @@ export interface GameConfigAcceptRequest {
 /**
  * Payload for gameConfig:list-dir. With `path` it lists that directory; without one main picks the
  * STARTING point for the field (`kind`) — the directory of `current` when it is already filled, else the
- * card root / the home folder / %APPDATA% (see the plan, Р5.2).
+ * card root / the home folder / %APPDATA%.
  */
 export interface GameConfigListDirRequest {
   readonly path?: string;
@@ -1310,7 +1310,7 @@ export interface DirEntry {
   readonly kind: 'dir' | 'file';
 }
 
-/** A starting point offered in the picker's left column. Not a restriction — see the plan, Р5.2. */
+/** A starting point offered in the picker's left column. Not a restriction: any live root may be browsed. */
 export interface DirRoot {
   readonly path: string;
   readonly label: string;

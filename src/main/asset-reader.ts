@@ -44,7 +44,7 @@ export const AUDIO_EXTENSIONS: readonly string[] = Object.keys(AUDIO_MIME).map((
  * An extension this reader does not know is REFUSED rather than served as `application/octet-stream`.
  * That fallback used to be harmless (only manifest-referenced files reached it), but the in-launcher
  * picker lets the renderer name the path — and "read any file on the machine as base64" is exactly what
- * the octet-stream branch would have granted (see the plan, Р5.1).
+ * the octet-stream branch would have granted.
  */
 export async function readImageDataUrl(filePath: string): Promise<string | undefined> {
   const mime = IMAGE_MIME[path.extname(filePath).toLowerCase()];

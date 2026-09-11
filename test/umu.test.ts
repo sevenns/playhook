@@ -20,7 +20,7 @@ describe('umu launch helpers (Proton exe mode)', () => {
     });
   });
 
-  describe('installDirs (install mode — Р7)', () => {
+  describe('installDirs (install mode)', () => {
     it('host view is <pfx>/drive_c/playhook/games/<id>, installer view is C:\\playhook\\games\\<id>', () => {
       const { hostDir, installerDir } = installDirs('/home/deck/.config/playhook', 'my-game');
       expect(hostDir).toBe(
@@ -48,7 +48,7 @@ describe('umu launch helpers (Proton exe mode)', () => {
     });
   });
 
-  describe('pendingWinetricks (prefix provisioning — Р7b)', () => {
+  describe('pendingWinetricks (prefix provisioning)', () => {
     it('returns the full baseline when nothing is done and no extras', () => {
       expect(pendingWinetricks([], [])).toEqual([...INSTALL_BASELINE_WINETRICKS]);
     });
@@ -115,7 +115,7 @@ describe('umu launch helpers (Proton exe mode)', () => {
       expect(env.PROTON_LOG_DIR).toBe('/home/deck/.config/playhook/proton-logs');
     });
 
-    it('strips the AppImage linker vars so system python3/Proton use clean libs (§5.1)', () => {
+    it('strips the AppImage linker vars so system python3/Proton use clean libs', () => {
       const env = buildUmuEnv(
         {
           PATH: '/usr/bin',

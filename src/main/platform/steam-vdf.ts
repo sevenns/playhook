@@ -1,9 +1,9 @@
 // Binary VDF (Valve's key-value binary format) reader/writer, scoped to what `shortcuts.vdf` uses.
 // Pure and electron-free (unit-tested in test/steam-shortcuts-vdf.test.ts).
 //
-// Why hand-rolled and not a dependency: the plan's candidate `steam-binary-vdf` is a single 0.1.0 release
-// over a year old that drags in six transitive deps (hex2dec, polycrc, buffer-reader, node-int64) — it
-// failed both liveness and dependency checks, so the plan's explicit fallback applies. The format is small
+// Why hand-rolled and not a dependency: the obvious candidate, `steam-binary-vdf`, is a single 0.1.0
+// release over a year old that drags in six transitive deps (hex2dec, polycrc, buffer-reader, node-int64)
+// — it failed both liveness and dependency checks. The format is small
 // and frozen; a round-trip test covers it far more cheaply than auditing that tree.
 //
 // Format: a stream of `<type byte><key NUL><payload>` entries, terminated by 0x08.
