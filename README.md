@@ -266,19 +266,21 @@ the Steam Deck they work in **Game Mode** as well as on the desktop.
 
 ### Settings
 
-- **Updates** — automatic mode (*download and install* / *download, install manually* / *off*), the
-  **pre-release (beta)** channel, and a manual *Check for updates* with the current version.
-- **Appearance** — theme (system / light / dark), **language** (system / English / Russian), and a
-  custom **background for the empty screen** (any image; *Reset* restores the bundled wallpaper).
+- **Updates** — the current version and a *Check for updates* button, the automatic mode (*download
+  and install* / *download, install manually* / *off*) and the **pre-release (beta)** channel. On macOS,
+  where the app cannot update itself, only the status line is shown.
+- **Language** — the interface language (system / English / Russian).
 - **General** — the gamepad summon hotkey, *keep the screen awake while the launcher is open*,
-  *always show the no-card screen* (instead of hiding to the tray), *disable silent installer mode*
-  (see [Install mode](#install-mode-heavy-games-on-slow-media)), and, on the Steam Deck, the Game Mode
-  auto-launch on card insertion.
+  *keep the launcher open without a card* (instead of hiding to the tray), *disable silent installer
+  mode* (see [Install mode](#install-mode-heavy-games-on-slow-media)), and, on the Steam Deck, the Game
+  Mode auto-launch on card insertion.
+- **Game metadata** — an optional **SteamGridDB API key**: with it, *Find online* also offers covers and
+  backgrounds from SteamGridDB (see [Credits](#credits)).
 - **Audio** — the **navigation sound set** and the **background ambience** shipped with the app, a
   volume slider for each, and an *only global ambience* switch that makes the app's ambience win over
   whatever the card carries in `backgroundMusic`. The navigation sounds always come from the chosen set:
   a card cannot supply its own.
-- **Advanced** — *Open logs*, *Open games folder* (the install-mode directory), *Reset to defaults*.
+- **Reset to defaults** and **Close** at the bottom. The logs folder is opened from the tray menu.
 
 Settings live in `settings.json` next to the rest of the app state (`%APPDATA%\playhook\` on Windows,
 `~/.config/playhook/` on Linux, `~/Library/Application Support/playhook/` on macOS); a missing or
@@ -916,7 +918,7 @@ exists while you are in Game Mode; **Remove from Steam** deletes it.
 The main process writes a timestamped log, split **per calendar day** into
 `%APPDATA%\playhook\logs\main-YYYY-MM-DD.log` (`~/.config/playhook/logs/` on Linux,
 `~/Library/Application Support/playhook/logs/` on macOS); files older than
-**14 days** are pruned on startup. Open the folder from **Settings → Advanced → Open logs**.
+**14 days** are pruned on startup. Open the folder from the tray menu (**Open logs**).
 
 It records card insertions, manifest validation, the stats reconcile / card-copy result, and
 launch/exit — useful when a save or stats copy to the card silently fails.
@@ -977,14 +979,29 @@ launch/exit — useful when a save or stats copy to the card silently fails.
 ```
 src/
   main/        # all work with the FS/processes/disks (Electron main)
+    metadata/  # "Find online": the MetadataProvider seam and one module per source (Steam, GOG, ...)
     platform/  # everything OS-specific (win32 / linux + Proton, umu / darwin)
   preload/     # the typed contextBridge bridge
   renderer/    # UI + gamepad/keyboard input (launcher, settings, customize — no Node)
-  shared/      # shared contract of types/IPC channels + the i18n dictionaries
+  shared/      # shared contract of types/IPC channels
+    i18n/      # the en / ru dictionaries and plural rules
 test/          # vitest suites (plain Node, no electron)
+  renderer/    # DOM tests of the screens, run under happy-dom against the real index.html
+  stubs/       # the inert `electron` stub the node suites are aliased to
+scripts/       # build-time helpers, plain ESM (see below)
 ```
 
-npm scripts: `typecheck`, `lint`, `test`, `format`, `build`, `start`, `rebuild`, `build:umu`, `dist`.
+npm scripts: `typecheck`, `lint`, `test`, `format`, `format:check`, `build` (= `build:renderer`,
+`build:app`, `build:main`, `build:assets`), `build:umu`, `start`, `rebuild`, `dist`; `postinstall` runs
+`electron-builder install-app-deps`.
+
+`scripts/*.mjs`:
+
+- `copy-assets.mjs` — copies html/css/fonts/audio into `dist/` after tsc and writes `dist/audio/index.json`.
+- `audio-index.mjs` — the pure, unit-tested helpers `copy-assets.mjs` uses to list sound sets and ambience.
+- `fetch-umu.mjs` — downloads the pinned umu-launcher zipapp into `resources/umu/` for the Linux build.
+- `after-pack.mjs` — electron-builder `afterPack` hook (Linux): wraps the executable so Game Mode gets `--no-sandbox`.
+
 Contributor conventions (layers, error handling, adding an IPC channel, the daemon's electron-free
 import graph) live in [`CLAUDE.md`](CLAUDE.md).
 
@@ -1026,8 +1043,8 @@ new files, not a gate: the existing hand-aligned sources are intentionally left 
   client (the card is just a pointer by `appid`). For a **non-Steam** wrapper/launcher `.exe`, point it at
   the exe and use [`watchProcesses`](#rules-and-security-the-card-is-untrusted-input) so exit detection
   works.
-- **Is there a Russian UI?** Yes — *Settings → Appearance* has English and Russian (plus a light/dark/system
-  theme), and by default the app follows the system language.
+- **Is there a Russian UI?** Yes — *Settings → Language* has English and Russian, and by default the app
+  follows the system language.
 
 ---
 
