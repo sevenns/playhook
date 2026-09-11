@@ -174,7 +174,10 @@ build does not self-update. **All OS-specific behaviour lives behind the `Platfo
   "fix" such a failure by rewriting the expectation with `path.join`: that makes the test assert whatever
   the code does and stops testing anything at all.
 
-## Tooling (all run in CI before build)
+## Tooling
+
+The first three run in CI on every PR and push to `main` (`check.yml`) and again before every release
+build. Prettier is deliberately NOT a gate.
 
 - `npm run typecheck` — strict `tsc`, no `any`. Covers `test/` as well as `src/`.
 - `npm run lint` — ESLint with type-aware rules (`no-non-null-assertion` — the "no `!`" rule, which
@@ -182,5 +185,6 @@ build does not self-update. **All OS-specific behaviour lives behind the `Platfo
   `strict-boolean-expressions`), over `src` and `test`. Tests switch off `require-await` and
   `unbound-method` (both only ever fire on test doubles) and allow a `_`-prefixed unused parameter.
 - `npm test` — vitest.
-- `npm run format` / `format:check` — Prettier (available for new code; the existing hand-aligned
-  files are intentionally not mass-reformatted).
+- `npm run format` / `format:check` — Prettier, available for new code and not run in CI: the existing
+  hand-aligned files are intentionally not mass-reformatted, so `format:check` is red on most of the repo
+  by design. Format the file you are adding; do not reformat the one you are touching.
