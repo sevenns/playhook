@@ -33,6 +33,8 @@ import { SettingsService } from './settings-service';
 import { NotificationsService } from './notifications';
 import { NotificationsStore } from './notifications-store';
 import { GameConfigService } from './game-config';
+import { FilePickerService } from './file-picker-service';
+import { GameMoveTransaction } from './game-move-transaction';
 import { HttpClient } from './metadata/http';
 import { MetadataService } from './metadata/service';
 import { SteamProvider } from './metadata/steam';
@@ -388,19 +390,36 @@ async function bootstrap(): Promise<void> {
     pcLibrary,
     reloadPcLibrary: () => controller.reloadPcLibrary(),
     getTranslator,
-    toManifestPcSavePath: (absolute) => platform.savePathResolver.toManifestPcSavePath(absolute),
     findGameSource: (id) => controller.findGameSource(id),
     notify: (input) => notifications.notify(input),
-    resolveManifest: (id) => controller.findManifest(id),
     findPcManifest: (id) => controller.findPcManifest(id),
-    isBusy: () => controller.isBusy(),
     library,
     isCardLoading: () => controller.isCardLoading(),
     refreshLibrary: () => controller.refreshLibraryRow(),
+  });
+  gameConfig.init();
+  // The in-launcher file browser and the move-to-card transaction, both built on the root guard and the
+  // game.json reads/writes GameConfigService exposes (see the two modules' headers).
+  const filePicker = new FilePickerService({
+    config: gameConfig,
+    getActiveRoot: () => watcher.getActiveRoot(),
+    pcLibrary,
+    getTranslator,
+    toManifestPcSavePath: (absolute) => platform.savePathResolver.toManifestPcSavePath(absolute),
+  });
+  filePicker.init();
+  const gameMove = new GameMoveTransaction({
+    config: gameConfig,
+    getTranslator,
+    getActiveRoot: () => watcher.getActiveRoot(),
+    reloadManifest: (root) => controller.reloadManifest(root),
+    notify: (input) => notifications.notify(input),
+    resolveManifest: (id) => controller.findManifest(id),
+    isBusy: () => controller.isBusy(),
     pcStore: store,
     savePathResolver: platform.savePathResolver,
   });
-  gameConfig.init();
+  gameMove.init();
   // Both ways round: the service is built FROM the controller, and the controller's collision answer
   // (a game on the card and on this PC at once) is carried out BY the service.
   controller.setCollisionResolver(gameConfig);

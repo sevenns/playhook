@@ -144,19 +144,12 @@ beforeEach(async () => {
     pcLibrary: new PcLibraryStore({ baseDir: dir }),
     reloadPcLibrary: () => Promise.resolve({ ok: true as const }),
     getTranslator: () => t,
-    toManifestPcSavePath: () => null,
     findGameSource: () => null,
     notify: () => undefined,
-    resolveManifest: () => null,
     findPcManifest: () => local,
-    isBusy: () => false,
     library: new LibraryStore({ baseDir: dir, readStats: () => Promise.resolve(NO_STATS) }),
     isCardLoading: () => false,
     refreshLibrary: () => undefined,
-    pcStore: { removeSyncState: () => Promise.resolve() },
-    savePathResolver: {
-      resolvePcSavePath: () => Promise.resolve({ path: '', containerExists: false }),
-    },
   });
 });
 
