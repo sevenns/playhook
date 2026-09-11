@@ -46,7 +46,7 @@ export interface LinuxGameLauncherDeps {
 function protonLogDir(userData: string): string | undefined {
   const flag = process.env['PLAYHOOK_PROTON_LOG'];
   if (flag === undefined || flag === '' || flag === '0') return undefined;
-  return path.join(userData, 'proton-logs');
+  return path.posix.join(userData, 'proton-logs');
 }
 
 /** Ensures the Proton-log dir exists (Proton won't create PROTON_LOG_DIR itself). No-op when off. */
@@ -64,7 +64,7 @@ async function collectProtonLog(logDir: string): Promise<void> {
     const names = (await fse.readdir(logDir)).filter((name) => name.endsWith('.log'));
     let newest: { readonly path: string; readonly mtimeMs: number } | null = null;
     for (const name of names) {
-      const full = path.join(logDir, name);
+      const full = path.posix.join(logDir, name);
       const stat = await fse.stat(full);
       if (newest === null || stat.mtimeMs > newest.mtimeMs) newest = { path: full, mtimeMs: stat.mtimeMs };
     }
@@ -176,7 +176,7 @@ const WINETRICKS_SENTINEL = '.playhook-winetricks';
 /** Reads the verbs already provisioned in `prefix` (empty if the sentinel is missing/unreadable). */
 async function readDoneVerbs(prefix: string): Promise<string[]> {
   try {
-    const text = await fse.readFile(path.join(prefix, WINETRICKS_SENTINEL), 'utf8');
+    const text = await fse.readFile(path.posix.join(prefix, WINETRICKS_SENTINEL), 'utf8');
     return text.split('\n').map((line) => line.trim()).filter((line) => line.length > 0);
   } catch {
     return []; // missing sentinel = nothing provisioned yet (normal first install)
@@ -254,7 +254,7 @@ async function ensurePrefixDeps(
     // Persist the union of previously-done and newly-applied verbs so re-installs skip this step.
     const union = [...new Set([...done, ...pending])];
     try {
-      await fse.writeFile(path.join(prefix, WINETRICKS_SENTINEL), `${union.join('\n')}\n`);
+      await fse.writeFile(path.posix.join(prefix, WINETRICKS_SENTINEL), `${union.join('\n')}\n`);
     } catch (cause) {
       // Non-fatal: without the sentinel the next install re-runs winetricks (idempotent, just slower).
       log.warn(`[install] failed to write winetricks sentinel: ${cause instanceof Error ? cause.message : String(cause)}`);
@@ -332,7 +332,7 @@ export function createLinuxGameLauncher(deps: LinuxGameLauncherDeps): GameProces
       // on linux — umu surfaces the Wine window whenever the installer isn't running silently).
       const installerArgs = buildInstallerArgs(install.type, install.installerDir, install.args, false, silent);
       const args = buildUmuArgs(deps.umuRunPath, install.installerPath, installerArgs);
-      const cwd = path.dirname(install.installerPath);
+      const cwd = path.posix.dirname(install.installerPath);
       log.info(
         `[install] umu-run installer silent=${silent} prefix="${prefix}" installer="${install.installerPath}" dir="${install.installerDir}"`,
       );

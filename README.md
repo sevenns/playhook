@@ -994,7 +994,8 @@ import graph) live in [`CLAUDE.md`](CLAUDE.md).
 
 PRs welcome. The codebase is **strict TypeScript** (no `any`, no non-null `!`, explicit return types,
 functional style). Please run `npm run typecheck`, `npm run lint` and `npm test` before opening a PR —
-CI runs all three, on Windows, Linux **and** macOS.
+CI runs all three on every PR, on Windows, Linux **and** macOS. Prettier (`npm run format`) is there for
+new files, not a gate: the existing hand-aligned sources are intentionally left as they are.
 
 ---
 

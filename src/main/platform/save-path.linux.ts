@@ -88,7 +88,7 @@ async function findCompatdataPrefix(appid: number, steamLocator: SteamLocator): 
   if (steamPath === null) return null;
   const libs = await steamLibraryDirs(steamPath);
   for (const lib of libs) {
-    const pfx = path.join(lib, 'steamapps', 'compatdata', String(appid), 'pfx');
+    const pfx = path.posix.join(lib, 'steamapps', 'compatdata', String(appid), 'pfx');
     if (await fse.pathExists(pfx)) return pfx;
   }
   return null;

@@ -42,6 +42,43 @@ export default tseslint.config(
     },
   },
   {
+    // CLAUDE.md's platform-layer rule ("all OS-specific behaviour lives behind the `Platform` bundle, not
+    // scattered `process.platform` checks"), enforced. The allowlist below is every file where a direct
+    // check is the RIGHT thing, each with its reason; anything else is a behavioural branch that belongs
+    // on a `Platform` interface. `warn` until the five remaining behavioural hits (ipc.ts,
+    // game-launcher.ts ×2, registry.ts ×2) move into `Platform`, then `error`. A per-line
+    // `eslint-disable` is not the way out — the repo has none, and that is worth keeping.
+    files: ['src/main/**/*.ts'],
+    ignores: [
+      // The platform layer itself: this is where the OS is meant to be asked.
+      'src/main/platform/**',
+      // Bootstrap and electron-UI glue that select the bundle or an OS-specific electron behaviour once
+      // (application menu, dock hide, tray icon format, simple-fullscreen, log/config directories).
+      'src/main/main.ts',
+      'src/main/window.ts',
+      'src/main/tray.ts',
+      'src/main/logger.ts',
+      'src/main/config-paths.ts',
+      // electron-updater environment detection (AppImage vs macOS) — about the updater's runtime, not
+      // about a game.
+      'src/main/updater.ts',
+      // Self-guards of the win32-only FFI modules: they must refuse to bind koffi anywhere but Windows
+      // BEFORE any Platform object exists.
+      'src/main/foreground.ts',
+      'src/main/window-finder.ts',
+    ],
+    rules: {
+      'no-restricted-syntax': [
+        'warn',
+        {
+          selector: "MemberExpression[object.name='process'][property.name='platform']",
+          message:
+            'OS-specific behaviour belongs on a `Platform` interface (src/main/platform/types.ts), not on a process.platform check here. See CLAUDE.md "Platform layer".',
+        },
+      ],
+    },
+  },
+  {
     files: ['test/**/*.ts'],
     rules: {
       // A fake implementing an async interface has nothing to await, and an assertion on a fake's method
