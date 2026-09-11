@@ -101,7 +101,8 @@ build does not self-update. **All OS-specific behaviour lives behind the `Platfo
 
 - Add the capability to an interface in `platform/types.ts` (the bundle is `ProcessMonitor`,
   `SteamLocator`, `SteamShortcuts`, `GameProcessLauncher`, `SavePathResolver`, `PowerBackend`,
-  `RemovableMounter`, `resolveInstallDir`).
+  `RemovableMounter`, `resolveInstallDir`). The file is types only and imports nothing from the
+  implementations — `GameProcess`, `PowerAction` and `InstallDirResolver` live there for that reason.
 - Implement it in **all three** of `platform/win32.ts`, `platform/linux.ts` and `platform/darwin.ts`
   (linux Proton helpers live in `platform/*.linux.ts` / `umu.ts`; the macOS ones in `platform/*.darwin.ts`).
   `createPlatform(process.platform)` selects the bundle once at bootstrap in an explicit three-way branch
@@ -187,9 +188,9 @@ tests and lint, in the same source-as-text style as `test/daemon-imports.test.ts
   `basename` / `resolve` / `relative` / `normalize` / `isAbsolute` / `path.sep`.
 - **`process.platform` outside `platform/`** — ESLint `no-restricted-syntax` over `src/main/**`
   (`eslint.config.mjs`), with an explicit allowlist and a reason per file (bootstrap / electron-UI glue,
-  electron-updater environment detection, the win32-only FFI modules' self-guards). It is `warn` until the
-  remaining behavioural checks move onto `Platform`, then `error`. A per-line `eslint-disable` is not the
-  way out: the repo has none.
+  electron-updater environment detection, the win32-only FFI modules' self-guards). It is an `error`: a
+  behavioural branch belongs on a `Platform` interface, implemented for all three OSes. A per-line
+  `eslint-disable` is not the way out: the repo has none.
 - **File and factory size ratchet** — `test/file-size-ratchet.test.ts` keeps a baseline of raw `wc -l`
   per `src/**` file over 1000 lines and per screen factory (`createControls`, `createGameSettingsScreen`,
   …). Nothing may grow past its entry; a file that shrank by more than 50 lines must have its entry

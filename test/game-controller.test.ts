@@ -26,8 +26,7 @@ import { StateManager } from '../src/main/state';
 import { LaunchAbortedError } from '../src/main/launch-errors';
 import { DEFAULT_SETTINGS } from '../src/main/app-settings';
 import { createTranslator } from '../src/shared/i18n/index';
-import type { GameProcess } from '../src/main/game-launcher';
-import type { Platform } from '../src/main/platform/types';
+import type { GameProcess, Platform } from '../src/main/platform/types';
 import { IPC, type ResolvedManifest, type Stats } from '../src/shared/types';
 
 const ZERO_STATS: Stats = { schemaVersion: 1, totalPlaySeconds: 0, lastPlayedAt: null, launchCount: 0 };
@@ -205,6 +204,7 @@ async function harness(opts: HarnessOptions): Promise<Harness> {
       killByName: unexpected('killByName'),
       isSteamGameRunning: unexpected('isSteamGameRunning'),
       killSteamGame: unexpected('killSteamGame'),
+      killImagesElevated: unexpected('killImagesElevated'),
     },
     steamLocator: { locateSteam: () => Promise.resolve(null) },
     steamShortcuts: {
@@ -221,6 +221,7 @@ async function harness(opts: HarnessOptions): Promise<Harness> {
       launchInstaller: () => Promise.resolve(proc),
       prepareInstallDir: () => Promise.resolve(),
       launchUninstaller: unexpected('launchUninstaller'),
+      resolveUninstaller: () => Promise.resolve(null),
       uninstallDir: () => sweepDir,
       prefixCleanupDir: () => Promise.resolve(opts.mode === 'prefix-cleanup' ? sweepDir : null),
     },
@@ -243,7 +244,6 @@ async function harness(opts: HarnessOptions): Promise<Harness> {
     waitForWatchedExit: unexpected('waitForWatchedExit'),
     waitForSteamStart: unexpected('waitForSteamStart'),
     waitForSteamExit: unexpected('waitForSteamExit'),
-    killImagesElevated: unexpected('killImagesElevated'),
     focusGameWindow: () => false,
   };
   const deps: ControllerDeps = {

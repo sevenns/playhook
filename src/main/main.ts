@@ -15,7 +15,6 @@ import { PcLibraryStore } from './pc-library';
 import { DriveWatcher } from './drive-watcher';
 import { GameController } from './game-controller';
 import {
-  killImagesElevated,
   waitForExit,
   waitForStart,
   waitForSteamExit,
@@ -303,7 +302,6 @@ async function bootstrap(): Promise<void> {
       waitForWatchedExit,
       waitForSteamStart,
       waitForSteamExit,
-      killImagesElevated,
       focusGameWindow,
     },
     isGamescope: gameModeSession,

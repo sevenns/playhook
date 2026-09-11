@@ -7,6 +7,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import type {
   GameProcessLauncher,
+  InstallDirResolver,
   Platform,
   PlatformDeps,
   PowerBackend,
@@ -18,18 +19,15 @@ import type {
   SteamShortcuts,
 } from './types';
 import {
+  killImagesElevated,
   launchGame,
   launchInstaller,
   launchUninstaller,
 } from '../game-launcher';
+import { resolveUninstaller } from '../uninstaller.win32';
 import { getSteamPath } from '../registry';
 import { suspendToSleep } from '../power-native';
-import {
-  expandPcSavePath,
-  absoluteToPcSavePath,
-  type ManifestEnv,
-  type InstallDirResolver,
-} from '../manifest';
+import { expandPcSavePath, absoluteToPcSavePath, type ManifestEnv } from '../manifest';
 import { createTranslator } from '../../shared/i18n/index';
 
 const execFileAsync = promisify(execFile);
@@ -94,6 +92,7 @@ function createProcessMonitor(): ProcessMonitor {
     killSteamGame(_appid, watchNames): Promise<void> {
       return monitor.killByName(watchNames);
     },
+    killImagesElevated: (imageNames) => killImagesElevated(imageNames),
   };
   return monitor;
 }
@@ -132,6 +131,9 @@ function createGameLauncher(monitor: ProcessMonitor): GameProcessLauncher {
     // pre-clean, and `copy` can write into it straight away.
     prepareInstallDir: () => Promise.resolve(),
     launchUninstaller: (target) => launchUninstaller(target, monitor),
+    // The game's own uninstaller first (FS search in the install dir → registry fallback): it must clean
+    // the shared system before the install dir is removed.
+    resolveUninstaller: (install) => resolveUninstaller(install),
     // win32: no Wine prefix — uninstall removes the app-controlled install dir (after the game's own
     // uninstaller runs). 1:1 with the pre-port behaviour.
     uninstallDir: (install) => install.dir,

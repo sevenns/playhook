@@ -23,13 +23,12 @@ import { type Translator } from '../shared/i18n/index';
 import { type ControllerDeps } from './controller-deps';
 import { findCaseInsensitiveName } from './manifest';
 import { LaunchAbortedError } from './launch-errors';
-import { type GameProcess } from './game-launcher';
 import { openSteamUri } from './steam-uri';
-import { type Platform, type ProcessMonitor } from './platform';
+import { type GameProcess, type Platform, type ProcessMonitor } from './platform';
 import { normalizeImageNames } from './image-names';
 import { type SteamInstallWatch } from './steam-install-watch';
 import { type SaveSyncFlow } from './save-sync-flow';
-import { removeWithRetry, resolveUninstaller } from './uninstaller.win32';
+import { removeWithRetry } from './uninstaller.win32';
 import { describe, delay } from './util';
 import { log } from './logger';
 
@@ -284,7 +283,7 @@ export class GameSequences {
         //     here (no UAC for them). A declined UAC just leaves the targets up → killFailed below.
         if (manifest.raw.runAsAdmin && (await this.killTargetsStillAlive(targets, proc, KILL_ELEVATE_GRACE_SEC))) {
           log.info(`[kill] elevated game survived non-elevated kill id=${manifest.raw.id} — escalating to elevated taskkill (UAC)`);
-          this.deps.processControl.killImagesElevated(targets);
+          this.monitor.killImagesElevated(targets);
         }
 
         // 3. Fact-based verdict over a window bounded by killTimeoutSec (a killed process lingers for a
@@ -830,7 +829,7 @@ export class GameSequences {
       // inside it belongs to that install — running it would clean a foreign registry and might pop a
       // wizard. Straight to the sweep instead (which is the whole uninstall for copy).
       if (install.type !== 'copy') {
-        const target = await resolveUninstaller(install);
+        const target = await this.launcher.resolveUninstaller(install);
         if (target !== null) {
           try {
             const proc = await this.launcher.launchUninstaller(target);

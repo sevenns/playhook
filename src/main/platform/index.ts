@@ -25,6 +25,10 @@ export type {
   PcSaveLocation,
   PowerBackend,
   RemovableMounter,
+  GameProcess,
+  PowerAction,
+  InstallDir,
+  InstallDirResolver,
 } from './types';
 
 /** Builds the platform service bundle for the running OS. Bootstrapped once in main. */

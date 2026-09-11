@@ -121,14 +121,9 @@ export function parseCommandLine(command: string): string[] {
  * Resolves what to launch to uninstall an install-mode game: FS search in the install dir first
  * (deterministic, no parsing/encoding issues — we build the silent args), then a registry fallback for a
  * rare nonstandard NSIS uninstaller name. Returns null → the caller does a plain directory removal.
+ * win32-only: the linux side never runs an in-prefix uninstaller (see GameProcessLauncher.resolveUninstaller).
  */
 export async function resolveUninstaller(install: ResolvedInstallerRun): Promise<LaunchTarget | null> {
-  // Linux: uninstall removes the WHOLE per-game Wine prefix (see GameProcessLauncher.uninstallDir),
-  // so running the game's own in-prefix uninstaller first is pointless (its registry/shortcut cleanup
-  // lives in the prefix we're about to delete). Skip it — win32 still runs it (no prefix; it must clean
-  // the shared system before the install dir is removed).
-  if (process.platform !== 'win32') return null;
-
   // Step 1: FS search in the install dir, with self-built silent flags.
   const found = await findUninstallerInDir(install.dir, install.type);
   if (found !== null) {
@@ -141,8 +136,7 @@ export async function resolveUninstaller(install: ResolvedInstallerRun): Promise
   }
   if (install.type === 'custom') return null; // no FS match and no silent convention → plain remove
 
-  // Step 2: registry fallback (rare — nonstandard NSIS uninstaller name). win32-only (reached only on
-  // win32; the non-win32 early return above skips the whole uninstaller path).
+  // Step 2: registry fallback (rare — nonstandard NSIS uninstaller name).
   const entry = await findUninstallEntry(install.dir);
   if (entry === null) return null;
   const command = entry.quietUninstallString ?? entry.uninstallString;

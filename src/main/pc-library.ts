@@ -12,11 +12,8 @@
 import path from 'node:path';
 import fse from 'fs-extra';
 import { MANIFEST_FILENAME, PC_LIBRARY_DIRNAME, type ResolvedManifest } from '../shared/types';
-import {
-  readManifests,
-  type InstallDirResolver,
-  type ManifestEnv,
-} from './manifest';
+import { readManifests, type ManifestEnv } from './manifest';
+import { type InstallDirResolver } from './platform/types';
 import { log } from './logger';
 import { uniqueAssetFileName } from './asset-file-names';
 import { assertImportableAsset, type ImportKind } from './asset-import';

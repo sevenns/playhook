@@ -45,9 +45,9 @@ export default tseslint.config(
     // CLAUDE.md's platform-layer rule ("all OS-specific behaviour lives behind the `Platform` bundle, not
     // scattered `process.platform` checks"), enforced. The allowlist below is every file where a direct
     // check is the RIGHT thing, each with its reason; anything else is a behavioural branch that belongs
-    // on a `Platform` interface. `warn` until the five remaining behavioural hits (uninstaller.win32.ts,
-    // game-launcher.ts ×2, registry.ts ×2) move into `Platform`, then `error`. A per-line
-    // `eslint-disable` is not the way out — the repo has none, and that is worth keeping.
+    // on a `Platform` interface — the win32-only helpers (game-launcher.ts, registry.ts,
+    // uninstaller.win32.ts) are reached only through the win32 bundle, so they need no guard of their
+    // own. A per-line `eslint-disable` is not the way out — the repo has none, and that is worth keeping.
     files: ['src/main/**/*.ts'],
     ignores: [
       // The platform layer itself: this is where the OS is meant to be asked.
@@ -69,7 +69,7 @@ export default tseslint.config(
     ],
     rules: {
       'no-restricted-syntax': [
-        'warn',
+        'error',
         {
           selector: "MemberExpression[object.name='process'][property.name='platform']",
           message:

@@ -21,6 +21,7 @@ import {
   type ResolvedManifest,
 } from '../shared/types';
 import { translateIssueMessage, type Translator } from '../shared/i18n/index';
+import { type InstallDirResolver } from './platform/types';
 import { log } from './logger';
 
 // Install-mode block (optional). When present, the card holds an installer and `executable` is
@@ -465,26 +466,6 @@ type InstallResolveResult =
       readonly executablePath: string;
     }
   | { readonly ok: false; readonly message: string };
-
-/**
- * The app-controlled install directory in BOTH views. On win32 they are identical
- * (`%LOCALAPPDATA%\playhook\games\<id>`); on linux they diverge:
- * - `hostDir` — the real filesystem path inside the game's Wine prefix
- *   (`<pfx>/drive_c/playhook/games/<id>`): every fs op and the resolved `executable` live under it;
- * - `installerDir` — the SAME location as the installer sees it under Wine (`C:\playhook\games\<id>`),
- *   fed to the silent dir-arg (`/DIR=` / `/D=`).
- */
-export interface InstallDir {
-  readonly hostDir: string;
-  readonly installerDir: string;
-}
-
-/**
- * Platform install-dir resolution, injected into readManifests: maps a game `id` to both views of
- * its app-controlled install dir, or null when install mode is unsupported on this platform/config
- * (win32 with `%LOCALAPPDATA%` unset). `id` is already validated as a safe single path segment.
- */
-export type InstallDirResolver = (id: string) => InstallDir | null;
 
 /**
  * Resolves the install-mode block: verifies the installer exists on the card, derives the

@@ -21,7 +21,6 @@ import {
   type waitForWatchedStart,
   type waitForSteamStart,
   type waitForSteamExit,
-  type killImagesElevated,
 } from './game-launcher';
 import { type Platform } from './platform';
 import { type AppSettingsStore } from './app-settings';
@@ -44,7 +43,7 @@ export interface CollisionResolver {
 /**
  * The process waits and the win32-only FFI helpers the sequences drive. Injected rather than imported:
  * the waits poll on second-long cadences (a real exit wait is three misses 2.5 s apart), and
- * `killImagesElevated` / `focusGameWindow` bind koffi — so a test of the controller hands in fast fakes
+ * `focusGameWindow` binds koffi — so a test of the controller hands in fast fakes
  * and never touches the native side.
  */
 export interface ProcessControl {
@@ -54,7 +53,6 @@ export interface ProcessControl {
   readonly waitForWatchedExit: typeof waitForWatchedExit;
   readonly waitForSteamStart: typeof waitForSteamStart;
   readonly waitForSteamExit: typeof waitForSteamExit;
-  readonly killImagesElevated: typeof killImagesElevated;
   readonly focusGameWindow: typeof focusGameWindow;
 }
 
