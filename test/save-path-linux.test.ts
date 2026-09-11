@@ -12,7 +12,7 @@ import type { GameManifest, ResolvedManifest } from '../src/shared/types';
 const PFX = '/home/deck/.config/playhook/prefixes/mygame';
 const HOME = `${PFX}/drive_c/users/steamuser`;
 
-describe('resolveInsideWinePrefix — %PREFIX% → Wine prefix mapping (Р5)', () => {
+describe('resolveInsideWinePrefix — %PREFIX% → Wine prefix mapping', () => {
   it('maps %APPDATA% to AppData/Roaming', () => {
     expect(resolveInsideWinePrefix(PFX, '%APPDATA%\\My Game\\Saves')).toBe(
       `${HOME}/AppData/Roaming/My Game/Saves`,
@@ -64,7 +64,7 @@ describe('resolveInsideWinePrefix — %PREFIX% → Wine prefix mapping (Р5)', (
   });
 });
 
-describe('winePrefixToManifestPcSavePath — Configure Browse reverse mapping (Р5)', () => {
+describe('winePrefixToManifestPcSavePath — Customize Browse reverse mapping', () => {
   it('maps a picked folder inside the prefix back to its %PREFIX% token', () => {
     expect(winePrefixToManifestPcSavePath(`${HOME}/AppData/Local/Saves`)).toBe('%LOCALAPPDATA%/Saves');
     expect(winePrefixToManifestPcSavePath(`${HOME}/AppData/Roaming/My Game/Saves`)).toBe(
@@ -161,8 +161,10 @@ describe('createLinuxSavePathResolver — a local game vs a local Steam game', (
     expect(location).not.toBeNull();
     // Asserted as "under compatdata + the Windows-profile tail" rather than one literal, because the
     // compatdata root is a real temp dir whose separators follow the OS the suite runs on (CI runs it on
-    // Windows too) — the tail below drive_c is the part this mapping owns.
-    expect(location?.path.startsWith(compat)).toBe(true);
+    // Windows too) — the tail below drive_c is the part this mapping owns. The resolver joins with
+    // `path.posix` (the platform-layer rule), so on the Windows runner the result is mixed-separator;
+    // compare with both sides normalised.
+    expect(location?.path.replace(/\\/g, '/').startsWith(compat.replace(/\\/g, '/'))).toBe(true);
     expect(location?.path.endsWith('drive_c/users/steamuser/AppData/Roaming/Hades/Saves')).toBe(true);
     expect(location?.containerExists).toBe(true);
   });

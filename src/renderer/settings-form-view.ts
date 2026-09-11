@@ -4,7 +4,7 @@
 //
 // Two jobs, and the second is the load-bearing one: rows are also PATCHED in place (patchRow) when a new
 // AppSettings snapshot arrives. Rebuilding the list on every settings:update would flash the screen and
-// restart every transition mid-flight — see the plan's §3.6. A full rebuild is only for a change in the
+// restart every transition mid-flight. A full rebuild is only for a change in the
 // row COMPOSITION (steamAvailable arriving).
 //
 // Everything but the Updates row is drawn by row-view-core, which the Customize screen shares: this

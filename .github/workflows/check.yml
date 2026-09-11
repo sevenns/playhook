@@ -1,0 +1,74 @@
+name: Check
+
+# Gate every pull request and every push to main on typecheck + lint + tests, on all three OSes. The
+# build-*.yml workflows run the same steps, but only on a v* tag or by hand — so between releases nothing
+# checked main, and rule violations (a bare `path.join` in a *.linux.ts module, which only fails on the
+# Windows runner) reached main and sat there until the next release build went red.
+#
+# Windows is not optional here: it is the only runner where the `path.posix` rule (CLAUDE.md, platform
+# layer) fails loudly.
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+# A new push to the same PR supersedes the run in flight — three OSes × ~5 minutes is too much to spend
+# on a commit nobody will look at.
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            electron-cache: ~/.cache/electron
+          # Pinned to windows-2022 for the same reason as build-windows.yml: windows-latest ships Visual
+          # Studio 18, which the bundled node-gyp cannot recognize, so the native drivelist build fails
+          # during `npm ci`.
+          - os: windows-2022
+            electron-cache: ~\AppData\Local\electron\Cache
+          - os: macos-latest
+            electron-cache: ~/Library/Caches/electron
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      # Node 22.12+ is required by electron@43 and @electron/rebuild@4 (their `engines`). `cache: npm`
+      # keeps ~/.npm between runs.
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      # The electron binary is downloaded by electron's own postinstall on every `npm ci`; caching its
+      # download directory saves ~100 MB per run.
+      - name: Cache electron download
+        uses: actions/cache@v4
+        with:
+          path: ${{ matrix.electron-cache }}
+          key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      # Deliberately WITHOUT --ignore-scripts: the postinstall (electron-builder install-app-deps) builds
+      # the native drivelist, and the game-config-* / game-move-transaction tests reach it through
+      # game-config.ts → drive-watcher.ts.
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Unit tests
+        run: npm test

@@ -1,5 +1,5 @@
-// Flat ESLint config (audit I4). Type-aware linting over src/ with the high-value async-safety rules
-// the audit calls out: no-floating-promises / no-misused-promises catch forgotten awaits, and
+// Flat ESLint config. Type-aware linting over src/ with the high-value async-safety rules:
+// no-floating-promises / no-misused-promises catch forgotten awaits, and
 // strict-boolean-expressions catches implicit nullable/number truthiness. eslint-config-prettier is
 // applied last so no lint rule fights the formatter. Tests are linted too (they are part of the
 // typechecked program), minus two rules that only ever fire on their fakes; build output is not.
@@ -37,6 +37,43 @@ export default tseslint.config(
           allowString: false,
           allowNumber: false,
           allowNullableObject: false,
+        },
+      ],
+    },
+  },
+  {
+    // CLAUDE.md's platform-layer rule ("all OS-specific behaviour lives behind the `Platform` bundle, not
+    // scattered `process.platform` checks"), enforced. The allowlist below is every file where a direct
+    // check is the RIGHT thing, each with its reason; anything else is a behavioural branch that belongs
+    // on a `Platform` interface. `warn` until the five remaining behavioural hits (ipc.ts,
+    // game-launcher.ts ×2, registry.ts ×2) move into `Platform`, then `error`. A per-line
+    // `eslint-disable` is not the way out — the repo has none, and that is worth keeping.
+    files: ['src/main/**/*.ts'],
+    ignores: [
+      // The platform layer itself: this is where the OS is meant to be asked.
+      'src/main/platform/**',
+      // Bootstrap and electron-UI glue that select the bundle or an OS-specific electron behaviour once
+      // (application menu, dock hide, tray icon format, simple-fullscreen, log/config directories).
+      'src/main/main.ts',
+      'src/main/window.ts',
+      'src/main/tray.ts',
+      'src/main/logger.ts',
+      'src/main/config-paths.ts',
+      // electron-updater environment detection (AppImage vs macOS) — about the updater's runtime, not
+      // about a game.
+      'src/main/updater.ts',
+      // Self-guards of the win32-only FFI modules: they must refuse to bind koffi anywhere but Windows
+      // BEFORE any Platform object exists.
+      'src/main/foreground.ts',
+      'src/main/window-finder.ts',
+    ],
+    rules: {
+      'no-restricted-syntax': [
+        'warn',
+        {
+          selector: "MemberExpression[object.name='process'][property.name='platform']",
+          message:
+            'OS-specific behaviour belongs on a `Platform` interface (src/main/platform/types.ts), not on a process.platform check here. See CLAUDE.md "Platform layer".',
         },
       ],
     },

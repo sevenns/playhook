@@ -10,9 +10,9 @@
  * two attempts re-arms the latch on its own.
  *
  * It cannot be the main mechanism, and it has to sit above every repeat cadence in the app: the pad's
- * HOLD_DELAY_MS is 350, and the keyboard's first repeat comes after an OS-configured 250-500 ms. A
- * threshold below those would split one hold into two sounds 350 ms apart, which is worse than one; a
- * deliberate re-tap is heard because of the release, not because of this number.
+ * HOLD_DELAY_MS is 175, and the keyboard's first repeat comes after an OS-configured 250-500 ms. A
+ * threshold below those would split one hold into two sounds a few hundred ms apart, which is worse than
+ * one; a deliberate re-tap is heard because of the release, not because of this number.
  */
 export const LIMIT_IDLE_MS = 700;
 

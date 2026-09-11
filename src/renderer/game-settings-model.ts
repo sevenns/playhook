@@ -116,7 +116,7 @@ export interface GameSettingsEnv {
    * inferring all of that from the length of a list reads like a puzzle.
    */
   readonly mode: 'edit' | 'add';
-  /** A "Move to card…" target has been chosen (Р2.2) — Save is labelled and routed for a move instead of
+  /** A "Move to card…" target has been chosen — Save is labelled and routed for a move instead of
    * an ordinary edit; Reset/Delete make no sense mid-move and are left out by the screen's own canDelete. */
   readonly move: boolean;
   /** Where a NEW game may go — the roots offered by the source row. Empty in edit mode (no such row). */
@@ -141,7 +141,7 @@ export interface GameSettingsEnv {
   readonly mixed: boolean;
   /** This game's validation problems, by the field path the validator reported (already localized). */
   readonly issues: ReadonlyMap<string, string>;
-  /** Problems in OTHER games of a multi-game file, already worded for display (see the plan, Э4). */
+  /** Problems in OTHER games of a multi-game file, already worded for display. */
   readonly otherIssues: readonly string[];
   /** A status line under the actions: what the last save did, or why Save is unavailable. */
   readonly status: string | null;
@@ -215,8 +215,8 @@ function lockedForHistory(rows: readonly GameSettingsRow[]): readonly GameSettin
 
 /**
  * The launch modes a source allows. A card cannot host a `pc` game (or the `none` draft state — a card
- * is portable and must stay resolvable on its own, see the plan's assumption 3); a local game is only
- * ever one, but may also be a draft with none configured yet (Р1).
+ * is portable and must stay resolvable on its own); a local game is only ever one, but may also be a
+ * draft with none configured yet.
  */
 export function launchModesFor(source: ManifestSource): readonly LaunchMode[] {
   return source === 'pc' ? ['pc', 'steam', 'none'] : ['executable', 'installer', 'steam'];
@@ -363,7 +363,7 @@ export function buildGameSettingsModel(
   });
   // Absent while a move is pending: the id is what BOTH halves of the move are addressed by (which slot
   // leaves the PC library, which stats/saves follow the game), so a move that also renames would orphan
-  // all of it — see the plan's assumption 4, and the matching refusal in GameConfigService.moveToCard.
+  // all of it — hence the matching refusal in GameConfigService.moveToCard.
   // Renaming stays available as an ordinary edit, before or after the move.
   if (!env.move) {
     basics.push({
@@ -815,7 +815,7 @@ export function hasSourceBoundValues(form: ManifestFormModel): boolean {
  * radio button was changed.
  */
 /**
- * Moves a LOADED PC-library form onto a card (Р2.2 — the pure half of "Move to card…"). Unlike
+ * Moves a LOADED PC-library form onto a card (the pure half of "Move to card…"). Unlike
  * `carryFormAcrossSources` (which starts a NEW, half-filled ADD form and has nothing of the old root's to
  * keep), this carries a REAL game's data across: everything the card dialect can express survives,
  * including the artwork/music, whose paths become the DETERMINISTIC names the game gets on the

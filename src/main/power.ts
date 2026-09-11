@@ -1,6 +1,6 @@
 // Power actions for the launcher's Shutdown/Reboot/Sleep menu. Interface-DI (like StatsService /
 // UpdaterService): the OS-touching bits are delegated to the platform PowerBackend (win32 `shutdown` +
-// powrprof FFI; linux `systemctl` via logind — Р9), and the app quit + error channel are injected, so
+// powrprof FFI; linux `systemctl` via logind), and the app quit + error channel are injected, so
 // this module is pure/electron/koffi-free on import and unit-testable in vitest with a fake backend (see
 // test/power.test.ts). main.ts bootstraps it with the real backend and registers the IPC channels (NOT
 // GameController — power isn't part of the game flow).
@@ -16,7 +16,7 @@ export type PowerAction = 'shutdown' | 'reboot' | 'sleep';
 
 export interface PowerServiceDeps {
   /** OS backend for the actual power commands (platform.powerBackend). `supported=false` → we surface
-   *  "unsupported" instead of running anything, replacing the old win32-only guard (Р9). */
+   *  "unsupported" instead of running anything, replacing the old win32-only guard. */
   readonly backend: PowerBackend;
   /** Quits the app after a successful shutdown/reboot (real: the bootstrap quit(), which drops close-guards). */
   quit(): void;

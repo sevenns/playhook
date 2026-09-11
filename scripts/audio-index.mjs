@@ -1,5 +1,5 @@
 // Pure helpers for building dist/audio/index.json — the bundled sound-set + ambience listing the
-// settings window reads at runtime (one readFile) instead of a readdir over the asar, which has no
+// Settings screen reads at runtime (one readFile) instead of a readdir over the asar, which has no
 // precedent in this codebase and whose withFileTypes/isDirectory was historically weak in the asar shim.
 // Side-effect-free so a unit test can exercise the .DS_Store / incomplete-set / non-audio filtering
 // without touching the filesystem.

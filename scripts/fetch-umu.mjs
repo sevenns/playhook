@@ -1,4 +1,4 @@
-// Fetches the umu-launcher zipapp into resources/umu/ for the Linux (Proton) build (Р1). The zipapp is a
+// Fetches the umu-launcher zipapp into resources/umu/ for the Linux (Proton) build. The zipapp is a
 // ~420 KB python zipapp (umu-run) + umu_run.py; it is NOT committed to the repo — this runs before the
 // Linux electron-builder pack (see build-linux.yml / `npm run build:umu`). Uses curl + tar (present on
 // macOS and the ubuntu CI runner). Idempotent: skips the download if resources/umu/umu-run already exists.
