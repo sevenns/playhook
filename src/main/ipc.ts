@@ -25,12 +25,7 @@ import {
   type Stats,
 } from '../shared/types';
 import { type Translator } from '../shared/i18n/index';
-import { type StateManager } from './state';
-import { type GameWindow } from './window';
-import { acceptsPendingFlush, type PcStore, type SyncSlot } from './pc-store';
-import { type StatsService } from './stats';
-import { type LibraryStore } from './library-store';
-import { type PcLibraryStore } from './pc-library';
+import { acceptsPendingFlush, type SyncSlot } from './pc-store';
 import { byRecentlyPlayed } from './library-index';
 import {
   commitHistorySync,
@@ -40,75 +35,20 @@ import {
 } from './history-sync';
 import { localGameGoesAfterMerge } from './history-config';
 import { sweepAtomicTemps } from './json-store';
-import { type DriveWatcher } from './drive-watcher';
 import { readManifests, findCaseInsensitiveName, isSafeGameId, type ManifestEnv } from './manifest';
 import { syncDir, syncByChange, snapshotTree } from './save-sync';
-import {
-  waitForExit,
-  waitForStart,
-  waitForWatchedExit,
-  waitForWatchedStart,
-  waitForSteamStart,
-  waitForSteamExit,
-  killImagesElevated,
-  LaunchAbortedError,
-  type GameProcess,
-} from './game-launcher';
+import { LaunchAbortedError } from './launch-errors';
+import { type GameProcess } from './game-launcher';
 import { findUninstallEntry } from './registry';
+import { type CollisionResolver, type ControllerDeps } from './controller-deps';
 import { steamInstallStatus } from './steam';
 import { openSteamUri } from './steam-uri';
 import { type PcSaveLocation, type Platform, type ProcessMonitor } from './platform';
 import { AssetReader } from './asset-reader';
-import { type AppSettingsStore } from './app-settings';
-import { type NotificationsService } from './notifications';
-import { focusGameWindow } from './window-finder';
 import { normalizeImageNames } from './image-names';
 import { SteamInstallWatch } from './steam-install-watch';
 import { describe, delay } from './util';
 import { log } from './logger';
-
-/**
- * What the collision answer needs from the Customize backend (GameConfigService). Attached after
- * construction — the service is built from this controller, so it cannot also be one of its deps.
- */
-export interface CollisionResolver {
-  /** The card's content signature right now, or null when it cannot be read. */
-  signatureFor(root: string): Promise<string | null>;
-  /** Puts a local game's name and artwork onto the card that carries the same id. */
-  mergeCollision(answer: GameCollisionAnswer): Promise<ConfigSaveResult>;
-  /** Drops a local game from the PC library (the draft whose look has just moved onto the card). */
-  removeLocalGame(id: string): Promise<ConfigSaveResult>;
-}
-
-export interface ControllerDeps {
-  readonly state: StateManager;
-  readonly window: GameWindow;
-  readonly store: PcStore;
-  readonly stats: StatsService;
-  /** The play history behind the carousel: copied art/audio of every game inserted on this device. */
-  readonly library: LibraryStore;
-  /** The local games added from this PC's own disk — a second, always-present manifest source. */
-  readonly pcLibrary: PcLibraryStore;
-  readonly watcher: DriveWatcher;
-  /** App-wide settings store — read/patched by the custom-wallpaper handlers (they own AssetReader). */
-  readonly settings: AppSettingsStore;
-  /**
-   * The notification inbox. Fed from the SUCCESS paths of the install/uninstall sequences only — never
-   * from a state transition: `failSequence` ends in `enterReady` too, and a Steam install never enters
-   * `installing` at all, so "it finished" cannot be read off the state machine.
-   */
-  readonly notifications: NotificationsService;
-  /** Platform services (process monitor, Steam locator, launcher, save-path resolver, power) for the OS. */
-  readonly platform: Platform;
-  /**
-   * Whether this is a SteamOS Game Mode (gamescope) session. In Game Mode there is no tray, so every path
-   * that would hide the window to the tray instead keeps the empty/error screen up. Always false on
-   * Windows/desktop, so their behaviour is unchanged.
-   */
-  readonly isGamescope: boolean;
-  /** The current translator (read live so a language change applies to freshly-generated messages). */
-  readonly getTranslator: () => Translator;
-}
 
 // How long the browsed game's HEAVY assets (hero images, music — megabytes of data URL each) wait before
 // being read. The light BrowseInfo goes out immediately, so the title/status/stats track the carousel
@@ -627,12 +567,7 @@ export class GameController {
   init(): void {
     const { state, window, watcher } = this.deps;
 
-    state.subscribe((next) => {
-      const browserWindow = window.browserWindow;
-      if (browserWindow !== null && !browserWindow.isDestroyed()) {
-        browserWindow.webContents.send(IPC.stateUpdate, next);
-      }
-    });
+    state.subscribe((next) => window.send(IPC.stateUpdate, next));
 
     watcher.onInsert((root) => void this.onInsert(root));
     watcher.onRemove(() => this.onRemove());
@@ -715,10 +650,7 @@ export class GameController {
 
   /** Sends a transient error to the renderer to surface in the error popup. */
   private sendError(message: string): void {
-    const browserWindow = this.deps.window.browserWindow;
-    if (browserWindow !== null && !browserWindow.isDestroyed()) {
-      browserWindow.webContents.send(IPC.errorShow, message);
-    }
+    this.deps.window.send(IPC.errorShow, message);
   }
 
   /** Stops the process waits and the watcher (on application exit). */
@@ -1163,10 +1095,7 @@ export class GameController {
       root,
       signature,
     };
-    const browserWindow = this.deps.window.browserWindow;
-    if (browserWindow !== null && !browserWindow.isDestroyed()) {
-      browserWindow.webContents.send(IPC.gameCollision, collision);
-    }
+    this.deps.window.send(IPC.gameCollision, collision);
   }
 
   /**
@@ -1424,7 +1353,7 @@ export class GameController {
   private resumeRunningGame(): void {
     const names = this.runningImageNames;
     if (names === null) return;
-    if (!focusGameWindow(names)) {
+    if (!this.deps.processControl.focusGameWindow(names)) {
       log.info('[resume] running game window not found — no-op (it may be closing)');
     }
   }
@@ -1529,7 +1458,7 @@ export class GameController {
         //     here (no UAC for them). A declined UAC just leaves the targets up → killFailed below.
         if (manifest.raw.runAsAdmin && (await this.killTargetsStillAlive(targets, proc, KILL_ELEVATE_GRACE_SEC))) {
           log.info(`[kill] elevated game survived non-elevated kill id=${manifest.raw.id} — escalating to elevated taskkill (UAC)`);
-          killImagesElevated(targets);
+          this.deps.processControl.killImagesElevated(targets);
         }
 
         // 3. Fact-based verdict over a window bounded by killTimeoutSec (a killed process lingers for a
@@ -1801,7 +1730,7 @@ export class GameController {
         }
         // Track by SteamAppId (via the monitor): on linux that reads /proc environ, so native-Linux AND
         // Proton games are detected regardless of their binary name; on win32 it maps to the watch names.
-        const { started } = await waitForSteamStart(
+        const { started } = await this.deps.processControl.waitForSteamStart(
           manifest.steam.appid,
           watchProcesses ?? [],
           manifest.raw.launchTimeoutSec,
@@ -1825,7 +1754,7 @@ export class GameController {
         this.runningProc = null;
         state.set({ kind: 'running', game: info, since });
         log.info(`[launch] running (steam) id=${manifest.raw.id} appid=${manifest.steam.appid}`);
-        await waitForSteamExit(manifest.steam.appid, watchProcesses ?? [], this.monitor, abort.signal);
+        await this.deps.processControl.waitForSteamExit(manifest.steam.appid, watchProcesses ?? [], this.monitor, abort.signal);
         log.info(`[launch] exited (steam) id=${manifest.raw.id}`);
       } else {
         // 2. launch → GameProcess (spawn, or elevated ShellExecuteEx per manifest.runAsAdmin)
@@ -1837,7 +1766,7 @@ export class GameController {
           return;
         }
         if (watchProcesses !== undefined && watchProcesses.length > 0) {
-          const { started } = await waitForWatchedStart(
+          const { started } = await this.deps.processControl.waitForWatchedStart(
             proc.pid,
             watchProcesses,
             manifest.raw.launchTimeoutSec,
@@ -1858,10 +1787,10 @@ export class GameController {
           this.runningProc = proc;
           state.set({ kind: 'running', game: info, since });
           log.info(`[launch] running (watched) id=${manifest.raw.id} watch=${watchProcesses.join(',')}`);
-          await waitForWatchedExit(watchProcesses, this.monitor, abort.signal);
+          await this.deps.processControl.waitForWatchedExit(watchProcesses, this.monitor, abort.signal);
           log.info(`[launch] exited (watched) id=${manifest.raw.id}`);
         } else {
-          const started = await waitForStart(proc, manifest.raw.launchTimeoutSec, abort.signal);
+          const started = await this.deps.processControl.waitForStart(proc, manifest.raw.launchTimeoutSec, abort.signal);
           if (!started) {
             this.failSequence('launch', info, this.t('errors.gameDidNotStart'));
             return;
@@ -1875,7 +1804,7 @@ export class GameController {
           this.runningProc = proc;
           state.set({ kind: 'running', game: info, since });
           log.info(`[launch] running id=${manifest.raw.id} pid=${proc.pid}`);
-          await waitForExit(proc, abort.signal);
+          await this.deps.processControl.waitForExit(proc, abort.signal);
           log.info(`[launch] exited id=${manifest.raw.id} pid=${proc.pid}`);
         }
       }
@@ -1962,7 +1891,7 @@ export class GameController {
 
         // Wait for the installer to exit, then grace-poll for the executable: some installers (often
         // custom wrappers) fork a child and exit early, so <exe> may appear shortly AFTER waitForExit.
-        await waitForExit(proc, abort.signal);
+        await this.deps.processControl.waitForExit(proc, abort.signal);
         const installed = await this.pollForExecutable(
           manifest.executablePath,
           manifest.raw.launchTimeoutSec,
@@ -2111,7 +2040,7 @@ export class GameController {
         if (target !== null) {
           try {
             proc = await this.launcher.launchUninstaller(target);
-            await waitForExit(proc, abort.signal);
+            await this.deps.processControl.waitForExit(proc, abort.signal);
           } catch (cause) {
             if (cause instanceof LaunchAbortedError) throw cause;
             log.warn(`[uninstall] uninstaller failed, continuing to cleanup: ${describe(cause)}`);
@@ -2398,10 +2327,7 @@ export class GameController {
   /** Stores the current hero images and pushes them to the window (null when no card / on error). */
   private setHero(assets: HeroAssets | null): void {
     this.currentHero = assets;
-    const browserWindow = this.deps.window.browserWindow;
-    if (browserWindow !== null && !browserWindow.isDestroyed()) {
-      browserWindow.webContents.send(IPC.heroUpdate, assets);
-    }
+    this.deps.window.send(IPC.heroUpdate, assets);
   }
 
   // ── Audio (the card's music + the bundled UI sound set) ──────────────────
@@ -2425,10 +2351,7 @@ export class GameController {
   /** Stores the current card's music and pushes it to the window (null when no card / on error). */
   private setCardMusic(url: string | null): void {
     this.currentCardMusic = url;
-    const browserWindow = this.deps.window.browserWindow;
-    if (browserWindow !== null && !browserWindow.isDestroyed()) {
-      browserWindow.webContents.send(IPC.cardMusicUpdate, url);
-    }
+    this.deps.window.send(IPC.cardMusicUpdate, url);
   }
 
   /**
@@ -2483,10 +2406,7 @@ export class GameController {
 
   /** Pushes the default-ambience data URL (or null) to the game window. */
   private pushAmbient(url: string | null): void {
-    const browserWindow = this.deps.window.browserWindow;
-    if (browserWindow !== null && !browserWindow.isDestroyed()) {
-      browserWindow.webContents.send(IPC.ambientUpdate, url);
-    }
+    this.deps.window.send(IPC.ambientUpdate, url);
   }
 
 
@@ -2495,10 +2415,7 @@ export class GameController {
   /** Stores the current carousel list and pushes it to the window (null when there is nothing to show). */
   private setLibrary(library: GameLibrary | null): void {
     this.currentLibrary = library;
-    const browserWindow = this.deps.window.browserWindow;
-    if (browserWindow !== null && !browserWindow.isDestroyed()) {
-      browserWindow.webContents.send(IPC.libraryUpdate, library);
-    }
+    this.deps.window.send(IPC.libraryUpdate, library);
   }
 
   /**
@@ -2596,35 +2513,23 @@ export class GameController {
   /** Stores the browsed game and pushes it to the window (null = nothing to show at all). */
   private pushBrowse(browse: BrowseInfo | null): void {
     this.currentBrowse = browse;
-    const browserWindow = this.deps.window.browserWindow;
-    if (browserWindow !== null && !browserWindow.isDestroyed()) {
-      browserWindow.webContents.send(IPC.browseUpdate, browse);
-    }
+    this.deps.window.send(IPC.browseUpdate, browse);
   }
 
   /** Pushes the browsed game's backgrounds. A SEPARATE channel from hero:update on purpose: that one
    * keeps carrying the inserted card's selected game, so browsing can never overwrite (and strand) it. */
   private pushBrowseHero(assets: HeroAssets | null): void {
-    const browserWindow = this.deps.window.browserWindow;
-    if (browserWindow !== null && !browserWindow.isDestroyed()) {
-      browserWindow.webContents.send(IPC.browseHero, assets);
-    }
+    this.deps.window.send(IPC.browseHero, assets);
   }
 
   /** Pushes the browsed game's music (music only — the SFX set is never rebuilt by browsing). */
   private pushBrowseMusic(url: string | null): void {
-    const browserWindow = this.deps.window.browserWindow;
-    if (browserWindow !== null && !browserWindow.isDestroyed()) {
-      browserWindow.webContents.send(IPC.browseMusic, url);
-    }
+    this.deps.window.send(IPC.browseMusic, url);
   }
 
   /** Pushes the bundled UI sound set (every UI sound the app plays). */
   private pushSfxSet(): void {
-    const browserWindow = this.deps.window.browserWindow;
-    if (browserWindow !== null && !browserWindow.isDestroyed()) {
-      browserWindow.webContents.send(IPC.sfxSetUpdate, this.sfxSet);
-    }
+    this.deps.window.send(IPC.sfxSetUpdate, this.sfxSet);
   }
 
   /**

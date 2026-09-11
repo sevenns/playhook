@@ -26,7 +26,7 @@ const SLACK = 50;
 /** Baseline `wc -l` per file over the free limit at the time of writing (playhook v0.8.1). */
 const FILE_BASELINE: Readonly<Record<string, number>> = {
   'src/main/game-config.ts': 1478,
-  'src/main/ipc.ts': 2833,
+  'src/main/ipc.ts': 2738,
   'src/main/manifest.ts': 1125,
   'src/renderer/app.ts': 1168,
   'src/renderer/controls.ts': 2188,

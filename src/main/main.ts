@@ -14,6 +14,16 @@ import { LibraryStore } from './library-store';
 import { PcLibraryStore } from './pc-library';
 import { DriveWatcher } from './drive-watcher';
 import { GameController } from './ipc';
+import {
+  killImagesElevated,
+  waitForExit,
+  waitForStart,
+  waitForSteamExit,
+  waitForSteamStart,
+  waitForWatchedExit,
+  waitForWatchedStart,
+} from './game-launcher';
+import { focusGameWindow } from './window-finder';
 import { GlobalGamepad } from './gamepad-global';
 import { createTray, buildTrayMenu, type TrayCallbacks, type TraySteamState } from './tray';
 import { createSteamShortcutService } from './steam-shortcut';
@@ -284,6 +294,16 @@ async function bootstrap(): Promise<void> {
     settings,
     notifications,
     platform,
+    processControl: {
+      waitForStart,
+      waitForExit,
+      waitForWatchedStart,
+      waitForWatchedExit,
+      waitForSteamStart,
+      waitForSteamExit,
+      killImagesElevated,
+      focusGameWindow,
+    },
     isGamescope: gameModeSession,
     getTranslator,
   });

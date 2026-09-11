@@ -40,8 +40,14 @@ import { describe } from './util';
 /** Where a staged asset lands on the card — the same `assets/` convention the PC library writes. */
 const CARD_ASSETS_DIRNAME = 'assets';
 
+/** The slice of the history the sync reads edits from and commits card slots to. */
+export type HistorySyncLibrary = Pick<
+  LibraryStore,
+  'entry' | 'readEditedSlot' | 'readCardSlot' | 'dropEdits' | 'takeCardSlot' | 'stagedFiles' | 'stagedFilePath'
+>;
+
 export interface HistorySyncDeps {
-  readonly library: LibraryStore;
+  readonly library: HistorySyncLibrary;
   readonly t: Translator;
 }
 
@@ -170,7 +176,7 @@ export async function syncHistoryConfig(
  */
 export async function commitHistorySync(
   sync: HistorySyncResult,
-  library: LibraryStore,
+  library: HistorySyncLibrary,
 ): Promise<void> {
   for (const [id, slot] of sync.uncommitted) {
     await library.takeCardSlot(id, slot);

@@ -28,17 +28,11 @@ import { type ProcessMonitor, type ProcessSnapshot } from './platform/types';
 import { buildInstallerArgs, buildParameters } from './launch-args';
 import { delay } from './util';
 import { log } from './logger';
+import { LaunchAbortedError } from './launch-errors';
 
 const START_POLL_INTERVAL_MS = 1000;
 const EXIT_POLL_INTERVAL_MS = 2500;
 const EXIT_DEBOUNCE_READS = 3;
-
-export class LaunchAbortedError extends Error {
-  constructor() {
-    super('launch wait aborted');
-    this.name = 'LaunchAbortedError';
-  }
-}
 
 /**
  * A launched game, abstracting the two launch backends so the wait loops don't care which was used.
