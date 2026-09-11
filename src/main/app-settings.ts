@@ -15,13 +15,10 @@ const settingsObject = z.object({
   // `autoUpdate` mid-write) still validates instead of failing the WHOLE parse → a full reset to defaults.
   // The value mirrors DEFAULT_SETTINGS. schemaVersion stays strict on purpose (see the note above the class).
   autoUpdate: z.enum(['download', 'download-install', 'off']).default('download-install'),
-  // Kept in the schema so an older settings.json that still carries a chosen theme parses (and so the
-  // key survives a round trip), but the value is NORMALIZED to 'system' on read: the Settings screen has
-  // no theme selector any more, and no window left that reads one: the launcher paints itself from the
-  // card's own palette.
-  theme: z.enum(['system', 'light', 'dark']).default('system'),
-  // Language mirrors theme: `.default('system')` so an older settings.json without the field stays valid
-  // (no schemaVersion bump / migration needed).
+  // `.default('system')` so an older settings.json without the field stays valid (no schemaVersion bump /
+  // migration needed). A `theme` key an older file still carries is dropped by z.object's default strip:
+  // the Settings screen has no theme selector any more, and no window left that reads one — the launcher
+  // paints itself from the card's own palette.
   language: z.enum(['system', 'en', 'ru']).default('system'),
   allowPrerelease: z.boolean().default(false),
   summonHotkeyEnabled: z.boolean().default(true),
@@ -62,7 +59,7 @@ const settingsObject = z.object({
   // The user's SteamGridDB key. `.default('')` migrates an older settings.json without the field (no
   // schemaVersion bump); an empty string is the normal state — the metadata feature just runs Steam-only.
   steamGridDbApiKey: z.string().default(''),
-});
+}) satisfies z.ZodType<AppSettings>;
 
 /**
  * `alwaysShowEmptyScreen` was renamed to `keepOpenWithoutCard` when the screen it was named after went
@@ -90,7 +87,6 @@ const settingsSchema = z.preprocess((raw) => {
 export const DEFAULT_SETTINGS: AppSettings = {
   schemaVersion: 1,
   autoUpdate: 'download-install',
-  theme: 'system',
   language: 'system',
   allowPrerelease: false,
   summonHotkeyEnabled: true,
@@ -150,11 +146,10 @@ export class AppSettingsStore {
 
   /**
    * Reads settings; returns the default when the file is missing or corrupted (a warn is logged on
-   * corruption). `theme` is normalized to 'system' regardless of what the file holds — see the schema.
+   * corruption).
    */
-  async read(): Promise<AppSettings> {
-    const parsed = await readJsonValidated(this.settingsPath, settingsSchema, DEFAULT_SETTINGS);
-    return { ...parsed, theme: 'system' };
+  read(): Promise<AppSettings> {
+    return readJsonValidated(this.settingsPath, settingsSchema, DEFAULT_SETTINGS);
   }
 
   /** The actual atomic write — called ONLY from inside a queued op, so it never enqueues (would deadlock). */

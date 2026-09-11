@@ -1,5 +1,5 @@
 // Tiny shared helpers used across main-process modules (the copies of `delay`/`describe` that had
-// drifted into individual files were folded in here; `manifest.ts` still carries its own `describe`).
+// drifted into individual files were folded in here).
 
 /** Human-readable message for an unknown thrown value. */
 export function describe(cause: unknown): string {

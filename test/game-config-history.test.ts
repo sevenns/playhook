@@ -15,9 +15,9 @@ import type {
   ConfigSaveResult,
   HistoryConfigReadResult,
   ManifestSource,
-  ResolvedManifest,
   Stats,
 } from '../src/shared/types';
+import type { ResolvedManifest } from '../src/main/manifest-types';
 
 const NO_STATS: Stats = { schemaVersion: 1, totalPlaySeconds: 0, lastPlayedAt: null, launchCount: 0 };
 const t = createTranslator('en');
@@ -73,20 +73,13 @@ beforeEach(async () => {
     pcLibrary: new PcLibraryStore({ baseDir: dir }),
     reloadPcLibrary: () => Promise.resolve({ ok: true as const }),
     getTranslator: () => t,
-    toManifestPcSavePath: () => null,
     findGameSource: () => available,
     notify: () => undefined,
-    resolveManifest: () => null,
     findPcManifest: () => null,
-    isBusy: () => false,
     library,
     isCardLoading: () => cardLoading,
     refreshLibrary: () => {
       refreshed += 1;
-    },
-    pcStore: { removeSyncState: () => Promise.resolve() },
-    savePathResolver: {
-      resolvePcSavePath: () => Promise.resolve({ path: '', containerExists: false }),
     },
   });
 });

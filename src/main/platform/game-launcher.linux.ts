@@ -9,9 +9,8 @@ import path from 'node:path';
 import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import fse from 'fs-extra';
-import type { GameProcessLauncher, ProcessMonitor } from './types';
-import type { ResolvedInstall } from '../../shared/types';
-import type { GameProcess } from '../game-launcher';
+import type { GameProcess, GameProcessLauncher, ProcessMonitor } from './types';
+import type { ResolvedInstall } from '../manifest-types';
 import {
   prefixDir,
   prefixForInstall,
@@ -363,6 +362,10 @@ export function createLinuxGameLauncher(deps: LinuxGameLauncherDeps): GameProces
       log.info(`[uninstall] umu-run uninstaller prefix="${prefix}" file="${target.file}"`);
       return spawnUmuProcess(args, target.cwd, env, deps.monitor);
     },
+    // Uninstall removes the WHOLE per-game prefix (see uninstallDir), so running the game's own in-prefix
+    // uninstaller first is pointless: its registry/shortcut cleanup lives in the prefix about to be
+    // deleted. Skip it — win32 still runs it (no prefix; it must clean the shared system).
+    resolveUninstaller: () => Promise.resolve(null),
     // Uninstall removes the WHOLE per-game prefix (it contains the install dir + the game's runtimes),
     // reclaiming the full disk footprint — not just the game files under drive_c/playhook/games/<id>.
     uninstallDir: (install) => prefixForInstall(install.dir),

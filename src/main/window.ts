@@ -136,6 +136,16 @@ export class GameWindow {
   }
 
   /**
+   * Pushes one message to the renderer — a no-op before the window exists and after it is destroyed, so
+   * every push from main can be unconditional. The channel is a string, not `IPC[...]`, on purpose: the
+   * services that push (notifications, the controller) already name their channels through the IPC table.
+   */
+  send(channel: string, payload: unknown): void {
+    const window = this.window;
+    if (window !== null && !window.isDestroyed()) window.webContents.send(channel, payload);
+  }
+
+  /**
    * Shows and focuses the launcher. With `forceForeground` (the Start+Back hotkey, summoning over
    * a running game) it does a minimize→restore to reliably grab the foreground — at the cost of a
    * brief blink. We never hold alwaysOnTop, so focus is never trapped: switching back to the game

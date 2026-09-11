@@ -159,11 +159,11 @@ function openKeyReadString(
 /**
  * Reads the Steam install path from the registry, or null. Primary: HKCU\Software\Valve\Steam\SteamPath
  * (a REG_SZ with FORWARD slashes — Steam's own convention). Fallback: HKLM\SOFTWARE\WOW6432Node\Valve\
- * Steam\InstallPath (backslashes). Best-effort: any error or non-Windows → null. Used to locate
- * steamapps/.acf for the "installed in Steam" detection and to gate steam:// launches.
+ * Steam\InstallPath (backslashes). Best-effort: any error → null. Used to locate steamapps/.acf for
+ * the "installed in Steam" detection and to gate steam:// launches. win32-only: reached only through the
+ * win32 SteamLocator.
  */
 export async function getSteamPath(): Promise<string | null> {
-  if (process.platform !== 'win32') return null;
   // Async signature for a uniform call site (mirrors findUninstallEntry); the work itself is sync FFI.
   return Promise.resolve().then(() => {
     try {
@@ -238,10 +238,10 @@ function scanBranch(
 
 /**
  * Finds the Uninstall registry entry whose InstallLocation equals `installDir` (across HKLM 64-bit,
- * HKLM WOW6432Node, and HKCU), or null. Best-effort: returns null on any error or on non-Windows.
+ * HKLM WOW6432Node, and HKCU), or null. Best-effort: returns null on any error. win32-only: reached
+ * only through the win32 GameProcessLauncher's resolveUninstaller.
  */
 export async function findUninstallEntry(installDir: string): Promise<UninstallEntry | null> {
-  if (process.platform !== 'win32') return null;
   // Async signature for a uniform call site (mirrors resolveUninstaller); the work itself is sync FFI.
   return Promise.resolve().then(() => {
     try {

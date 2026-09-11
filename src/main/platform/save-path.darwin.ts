@@ -19,7 +19,7 @@
 //
 // The prefix→path mapping is pure (unit-tested without fs); paths are built with `path.posix` (CLAUDE.md).
 import path from 'node:path';
-import type { ResolvedManifest } from '../../shared/types';
+import type { ResolvedManifest } from '../manifest-types';
 import type { PcSaveLocation, SavePathResolver } from './types';
 
 /** The home-relative bases the Windows prefixes map onto. Resolved once from the OS/Electron paths. */

@@ -4,8 +4,11 @@
 // A background app lives in the tray; closing the window doesn't quit the program.
 import path from 'node:path';
 import { Tray, Menu, nativeImage, type NativeImage } from 'electron';
-import { APP_NAME } from '../shared/types';
 import { type Translator } from '../shared/i18n/index';
+
+/** Display name (window title / tray tooltip). The %APPDATA% data folder is derived separately by
+ * Electron from package.json `name` (currently "playhook"). */
+const APP_NAME = 'Playhook' as const;
 
 export interface TrayCallbacks {
   readonly onShow: () => void;

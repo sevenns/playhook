@@ -11,16 +11,22 @@
 // from the daemon's graph and from unit tests, per CLAUDE.md.
 import path from 'node:path';
 import fse from 'fs-extra';
-import { MANIFEST_FILENAME, PC_LIBRARY_DIRNAME, type ResolvedManifest } from '../shared/types';
-import {
-  readManifests,
-  type InstallDirResolver,
-  type ManifestEnv,
-} from './manifest';
+import { MANIFEST_FILENAME, type ResolvedManifest } from './manifest-types';
+import { readManifests, type ManifestEnv } from './manifest';
+import { type InstallDirResolver } from './platform/types';
+import { isEnoent } from './json-store';
 import { log } from './logger';
 import { uniqueAssetFileName } from './asset-file-names';
 import { assertImportableAsset, type ImportKind } from './asset-import';
 import { describe } from './util';
+
+/**
+ * Directory under `userData` that holds the PC library — the local games added from this machine's own
+ * disk. It is laid out exactly like a card (`game.json` + `assets/`, plus `saves/<id>/` standing in for
+ * the card's save copy), so the whole manifest/asset/history pipeline reads it as an always-inserted
+ * card. See ManifestSource.
+ */
+const PC_LIBRARY_DIRNAME = 'pc-games' as const;
 
 export interface PcLibraryDeps {
   /** The app data directory (`app.getPath('userData')` in main). The library lives under it. */
@@ -123,7 +129,7 @@ export class PcLibraryStore {
     try {
       names = await fse.readdir(this.assetsDir);
     } catch (cause) {
-      if (!isNotFound(cause)) log.warn('[pc-library] cannot list assets for cleanup:', describe(cause));
+      if (!isEnoent(cause)) log.warn('[pc-library] cannot list assets for cleanup:', describe(cause));
       return;
     }
     for (const name of names) {
@@ -142,8 +148,3 @@ export class PcLibraryStore {
 }
 
 /** True for an "it isn't there" fs error — an empty library is a normal state, not a failure. */
-function isNotFound(cause: unknown): boolean {
-  return (
-    typeof cause === 'object' && cause !== null && (cause as { code?: unknown }).code === 'ENOENT'
-  );
-}

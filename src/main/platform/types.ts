@@ -12,11 +12,49 @@ import type {
   LaunchTarget,
   ResolvedInstall,
   ResolvedInstallerRun,
-} from '../../shared/types';
-import type { GameProcess } from '../game-launcher';
-import type { PowerAction } from '../power';
-import type { InstallDirResolver } from '../manifest';
+} from '../manifest-types';
 import type { Translator } from '../../shared/i18n/index';
+
+/**
+ * A launched game, abstracting the launch backends so the wait loops don't care which was used.
+ * `pid` is the real pid for the normal path, 0 for the elevated path (we monitor by HANDLE there).
+ */
+export interface GameProcess {
+  readonly pid: number;
+  isAlive(): Promise<boolean>;
+  /**
+   * Force-terminates the process (force-close from the More menu). Normal path: `taskkill /PID <pid> /T
+   * /F` (the whole tree), guarded by an isAlive() re-check so a reused pid can't take down an unrelated
+   * process. Elevated path: TerminateProcess on the kept HANDLE, done synchronously (no await before the
+   * FFI call) and skipped if dispose() already closed the handle. Errors are swallowed — the caller
+   * decides success by a fact-based control poll, not this call's outcome.
+   */
+  kill(): Promise<void>;
+  /** Releases the kept HANDLE (elevated path); no-op for the normal path. */
+  dispose(): void;
+}
+
+export type PowerAction = 'shutdown' | 'reboot' | 'sleep';
+
+/**
+ * The app-controlled install directory in BOTH views. On win32 they are identical
+ * (`%LOCALAPPDATA%\playhook\games\<id>`); on linux they diverge:
+ * - `hostDir` — the real filesystem path inside the game's Wine prefix
+ *   (`<pfx>/drive_c/playhook/games/<id>`): every fs op and the resolved `executable` live under it;
+ * - `installerDir` — the SAME location as the installer sees it under Wine (`C:\playhook\games\<id>`),
+ *   fed to the silent dir-arg (`/DIR=` / `/D=`).
+ */
+export interface InstallDir {
+  readonly hostDir: string;
+  readonly installerDir: string;
+}
+
+/**
+ * Platform install-dir resolution, injected into readManifests: maps a game `id` to both views of
+ * its app-controlled install dir, or null when install mode is unsupported on this platform/config
+ * (win32 with `%LOCALAPPDATA%` unset). `id` is already validated as a safe single path segment.
+ */
+export type InstallDirResolver = (id: string) => InstallDir | null;
 
 /**
  * An atomic snapshot of the running processes (one OS call). The same snapshot answers BOTH "is a watched
@@ -56,6 +94,12 @@ export interface ProcessMonitor {
    * every process tagged with this `SteamAppId`, plus a by-name sweep as a fallback.
    */
   killSteamGame(appid: number, watchNames: readonly string[]): Promise<void>;
+  /**
+   * Force-kills the given image names ELEVATED — win32 only: a runAsAdmin game's high-integrity processes
+   * survive a plain taskkill, so this runs ONE elevated `taskkill /F /T /IM …` (a single UAC prompt).
+   * Best-effort and fire-and-forget; the caller judges success by a fact-based poll. No-op elsewhere.
+   */
+  killImagesElevated(imageNames: readonly string[]): void;
 }
 
 /** Locates the local Steam installation (the source of the steamapps libraries + compatdata prefixes). */
@@ -108,6 +152,13 @@ export interface GameProcessLauncher {
   ): Promise<void>;
   /** Launches a resolved uninstaller target silently. Throws on failure. */
   launchUninstaller(target: LaunchTarget): Promise<GameProcess>;
+  /**
+   * What to launch to uninstall an install-mode game, or null for a plain directory sweep. win32 runs
+   * the game's own uninstaller first (it must clean the shared system before the install dir is
+   * removed); linux removes the WHOLE per-game Wine prefix, so an in-prefix uninstaller is pointless
+   * (its registry/shortcut cleanup lives in the prefix about to be deleted) → always null there.
+   */
+  resolveUninstaller(install: ResolvedInstallerRun): Promise<LaunchTarget | null>;
   /**
    * The directory whose removal fully uninstalls the game (removed best-effort by the controller).
    * win32: the app-controlled install dir. linux: the WHOLE per-game Wine prefix — it holds the install

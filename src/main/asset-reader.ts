@@ -4,7 +4,8 @@
 // delivery (setHero/setCardMusic push to the window); this class only reads bytes and encodes them.
 import path from 'node:path';
 import fse from 'fs-extra';
-import { type HeroAssets, type ResolvedManifest, type SfxName, type SfxSet } from '../shared/types';
+import { type HeroAssets, type SfxName, type SfxSet } from '../shared/types';
+import type { ResolvedManifest } from './manifest-types';
 import { log } from './logger';
 import { describe } from './util';
 

@@ -7,7 +7,7 @@ import {
   resolveInsideWinePrefix,
   winePrefixToManifestPcSavePath,
 } from '../src/main/platform/save-path.linux';
-import type { GameManifest, ResolvedManifest } from '../src/shared/types';
+import type { GameManifest, ResolvedManifest } from '../src/main/manifest-types';
 
 const PFX = '/home/deck/.config/playhook/prefixes/mygame';
 const HOME = `${PFX}/drive_c/users/steamuser`;

@@ -19,45 +19,16 @@
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import koffi from 'koffi';
-import {
-  type LaunchTarget,
-  type ResolvedManifest,
-  type ResolvedInstallerRun,
-} from '../shared/types';
-import { type ProcessMonitor, type ProcessSnapshot } from './platform/types';
+import type { LaunchTarget, ResolvedManifest, ResolvedInstallerRun } from './manifest-types';
+import { type GameProcess, type ProcessMonitor, type ProcessSnapshot } from './platform/types';
 import { buildInstallerArgs, buildParameters } from './launch-args';
 import { delay } from './util';
 import { log } from './logger';
+import { LaunchAbortedError } from './launch-errors';
 
 const START_POLL_INTERVAL_MS = 1000;
 const EXIT_POLL_INTERVAL_MS = 2500;
 const EXIT_DEBOUNCE_READS = 3;
-
-export class LaunchAbortedError extends Error {
-  constructor() {
-    super('launch wait aborted');
-    this.name = 'LaunchAbortedError';
-  }
-}
-
-/**
- * A launched game, abstracting the two launch backends so the wait loops don't care which was used.
- * `pid` is the real pid for the normal path, 0 for the elevated path (we monitor by HANDLE there).
- */
-export interface GameProcess {
-  readonly pid: number;
-  isAlive(): Promise<boolean>;
-  /**
-   * Force-terminates the process (force-close from the More menu). Normal path: `taskkill /PID <pid> /T
-   * /F` (the whole tree), guarded by an isAlive() re-check so a reused pid can't take down an unrelated
-   * process. Elevated path: TerminateProcess on the kept HANDLE, done synchronously (no await before the
-   * FFI call) and skipped if dispose() already closed the handle. Errors are swallowed — the caller
-   * decides success by a fact-based control poll, not this call's outcome.
-   */
-  kill(): Promise<void>;
-  /** Releases the kept HANDLE (elevated path); no-op for the normal path. */
-  dispose(): void;
-}
 
 function throwIfAborted(signal: AbortSignal | undefined): void {
   if (signal?.aborted === true) throw new LaunchAbortedError();
@@ -187,10 +158,10 @@ function loadKernel(): KernelLib {
  * the UAC dialog blocks the main thread briefly, which is fine while a game is running (input is ignored).
  * We do NOT wait for taskkill to finish — it runs on after we release our handle; the caller's control
  * poll decides success by fact. Best-effort: a declined UAC (GetLastError 1223) or any failure is logged
- * and swallowed. No-op off Windows / with no names.
+ * and swallowed. No-op with no names. win32-only, and reached only through the win32 ProcessMonitor.
  */
 export function killImagesElevated(imageNames: readonly string[]): void {
-  if (process.platform !== 'win32' || imageNames.length === 0) return;
+  if (imageNames.length === 0) return;
   const shell = loadShell();
   const kernel = loadKernel();
   const args = ['/F', '/T'];
@@ -300,9 +271,6 @@ async function launchNormal(
  * few seconds and gamepad input is ignored outside `ready`, so the brief block is acceptable.
  */
 function launchElevated(target: LaunchTarget, mode: LaunchMode): GameProcess {
-  if (process.platform !== 'win32') {
-    throw new Error('elevated launch (runAsAdmin) is Windows-only');
-  }
   const shell = loadShell();
   const kernel = loadKernel();
 

@@ -7,7 +7,8 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mergePresentation } from '../src/main/history-config';
 import { createTranslator } from '../src/shared/i18n/index';
-import type { DriveCandidate, ResolvedManifest, Stats } from '../src/shared/types';
+import type { DriveCandidate, Stats } from '../src/shared/types';
+import type { ResolvedManifest } from '../src/main/manifest-types';
 
 // The service asks the drive layer whether a root may be written to; there are no removable drives in a
 // test run, so the card stands in as the one candidate (as game-move-transaction.test.ts does).
@@ -144,19 +145,12 @@ beforeEach(async () => {
     pcLibrary: new PcLibraryStore({ baseDir: dir }),
     reloadPcLibrary: () => Promise.resolve({ ok: true as const }),
     getTranslator: () => t,
-    toManifestPcSavePath: () => null,
     findGameSource: () => null,
     notify: () => undefined,
-    resolveManifest: () => null,
     findPcManifest: () => local,
-    isBusy: () => false,
     library: new LibraryStore({ baseDir: dir, readStats: () => Promise.resolve(NO_STATS) }),
     isCardLoading: () => false,
     refreshLibrary: () => undefined,
-    pcStore: { removeSyncState: () => Promise.resolve() },
-    savePathResolver: {
-      resolvePcSavePath: () => Promise.resolve({ path: '', containerExists: false }),
-    },
   });
 });
 

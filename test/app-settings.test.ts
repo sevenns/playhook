@@ -2,8 +2,9 @@
 // read-modify-writes (a slider burst can't lose updates), flush() drains in-flight writes (awaited before
 // an update install), patch() propagates its result/rejection to the caller, the write is atomic, and a
 // partial file missing a defaulted field still validates instead of resetting everything to defaults.
-// Plus the two rules the Settings-screen move added: `theme` is normalized to 'system' on read, and every
-// write notifies the onChange listener (that push is what the screen renders from).
+// Plus the two rules the Settings-screen move added: a `theme` key from an older file is tolerated (and
+// dropped on the next write), and every write notifies the onChange listener (that push is what the
+// screen renders from).
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -74,7 +75,7 @@ describe('AppSettingsStore — atomic write + schema tolerance', () => {
 
   it('a file missing a defaulted field (autoUpdate) still validates instead of resetting to defaults', async () => {
     // Simulate a partial/older settings.json that lost `autoUpdate`: every OTHER field must survive.
-    const partial = { ...DEFAULT_SETTINGS, theme: 'dark' as const, musicVolume: 0.25 };
+    const partial = { ...DEFAULT_SETTINGS, musicVolume: 0.25 };
     delete (partial as { autoUpdate?: unknown }).autoUpdate;
     await fs.writeFile(path.join(baseDir, 'settings.json'), JSON.stringify(partial), 'utf8');
     const store = new AppSettingsStore(baseDir);
@@ -116,18 +117,17 @@ describe('AppSettingsStore — atomic write + schema tolerance', () => {
   });
 });
 
-describe('AppSettingsStore — theme normalization', () => {
-  it('reads back `system` even when the file says `dark` (the selector is gone)', async () => {
-    const stored = { ...DEFAULT_SETTINGS, theme: 'dark' as const };
-    await fs.writeFile(path.join(baseDir, 'settings.json'), JSON.stringify(stored), 'utf8');
-    expect((await new AppSettingsStore(baseDir).read()).theme).toBe('system');
-  });
-
-  it('normalizes it for patch() results too, so no caller can resurrect the old value', async () => {
-    const stored = { ...DEFAULT_SETTINGS, theme: 'light' as const };
+describe('AppSettingsStore — the retired `theme` key', () => {
+  it('still parses a file that carries it, and drops it on the next write', async () => {
+    const stored = { ...DEFAULT_SETTINGS, theme: 'dark' };
     await fs.writeFile(path.join(baseDir, 'settings.json'), JSON.stringify(stored), 'utf8');
     const store = new AppSettingsStore(baseDir);
-    expect((await store.patch({ musicVolume: 0.6 })).theme).toBe('system');
+    const read = await store.read();
+    expect(read.musicVolume).toBe(DEFAULT_SETTINGS.musicVolume); // not reset: the file validated
+    expect('theme' in read).toBe(false);
+    await store.patch({ musicVolume: 0.6 });
+    const written: unknown = JSON.parse(await fs.readFile(path.join(baseDir, 'settings.json'), 'utf8'));
+    expect(written).not.toHaveProperty('theme');
   });
 });
 
