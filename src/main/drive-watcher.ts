@@ -6,7 +6,8 @@
 import path from 'node:path';
 import fse from 'fs-extra';
 import { list } from 'drivelist';
-import { MANIFEST_FILENAME, type DriveCandidate } from '../shared/types';
+import { type DriveCandidate } from '../shared/types';
+import { MANIFEST_FILENAME } from './manifest-types';
 import { type Translator } from '../shared/i18n/index';
 import { parseManifestItems } from './manifest';
 import { log } from './logger';

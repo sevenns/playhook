@@ -12,7 +12,7 @@ import type {
   LaunchTarget,
   ResolvedInstall,
   ResolvedInstallerRun,
-} from '../../shared/types';
+} from '../manifest-types';
 import type { Translator } from '../../shared/i18n/index';
 
 /**

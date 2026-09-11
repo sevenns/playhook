@@ -4,7 +4,14 @@
 // selected, where the cursor lands) and hands the result here; this holds the last value per channel so
 // the renderer's `*:request` invokes can be answered, and owns the debounce + ticket that keep a fast flip
 // through the carousel from reading the disk once per step.
-import { IPC, type BrowseInfo, type GameLibrary, type HeroAssets, type ResolvedManifest, type SfxSet } from '../shared/types';
+import {
+  IPC,
+  type BrowseInfo,
+  type GameLibrary,
+  type HeroAssets,
+  type SfxSet,
+} from '../shared/types';
+import type { ResolvedManifest } from './manifest-types';
 import { type AssetReader } from './asset-reader';
 import { type BrowseAssets } from './library-store';
 

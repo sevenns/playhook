@@ -12,11 +12,14 @@
 import path from 'node:path';
 import fse from 'fs-extra';
 import { z } from 'zod';
-import { CARD_STATS_FILENAME, type Stats } from '../shared/types';
+import { type Stats } from '../shared/types';
 import { parseStats, statsSchema, type PcStore } from './pc-store';
 import { isEnoent, writeFileAtomicEnsuringDir } from './json-store';
 import { log } from './logger';
 import { describe } from './util';
+
+/** File name of the stats copy on the card (best-effort). */
+export const CARD_STATS_FILENAME = 'stats.json' as const;
 
 // The per-id card-stats map (v2). Built on the shared single-game statsSchema so "a valid Stats record"
 // has one definition. `games` is a record id→Stats; `schemaVersion` distinguishes it from a bare v1 file.

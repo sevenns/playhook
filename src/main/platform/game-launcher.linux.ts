@@ -10,7 +10,7 @@ import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import fse from 'fs-extra';
 import type { GameProcess, GameProcessLauncher, ProcessMonitor } from './types';
-import type { ResolvedInstall } from '../../shared/types';
+import type { ResolvedInstall } from '../manifest-types';
 import {
   prefixDir,
   prefixForInstall,

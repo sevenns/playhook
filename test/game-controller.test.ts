@@ -27,7 +27,8 @@ import { LaunchAbortedError } from '../src/main/launch-errors';
 import { DEFAULT_SETTINGS } from '../src/main/app-settings';
 import { createTranslator } from '../src/shared/i18n/index';
 import type { GameProcess, Platform } from '../src/main/platform/types';
-import { IPC, type ResolvedManifest, type Stats } from '../src/shared/types';
+import { IPC, type Stats } from '../src/shared/types';
+import type { ResolvedManifest } from '../src/main/manifest-types';
 
 const ZERO_STATS: Stats = { schemaVersion: 1, totalPlaySeconds: 0, lastPlayedAt: null, launchCount: 0 };
 

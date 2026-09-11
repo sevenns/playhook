@@ -12,14 +12,12 @@ import path from 'node:path';
 import fse from 'fs-extra';
 import { z } from 'zod';
 import {
-  MANIFEST_FILENAME,
   MAX_HERO_IMAGES,
-  type GameManifest,
   type ManifestSource,
   type ManifestValidationIssue,
   type ConfigValidationResult,
-  type ResolvedManifest,
 } from '../shared/types';
+import { MANIFEST_FILENAME, type GameManifest, type ResolvedManifest } from './manifest-types';
 import { translateIssueMessage, type Translator } from '../shared/i18n/index';
 import { type InstallDirResolver } from './platform/types';
 import { isEnoent } from './json-store';

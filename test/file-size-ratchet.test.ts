@@ -32,7 +32,7 @@ const FILE_BASELINE: Readonly<Record<string, number>> = {
   'src/renderer/game-settings-screen.ts': 2942,
   'src/renderer/online-picker.ts': 1322,
   'src/renderer/settings-screen.ts': 1193,
-  'src/shared/types.ts': 1693,
+  'src/shared/types.ts': 1397,
 };
 
 interface FactoryBaseline {

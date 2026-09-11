@@ -4,7 +4,7 @@
 // in-dir search) are unit-tested on their own — see test/uninstaller.test.ts.
 import path from 'node:path';
 import fse from 'fs-extra';
-import { type InstallerRunType, type LaunchTarget, type ResolvedInstallerRun } from '../shared/types';
+import type { InstallerRunType, LaunchTarget, ResolvedInstallerRun } from './manifest-types';
 import { findUninstallEntry } from './registry';
 import { delay } from './util';
 

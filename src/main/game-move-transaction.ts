@@ -9,14 +9,13 @@ import fse from 'fs-extra';
 import { ipcMain } from 'electron';
 import {
   IPC,
-  MANIFEST_FILENAME,
   type ConfigMoveResult,
-  type ConfigReadResult,
   type GameMoveRequest,
-  type NotificationInput,
-  type ResolvedManifest,
 } from '../shared/types';
+import { MANIFEST_FILENAME, type ResolvedManifest } from './manifest-types';
 import { type Translator } from '../shared/i18n/index';
+import { type ConfigReadResult } from './game-config';
+import { type NotificationInput } from './notifications';
 import {
   countGamesWithId,
   expectedGameFilePath,

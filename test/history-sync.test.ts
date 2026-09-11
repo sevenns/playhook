@@ -13,7 +13,8 @@ import {
   syncHistoryConfig,
 } from '../src/main/history-sync';
 import type { HistorySyncResult } from '../src/main/history-sync';
-import type { ResolvedManifest, Stats } from '../src/shared/types';
+import type { Stats } from '../src/shared/types';
+import type { ResolvedManifest } from '../src/main/manifest-types';
 
 const NO_STATS: Stats = { schemaVersion: 1, totalPlaySeconds: 0, lastPlayedAt: null, launchCount: 0 };
 const t = createTranslator('en');

@@ -14,12 +14,9 @@ import os from 'node:os';
 import path from 'node:path';
 import fse from 'fs-extra';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-  type DriveCandidate,
-  type GameMoveRequest,
-  type NotificationInput,
-  type ResolvedManifest,
-} from '../src/shared/types';
+import { type DriveCandidate, type GameMoveRequest } from '../src/shared/types';
+import type { ResolvedManifest } from '../src/main/manifest-types';
+import type { NotificationInput } from '../src/main/notifications';
 import { createTranslator } from '../src/shared/i18n/index';
 
 const hooks = vi.hoisted(() => ({

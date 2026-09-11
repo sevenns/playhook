@@ -7,7 +7,7 @@ import {
   movedHeroAssetPath,
   movedMusicAssetPath,
 } from '../shared/asset-move-names';
-import { type ResolvedManifest } from '../shared/types';
+import type { ResolvedManifest } from './manifest-types';
 import { parseManifestItems } from './manifest';
 
 function isRecord(value: unknown): value is Record<string, unknown> {

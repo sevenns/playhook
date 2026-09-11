@@ -3,7 +3,8 @@
 // was pulled mid-game, and the baseline the next change-detection reads. Split out of the sequences so
 // the launch sequence reads as launch → wait → sync, and the insert path shares the same flush.
 import fse from 'fs-extra';
-import { type ResolvedManifest, type Stats } from '../shared/types';
+import { type Stats } from '../shared/types';
+import type { ResolvedManifest } from './manifest-types';
 import { type ControllerDeps } from './controller-deps';
 import { acceptsPendingFlush, type SyncSlot } from './pc-store';
 import { syncDir, syncByChange, snapshotTree } from './save-sync';

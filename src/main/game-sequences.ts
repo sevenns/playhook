@@ -12,13 +12,8 @@
 // running-game fields) through `onFinally`.
 import path from 'node:path';
 import fse from 'fs-extra';
-import {
-  type AppState,
-  type GameInfo,
-  type ResolvedCopyInstall,
-  type ResolvedManifest,
-  type Stats,
-} from '../shared/types';
+import { type AppState, type GameInfo, type Stats } from '../shared/types';
+import type { ResolvedCopyInstall, ResolvedManifest } from './manifest-types';
 import { type Translator } from '../shared/i18n/index';
 import { type ControllerDeps } from './controller-deps';
 import { findCaseInsensitiveName } from './manifest';

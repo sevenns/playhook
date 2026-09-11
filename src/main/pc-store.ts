@@ -7,7 +7,8 @@
 import path from 'node:path';
 import fse from 'fs-extra';
 import { z } from 'zod';
-import { type ResolvedManifest, type Stats } from '../shared/types';
+import { type Stats } from '../shared/types';
+import type { ResolvedManifest } from './manifest-types';
 import { readJsonValidated, writeJsonAtomic } from './json-store';
 import { type SyncState } from './save-sync';
 import { log } from './logger';

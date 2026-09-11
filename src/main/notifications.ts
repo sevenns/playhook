@@ -8,7 +8,7 @@
 // in the controller".
 import { randomUUID } from 'node:crypto';
 import { ipcMain } from 'electron';
-import { IPC, type AppNotification, type NotificationInput } from '../shared/types';
+import { IPC, type AppNotification, type NotificationBase } from '../shared/types';
 import { log } from './logger';
 import {
   addNotification,
@@ -19,6 +19,13 @@ import {
   type PresenceInput,
 } from './notifications-model';
 import { type NotificationsStore } from './notifications-store';
+
+// Distributes over the union so each member loses the base fields on its own (a plain Omit would
+// collapse the three into one non-discriminated object).
+type WithoutNotificationBase<T> = T extends unknown ? Omit<T, keyof NotificationBase> : never;
+
+/** What a source of events hands to NotificationsService.notify — the base fields are main's to fill. */
+export type NotificationInput = WithoutNotificationBase<AppNotification>;
 
 /**
  * How many toasts are worth playing back one after another when the user returns. Beyond this the queue

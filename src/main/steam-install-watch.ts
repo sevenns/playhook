@@ -4,7 +4,8 @@
 // including changes the user makes in Steam directly. It owns its timer, the in-flight guard and the
 // optimistic uninstall request; it reaches back into the controller only through the narrow `deps`
 // seam below (accessors + enterReady), so the delicate re-arm/staleness logic stays in one place.
-import { type AppState, type GameInfo, type ResolvedManifest } from '../shared/types';
+import { type AppState, type GameInfo } from '../shared/types';
+import type { ResolvedManifest } from './manifest-types';
 import { steamInstallStatus, type SteamInstallStatus } from './steam';
 import { type SteamLocator } from './platform';
 import { log } from './logger';

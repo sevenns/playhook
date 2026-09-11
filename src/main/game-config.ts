@@ -28,9 +28,7 @@ import fse from 'fs-extra';
 import { ipcMain } from 'electron';
 import {
   IPC,
-  MANIFEST_FILENAME,
   type ConfigPickResult,
-  type ConfigReadResult,
   type ConfigRootReadResult,
   type ConfigSaveResult,
   type ConfigValidationResult,
@@ -43,12 +41,12 @@ import {
   type HistoryConfigSaveRequest,
   type ManifestValidationIssue,
   type ManifestSource,
-  type NotificationInput,
-  type ResolvedManifest,
 } from '../shared/types';
+import { MANIFEST_FILENAME, type ResolvedManifest } from './manifest-types';
 import { type Translator } from '../shared/i18n/index';
 import { AUDIO_EXTENSIONS, IMAGE_EXTENSIONS, readImageDataUrl } from './asset-reader';
 import { describePickRejection } from './file-picker-service';
+import { type NotificationInput } from './notifications';
 import { hostPlatform } from './config-paths';
 import { describeManifestContent, listDriveCandidates } from './drive-watcher';
 import { addedGamesOf, rootReadResult } from './game-config-add';
@@ -148,6 +146,10 @@ function isEmptyManifestList(text: string): boolean {
  * what a DriveWatcher insert/removal amounts to for this service) and after any save.
  */
 const CANDIDATES_TTL_MS = 2000;
+
+/** Result of reading a root's game.json for the editor. */
+export type ConfigReadResult =
+  { readonly ok: true; readonly text: string } | { readonly ok: false; readonly message: string };
 
 export interface GameConfigDeps {
   /** The launcher's currently-active card root (DriveWatcher.getActiveRoot). */

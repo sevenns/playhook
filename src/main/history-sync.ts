@@ -18,7 +18,7 @@
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import fse from 'fs-extra';
-import { MANIFEST_FILENAME } from '../shared/types';
+import { MANIFEST_FILENAME } from './manifest-types';
 import type { Translator } from '../shared/i18n';
 import { validateManifestText } from './manifest';
 import type { ManifestValidationIssue } from '../shared/types';

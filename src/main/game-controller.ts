@@ -17,9 +17,9 @@ import {
   type GameLibrary,
   type HeroAssets,
   type ManifestSource,
-  type ResolvedManifest,
   type Stats,
 } from '../shared/types';
+import type { ResolvedManifest } from './manifest-types';
 import { type Translator } from '../shared/i18n/index';
 import { byRecentlyPlayed } from './library-index';
 import {

@@ -19,11 +19,7 @@
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import koffi from 'koffi';
-import {
-  type LaunchTarget,
-  type ResolvedManifest,
-  type ResolvedInstallerRun,
-} from '../shared/types';
+import type { LaunchTarget, ResolvedManifest, ResolvedInstallerRun } from './manifest-types';
 import { type GameProcess, type ProcessMonitor, type ProcessSnapshot } from './platform/types';
 import { buildInstallerArgs, buildParameters } from './launch-args';
 import { delay } from './util';
