@@ -91,7 +91,11 @@ interface Harness {
   readonly journal: string[];
   /** What the fake watcher was given for `onInsert` — the way a card swap reaches the controller. */
   readonly insert: (root: string) => void;
-  /** Opens the pending `waitForExit` gate (the game / installer "exits"). */
+  /**
+   * Opens the `waitForExit` gate (the game / installer "exits"). Sticky: a sequence reaches its wait only
+   * after real fs work (the install pre-clean, a settings read), so an exit requested before the gate
+   * exists opens it the moment it is created.
+   */
   readonly exit: () => void;
   readonly tmp: string;
   /** The path the fake `stats.read` / `recordPlay` throw on once set — the "error in the body" hook. */
@@ -148,9 +152,15 @@ async function harness(opts: HarnessOptions): Promise<Harness> {
   const journal: string[] = [];
   const state = new StateManager();
   state.subscribe((next) => journal.push(`state:${next.kind}`));
-  const h: { failStats: boolean; exit: () => void; insert: (root: string) => void } = {
+  const h: {
+    failStats: boolean;
+    exitRequested: boolean;
+    release: (() => void) | null;
+    insert: (root: string) => void;
+  } = {
     failStats: false,
-    exit: () => undefined,
+    exitRequested: false,
+    release: null,
     insert: () => undefined,
   };
   const readStats = (): Promise<Stats> =>
@@ -258,7 +268,8 @@ async function harness(opts: HarnessOptions): Promise<Harness> {
     waitForStart: () => Promise.resolve(true),
     waitForExit: (_proc, signal) => {
       const gate = abortableGate(signal);
-      h.exit = gate.release;
+      h.release = gate.release;
+      if (h.exitRequested) gate.release();
       return gate.opened;
     },
     waitForWatchedStart: unexpected('waitForWatchedStart'),
@@ -301,7 +312,10 @@ async function harness(opts: HarnessOptions): Promise<Harness> {
     set failStats(value: boolean) {
       h.failStats = value;
     },
-    exit: () => h.exit(),
+    exit: () => {
+      h.exitRequested = true;
+      h.release?.();
+    },
     insert: (root) => h.insert(root),
   };
 }
