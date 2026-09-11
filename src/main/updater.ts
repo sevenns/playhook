@@ -473,7 +473,7 @@ export class UpdaterService {
     autoUpdater.quitAndInstall();
   }
 
-  // ── Pushing status to the settings window ──────────────────────────────────
+  // ── Pushing status to the Settings screen ──────────────────────────────────
 
   private setStatus(next: UpdateStatus): void {
     this.status = next;

@@ -1,6 +1,6 @@
 // Steam-mode backend: detecting whether a Steam app is installed (Steam's own .acf state) and opening
 // steam:// URIs for launch/install. A separate backend from install mode — no card installer, no
-// app-controlled dir. Windows-only in practice (getSteamPath is null off-Windows ⇒ "not installed");
+// app-controlled dir. Wherever the platform's SteamLocator finds no Steam, the game reads as "not installed";
 // dev builds on macOS degrade gracefully rather than crashing.
 //
 // Why .acf and not a registry DWORD: Steam's `appmanifest_<appid>.acf` (in each library's `steamapps`)

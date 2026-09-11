@@ -1341,7 +1341,7 @@ export class GameController {
 
   /**
    * Applies the "keep the launcher open without a card" setting (seeded at startup, toggled live from the
-   * settings window). Besides caching the flag it reconciles the launcher NOW when we're idle with no
+   * Settings screen). Besides caching the flag it reconciles the launcher NOW when we're idle with no
    * card: bring it up when turning it on, or hide back to the tray when turning it off. When a card is
    * present (ready/busy) nothing changes — the launcher is already visible for the game.
    */
@@ -1660,7 +1660,7 @@ export class GameController {
    * and the download — possibly hours/GBs) and returns WITHOUT entering a blocking `installing` state.
    * We stay on the `ready` ("Install") screen; the background re-detect poller (started by enterReady)
    * flips the button to "Play" once Steam's .acf reports the game fully installed. Steam itself collapses
-   * repeated `steam://install` calls, so no debounce is needed. Pre-checks getSteamPath: openExternal
+   * repeated `steam://install` calls, so no debounce is needed. Pre-checks `steamLocator.locateSteam()`: openExternal
    * doesn't reliably reject when steam:// is unregistered.
    */
   private async runSteamInstall(manifest: ResolvedManifest, info: GameInfo): Promise<void> {
@@ -1685,12 +1685,6 @@ export class GameController {
   }
 
   /**
-   * Steam uninstall action: fire-and-forget, mirroring runSteamInstall. Opens `steam://uninstall/<appid>`
-   * (Steam shows its own confirmation/removal UI) and returns WITHOUT a blocking `uninstalling` state. We
-   * stay on the `ready` ("Play"/"Uninstall") screen; the background poller flips the button back to
-   * "Install" once Steam removes the .acf. Pre-checks getSteamPath.
-   */
-  /**
    * Opens Steam's Downloads page (steam://open/downloads). Triggered by the Play button while a Steam
    * download is in progress (its loader is otherwise a no-op) so the user can pause/resume in Steam —
    * we can't control Steam's downloads programmatically (no URI/API for pause/resume).
@@ -1703,6 +1697,12 @@ export class GameController {
     }
   }
 
+  /**
+   * Steam uninstall action: fire-and-forget, mirroring runSteamInstall. Opens `steam://uninstall/<appid>`
+   * (Steam shows its own confirmation/removal UI) and returns WITHOUT a blocking `uninstalling` state. We
+   * stay on the `ready` ("Play"/"Uninstall") screen; the background poller flips the button back to
+   * "Install" once Steam removes the .acf. Pre-checks `steamLocator.locateSteam()`.
+   */
   private async runSteamUninstall(manifest: ResolvedManifest, info: GameInfo): Promise<void> {
     const appid = manifest.steam?.appid;
     if (appid === undefined) return; // defensive: onUninstallRequested only calls this in steam mode

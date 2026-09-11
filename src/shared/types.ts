@@ -1,6 +1,6 @@
-// Shared contract between main, preload and renderer.
-// Types only — the file compiles to empty JS and creates no runtime dependencies,
-// so the renderer can import from here via `import type` without require.
+// Shared contract between main, preload and renderer: the types, plus the IPC channel table and a few
+// constants (`IPC`, `APP_NAME`, `MANIFEST_FILENAME`), which ARE runtime values — preload imports them.
+// Everything else is erased; the renderer imports it via `import type`.
 import type { Locale } from './i18n/index';
 import type { ArtworkQuality } from './artwork-filter';
 
@@ -557,7 +557,7 @@ export type AppState =
   | { readonly kind: 'error'; readonly game?: GameInfo; readonly message: string };
 
 /**
- * Update state for the settings window (discriminated union). The UpdaterService owns the current
+ * Update state for the Settings screen (discriminated union). The UpdaterService owns the current
  * snapshot, returns it on request and pushes it on every change. Maps 1:1 onto electron-updater
  * events (see updater.ts). `unsupported` is set immediately when this build cannot self-update at all —
  * in dev / non-packaged, and on macOS (unsigned bundle, see UpdateUnsupportedReason) — and the settings
@@ -592,7 +592,7 @@ export type UpdateUnsupportedReason = 'not-packaged' | 'platform';
  */
 export type AutoUpdateMode = 'download' | 'download-install' | 'off';
 
-/** UI theme for the settings window. `system` follows the OS light/dark preference. */
+/** UI theme, kept only so an older settings.json still parses: no screen offers a selector any more. */
 export type ThemeMode = 'system' | 'light' | 'dark';
 
 /**
@@ -679,7 +679,7 @@ export interface AppSettings {
   readonly steamGridDbApiKey: string;
 }
 
-/** The bundled UI sound sets + ambience tracks available to pick in the settings window. */
+/** The bundled UI sound sets + ambience tracks available to pick on the Settings screen. */
 export interface AudioOptions {
   /** Sound-set folder names under `audio/ui/` (e.g. `playhook-abyss`, `ps5`); the default is always present. */
   readonly soundSets: readonly string[];
@@ -871,7 +871,7 @@ export const IPC = {
   startupSoundRequest: 'audio:startup-request',
   /** game-renderer → main (invoke): request the current audio volumes (on window startup). */
   volumeRequest: 'volume:request',
-  /** main → game-renderer: updated audio volumes (pushed when changed in the settings window). */
+  /** main → game-renderer: updated audio volumes (pushed when changed on the Settings screen). */
   volumeUpdate: 'volume:update',
   /** game-renderer → main (invoke): request the current effective UI locale (on window startup). */
   languageRequest: 'app:language-request',

@@ -565,7 +565,7 @@ async function bootstrap(): Promise<void> {
   const globalGamepad = new GlobalGamepad();
   globalGamepadRef = globalGamepad;
   globalGamepad.onChord(() => {
-    if (!summonHotkeyEnabled) return; // toggled off in the settings window
+    if (!summonHotkeyEnabled) return; // toggled off on the Settings screen
     window.showAndFocus(true);
   });
   globalGamepad.start();

@@ -1042,7 +1042,7 @@ void window.api.requestCardMusic().then((url) => {
   syncMusic();
 });
 
-// The default ambience is app-wide (set in the settings window) and delivered on its own channel; the
+// The default ambience is app-wide (set on the Settings screen) and delivered on its own channel; the
 // audio engine plays it only while the card has no music of its own (a game's music always wins) and
 // crossfades between the two. Seed on startup and update live. syncMusic re-asserts the gate so a seed
 // arriving before the first visibility sync still starts (or stays paused) correctly.
@@ -1059,7 +1059,7 @@ void window.api.requestAmbient().then((url) => {
 window.api.onSfxSet((set) => audio.setSounds(set));
 void window.api.requestSfxSet().then((set) => audio.setSounds(set));
 
-// Audio volumes are app-wide (set in the settings window): seed them on startup and update live.
+// Audio volumes are app-wide (set on the Settings screen): seed them on startup and update live.
 const applyVolumes = (volumes: { music: number; sfx: number }): void => {
   audio.setMusicVolume(volumes.music);
   audio.setSfxVolume(volumes.sfx);
