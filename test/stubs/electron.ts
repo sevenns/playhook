@@ -1,4 +1,4 @@
-// Minimal `electron` stub for the vitest node run (audit C1/M-4). The main modules under test import
+// Minimal `electron` stub for the vitest node run. The main modules under test import
 // `electron` transitively (e.g. logger.ts → app.getPath), but there is no electron runtime in plain
 // Node. vitest aliases the bare `electron` specifier to this file (see vitest.config.ts), so those
 // imports resolve to inert no-ops. It exposes only what the tested import graph touches; extend as

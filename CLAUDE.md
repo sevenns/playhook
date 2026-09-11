@@ -21,7 +21,9 @@ mandate to rewrite what already works.
 
 ## Layers (do not blur)
 
-- **main** owns all game logic (fs, registry, process control, FFI). **renderer** is stateless UI.
+- **main** owns all game logic (fs, registry, process control, FFI). **renderer** holds no domain state:
+  UI state (a manifest draft, a menu stack, the boot sequence) lives inside the screen factories, and
+  everything about games, cards and settings is pushed from main via the `on*` subscriptions.
 - They talk **only over IPC**. The renderer never touches fs/registry; main never touches the DOM.
 - Preload bridges are typed and sandboxed (`contextIsolation: true`, `sandbox: true`).
 - A **pure** function BOTH sides must compute identically (no fs/electron either way) lives in
@@ -48,11 +50,11 @@ Pick per situation, matching the existing patterns:
 
 ## Adding a new service
 
-Follow the **interface-DI** shape of `StatsService` / `UpdaterService` (dependencies passed via a
-typed `…Deps` interface), not the bare-primitive-constructor or free-function styles that predate it.
-Interface-DI is the most testable: it lets a unit test inject fakes without electron/fs. Bootstrap the
-service in `main.ts`; wire IPC through `GameController` (or the service's own `init()`, the way
-`GameConfigService` and `MetadataService` register their channels).
+Follow the **interface-DI** shape of `UpdaterService` / `NotificationsService` / `MetadataService`
+(dependencies passed via a typed `…Deps` interface), not the bare-primitive-constructor or free-function
+styles that predate it. Interface-DI is the most testable: it lets a unit test inject fakes without
+electron/fs. Bootstrap the service in `main.ts`; wire IPC through `GameController` (or the service's own
+`init()`, the way `GameConfigService` and `MetadataService` register their channels).
 
 ## Adding a new IPC channel
 
@@ -133,6 +135,7 @@ build does not self-update. **All OS-specific behaviour lives behind the `Platfo
   it), a wrong separator does not fail loudly — it produces a wrong value.
   Quick check before pushing:
   `grep -rn "path\.\(join\|dirname\|basename\|resolve\)(" src/main/platform/*.{linux,darwin}.ts`
+  — and `test/platform-posix-paths.test.ts` is that grep with teeth (see "Mechanical guards").
 
 ## Tests
 
@@ -173,6 +176,27 @@ build does not self-update. **All OS-specific behaviour lives behind the `Platfo
   should stay — it is the *source* that must use `path.posix` (see the platform-layer rule above). Never
   "fix" such a failure by rewriting the expectation with `path.join`: that makes the test assert whatever
   the code does and stops testing anything at all.
+
+## Mechanical guards
+
+Rules that live only in this file get broken between releases, so the ones that matter are enforced by
+tests and lint, in the same source-as-text style as `test/daemon-imports.test.ts`:
+
+- **`path.posix` in the platform layer** — `test/platform-posix-paths.test.ts` reads every module under
+  `src/main/platform/` except `win32.ts` / `*.win32.ts` and fails on a bare `path.join` / `dirname` /
+  `basename` / `resolve` / `relative` / `normalize` / `isAbsolute` / `path.sep`.
+- **`process.platform` outside `platform/`** — ESLint `no-restricted-syntax` over `src/main/**`
+  (`eslint.config.mjs`), with an explicit allowlist and a reason per file (bootstrap / electron-UI glue,
+  electron-updater environment detection, the win32-only FFI modules' self-guards). It is `warn` until the
+  remaining behavioural checks move onto `Platform`, then `error`. A per-line `eslint-disable` is not the
+  way out: the repo has none.
+- **File and factory size ratchet** — `test/file-size-ratchet.test.ts` keeps a baseline of raw `wc -l`
+  per `src/**` file over 1000 lines and per screen factory (`createControls`, `createGameSettingsScreen`,
+  …). Nothing may grow past its entry; a file that shrank by more than 50 lines must have its entry
+  lowered; a file not in the map may not exceed 1000. When you grow one, split it instead.
+
+All three run on every PR and every push to `main` on Windows, Linux and macOS
+(`.github/workflows/check.yml`), so a rule violation no longer waits for the next release build to surface.
 
 ## Tooling
 

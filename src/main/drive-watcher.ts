@@ -86,7 +86,7 @@ export async function listDriveCandidates(
  * Every mounted volume on the machine, as plain paths — the STARTING points the in-launcher file picker
  * offers in its left column. Deliberately unfiltered, unlike listDriveCandidates: a game is installed
  * wherever the user installed it (the usual `C:\Program Files (x86)\Steam\steamapps\common\…` is a system
- * disk by any definition), and where to browse is the user's call, not ours. See the plan, Р5.2.
+ * disk by any definition), and where to browse is the user's call, not ours.
  */
 export async function listAllMountpoints(): Promise<readonly string[]> {
   const drives = await list();
@@ -193,8 +193,8 @@ export class DriveWatcher {
   private errorHandler: ((error: Error) => void) | null = null;
 
   /**
-   * @param automount Optional sweep that mounts an inserted-but-unmounted removable card before scanning
-   *   (Р10). Wired ONLY in a SteamOS Game Mode session, as a SAFETY NET: the session normally mounts the
+   * @param automount Optional sweep that mounts an inserted-but-unmounted removable card before scanning.
+   *   Wired ONLY in a SteamOS Game Mode session, as a SAFETY NET: the session normally mounts the
    *   card itself, but a card that arrives without a mountpoint has no path for scan() to look under and
    *   would stay invisible. null everywhere else (Windows and the KDE desktop session mount on their
    *   own). Must never throw.

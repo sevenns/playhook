@@ -82,8 +82,7 @@ export function volumePercent(volume: number): number {
 
 /**
  * Cosmetic label for a raw set/track name: split on '-', capitalize each word, join with spaces
- * (`steam-big-picture` → `Steam Big Picture`). These are proper names of bundled files — not translated. Mirrors the
- * settings window's own prettifyName.
+ * (`steam-big-picture` → `Steam Big Picture`). These are proper names of bundled files — not translated.
  */
 export function prettifyName(raw: string): string {
   return raw

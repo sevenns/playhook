@@ -2861,7 +2861,7 @@ html:not(.mouse-asleep) .osk-key:hover,
 /* ── File browser ───────────────────────────────────────────────────────────
    Read-only, and unrestricted on purpose: where to browse is the user's business (the commonest install
    path there is, `…/steamapps/common`, is a system directory by any definition). What is guarded is what
-   main ACCEPTS back — see the plan, Р5.2. */
+   main ACCEPTS back. */
 
 .picker {
   position: absolute;

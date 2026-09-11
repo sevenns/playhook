@@ -540,7 +540,7 @@ describe('carryFormAcrossSources / hasSourceBoundValues', () => {
   });
 });
 
-// Moving a REAL local game onto a card (Р2.2) — unlike carryFormAcrossSources (a half-filled ADD form
+// Moving a REAL local game onto a card — unlike carryFormAcrossSources (a half-filled ADD form
 // with nothing of the old root's to keep), this carries actual game data across, including art/music,
 // whose paths become the deterministic destination names (see asset-move-names.ts).
 describe('carryFormToCard', () => {

@@ -2,7 +2,7 @@
 // Game Mode tile. This is the one place in the app that writes a file Steam owns, so the whole module is
 // built around not damaging it.
 //
-// Safety rules (from the plan's §3.5, several of them established by experiment on a real Deck):
+// Safety rules (several of them established by experiment on a real Deck):
 //  - Steam does NOT need to be closed: it does not rewrite shortcuts.vdf on exit (verified — a Steam that
 //    was killed by a mode switch left an externally-modified file untouched).
 //  - Read-modify-write, never a blind overwrite: foreign shortcuts are carried through verbatim.

@@ -49,7 +49,7 @@ const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000; // re-check every 6h for long-runn
 /**
  * Whether this build can self-update at all: it must be PACKAGED, and it must not be the macOS one —
  * Squirrel.Mac only applies an update to a code-signed bundle, and this project ships an unsigned dmg
- * (Д6). Everywhere that would otherwise touch `autoUpdater` asks this first, so the macOS build cannot
+ * (no Apple Developer account). Everywhere that would otherwise touch `autoUpdater` asks this first, so the macOS build cannot
  * start a check whose install step is guaranteed to fail.
  */
 function updatesSupported(): boolean {
@@ -117,7 +117,7 @@ export class UpdaterService {
     this.registerIpc();
 
     // macOS FIRST, before the packaged check: Squirrel.Mac refuses to apply an update to an app bundle
-    // that is not code-signed, and this build is not (no Apple Developer account — Д6). Wiring autoUpdater
+    // that is not code-signed, and this build is not (no Apple Developer account). Wiring autoUpdater
     // anyway would mean a check that finds a version, downloads it and then fails at install — so the
     // Settings screen is told to explain manual updating instead.
     //
@@ -473,7 +473,7 @@ export class UpdaterService {
     autoUpdater.quitAndInstall();
   }
 
-  // ── Pushing status to the settings window ──────────────────────────────────
+  // ── Pushing status to the Settings screen ──────────────────────────────────
 
   private setStatus(next: UpdateStatus): void {
     this.status = next;

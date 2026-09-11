@@ -1,4 +1,4 @@
-// Linux SavePathResolver (Р5/Э6): resolves the Windows-dictionary `pcSavePath` to a physical folder
+// Linux SavePathResolver: resolves the Windows-dictionary `pcSavePath` to a physical folder
 // INSIDE the game's Wine prefix (exe/install modes) or its Steam compatdata prefix (steam mode). The
 // moment of resolution is sync-time, not manifest-read, so a prefix that doesn't exist yet is a no-op
 // sync (null), not a rejected card. The prefix→subpath mapping is a pure function (unit-tested without
@@ -12,7 +12,7 @@ import { steamLibraryDirs } from '../steam';
 import { log } from '../logger';
 
 /**
- * Where each Windows env-prefix lives inside a Wine prefix, relative to `drive_c` (Р5). Wine lays the
+ * Where each Windows env-prefix lives inside a Wine prefix, relative to `drive_c`. Wine lays the
  * steamuser home out exactly like a Windows profile, so the mapping is a fixed table. `%USERPROFILE%` is
  * the steamuser home itself (empty tail). Modern Proton uses the Vista+ `AppData\…` / `Documents` layout
  * (not the XP `My Documents` one), matching the prefixes we create and the compatdata Steam maintains.
@@ -45,7 +45,7 @@ export function resolveInsideWinePrefix(pfx: string, pcSavePath: string): string
 }
 
 /**
- * Reverse of resolveInsideWinePrefix, for the Configure window's pcSavePath Browse (Р5). Takes an
+ * Reverse of resolveInsideWinePrefix, for the Customize screen's pcSavePath Browse. Takes an
  * ABSOLUTE host folder the user picked and expresses it as a `%PREFIX%/…` manifest string, or null when it
  * lives in no Wine prefix at all (then it cannot be a Windows game's save location and the picker rejects
  * it). Pure.
@@ -97,7 +97,7 @@ async function findCompatdataPrefix(appid: number, steamLocator: SteamLocator): 
 /**
  * The Wine prefix that owns this game's saves, and whether it exists yet.
  *
- * exe/install: the path is DETERMINISTIC (`<userData>/prefixes/<id>` — Р2), so it is always returned, even
+ * exe/install: the path is DETERMINISTIC (`<userData>/prefixes/<id>`), so it is always returned, even
  * before the prefix exists. That is what lets sync-in restore card saves into a prefix that a launch is
  * about to create (launchGame ensureDir's it anyway); `exists: false` tells the caller the PC side has no
  * authority, so a stale baseline must not turn the empty prefix into a phantom deletion on the card.
@@ -130,7 +130,7 @@ export function createLinuxSavePathResolver(deps: LinuxSavePathDeps): SavePathRe
       const prefix = await prefixForManifest(manifest, deps);
       if (prefix === null) {
         // Steam mode with no compatdata: the game has never run under Proton (or isn't installed), so
-        // there is no location to sync with — a logged no-op, not an error (Р5).
+        // there is no location to sync with — a logged no-op, not an error.
         log.info(`[save-sync] no Steam compatdata for "${manifest.raw.id}" yet — pcSavePath "${pcSavePath}" unresolved`);
         return null;
       }

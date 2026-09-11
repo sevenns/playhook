@@ -1,6 +1,6 @@
-// The electron-free half of "Move to card…" (see the plan, Р2.4/Р2.5/Р2.8): moving a local (PC-library)
-// game onto a card. Pure so it can be unit-tested — the transaction itself (GameConfigService.moveToCard)
-// touches fs and cannot be imported in vitest, the same reason game-config-add.ts was carved out.
+// The electron-free half of "Move to card…": moving a local (PC-library) game onto a card. Pure so it
+// can be unit-tested — the transaction itself (GameConfigService.moveToCard) touches fs and cannot be
+// imported in vitest, the same reason game-config-add.ts was carved out.
 import path from 'node:path';
 import {
   movedGridAssetPath,
@@ -18,11 +18,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * library's post-move text (the "from" side — never sent by the renderer, always derived here; the same
  * never-trust-the-renderer's-derived-text stance the rest of GameConfigService takes for a write), and the
  * target card's PRE-move text, recovered by removing the just-inserted slot back out of `toText` (used to
- * best-effort restore the card if the library write fails after the card's already been written — see the
- * plan, Р2.5's rollback note). Mirrors `gamesToText`'s shape rules (configure-form-model.ts) so the result
- * round-trips through the SAME reader every other write does: a lone object for exactly one game left, an
- * array for more than one, `'[]\n'` for none. Returns null only if `text` is not valid JSON, which never
- * happens for text this function is actually called with (always already schema-validated beforehand).
+ * best-effort restore the card if the library write fails after the card's already been written).
+ * Mirrors `gamesToText`'s shape rules (configure-form-model.ts) so the result round-trips through the
+ * SAME reader every other write does: a lone object for exactly one game left, an array for more than
+ * one, `'[]\n'` for none. Returns null only if `text` is not valid JSON, which never happens for text
+ * this function is actually called with (always already schema-validated beforehand).
  */
 export function removeGameFromManifestText(id: string, text: string): string | null {
   let parsed: unknown;
@@ -53,8 +53,8 @@ export function findGameInText(id: string, text: string): Record<string, unknown
 }
 
 /**
- * The card-relative path that must already exist on the target BEFORE a move commits (Р2.6 — "the files
- * of the game itself"), or null when there is nothing to check: Steam mode has no card file at all.
+ * The card-relative path that must already exist on the target BEFORE a move commits ("the files of the
+ * game itself"), or null when there is nothing to check: Steam mode has no card file at all.
  *
  * `carryFormToCard` only ever LANDS a moved game in `steam` or `executable` mode, but the form stays open
  * afterwards and offers every mode a card allows — Installer among them — so all three are reachable by

@@ -1,4 +1,4 @@
-// Pure parsing/filtering for the Game-Mode automount sweep (Р10). The safety contract lives here: only a
+// Pure parsing/filtering for the Game-Mode automount sweep. The safety contract lives here: only a
 // removable, unmounted volume with a real data filesystem may ever be mounted — the internal drive must
 // never match, whatever lsblk reports.
 import { describe, expect, it } from 'vitest';

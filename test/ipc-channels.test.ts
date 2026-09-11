@@ -1,4 +1,4 @@
-// Completeness guard for the IPC contract bridge (audit C2/M-1). The `satisfies Partial<typeof IPC>`
+// Completeness guard for the IPC contract bridge. The `satisfies Partial<typeof IPC>`
 // in each preload catches wrong values and typo'd keys at compile time, but Partial<> CANNOT catch a
 // channel that exists in the shared IPC source of truth yet was never exposed by any preload. This
 // test closes that gap by reading each preload's CHANNELS map from source (the preloads import

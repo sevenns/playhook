@@ -1,11 +1,11 @@
-// macOS ProcessMonitor backed by `ps` (Д1). There is no /proc on darwin and no way to read another
+// macOS ProcessMonitor backed by `ps`. There is no /proc on darwin and no way to read another
 // process's environment without privileges, so a Steam game is identified the way win32 identifies it —
 // by the watched image names — rather than by the `SteamAppId` tag the linux monitor keys on.
 //
 // The snapshot comes from `ps -axwwo pid=,comm=`: `-ww` disables the column truncation that would cut long
 // bundle paths, and `comm` is the executable's full path, so the basename is a reliable image name.
 //
-// Name matching normalizes the `.exe` suffix away on BOTH sides (Д5): a card written for Windows/Deck
+// Name matching normalizes the `.exe` suffix away on BOTH sides: a card written for Windows/Deck
 // stores `valheim.exe`, while the native mac process is `valheim`. A mac-only record may store the bare
 // name; both spellings therefore match the same process.
 //
@@ -37,7 +37,7 @@ export interface DarwinProcParent {
 /**
  * A comparable image name: the basename (both separators, so a Windows-dictionary `dir\game.exe` also
  * reduces), lower-cased, with a trailing `.exe` dropped. Dropping the suffix is what lets a card written
- * for Windows match the native mac binary of the same game (Д5/Р1). Pure.
+ * for Windows match the native mac binary of the same game. Pure.
  */
 export function normalizeImageName(name: string): string {
   return pathBasename(name).toLowerCase().replace(/\.exe$/, '');
@@ -196,7 +196,7 @@ export function createDarwinProcessMonitor(): ProcessMonitor {
       // and a pid whose process honoured SIGTERM may by now belong to something else entirely.
       signalPids(stillAlive(pids), 'SIGKILL');
     },
-    // Д1: a mac process carries no readable Steam tag, so the watched image names ARE the running signal —
+    // A mac process carries no readable Steam tag, so the watched image names ARE the running signal —
     // the same rule win32 uses. The appid is unused here.
     async isSteamGameRunning(_appid, watchNames): Promise<boolean> {
       if (watchNames.length === 0) return false;

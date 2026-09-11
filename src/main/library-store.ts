@@ -110,7 +110,7 @@ const indexSchema = z.object({
 export interface LibraryStoreDeps {
   /** app.getPath('userData') — `library/` is created inside it. */
   readonly baseDir: string;
-  /** Reads a game's authoritative stats (PcStore). The index only CACHES these numbers — see Р1. */
+  /** Reads a game's authoritative stats (PcStore). The index only CACHES these numbers. */
   readonly readStats: (id: string) => Promise<Stats>;
 }
 
@@ -158,7 +158,7 @@ export class LibraryStore {
     }
   }
 
-  /** The carousel order for the given card ids: the card's games first, then the played history (Р1). */
+  /** The carousel order for the given card ids: the card's games first, then the played history. */
   entriesForCarousel(activeIds: readonly string[]): readonly LibraryEntryRecord[] {
     return orderForCarousel(this.index.entries, activeIds);
   }
@@ -204,7 +204,7 @@ export class LibraryStore {
     // (a false warning, and a full re-copy of every asset on every insert).
     const pristineTitle = (await this.readCardSlot(id))?.['title'];
     // The snapshot belongs to the CARD path alone: a PC-library game's slot speaks the `pc` dialect and
-    // would make a card unreadable if it were ever applied to one (see the plan, Р1).
+    // would make a card unreadable if it were ever applied to one.
     const cardSlotHash =
       manifest.source === 'card' && cardSlot !== undefined
         ? await this.takeCardSlot(id, cardSlot)
@@ -311,7 +311,7 @@ export class LibraryStore {
     });
     if (replacedForeign) {
       // Two cards sharing a manifest id now overwrite each other's COVER AND NAME, not just their stats
-      // numbers — a new, visible class of mistake, so it gets a breadcrumb (Р3).
+      // numbers — a new, visible class of mistake, so it gets a breadcrumb.
       log.warn(
         `[library] id="${id}" already existed with a different title/source — the history entry was overwritten (colliding manifest ids across cards)`,
       );

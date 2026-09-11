@@ -226,7 +226,7 @@ const gameSettingsScreen = createGameSettingsScreen({
   // declared below, and no message can arrive before the user has opened this screen.
   notify: (text) => toast.show(text),
   showError: (text) => controls.showError(text),
-  // Editing while the game runs is legal (Р3); DELETING it is not — the launcher would be left holding a
+  // Editing while the game runs is legal; DELETING it is not — the launcher would be left holding a
   // manifest the file no longer has.
   isBusy: () =>
     currentState.kind === 'running' ||
@@ -558,7 +558,7 @@ function syncMusic(): void {
   audio.setMusicPlaying(visible && !running);
 }
 
-// ── "Chatter": a rotating funny suffix for long busy phases (install / Proton config — Р7j) ──────────
+// ── "Chatter": a rotating funny suffix for long busy phases (install / Proton config) ────────────────
 // The base status ("Установка..." / "Конфигурация Proton...") shows alone for the first MINUTE; after that
 // a random funny suffix is APPENDED and swapped every 20s, so a long silent install/provision doesn't feel
 // stuck. Renderer-owned (pure presentation) — main only sets the base state.
@@ -762,7 +762,7 @@ function render(state: AppState): void {
   controls.refresh();
   syncMusic();
 
-  // Empty-screen error (Р8, point 1): a card that fails to load sets state=error with no game. In Game
+  // Empty-screen error: a card that fails to load sets state=error with no game. In Game
   // Mode the window is shown (no tray to hide into), so surface the reason over the idle screen via the
   // error popup. Only on ENTERING the error (prev not already error) so a locale/wallpaper re-render
   // doesn't re-pop a popup the user has closed. Desktop/Windows keep hiding, so this rarely fires there.
@@ -940,7 +940,7 @@ function applyBrowse(browse: BrowseInfo | null): void {
   currentBrowse = browse;
   // The Customize screen is about ONE game's file. When the card carrying it is pulled or swapped —
   // everything under the screen is rebuilt by then — there is nothing left to edit, so it closes rather
-  // than staying open over a game that is gone (see the plan, Р6.2).
+  // than staying open over a game that is gone.
   gameSettingsScreen.applyBrowse(browse);
   // The game the screen was about is GONE — the last history entry was forgotten, the card was pulled —
   // and main has nothing to put in its place. A detail screen is one game's screen, so with no game there
@@ -1042,7 +1042,7 @@ void window.api.requestCardMusic().then((url) => {
   syncMusic();
 });
 
-// The default ambience is app-wide (set in the settings window) and delivered on its own channel; the
+// The default ambience is app-wide (set on the Settings screen) and delivered on its own channel; the
 // audio engine plays it only while the card has no music of its own (a game's music always wins) and
 // crossfades between the two. Seed on startup and update live. syncMusic re-asserts the gate so a seed
 // arriving before the first visibility sync still starts (or stays paused) correctly.
@@ -1059,7 +1059,7 @@ void window.api.requestAmbient().then((url) => {
 window.api.onSfxSet((set) => audio.setSounds(set));
 void window.api.requestSfxSet().then((set) => audio.setSounds(set));
 
-// Audio volumes are app-wide (set in the settings window): seed them on startup and update live.
+// Audio volumes are app-wide (set on the Settings screen): seed them on startup and update live.
 const applyVolumes = (volumes: { music: number; sfx: number }): void => {
   audio.setMusicVolume(volumes.music);
   audio.setSfxVolume(volumes.sfx);

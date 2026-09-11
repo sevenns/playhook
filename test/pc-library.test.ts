@@ -117,7 +117,7 @@ describe('PcLibraryStore.importAsset', () => {
   });
 
   // The three refusals that replace the native dialog's filters, now that the in-launcher picker names
-  // the path from the renderer (see the plan, Р5.1).
+  // the path from the renderer.
   it('refuses a file whose extension does not match the kind', async () => {
     const key = path.join(baseDir, 'id_rsa');
     await fs.writeFile(key, 'PRIVATE KEY');

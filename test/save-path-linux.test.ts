@@ -12,7 +12,7 @@ import type { GameManifest, ResolvedManifest } from '../src/shared/types';
 const PFX = '/home/deck/.config/playhook/prefixes/mygame';
 const HOME = `${PFX}/drive_c/users/steamuser`;
 
-describe('resolveInsideWinePrefix — %PREFIX% → Wine prefix mapping (Р5)', () => {
+describe('resolveInsideWinePrefix — %PREFIX% → Wine prefix mapping', () => {
   it('maps %APPDATA% to AppData/Roaming', () => {
     expect(resolveInsideWinePrefix(PFX, '%APPDATA%\\My Game\\Saves')).toBe(
       `${HOME}/AppData/Roaming/My Game/Saves`,
@@ -64,7 +64,7 @@ describe('resolveInsideWinePrefix — %PREFIX% → Wine prefix mapping (Р5)', (
   });
 });
 
-describe('winePrefixToManifestPcSavePath — Configure Browse reverse mapping (Р5)', () => {
+describe('winePrefixToManifestPcSavePath — Customize Browse reverse mapping', () => {
   it('maps a picked folder inside the prefix back to its %PREFIX% token', () => {
     expect(winePrefixToManifestPcSavePath(`${HOME}/AppData/Local/Saves`)).toBe('%LOCALAPPDATA%/Saves');
     expect(winePrefixToManifestPcSavePath(`${HOME}/AppData/Roaming/My Game/Saves`)).toBe(

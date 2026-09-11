@@ -5,7 +5,7 @@
 // It is READ-ONLY and unrestricted on purpose: where to browse is the user's business, and the commonest
 // install path there is (`…/steamapps/common`) is a system directory by any definition. What is guarded
 // is what main ACCEPTS back — the type/extension checks and the import limits live there, where a
-// renderer cannot talk its way past them (see the plan, Р5.1/Р5.2).
+// renderer cannot talk its way past them.
 //
 // Two columns: the starting points on the left (the card, this PC, the home folder, every mounted
 // volume), the current directory on the right. Left/right move between them, up/down inside one, A enters

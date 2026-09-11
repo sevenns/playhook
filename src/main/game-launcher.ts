@@ -355,7 +355,7 @@ function launchElevated(target: LaunchTarget, mode: LaunchMode): GameProcess {
       if (!disposed) {
         const ok = kernel.TerminateProcess(handle, KILL_EXIT_CODE);
         if (ok === 0) {
-          // Undocumented whether SEE_MASK_NOCLOSEPROCESS grants PROCESS_TERMINATE (see K-Д1) — leave a
+          // Undocumented whether SEE_MASK_NOCLOSEPROCESS grants PROCESS_TERMINATE — leave a
           // breadcrumb; the controller's control poll turns a still-alive game into errors.killFailed.
           log.warn(`[kill] TerminateProcess failed (GetLastError=${kernel.GetLastError()})`);
         }

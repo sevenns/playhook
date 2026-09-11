@@ -185,7 +185,6 @@ export const en = {
   'settings.languageSystem': 'Match system',
   'settings.sectionGeneral': 'General',
   'settings.summonHotkey': 'Show the launcher with a gamepad shortcut',
-  // The launcher screen states the chord in one line (the settings window splits it around a <b>).
   'settings.summonHint': 'Hold Menu + View on your gamepad to bring the launcher to the front.',
   'settings.preventScreensaver': 'Keep the screen awake while the launcher is open',
   'settings.keepOpenWithoutCard': 'Keep the launcher open without a card',
@@ -252,7 +251,7 @@ export const en = {
   'gameConfig.pickNeedsFile': 'Pick a file for this field.',
   'gameConfig.pickWrongType': 'That file type does not fit this field.',
   'gameConfig.listFailed': 'This folder could not be opened.',
-  // Move to card (Р2.5) — GameConfigService.moveToCard.
+  // Move to card — GameConfigService.moveToCard.
   'gameConfig.moveGameBusy': 'Wait for the current install or launch to finish, then try again.',
   'gameConfig.moveIdTaken': 'This card already has a game with the same id.',
   'gameConfig.moveIdChanged':

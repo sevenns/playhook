@@ -1,5 +1,5 @@
 // Applying edits made from the HISTORY onto the card that carries the game — the step that runs at the
-// very start of an insertion, before the manifests are read (see the plan, Р2/Р3/Р9).
+// very start of an insertion, before the manifests are read.
 //
 // Everything here is guarded, because it writes to somebody's card:
 //

@@ -7,7 +7,7 @@ import { shell } from 'electron';
 /**
  * Opens a `steam://` URI (rungameid/install) via Electron's shell.openExternal. NOTE: openExternal does
  * NOT reliably reject when `steam://` is unregistered (Steam not installed) — callers must gate on
- * getSteamPath() !== null BEFORE calling this. Here we only guarantee that any sync/async failure
+ * `steamLocator.locateSteam()` !== null BEFORE calling this. Here we only guarantee that any sync/async failure
  * propagates as a rejected promise so the caller can surface it.
  */
 export async function openSteamUri(uri: string): Promise<void> {

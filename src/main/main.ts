@@ -84,7 +84,7 @@ function configureAutoLaunch(): void {
 }
 
 /**
- * Linux autostart (Р11). Electron's app.setLoginItemSettings is macOS/Windows-only, so we write an XDG
+ * Linux autostart. Electron's app.setLoginItemSettings is macOS/Windows-only, so we write an XDG
  * autostart entry by hand. Only meaningful for the packaged AppImage (Exec points at $APPIMAGE) and only
  * in Desktop Mode — in Game Mode the app runs as a non-Steam game with no autostart mechanism, so we skip
  * it there. Best-effort: any failure is logged, never fatal.
@@ -262,7 +262,7 @@ async function bootstrap(): Promise<void> {
     getTranslator,
   });
 
-  // Game Mode only (Р10), as a safety net: the gamescope session normally mounts an inserted card itself,
+  // Game Mode only, as a safety net: the gamescope session normally mounts an inserted card itself,
   // but one that arrives unmounted is invisible to the scan (it has no path to look under). Sweeping it
   // into /run/media keeps hot-swap working in that case. Windows and the KDE desktop session mount on
   // their own → no sweep wired there.
@@ -427,7 +427,7 @@ async function bootstrap(): Promise<void> {
       recomputeKeepAwake();
     },
     // Game Mode: no tray to hide into, and Steam closes a non-Steam game by closing its window → let the
-    // close through and quit on window-all-closed (Р8, point 5). Desktop/Windows keep the hide-to-tray guard.
+    // close through and quit on window-all-closed. Desktop/Windows keep the hide-to-tray guard.
     { hideToTrayOnClose: !gameModeSession },
   );
   // The update status is pushed to the launcher, which is where the Settings screen lives now. Attached
@@ -565,7 +565,7 @@ async function bootstrap(): Promise<void> {
   const globalGamepad = new GlobalGamepad();
   globalGamepadRef = globalGamepad;
   globalGamepad.onChord(() => {
-    if (!summonHotkeyEnabled) return; // toggled off in the settings window
+    if (!summonHotkeyEnabled) return; // toggled off on the Settings screen
     window.showAndFocus(true);
   });
   globalGamepad.start();
@@ -597,7 +597,7 @@ if (!gotSingleInstanceLock) {
 
   // A background app doesn't quit when the window is closed/hidden — it lives in the tray. Exception:
   // SteamOS Game Mode has no tray and the window's close isn't guarded, so a real close means the user
-  // ended the (non-Steam) game → quit (Р8, point 5).
+  // ended the (non-Steam) game → quit.
   app.on('window-all-closed', () => {
     if (quitting || gameModeSession) app.quit();
   });

@@ -294,7 +294,7 @@ export function createControls(deps: ControlsDeps): Controls {
    * The full-screen overlays, as a set rather than as a named one. Every mechanism that has to stand down
    * while a screen is up — the idle timer, the wheel, Y, and all six primitives — asks THESE two
    * questions instead of `settings.isOpen()`, so the next screen is one entry in this list rather than an
-   * eleventh edit in every primitive (see the plan, Р1).
+   * eleventh edit in every primitive.
    *
    * At most one is ever open: a screen is entered from the Details menu, which closes on the way in, and
    * a surface that opens on top of a screen (the keyboard, the file picker) belongs to that screen's own
@@ -386,7 +386,7 @@ export function createControls(deps: ControlsDeps): Controls {
     // itself just set (see the mousemove handler).
     armHover();
     // Only the FIRST view is an opening; switching views keeps the popup on screen and keeps the
-    // button/back sounds the callers already play (Р4).
+    // button/back sounds the callers already play.
     if (popupView === 'none') audio.play('popup-open');
     popupView = view;
     popup.dataset['view'] = view;
@@ -425,7 +425,7 @@ export function createControls(deps: ControlsDeps): Controls {
   function closePopup(options?: { readonly silent?: boolean }): void {
     if (popupView === 'none') return;
     // `silent` is for a close that is only half of a bigger move — the popup handing over to a screen,
-    // where the destination's own popup-open is the single sound of that gesture (Р5).
+    // where the destination's own popup-open is the single sound of that gesture.
     if (options?.silent !== true) audio.play('popup-close');
     popupView = 'none';
     popup.classList.remove('is-open');
@@ -613,7 +613,7 @@ export function createControls(deps: ControlsDeps): Controls {
     const item = deps.getNotifications().find((candidate) => candidate.id === id);
     window.api.dismissNotification(id);
     // Muted when the entry leads to Settings — that screen's popup-open is the sound of the whole
-    // gesture (Р5). With nowhere to go, the popup simply closes and says so.
+    // gesture. With nowhere to go, the popup simply closes and says so.
     closePopup({ silent: item?.kind === 'update-ready' });
     if (item === undefined) return;
     if (item.kind === 'update-ready') {

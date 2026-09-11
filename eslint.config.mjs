@@ -1,5 +1,5 @@
-// Flat ESLint config (audit I4). Type-aware linting over src/ with the high-value async-safety rules
-// the audit calls out: no-floating-promises / no-misused-promises catch forgotten awaits, and
+// Flat ESLint config. Type-aware linting over src/ with the high-value async-safety rules:
+// no-floating-promises / no-misused-promises catch forgotten awaits, and
 // strict-boolean-expressions catches implicit nullable/number truthiness. eslint-config-prettier is
 // applied last so no lint rule fights the formatter. Tests are linted too (they are part of the
 // typechecked program), minus two rules that only ever fire on their fakes; build output is not.

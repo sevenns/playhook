@@ -18,7 +18,7 @@ import { createTranslator } from '../src/shared/i18n/index';
 const t = createTranslator('en');
 
 // Path helpers are platform-sensitive (path.sep differs), so assertions check the *inside/outside*
-// invariant rather than exact separators — the anti-traversal contract is what matters (audit S4).
+// invariant rather than exact separators — the anti-traversal contract is what matters.
 const root = path.resolve('card-root');
 
 function isInside(base: string, target: string): boolean {
@@ -42,7 +42,7 @@ describe('resolveInside', () => {
     expect(resolveInside(root, '/etc/passwd')).toBeNull();
   });
 
-  it('normalizes Windows backslash separators (Р12)', () => {
+  it('normalizes Windows backslash separators', () => {
     // A Windows-authored `"bin\\game.exe"` must resolve INSIDE the root on Linux too, where `\` is not a
     // separator — the normalization turns it into `bin/game.exe` before resolving.
     const resolved = resolveInside(root, 'bin\\game.exe');
@@ -52,7 +52,7 @@ describe('resolveInside', () => {
     expect(resolved).toBe(resolveInside(root, 'bin/game.exe'));
   });
 
-  it('still rejects traversal written with backslashes (Р12)', () => {
+  it('still rejects traversal written with backslashes', () => {
     expect(resolveInside(root, '..\\outside.exe')).toBeNull();
   });
 });
@@ -68,7 +68,7 @@ describe('stripCopySourcePrefix (copy mode: executable relative to the copied di
     expect(stripCopySourcePrefix('bin/game.exe', 'Games/MyGame')).toBe('bin/game.exe');
   });
 
-  it('normalizes Windows backslashes on both sides (Р12)', () => {
+  it('normalizes Windows backslashes on both sides', () => {
     expect(stripCopySourcePrefix('game\\game.exe', 'game')).toBe('game.exe');
     expect(stripCopySourcePrefix('Games\\MyGame\\bin\\game.exe', 'Games\\MyGame')).toBe(
       'bin/game.exe',
@@ -229,7 +229,7 @@ describe('validateManifestText', () => {
     expect(validateManifestText(text, t).ok).toBe(false);
   });
 
-  // The `.exe` suffix is optional (Д5): a native macOS process has no such name, and steam mode requires
+  // The `.exe` suffix is optional: a native macOS process has no such name, and steam mode requires
   // watchProcesses — so demanding it would make steam mode impossible on macOS. Everything that made the
   // old pattern safe (no separators, no quotes, no traversal) still holds.
   it('accepts a watchProcesses name WITHOUT the .exe suffix (a native mac binary)', () => {
