@@ -54,6 +54,11 @@ const FACTORY_BASELINE: readonly FactoryBaseline[] = [
   { file: 'src/renderer/settings-screen.ts', name: 'createSettingsScreen', lines: 998 },
 ];
 
+/** Source lines regardless of line endings (a Windows checkout without .gitattributes has CRLF). */
+function splitLines(source: string): readonly string[] {
+  return source.split(/\r?\n/);
+}
+
 /** `wc -l`: the number of newline characters. */
 function lineCount(source: string): number {
   let count = 0;
@@ -81,7 +86,7 @@ function readSource(file: string): string {
  * line of its own at column zero after it; null when the function is not found.
  */
 function functionSpan(source: string, name: string): number | null {
-  const lines = source.split('\n');
+  const lines = splitLines(source);
   const start = lines.findIndex((line) => line.startsWith(`export function ${name}(`));
   if (start === -1) return null;
   const end = lines.findIndex((line, index) => index > start && line === '}');
@@ -136,6 +141,7 @@ describe('file size ratchet (raw lines, wc -l)', () => {
     const sample = ['import x from "y";', '', 'export function createThing(deps: Deps): Thing {', '  return {};', '}', ''].join('\n');
     expect(functionSpan(sample, 'createThing')).toBe(3);
     expect(functionSpan(sample, 'createOther')).toBeNull();
+    expect(functionSpan(sample.replace(/\n/g, '\r\n'), 'createThing')).toBe(3);
     expect(sourceFiles().length).toBeGreaterThan(50);
   });
 });
