@@ -9,10 +9,9 @@
 // no further prompt.
 import type { Translator } from '../shared/i18n/index';
 import type { PowerBackend } from './platform';
+import { type PowerAction } from './platform/types';
 import { log } from './logger';
 import { describe } from './util';
-
-export type PowerAction = 'shutdown' | 'reboot' | 'sleep';
 
 export interface PowerServiceDeps {
   /** OS backend for the actual power commands (platform.powerBackend). `supported=false` → we surface

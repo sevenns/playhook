@@ -206,6 +206,8 @@ export function createDarwinProcessMonitor(): ProcessMonitor {
     killSteamGame(_appid, watchNames): Promise<void> {
       return monitor.killByName(watchNames);
     },
+    // No elevated launch on macOS (runAsAdmin is a no-op there), so there is nothing to kill elevated.
+    killImagesElevated: () => undefined,
   };
   return monitor;
 }

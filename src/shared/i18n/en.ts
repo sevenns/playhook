@@ -430,7 +430,7 @@ export const en = {
   'gameSettings.confirmDeleteSavesNote':
     'The game files stay where they are, and so do its save backups. Unsaved changes on this screen are discarded.',
 
-  // ── User-facing errors from main (ipc.ts / game-config.ts / updater.ts) ─────
+  // ── User-facing errors from main (game-controller / game-sequences / game-config / updater) ──
   // The wrapper is translated; the technical cause ({cause}) is inserted as-is (system messages, nested
   // exceptions and the like stay in their original form).
   // ── Online metadata (main/metadata/*) ─────────────────────────────────────

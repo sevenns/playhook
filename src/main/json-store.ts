@@ -11,12 +11,10 @@ import type { z } from 'zod';
 import { log } from './logger';
 import { delay } from './util';
 
-function isMissingFile(cause: unknown): boolean {
-  return (
-    cause instanceof Error &&
-    'code' in cause &&
-    (cause as { readonly code?: unknown }).code === 'ENOENT'
-  );
+/** Whether a thrown value is the fs "no such file" error — the benign absence every store treats as
+ * a normal first run, as opposed to a read failure worth a breadcrumb. */
+export function isEnoent(cause: unknown): boolean {
+  return typeof cause === 'object' && cause !== null && (cause as { readonly code?: unknown }).code === 'ENOENT';
 }
 
 /**
@@ -32,7 +30,7 @@ export async function readJsonValidated<S extends z.ZodTypeAny>(
   try {
     raw = await fse.readJson(filePath);
   } catch (cause) {
-    if (!isMissingFile(cause)) {
+    if (!isEnoent(cause)) {
       log.warn(`[store] failed to read "${filePath}", using default:`, cause);
     }
     return fallback;

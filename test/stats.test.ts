@@ -3,7 +3,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { mergeStats, StatsService } from '../src/main/stats';
-import { CARD_STATS_FILENAME, type Stats } from '../src/shared/types';
+import { type Stats } from '../src/shared/types';
+import { CARD_STATS_FILENAME } from '../src/main/stats';
 import type { PcStore } from '../src/main/pc-store';
 
 const base: Stats = { schemaVersion: 1, totalPlaySeconds: 0, launchCount: 0, lastPlayedAt: null };

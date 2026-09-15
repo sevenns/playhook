@@ -11,8 +11,7 @@
 //  • a Gatekeeper-blocked binary — a quarantined game downloaded from the internet is SIGKILLed by
 //    syspolicyd with no UI at all, so an instant death right after spawn is reported as what it is.
 import { spawn } from 'node:child_process';
-import type { GameProcessLauncher, ProcessMonitor } from './types';
-import type { GameProcess } from '../game-launcher';
+import type { GameProcess, GameProcessLauncher, ProcessMonitor } from './types';
 import type { Translator } from '../../shared/i18n/index';
 import { isAppBundlePath, resolveAppBundleExecutable } from './app-bundle.darwin';
 import { delay } from '../util';
@@ -127,6 +126,7 @@ export function createDarwinGameLauncher(deps: DarwinGameLauncherDeps): GameProc
     launchInstaller: () => refuseInstall(),
     prepareInstallDir: () => refuseInstall(),
     launchUninstaller: () => refuseInstall(),
+    resolveUninstaller: () => Promise.resolve(null),
     // Never reached (install mode never resolves on darwin); returns the same dir win32 would, so the
     // interface stays total rather than throwing from a getter-shaped method.
     uninstallDir: (install) => install.dir,

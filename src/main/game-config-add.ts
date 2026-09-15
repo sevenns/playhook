@@ -7,6 +7,7 @@ import {
   type HostPlatform,
   type ManifestSource,
 } from '../shared/types';
+import { parseManifestItems } from './manifest';
 
 /** The fixed half of a root read — everything that does not depend on whether a game.json is there. */
 export interface RootReadBase {
@@ -43,13 +44,8 @@ export interface AddedGame {
 export function addedGamesOf(beforeSignature: string, text: string): readonly AddedGame[] {
   if (beforeSignature === 'invalid') return [];
   const before = new Set(beforeSignature.split('|').filter((id) => id.length > 0));
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    return [];
-  }
-  const games: readonly unknown[] = Array.isArray(parsed) ? parsed : [parsed];
+  const games = parseManifestItems(text);
+  if (games === null) return [];
   const added: AddedGame[] = [];
   for (const game of games) {
     if (typeof game !== 'object' || game === null) continue;

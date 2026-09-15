@@ -1,6 +1,6 @@
 // Opening `steam://` URIs. Split out of steam.ts so that module can stay electron-free: it is reached
 // from `save-path.linux.ts`, which the Game Mode daemon loads under ELECTRON_RUN_AS_NODE — a context
-// where importing `electron` fails outright. Only the GUI (ipc.ts) opens URIs, so only this file needs
+// where importing `electron` fails outright. Only the GUI (game-controller.ts, game-sequences.ts) opens URIs, so only this file needs
 // electron, and nothing on the daemon's import path touches it.
 import { shell } from 'electron';
 

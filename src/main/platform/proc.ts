@@ -207,6 +207,8 @@ export function createLinuxProcessMonitor(): ProcessMonitor {
       const snap = snapshotFromEntries(await scanProc());
       return watchNames.some((name) => snap.hasImageName(name));
     },
+    // No elevation under Proton — a plain kill is all there is.
+    killImagesElevated: () => undefined,
     async killSteamGame(appid, watchNames): Promise<void> {
       signalPids(await steamAppPids(appid));
       // Fallback sweep by the Windows watch names (Proton `.exe`) — harmless if none match.

@@ -5,7 +5,7 @@
 // fs); the async wrapper adds the per-game prefix lookup + existence gate.
 import path from 'node:path';
 import fse from 'fs-extra';
-import type { ResolvedManifest } from '../../shared/types';
+import type { ResolvedManifest } from '../manifest-types';
 import type { PcSaveLocation, SavePathResolver, SteamLocator } from './types';
 import { prefixDir } from './umu';
 import { steamLibraryDirs } from '../steam';

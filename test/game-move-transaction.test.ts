@@ -1,4 +1,4 @@
-// GameConfigService.moveToCard end to end: the transaction itself, not the pure helpers game-move.test.ts
+// GameMoveTransaction.moveToCard end to end: the transaction itself, not the pure helpers game-move.test.ts
 // covers. Everything risky about a move lives in the ORDER of its steps and in its two levels of rollback
 // — a copy that lands on the card, a card manifest that is written and then has to be taken back — and
 // none of that is reachable except by driving the whole sequence, so that is what happens here.
@@ -14,12 +14,9 @@ import os from 'node:os';
 import path from 'node:path';
 import fse from 'fs-extra';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-  type DriveCandidate,
-  type GameMoveRequest,
-  type NotificationInput,
-  type ResolvedManifest,
-} from '../src/shared/types';
+import { type DriveCandidate, type GameMoveRequest } from '../src/shared/types';
+import type { ResolvedManifest } from '../src/main/manifest-types';
+import type { NotificationInput } from '../src/main/notifications';
 import { createTranslator } from '../src/shared/i18n/index';
 
 const hooks = vi.hoisted(() => ({
@@ -47,6 +44,7 @@ vi.mock('../src/main/drive-watcher', async (importOriginal) => {
 });
 
 const { GameConfigService } = await import('../src/main/game-config');
+const { GameMoveTransaction } = await import('../src/main/game-move-transaction');
 const { PcLibraryStore } = await import('../src/main/pc-library');
 const { LibraryStore } = await import('../src/main/library-store');
 const { describeManifestContent } = await import('../src/main/drive-watcher');
@@ -55,7 +53,7 @@ const { readManifests } = await import('../src/main/manifest');
 const t = createTranslator('en');
 
 interface Harness {
-  readonly service: InstanceType<typeof GameConfigService>;
+  readonly service: InstanceType<typeof GameMoveTransaction>;
   readonly pcRoot: string;
   readonly cardRoot: string;
   readonly liveSaves: string;
@@ -190,18 +188,17 @@ async function buildHarness(toText: string): Promise<Harness> {
   const removedSyncStates: string[] = [];
   const manifest = await resolvedPcManifest(pcRoot, 'hades');
 
-  const service = new GameConfigService({
+  // The real GameConfigService supplies the root guard and the game.json reads/writes the transaction
+  // is built from; the move itself is the GameMoveTransaction under test.
+  const config = new GameConfigService({
     getActiveRoot: () => null,
     reloadManifest: () => Promise.resolve({ ok: true as const }),
     pcLibrary,
     reloadPcLibrary: () => Promise.resolve({ ok: true as const }),
     getTranslator: () => t,
-    toManifestPcSavePath: () => null,
     findGameSource: () => ({ root: pcRoot, source: 'pc' as const }),
     notify: (input) => notifications.push(input),
-    resolveManifest: (id) => (id === 'hades' ? manifest : null),
     findPcManifest: () => null,
-    isBusy: () => false,
     // The move never reaches the history — the two history-only deps are stubs of the narrowest kind.
     library: new LibraryStore({
       baseDir: dir,
@@ -215,6 +212,15 @@ async function buildHarness(toText: string): Promise<Harness> {
     }),
     isCardLoading: () => false,
     refreshLibrary: () => undefined,
+  });
+  const service = new GameMoveTransaction({
+    config,
+    getTranslator: () => t,
+    getActiveRoot: () => null,
+    reloadManifest: () => Promise.resolve({ ok: true as const }),
+    notify: (input) => notifications.push(input),
+    resolveManifest: (id) => (id === 'hades' ? manifest : null),
+    isBusy: () => false,
     pcStore: {
       removeSyncState: (id: string) => {
         removedSyncStates.push(id);

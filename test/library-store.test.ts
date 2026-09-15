@@ -6,7 +6,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LibraryStore } from '../src/main/library-store';
-import type { ResolvedManifest, Stats } from '../src/shared/types';
+import type { Stats } from '../src/shared/types';
+import type { ResolvedManifest } from '../src/main/manifest-types';
 
 const NO_STATS: Stats = {
   schemaVersion: 1,
