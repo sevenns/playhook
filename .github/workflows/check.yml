@@ -27,16 +27,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: ubuntu-latest
-            electron-cache: ~/.cache/electron
+        os:
+          - ubuntu-latest
           # Pinned to windows-2022 for the same reason as build-windows.yml: windows-latest ships Visual
           # Studio 18, which the bundled node-gyp cannot recognize, so the native drivelist build fails
           # during `npm ci`.
-          - os: windows-2022
-            electron-cache: ~\AppData\Local\electron\Cache
-          - os: macos-latest
-            electron-cache: ~/Library/Caches/electron
+          - windows-2022
+          - macos-latest
 
     steps:
       - name: Checkout
@@ -49,14 +46,6 @@ jobs:
         with:
           node-version: '22'
           cache: 'npm'
-
-      # The electron binary is downloaded by electron's own postinstall on every `npm ci`; caching its
-      # download directory saves ~100 MB per run.
-      - name: Cache electron download
-        uses: actions/cache@v4
-        with:
-          path: ${{ matrix.electron-cache }}
-          key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
 
       # Deliberately WITHOUT --ignore-scripts: the postinstall (electron-builder install-app-deps) builds
       # the native drivelist, and the game-config-* / game-move-transaction tests reach it through
@@ -72,3 +61,8 @@ jobs:
 
       - name: Unit tests
         run: npm test
+
+      # typecheck proves the types; the esbuild bundle of the renderer and the tsc emit of main are what
+      # ships, and until now they were only built on a release tag.
+      - name: Build
+        run: npm run build
