@@ -14,9 +14,10 @@ import type { AppNotification, AppState, GameInfo } from '../shared/types';
 import type { MessageKey, Translator } from '../shared/i18n/index.js';
 import { formatNotification, formatNotificationTime } from './format.js';
 import { createScroller } from './screen-scroller.js';
-import { HOLD_DELAY_MS, NAV_REPEAT_MS, createAutoRepeatChain } from './auto-repeat.js';
+import { NAV_REPEAT_MS, createAutoRepeatChain } from './auto-repeat.js';
 import { createGamepadController } from './gamepad.js';
-import { createWakeMeter } from './mouse-sleep.js';
+import { createKeyboardController } from './keyboard.js';
+import { createIdleGuard } from './idle.js';
 import { createHoverGuard } from './hover-guard.js';
 import type { NavSurface } from './nav-surface.js';
 import type { SystemCardId } from './system-cards.js';
@@ -809,7 +810,7 @@ export function createControls(deps: ControlsDeps): Controls {
     if (more !== -1) focusIndex = more;
     focusRevealed = true;
     applyFocus();
-    armIdleTimer(); // the countdown was suspended while the screen was up
+    idle.arm(); // the countdown was suspended while the screen was up
   }
 
   // ── Menu item: Install / Uninstall (game-dependent) ──────────────────────────
@@ -915,16 +916,19 @@ export function createControls(deps: ControlsDeps): Controls {
   // it wakes again only on an explicit gamepad move or a mouse hover. `wasActive` tracks the edge.
   let focusRevealed = true;
   let wasActive = false;
-  // Idle timeout, shared by the bar focus and the mouse: after 5s with no input the bar highlight goes
-  // dormant AND the mouse falls asleep. Any input restarts the countdown; the gamepad puts the mouse to
-  // sleep at once (the user switched to the pad), a shove wakes it back up (see the note* helpers).
-  const IDLE_MS = 5_000;
-  let idleTimer = 0;
-  // The launcher OPENS with the mouse asleep (index.html carries the class from the first frame, so there
-  // is no moment where a parked pointer can hover something before this file runs). Waking it takes a
-  // deliberate shove — see mouse-sleep.ts and the swallowing listener below.
-  let mouseAsleep = true;
-  const wakeMeter = createWakeMeter();
+  // Idle timeout, shared by the bar focus and the mouse (idle.ts): after 5s with no input the bar
+  // highlight goes dormant AND the mouse falls asleep. Any input restarts the countdown; the gamepad puts
+  // the mouse to sleep at once (the user switched to the pad), a shove wakes it back up.
+  const idle = createIdleGuard({
+    hover,
+    isSuspended: () => overlays.isAnyOpen(),
+    onIdle: () => {
+      if (focusRevealed && focusActive()) {
+        focusRevealed = false;
+        applyFocus();
+      }
+    },
+  });
 
   function mainFocusables(): readonly HTMLButtonElement[] {
     // The carousel has no bar to focus at all: Play is the selected card's invisible stand-in for the
@@ -986,53 +990,6 @@ export function createControls(deps: ControlsDeps): Controls {
       'aria-label',
       t()(returnToGame ? 'launcher.aria.returnToGame' : 'launcher.aria.play'),
     );
-  }
-
-  /** Puts the mouse to sleep or wakes it: hides the cursor AND turns every pointer gesture on or off. */
-  function setMouseAsleep(asleep: boolean): void {
-    if (mouseAsleep === asleep) return;
-    mouseAsleep = asleep;
-    document.documentElement.classList.toggle('mouse-asleep', asleep);
-    wakeMeter.reset();
-  }
-
-  // (Re)start the idle countdown (IDLE_MS). On expiry the cursor hides and the bar highlight
-  // goes dormant if it's shown with nothing open — both "went idle" at the same moment.
-  function armIdleTimer(): void {
-    if (idleTimer !== 0) window.clearTimeout(idleTimer);
-    // With the Settings screen up there is no bar highlight to retire and no carousel to hand back to:
-    // firing would strip the return point on More and light the strip up under the veil.
-    if (overlays.isAnyOpen()) return;
-    idleTimer = window.setTimeout(() => {
-      idleTimer = 0;
-      setMouseAsleep(true);
-      if (focusRevealed && focusActive()) {
-        focusRevealed = false;
-        applyFocus();
-      }
-    }, IDLE_MS);
-  }
-
-  // Gamepad/keyboard input = activity: the mouse goes to sleep at once (the user switched to the pad, so
-  // the pointer parked on screen stops counting as input at all), hover is disarmed, the idle countdown
-  // restarts.
-  function noteGamepadActivity(): void {
-    setMouseAsleep(true);
-    // Explicitly, not just via setMouseAsleep: while the mouse is ALREADY asleep that call is a no-op,
-    // and the travel a bumped trackpad has quietly banked up has to die on every pad step regardless —
-    // otherwise a hand resting on the Deck adds up to a wake across a whole session of pressing buttons.
-    wakeMeter.reset();
-    // Every keyboard/gamepad step re-arms the hover guard: last input wins. Without this, one real mouse
-    // move wakes hover for good, and from then on any element that slides under the still cursor — a
-    // scrolling list, a popup opening — can take the focus back off the key that just moved it.
-    hover.arm();
-    armIdleTimer();
-  }
-
-  // Real mouse movement, with the mouse already awake = activity: keep the cursor up, restart the idle.
-  function noteMouseActivity(): void {
-    setMouseAsleep(false);
-    armIdleTimer();
   }
 
   function moveFocus(delta: number, repeat = false): void {
@@ -1466,8 +1423,7 @@ export function createControls(deps: ControlsDeps): Controls {
     // Asleep, a move is not input — it only feeds the meter. Nothing hovers, nothing focuses and the
     // cursor stays hidden until the travel adds up to a shove. The position above is recorded either way:
     // whatever wakes the mouse next has to know where the pointer already is.
-    if (mouseAsleep && !wakeMeter.moved(event.clientX, event.clientY, performance.now())) return;
-    noteMouseActivity();
+    if (!idle.pointerMoved(event.clientX, event.clientY, performance.now())) return;
     if (!hover.awake(event.clientX, event.clientY)) return;
     const element = event.target instanceof Element ? event.target : null;
     // The popup owns the pointer while it is open: its stack is the only thing hover may move.
@@ -1490,55 +1446,6 @@ export function createControls(deps: ControlsDeps): Controls {
       focusIndex = idx;
       applyFocus();
     }
-  });
-
-  // Every OTHER thing a pointer can do, switched off in one place for as long as the mouse is asleep.
-  //
-  // Asleep means the mouse is OUT of the UI, not merely invisible: clicks, the wheel, right-click-as-back,
-  // the hover reads on every surface. Gating each of those where it lives would be a list to keep in sync,
-  // and one forgotten entry is a stutter nobody can reproduce — which is exactly how a resting cursor kept
-  // stealing the popup's focus. So the gestures die here, in the capture phase on window, before any
-  // surface sees them. Moves are the deliberate exception: they are the way back (see above).
-  //
-  // Two things still get through. Untrusted events, because a synthetic .click() is our own code driving
-  // the UI rather than a mouse (file-picker.ts does that). And touch: a finger on the Deck's screen is a
-  // poke at one specific thing, never a pointer drifting under a resting hand, so it wakes the mouse and
-  // proceeds — the click Chromium synthesises after it then lands on a UI that is already awake.
-  const SLEPT_THROUGH: readonly string[] = [
-    'click',
-    'dblclick',
-    'auxclick',
-    'contextmenu',
-    'wheel',
-    'mousedown',
-    'mouseup',
-    'mouseover',
-    'mouseout',
-    'mouseenter',
-    'mouseleave',
-    'pointerdown',
-    'pointerup',
-    'pointerover',
-    'pointerout',
-    'pointerenter',
-    'pointerleave',
-  ];
-  SLEPT_THROUGH.forEach((type) => {
-    window.addEventListener(
-      type,
-      (event) => {
-        if (!mouseAsleep || !event.isTrusted) return;
-        if (event instanceof PointerEvent && event.pointerType === 'touch') {
-          noteMouseActivity();
-          return;
-        }
-        event.stopImmediatePropagation();
-        // Not merely "don't route it": the default has to go too, or a sleeping wheel still scrolls the
-        // list under the cursor and a sleeping middle-click still opens Chromium's autoscroll.
-        if (event.cancelable) event.preventDefault();
-      },
-      { capture: true, passive: false },
-    );
   });
 
   // The six navigation primitives, shared by the gamepad AND the keyboard (below) so both drive the exact
@@ -1593,7 +1500,7 @@ export function createControls(deps: ControlsDeps): Controls {
   }
 
   function navLeft(repeat = false): void {
-    noteGamepadActivity();
+    idle.noteGamepadActivity();
     if (repeat) noteFlip();
     // Left is "out" of a popup, the same step B takes: the stacks live on the right edge of the screen,
     // so moving left off them means leaving — the reading the layout already suggests on the carousel
@@ -1619,7 +1526,7 @@ export function createControls(deps: ControlsDeps): Controls {
     moveFocus(-1, repeat);
   }
   function navRight(repeat = false): void {
-    noteGamepadActivity();
+    idle.noteGamepadActivity();
     if (repeat) noteFlip();
     // Same early branch as navLeft — `repeat` is irrelevant here: a held right is exactly what a slider
     // wants, one step per repeat, and the screen has no "at the end, hand the focus over" rule.
@@ -1640,7 +1547,7 @@ export function createControls(deps: ControlsDeps): Controls {
   // Vertical hold-to-repeat exists for the Settings LIST, which is long enough to warrant it. The popup
   // stacks are short and cyclic — repeating there would spin them — so a repeat is dropped anywhere else.
   function navUp(repeat = false): void {
-    noteGamepadActivity();
+    idle.noteGamepadActivity();
     if (repeat) noteFlip();
     if (popupView !== 'none') {
       // Held presses move here like they do in every other vertical list: the notification inbox is a
@@ -1664,7 +1571,7 @@ export function createControls(deps: ControlsDeps): Controls {
     else audio.playLimit(); // on the strip there is nothing above the cards to step up to
   }
   function navDown(repeat = false): void {
-    noteGamepadActivity();
+    idle.noteGamepadActivity();
     if (repeat) noteFlip();
     if (popupView !== 'none') {
       moveStackFocus(1); // see navUp — a held direction runs the stack, same as any other list
@@ -1691,14 +1598,14 @@ export function createControls(deps: ControlsDeps): Controls {
     deps.carousel.activate();
   }
   function navActivate(): void {
-    noteGamepadActivity();
+    idle.noteGamepadActivity();
     if (popupView !== 'none') activateStack();
     else if (overlays.active() !== null) overlays.active()?.navActivate();
     else if (stripActive()) deps.carousel.activate();
     else activateFocused();
   }
   function navBack(): void {
-    noteGamepadActivity();
+    idle.noteGamepadActivity();
     // Deepest level first: a popup closes, then the bar hands the focus back to the strip, then a detail
     // screen steps back to the carousel. On the strip itself B does nothing — it is the top level.
     if (popupView !== 'none') {
@@ -1725,7 +1632,7 @@ export function createControls(deps: ControlsDeps): Controls {
    * between Play and More. Everywhere else it is an honest dead end.
    */
   function navY(): void {
-    noteGamepadActivity();
+    idle.noteGamepadActivity();
     const overlay = overlays.active();
     if (overlay !== null) {
       if (overlay.navTertiary === undefined) audio.playLimit();
@@ -1781,7 +1688,7 @@ export function createControls(deps: ControlsDeps): Controls {
       if (deps.isBooting()) return; // the row is behind the boot screen — see whileAwake
       if (overlays.isAnyOpen()) return;
       if (!onCarousel()) return;
-      noteMouseActivity();
+      idle.noteMouseActivity();
       const delta = event.deltaY !== 0 ? event.deltaY : event.deltaX;
       if (delta === 0) return;
       const now = performance.now();
@@ -1807,7 +1714,7 @@ export function createControls(deps: ControlsDeps): Controls {
     navBack();
     // AFTER, not before: navBack() is written for the gamepad and hides the cursor as its first act.
     // This click IS the mouse, so the cursor has to come back — and it is this call that restores it.
-    noteMouseActivity();
+    idle.noteMouseActivity();
   });
 
   /**
@@ -1846,101 +1753,20 @@ export function createControls(deps: ControlsDeps): Controls {
     autoRepeat,
   );
 
-  // Keyboard navigation (Desktop Mode / no gamepad): WASD + arrows move, Space/Enter activate, Tab/Backspace
-  // (and Esc) step back — the SAME six primitives as the gamepad, so the two input models stay in lockstep.
-  // No key of its own for "go to More": on home, back has nothing above it to return to, so it doubles as
-  // that toggle (see navBack) and Tab / Esc / B all reach the button.
-  // Edge-only (event.repeat ignored) to match the gamepad's one-move-per-press feel. preventDefault stops
-  // the browser default (Tab focus traversal, Space scroll / native button press, arrow scroll) from firing
-  // alongside our custom navigation. A backgrounded launcher doesn't receive keydown (the OS routes keys to
-  // the focused window), so — unlike the Gamepad API — no explicit pause is needed here.
-  const KEY_NAV: Readonly<Record<string, (repeat: boolean) => void>> = {
-    a: navLeft,
-    arrowleft: navLeft,
-    d: navRight,
-    arrowright: navRight,
-    w: navUp,
-    arrowup: navUp,
-    s: navDown,
-    arrowdown: navDown,
-    ' ': navActivate,
-    enter: navActivate,
-    tab: navBack,
-    backspace: navBack,
-    escape: navBack,
-  };
-  // The four directions are the exception to the edge model: holding one flips through the carousel,
-  // runs down the Settings list or through a popup stack, matching the gamepad's hold-to-repeat. The
-  // repeat is OURS, on a timer — the OS supplies its
-  // own, but at a rate and an initial delay that are the user's system settings, not ours, so the two
-  // input models would drift apart (and chaining one run into the next would be impossible: the OS
-  // restarts its full delay on every new key). Native repeats are dropped. Every other key stays one
-  // action per press.
-  const REPEATABLE_KEYS = new Set([
-    'a',
-    'arrowleft',
-    'd',
-    'arrowright',
-    'w',
-    'arrowup',
-    's',
-    'arrowdown',
-  ]);
-  // The key whose repeat is running, and its timer. Only one at a time: with two directions down the
-  // last one pressed owns the run, which is what a keyboard's own repeat does too.
-  let heldKey: string | null = null;
-  let keyRepeatTimer = 0;
-
-  function stopKeyRepeat(): void {
-    if (keyRepeatTimer !== 0) {
-      window.clearTimeout(keyRepeatTimer);
-      keyRepeatTimer = 0;
-    }
-    heldKey = null;
-  }
-
-  function scheduleKeyRepeat(key: string, handler: (repeat: boolean) => void, delay: number): void {
-    keyRepeatTimer = window.setTimeout(() => {
-      keyRepeatTimer = 0;
-      if (heldKey !== key) return;
-      autoRepeat.noteRepeat(performance.now());
-      handler(true);
-      scheduleKeyRepeat(key, handler, NAV_REPEAT_MS);
-    }, delay);
-  }
-
-  window.addEventListener('keydown', (event) => {
-    const key = event.key.toLowerCase();
-    const handler = KEY_NAV[key];
-    if (handler === undefined) return;
-    event.preventDefault(); // suppress the native default even on auto-repeat (e.g. Tab traversal)
-    if (event.repeat) return; // the OS cadence is not ours — the timer below drives the run
-    // The boot fence, as a full return rather than a gated call (see whileAwake): the repeat timer armed
-    // below outlives the boot screen, so a direction merely GATED here would come back to life the moment
-    // the UI appeared and flip the row for a press made before it existed.
-    if (deps.isBooting()) return;
-    handler(false);
-    if (!REPEATABLE_KEYS.has(key)) return;
-    stopKeyRepeat(); // a second direction takes the run over from the first
-    heldKey = key;
-    // A key taken up while the previous run is still warm continues it, delay skipped — same rule as the
-    // pad's (auto-repeat.ts), so swinging left→right glides on either device.
-    const now = performance.now();
-    scheduleKeyRepeat(key, handler, autoRepeat.continues(now) ? NAV_REPEAT_MS : HOLD_DELAY_MS);
-  });
-  // The keyboard's half of "the hold is over". A keyup can be missed (the window loses focus mid-hold and
-  // the release goes to whoever took it), which is what the watchdog in noteFlip covers — and the blur
-  // below, which also has to stop a timer nobody would otherwise turn off.
-  window.addEventListener('keyup', (event) => {
-    const key = event.key.toLowerCase();
-    if (heldKey === key) stopKeyRepeat();
-    if (REPEATABLE_KEYS.has(key)) endInput();
-  });
-  window.addEventListener('blur', () => {
-    if (heldKey === null) return;
-    stopKeyRepeat();
-    endInput();
-  });
+  // The keyboard's half of the input model (keyboard.ts): the same primitives, its own hold-to-repeat.
+  createKeyboardController(
+    {
+      onLeft: navLeft,
+      onRight: navRight,
+      onUp: navUp,
+      onDown: navDown,
+      onActivate: navActivate,
+      onBack: navBack,
+      onDirectionsReleased: endInput,
+    },
+    autoRepeat,
+    { isFenced: () => deps.isBooting() },
+  );
 
   function applyGameButtons(): void {
     // The game-dependent Details items: the Install/Uninstall toggle and the running-only Force close.
@@ -2036,7 +1862,7 @@ export function createControls(deps: ControlsDeps): Controls {
     },
     start: () => {
       gamepad.start();
-      armIdleTimer(); // begin the countdown so an untouched launcher hides its cursor (IDLE_MS)
+      idle.arm(); // begin the countdown so an untouched launcher hides its cursor (IDLE_MS)
     },
     /** Pause/resume acting on gamepad input (paused while the launcher is backgrounded — a game on top). */
     setGamepadPaused: (paused: boolean) => gamepad.setPaused(paused),

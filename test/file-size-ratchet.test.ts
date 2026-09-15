@@ -27,7 +27,7 @@ const SLACK = 50;
 const FILE_BASELINE: Readonly<Record<string, number>> = {
   'src/main/game-controller.ts': 1468,
   'src/main/manifest.ts': 1125,
-  'src/renderer/controls.ts': 2068,
+  'src/renderer/controls.ts': 1875,
   'src/renderer/game-settings-screen.ts': 2446,
   'src/renderer/online-picker.ts': 1322,
   'src/renderer/settings-screen.ts': 1035,
@@ -47,7 +47,7 @@ interface FactoryBaseline {
  */
 const FACTORY_BASELINE: readonly FactoryBaseline[] = [
   { file: 'src/renderer/game-settings-screen.ts', name: 'createGameSettingsScreen', lines: 2201 },
-  { file: 'src/renderer/controls.ts', name: 'createControls', lines: 1936 },
+  { file: 'src/renderer/controls.ts', name: 'createControls', lines: 1745 },
   { file: 'src/renderer/online-picker.ts', name: 'createOnlinePicker', lines: 1174 },
   { file: 'src/renderer/settings-screen.ts', name: 'createSettingsScreen', lines: 848 },
 ];
