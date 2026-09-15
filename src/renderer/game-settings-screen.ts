@@ -47,8 +47,8 @@ import { createEntrance } from './entrance.js';
 import { createHoverGuard } from './hover-guard.js';
 import { wrapIndex } from './index-math.js';
 import { createScroller } from './screen-scroller.js';
-import { createSidebar, type SidebarEntry } from './screen-sidebar.js';
-import { createListScreenCore, sectionByKey, titledSections } from './list-screen-core.js';
+import { createSidebar } from './screen-sidebar.js';
+import { createListScreenCore, sectionByKey } from './list-screen-core.js';
 import { createMenuStack, type MenuEntry } from './menu-stack.js';
 import { createAssetLightbox } from './asset-lightbox.js';
 import { createListEditor } from './list-editor.js';
@@ -86,12 +86,16 @@ import {
   type GameSettingsRow,
 } from './game-settings-model.js';
 import {
+  artworkSignature,
+  buildStatusNote,
+  columnEntries,
   isFocusable,
   patchGameRow,
   relocalizeGameRow,
   relocalizeGameSections,
   renderGameSettings,
   screenHeading,
+  statusNotes,
   type RenderedGameRow,
 } from './game-settings-view.js';
 import { optionLabel, rowLabelText, type CoreOption } from './row-view-core.js';
@@ -634,10 +638,6 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
 
   // ── Rendering ──────────────────────────────────────────────────────────────
 
-  function rowsOf(next: GameSettingsModel): readonly GameSettingsRow[] {
-    return next.sections.flatMap((section) => section.rows);
-  }
-
   /** Whether two models describe the same rows in the same order (a patch is enough when they do). */
   function sameComposition(a: GameSettingsModel, b: GameSettingsModel): boolean {
     const ids = (m: GameSettingsModel): string =>
@@ -645,17 +645,6 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
         .map((row) => `${row.kind}:${row.id}`)
         .join('|');
     return ids(a) === ids(b);
-  }
-
-  /** Every artwork path the screen currently shows, so a patch can tell whether the strips are stale. */
-  function artworkSignature(from: GameSettingsModel): string {
-    return rowsOf(from)
-      .map((row) => {
-        if (row.kind === 'list' && row.preview !== undefined) return row.items.join(',');
-        if (row.kind === 'path' && row.preview !== undefined) return row.value;
-        return '';
-      })
-      .join('|');
   }
 
   function renderMessage(text: string): void {
@@ -674,16 +663,6 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   /** The one-shot entrance (see .setting-row.is-entering in styles.css, and entrance.ts for the shape). */
   const entrance = createEntrance(listEl, '.setting-row', ENTRANCE_MS);
 
-  /** The rows that are NOT in any titled section: this screen's actions and its notes. */
-  function trailingRows(from: GameSettingsModel): readonly GameSettingsRow[] {
-    return from.sections.filter((s) => s.titleKey === undefined).flatMap((s) => s.rows);
-  }
-
-  /**
-   * The column: the sections, then the actions. The NOTES that share the model's last section stay out
-   * of it — they are the screen's own feedback (what the last save did, why Save is unavailable), so
-   * they go under both columns where they are readable from anywhere.
-   */
   /**
    * What the column WOULD show — so it is only rebuilt when that actually changed. `null` means "nothing
    * is known about what is on screen", which is NOT the same as "it is empty": a re-opened screen that
@@ -692,7 +671,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   let columnSignature: string | null = null;
 
   function renderColumn(from: GameSettingsModel): void {
-    const entries = columnEntries(from);
+    const entries = columnEntries(from, t());
     const signature = entries
       .map((entry) => `${entry.id}:${entry.label}:${entry.disabled === true ? '1' : '0'}`)
       .join('|');
@@ -713,49 +692,16 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     }
   }
 
-  function columnEntries(from: GameSettingsModel): readonly SidebarEntry<MessageKey, GameRowId>[] {
-    return [
-      ...titledSections(from.sections).map((section) => ({
-        id: section.titleKey,
-        label: t()(section.titleKey),
-        kind: 'section' as const,
-      })),
-      ...trailingRows(from).flatMap((row) =>
-        row.kind === 'action'
-          ? [
-              {
-                id: row.id,
-                label: rowLabelText(row.label, t()),
-                kind: 'action' as const,
-                ...(row.danger === true ? { danger: true } : {}),
-                ...(row.disabled === true ? { disabled: true } : {}),
-              },
-            ]
-          : [],
-      ),
-    ];
-  }
-
   /** The same, for the status strip — and the same reason for the null. */
   let statusSignature: string | null = null;
 
   /** The notes, under both columns. */
   function renderStatus(from: GameSettingsModel): void {
-    const notes = trailingRows(from).flatMap((row) => (row.kind === 'note' ? [row] : []));
+    const notes = statusNotes(from);
     const signature = notes.map((note) => `${note.tone}:${rowLabelText(note.text, t())}`).join('|');
     if (signature === statusSignature) return;
     statusSignature = signature;
-    statusEl.replaceChildren(
-      ...notes.map((note) => {
-        const el = document.createElement('div');
-        el.className = `setting-row setting-row-note is-inert is-${note.tone}`;
-        const text = document.createElement('div');
-        text.className = 'setting-note-text';
-        text.textContent = rowLabelText(note.text, t());
-        el.append(text);
-        return el;
-      }),
-    );
+    statusEl.replaceChildren(...notes.map((note) => buildStatusNote(note, t())));
   }
 
   function render(): void {

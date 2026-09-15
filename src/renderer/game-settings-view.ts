@@ -6,7 +6,10 @@
 //
 // Unlike the Settings view there is no screen-specific row kind here: every kind this screen draws lives
 // in row-view-core, which is why this module is as short as it is.
-import type { GameSettingsModel, GameSettingsRow } from './game-settings-model.js';
+import type { GameRowId, GameSettingsModel, GameSettingsRow } from './game-settings-model.js';
+import type { MessageKey } from '../shared/i18n/index.js';
+import { titledSections } from './list-screen-core.js';
+import type { SidebarEntry } from './screen-sidebar.js';
 import type { Translator } from '../shared/i18n/index.js';
 import {
   buildCoreRow,
@@ -149,3 +152,76 @@ export function screenHeading(model: GameSettingsModel | null): string {
 
 /** Exported for the controller's own re-localization pass of an expanded dropdown. */
 export { rowLabelText };
+
+/** Every row of the model, section by section. */
+export function rowsOf(model: GameSettingsModel): readonly GameSettingsRow[] {
+  return model.sections.flatMap((section) => section.rows);
+}
+
+/** The rows that are NOT in any titled section: the screen's actions and its notes. */
+export function trailingRows(model: GameSettingsModel): readonly GameSettingsRow[] {
+  return model.sections.filter((s) => s.titleKey === undefined).flatMap((s) => s.rows);
+}
+
+/** Every artwork path the model shows, so a patch can tell whether the thumbnail strips are stale. */
+export function artworkSignature(model: GameSettingsModel): string {
+  return rowsOf(model)
+    .map((row) => {
+      if (row.kind === 'list' && row.preview !== undefined) return row.items.join(',');
+      if (row.kind === 'path' && row.preview !== undefined) return row.value;
+      return '';
+    })
+    .join('|');
+}
+
+/**
+ * The column: the sections, then the actions. The NOTES that share the model's last section stay out
+ * of it — they are the screen's own feedback (what the last save did, why Save is unavailable), so
+ * they go under both columns where they are readable from anywhere (see statusNotes).
+ */
+export function columnEntries(
+  model: GameSettingsModel,
+  t: Translator,
+): readonly SidebarEntry<MessageKey, GameRowId>[] {
+  return [
+    ...titledSections(model.sections).map((section) => ({
+      id: section.titleKey,
+      label: t(section.titleKey),
+      kind: 'section' as const,
+    })),
+    ...trailingRows(model).flatMap((row) =>
+      row.kind === 'action'
+        ? [
+            {
+              id: row.id,
+              label: rowLabelText(row.label, t),
+              kind: 'action' as const,
+              ...(row.danger === true ? { danger: true } : {}),
+              ...(row.disabled === true ? { disabled: true } : {}),
+            },
+          ]
+        : [],
+    ),
+  ];
+}
+
+/** The notes under both columns, as the status strip draws them. */
+export function statusNotes(
+  model: GameSettingsModel,
+): readonly Extract<GameSettingsRow, { kind: 'note' }>[] {
+  return trailingRows(model).flatMap((row) => (row.kind === 'note' ? [row] : []));
+}
+
+/** One note of the status strip. */
+export function buildStatusNote(
+  note: Extract<GameSettingsRow, { kind: 'note' }>,
+  t: Translator,
+): HTMLElement {
+  const el = document.createElement('div');
+  el.className = `setting-row setting-row-note is-inert is-${note.tone}`;
+  const text = document.createElement('div');
+  text.className = 'setting-note-text';
+  text.textContent = rowLabelText(note.text, t);
+  el.append(text);
+  return el;
+}
