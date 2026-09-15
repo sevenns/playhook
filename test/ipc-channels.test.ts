@@ -56,3 +56,49 @@ describe('IPC channel contract (preload ↔ shared/types)', () => {
     }
   });
 });
+
+/** Every `.ts` under `dir`, recursively. */
+function listTsFiles(dir: string): string[] {
+  return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) return listTsFiles(full);
+    return entry.name.endsWith('.ts') ? [full] : [];
+  });
+}
+
+describe('IPC channel registration (main)', () => {
+  // The handlers are registered by six services' `init()` since the controller split, and Electron
+  // refuses a second `ipcMain.handle` on a channel at runtime ("Attempted to register a second handler")
+  // — a failure the test stub cannot show, because it lets a later registration replace the earlier one
+  // so every test can build its own service. So the sources are read as text: each registration names
+  // its channel as an `IPC.<key>` literal, and no key may appear in two registrations.
+  const mainDir = path.resolve(__dirname, '../src/main');
+  const registrations = listTsFiles(mainDir).flatMap((file) => {
+    const source = fs.readFileSync(file, 'utf8');
+    const calls = [...source.matchAll(/ipcMain\.(?:handle|on)\(/g)].length;
+    const keys = [...source.matchAll(/ipcMain\.(?:handle|on)\(\s*IPC\.(\w+)/g)].flatMap((m) =>
+      m[1] === undefined ? [] : [m[1]],
+    );
+    return { file: path.relative(mainDir, file), calls, keys };
+  });
+
+  it('names every registered channel as an IPC.<key> literal (so the check below sees them all)', () => {
+    for (const { file, calls, keys } of registrations) {
+      expect(keys.length, `registrations in ${file} not spelled ipcMain.handle(IPC.<key>`).toBe(calls);
+    }
+  });
+
+  it('registers each channel at most once across every service', () => {
+    const owners = new Map<string, string[]>();
+    for (const { file, keys } of registrations) {
+      for (const key of keys) owners.set(key, [...(owners.get(key) ?? []), file]);
+    }
+    const twice = [...owners].filter(([, files]) => files.length > 1);
+    expect(twice).toEqual([]);
+  });
+
+  it('registers only channels that exist in the shared IPC map', () => {
+    const unknown = registrations.flatMap(({ keys }) => keys.filter((key) => !(key in IPC)));
+    expect(unknown).toEqual([]);
+  });
+});

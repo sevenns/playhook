@@ -99,6 +99,18 @@ export const clipboard = {
   },
 };
 
+/**
+ * `shell.openExternal` records the URIs instead of opening anything — the Steam sequences launch,
+ * install and uninstall by opening `steam://` URIs (test/game-controller.test.ts asserts on them).
+ */
+export const shell = {
+  opened: [] as string[],
+  openExternal(url: string): Promise<void> {
+    shell.opened.push(url);
+    return Promise.resolve();
+  },
+};
+
 export const contextBridge = {
   exposeInMainWorld(): void {},
 };
@@ -111,4 +123,4 @@ export const ipcRenderer = {
   },
 };
 
-export default { app, Menu, nativeImage, ipcMain, clipboard, contextBridge, ipcRenderer };
+export default { app, Menu, nativeImage, ipcMain, clipboard, shell, contextBridge, ipcRenderer };

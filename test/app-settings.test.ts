@@ -119,11 +119,11 @@ describe('AppSettingsStore — atomic write + schema tolerance', () => {
 
 describe('AppSettingsStore — the retired `theme` key', () => {
   it('still parses a file that carries it, and drops it on the next write', async () => {
-    const stored = { ...DEFAULT_SETTINGS, theme: 'dark' };
+    const stored = { ...DEFAULT_SETTINGS, musicVolume: 0.25, theme: 'dark' };
     await fs.writeFile(path.join(baseDir, 'settings.json'), JSON.stringify(stored), 'utf8');
     const store = new AppSettingsStore(baseDir);
     const read = await store.read();
-    expect(read.musicVolume).toBe(DEFAULT_SETTINGS.musicVolume); // not reset: the file validated
+    expect(read.musicVolume).toBe(0.25); // not reset: the file validated (a reset would read the default)
     expect('theme' in read).toBe(false);
     await store.patch({ musicVolume: 0.6 });
     const written: unknown = JSON.parse(await fs.readFile(path.join(baseDir, 'settings.json'), 'utf8'));
