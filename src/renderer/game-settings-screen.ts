@@ -53,6 +53,7 @@ import { createSidebar, type SidebarEntry } from './screen-sidebar.js';
 import { createListScreenCore, sectionByKey, titledSections } from './list-screen-core.js';
 import { createMenuStack, type MenuEntry, type MenuLevel } from './menu-stack.js';
 import { createAssetLightbox } from './asset-lightbox.js';
+import { createManifestValidator, issueKey } from './manifest-validation.js';
 import type { FilePickerSurface, NavSurface, TextEntrySurface } from './nav-surface.js';
 import type { ApplyOutcome, OnlinePickerSurface } from './online-picker.js';
 import {
@@ -92,8 +93,6 @@ import {
 } from './game-settings-view.js';
 import { optionLabel, rowLabelText, type CoreOption } from './row-view-core.js';
 
-/** How long the screen waits after a change before asking main to validate the text. */
-const VALIDATE_DEBOUNCE_MS = 400;
 /**
  * How often the screen re-asks whether there is a card to move onto. A poll rather than a push because
  * nothing announces a BLANK card: main's watcher only reports media carrying a game.json, and an empty
@@ -368,9 +367,6 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   let status: string | null = null;
 
   let model: GameSettingsModel | null = null;
-  let validateTimer = 0;
-  /** Guards a late answer from a validation whose text is already stale. */
-  let validateToken = 0;
   /**
    * Whether a card is plugged in for "Move to card…" to reach. Starts false: the row is offered inert
    * until the first listing says otherwise, which is the honest order — an item that looks pressable
@@ -409,6 +405,12 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
         read: () => deps.api.imagePreview(at.root, at.relative),
       };
     },
+  });
+  /** The debounced whole-file validation (manifest-validation.ts); the request is assembled in runValidate. */
+  const validator = createManifestValidator({
+    validate: (root, text, source) => deps.api.validate(root, text, source),
+    getTranslator: () => deps.getTranslator(),
+    onDue: () => void runValidate(),
   });
 
   /**
@@ -1275,11 +1277,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   // ── Validation ─────────────────────────────────────────────────────────────
 
   function scheduleValidate(): void {
-    if (validateTimer !== 0) window.clearTimeout(validateTimer);
-    validateTimer = window.setTimeout(() => {
-      validateTimer = 0;
-      void runValidate();
-    }, VALIDATE_DEBOUNCE_MS);
+    validator.schedule();
   }
 
   /**
@@ -1294,61 +1292,24 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     // off a card and has to keep validating as one.
     const root = move !== null ? move.target.root : (media?.root ?? '');
     if (origin === null || unreadable !== null) return;
-    const index = move !== null ? move.targetIndex : slotIndex;
-    const activeSlots = move !== null ? move.targetSlots : slots;
-    const token = ++validateToken;
-    const text = currentText();
-    const result = await deps.api.validate(root, text, origin.kind === 'history' ? 'card' : undefined);
-    if (token !== validateToken) return; // a newer edit already asked
-    const own = new Map<string, string>();
-    const others: string[] = [];
-    if (!result.ok) {
-      for (const issue of result.issues) {
-        const scoped = /^games\.(\d+)\.(.*)$/.exec(issue.path);
-        if (scoped === null) {
-          // An unscoped path belongs to the single-game shape — which is ours by definition.
-          own.set(issue.path, issue.message);
-          continue;
-        }
-        const idx = Number(scoped[1]);
-        const field = scoped[2] ?? '';
-        if (idx === index) own.set(field, issue.message);
-        else others.push(describeOtherIssue(activeSlots, idx, field, issue.message));
-      }
-    }
-    issues = own;
+    const verdict = await validator.run({
+      root,
+      text: currentText(),
+      ...(origin.kind === 'history' ? { source: 'card' } : {}),
+      index: move !== null ? move.targetIndex : slotIndex,
+      slots: move !== null ? move.targetSlots : slots,
+    });
+    if (verdict === null) return; // a newer edit already asked
+    issues = verdict.own;
     // Only issues this VISIT introduced block Save. For a game edited from the history the baseline is
     // its stored manifest, which — on a card written by hand years ago — can fail the editor's stricter
     // gates all by itself (see manifest.ts). Without this mirror of main's own rule the button would be
     // dead for such a card and the user would never reach the message explaining why.
-    ownIssues = [...own].some(([path, message]) => !baselineOwnIssues.has(issueKey(path, message)));
-    otherIssues = others;
+    ownIssues = [...verdict.own].some(
+      ([path, message]) => !baselineOwnIssues.has(issueKey(path, message)),
+    );
+    otherIssues = verdict.others;
     render();
-  }
-
-  /** How one issue is remembered in a baseline set — path and wording together, as main compares them. */
-  function issueKey(path: string, message: string): string {
-    return `${path}\u0000${message}`;
-  }
-
-  /** "Hades (game 3): install.args — expected array" — the other game is named when we can name it. */
-  function describeOtherIssue(
-    activeSlots: readonly GameFormState[],
-    index: number,
-    field: string,
-    message: string,
-  ): string {
-    const slot = activeSlots[index];
-    const title =
-      slot !== undefined && !isRawSlot(slot) && slot.model.title !== ''
-        ? slot.model.title
-        : t()('gameSettings.otherGameUnnamed');
-    return t()('gameSettings.otherGameIssue', {
-      game: title,
-      number: index + 1,
-      field: field === '' ? '—' : field,
-      message,
-    });
   }
 
   /**
@@ -2202,10 +2163,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     deps.onlinePicker.close();
     entrance.cancel();
     core.cancelPreview();
-    if (validateTimer !== 0) {
-      window.clearTimeout(validateTimer);
-      validateTimer = 0;
-    }
+    validator.cancel();
     stopWatchingMoveTargets();
     delete app.dataset['overlay'];
     screen.setAttribute('aria-hidden', 'true');
