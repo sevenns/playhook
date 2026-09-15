@@ -51,8 +51,9 @@ import { wrapIndex } from './index-math.js';
 import { createScroller } from './screen-scroller.js';
 import { createSidebar, type SidebarEntry } from './screen-sidebar.js';
 import { createListScreenCore, sectionByKey, titledSections } from './list-screen-core.js';
-import { createMenuStack, type MenuEntry, type MenuLevel } from './menu-stack.js';
+import { createMenuStack, type MenuEntry } from './menu-stack.js';
 import { createAssetLightbox } from './asset-lightbox.js';
+import { createListEditor } from './list-editor.js';
 import { createManifestValidator, issueKey } from './manifest-validation.js';
 import type { FilePickerSurface, NavSurface, TextEntrySurface } from './nav-surface.js';
 import type { ApplyOutcome, OnlinePickerSurface } from './online-picker.js';
@@ -414,6 +415,16 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     validate: (root, text, source) => deps.api.validate(root, text, source),
     getTranslator: () => deps.getTranslator(),
     onDue: () => void runValidate(),
+  });
+  /** The list rows' editor — its own levels of the column menu (list-editor.ts). */
+  const listEditor = createListEditor({
+    menu,
+    keyboard: deps.keyboard,
+    getTranslator: () => deps.getTranslator(),
+    browse: (id, current, multi, onPicked) => browseInto(id, current, multi, onPicked),
+    showImage: (path) => void lightbox.show(path),
+    setList,
+    rowTitle,
   });
 
   /**
@@ -1060,128 +1071,6 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     if (id !== 'executable') return null;
     if (form.launchMode !== 'executable' || !form.copyToPc) return null;
     return form.copyInstall.installer === '' ? null : form.copyInstall.installer;
-  }
-
-  // ── List editing (its own level of the column menu) ─────────────────────────
-
-  function openListMenu(row: Extract<GameSettingsRow, { kind: 'list' }>): void {
-    menu.push(buildListLevel(row.id, row.items, row.max, row.preview !== undefined, rowTitle(row)));
-  }
-
-  function buildListLevel(
-    id: GameRowId,
-    items: readonly string[],
-    max: number,
-    isPath: boolean,
-    title: string,
-  ): MenuLevel {
-    const entries: MenuEntry[] = items.map((item, index) => ({
-      label: item,
-      run: () => openItemMenu(id, items, index, max, isPath, title),
-    }));
-    if (max === 0 || items.length < max) {
-      entries.push({
-        label: t()('gameSettings.listAdd'),
-        run: () => {
-          if (isPath) {
-            browseInto(id, '', max !== 1, (paths) => {
-              const room = max === 0 ? paths.length : Math.max(0, max - items.length);
-              setList(id, [...items, ...paths.slice(0, room)]);
-            });
-            return;
-          }
-          deps.keyboard.open({
-            value: '',
-            mode: 'text',
-            title,
-            onDone: (value) => {
-              if (value.trim() === '') return;
-              const next = [...items, value];
-              setList(id, next);
-              menu.replace(buildListLevel(id, next, max, isPath, title));
-            },
-          });
-        },
-      });
-    }
-    return menu.asMenu({ title, entries });
-  }
-
-  function openItemMenu(
-    id: GameRowId,
-    items: readonly string[],
-    index: number,
-    max: number,
-    isPath: boolean,
-    title: string,
-  ): void {
-    const commit = (next: readonly string[]): void => {
-      setList(id, next);
-      // Back to the list itself, refreshed — the user is usually not done after one change.
-      menu.replace(buildListLevel(id, next, max, isPath, title), 2);
-    };
-    const entries: MenuEntry[] = [];
-    if (isPath) {
-      entries.push({
-        label: t()('gameSettings.viewImage'),
-        run: () => void lightbox.show(items[index] ?? ''),
-      });
-    }
-    entries.push({
-      label: t()('gameSettings.listReplace'),
-      run: () => {
-        if (isPath) {
-          browseInto(id, items[index] ?? '', false, (paths) => {
-            const picked = paths[0];
-            if (picked === undefined) return;
-            setList(
-              id,
-              items.map((item, i) => (i === index ? picked : item)),
-            );
-          });
-          return;
-        }
-        deps.keyboard.open({
-          value: items[index] ?? '',
-          mode: 'text',
-          title,
-          onDone: (value) => {
-            if (value.trim() === '') return;
-            commit(items.map((item, i) => (i === index ? value : item)));
-          },
-        });
-      },
-    });
-    // Reordering is a gamepad gesture here, not a drag: the manifest's order is load-bearing (the first
-    // hero image is the one the carousel crops its card from), and a mouse-only affordance would put that
-    // out of reach in Game Mode.
-    if (index > 0) {
-      entries.push({
-        label: t()('gameSettings.listMoveUp'),
-        run: () => commit(swap(items, index, index - 1)),
-      });
-    }
-    if (index < items.length - 1) {
-      entries.push({
-        label: t()('gameSettings.listMoveDown'),
-        run: () => commit(swap(items, index, index + 1)),
-      });
-    }
-    entries.push({
-      label: t()('gameSettings.listRemove'),
-      run: () => commit(items.filter((_, i) => i !== index)),
-    });
-    menu.push(menu.asMenu({ title: items[index] ?? '', entries }));
-  }
-
-  function swap(items: readonly string[], a: number, b: number): readonly string[] {
-    const next = [...items];
-    const first = next[a];
-    const second = next[b];
-    if (first === undefined || second === undefined) return items;
-    next[a] = second;
-    next[b] = first;
-    return next;
   }
 
   // ── Validation ─────────────────────────────────────────────────────────────
@@ -1937,7 +1826,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       case 'list':
         deps.audio.play('button');
         pressFlash(target.el);
-        openListMenu(row);
+        listEditor.open(row);
         return;
       case 'action':
         // Actions live in the column now; a row of this kind should never reach the pane.
