@@ -52,6 +52,7 @@ import { createScroller } from './screen-scroller.js';
 import { createSidebar, type SidebarEntry } from './screen-sidebar.js';
 import { createListScreenCore, sectionByKey, titledSections } from './list-screen-core.js';
 import { createMenuStack, type MenuEntry, type MenuLevel } from './menu-stack.js';
+import { createAssetLightbox } from './asset-lightbox.js';
 import type { FilePickerSurface, NavSurface, TextEntrySurface } from './nav-surface.js';
 import type { ApplyOutcome, OnlinePickerSurface } from './online-picker.js';
 import {
@@ -81,7 +82,6 @@ import {
   type GameSettingsRow,
 } from './game-settings-model.js';
 import {
-  applyThumbnails,
   isFocusable,
   patchGameRow,
   relocalizeGameRow,
@@ -256,9 +256,6 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   const titleEl = req('game-settings-title');
   const menuEl = req('game-settings-options');
   const menuListEl = req('game-settings-options-list');
-  const lightboxEl = req('lightbox');
-  const lightboxImage = req<HTMLImageElement>('lightbox-image');
-  const lightboxCaption = req('lightbox-caption');
   const sourceEl = req('game-settings-source');
 
   const t = (): Translator => deps.getTranslator();
@@ -382,8 +379,6 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   let moveTargets = false;
   let moveTargetsTimer = 0;
 
-  /** The artwork viewer is the topmost surface of all — a look at a picture, closed by B or the veil. */
-  let lightboxOpen = false;
 
   const listScroller = createScroller(listEl);
   const hover = createHoverGuard();
@@ -396,6 +391,24 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     hover,
     closeLabel: () => t()('launcher.menu.close'),
     onLeave: () => stopMetadataWork(),
+  });
+  /** The artwork viewer and the thumbnail strips (asset-lightbox.ts); where a path is READ from is answered here. */
+  const lightbox = createAssetLightbox({
+    audio: deps.audio,
+    locate: (path) => {
+      // A history game's files are not on any root the renderer can name: what is staged sits in the app's
+      // own storage, and the rest exists only as the copy the history keeps (see historyAssetPreview).
+      const id = historyId();
+      if (id !== null) {
+        return { key: `history:${id} ${path}`, read: () => deps.api.historyAssetPreview(id, path) };
+      }
+      const at = assetPreviewRoot(path);
+      if (at === null) return null;
+      return {
+        key: `${at.root} ${at.relative}`,
+        read: () => deps.api.imagePreview(at.root, at.relative),
+      };
+    },
   });
 
   /**
@@ -795,54 +808,10 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     core.setRendered([]);
   }
 
-  /**
-   * The thumbnails read so far, by path. Stepping back onto a section re-renders its rows, and reading
-   * every picture off the disk again for a strip that has not changed is both a round trip per image and
-   * a visible re-decode. Emptied on open, so a screen re-opened after the files moved starts fresh.
-   */
-  const thumbnails = new Map<string, string | null>();
-
-  /** Cache key includes the root: the same card-relative STRING can name different bytes in the PC
-   * library and on a move's target card (see assetPreviewRoot), and thumbnails must not conflate them. */
-  async function thumbnailFor(root: string, path: string): Promise<string | null> {
-    // A history game has no root, so its cache namespace is the game itself — otherwise every history
-    // game would share the '' key and serve each other's covers.
-    const id = historyId();
-    const key = id !== null ? `history:${id} ${path}` : `${root} ${path}`;
-    const cached = thumbnails.get(key);
-    if (cached !== undefined) return cached;
-    const url = id !== null ? await deps.api.historyAssetPreview(id, path) : await deps.api.imagePreview(root, path);
-    thumbnails.set(key, url);
-    return url;
-  }
-
-  /** Reads the artwork rows' thumbnails (one invoke per path) and drops them into their rows. */
+  /** The artwork rows' thumbnails, for the pane as it stands (see asset-lightbox.ts). */
   async function refreshThumbnails(): Promise<void> {
     if (origin === null) return;
-    // Card-relative during a pending move (see assetPreviewRoot): a hero/grid image the move carried
-    // over unedited previews from the PC library, everything else from wherever the form is pointed.
-    // A history game's assets are addressed by id inside thumbnailFor; the path travels unchanged.
-    const forHistory = historyId() !== null;
-    const thumbnailAt = (
-      path: string,
-    ): { readonly root: string; readonly relative: string } | null =>
-      forHistory ? { root: '', relative: path } : assetPreviewRoot(path);
-    for (const row of core.rendered()) {
-      const source = row.row;
-      if (source.kind === 'list' && source.preview !== undefined) {
-        const urls = await Promise.all(
-          source.items.map((item) => {
-            const at = thumbnailAt(item);
-            return at === null ? Promise.resolve(null) : thumbnailFor(at.root, at.relative);
-          }),
-        );
-        applyThumbnails(row, urls, source.preview, source.items);
-      } else if (source.kind === 'path' && source.preview !== undefined) {
-        const at = source.value === '' ? null : thumbnailAt(source.value);
-        const url = at === null ? null : await thumbnailFor(at.root, at.relative);
-        applyThumbnails(row, [url], source.preview, [source.value]);
-      }
-    }
+    await lightbox.refreshThumbnails(core.rendered());
   }
 
   // ── Field editing ──────────────────────────────────────────────────────────
@@ -1073,7 +1042,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     if (row.value !== '' && row.preview !== undefined) {
       entries.push({
         label: t()('gameSettings.viewImage'),
-        run: () => void showImage(row.value),
+        run: () => void lightbox.show(row.value),
       });
     }
     entries.push({
@@ -1109,43 +1078,6 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       return { root: move.target.root, relative };
     }
     return media === null ? null : { root: media.root, relative };
-  }
-
-  /** Opens the artwork at full size. Nothing but a look — B (or the veil) closes it. */
-  async function showImage(relative: string): Promise<void> {
-    if (relative === '') return;
-    // A history game's files are not on any root the renderer can name: what is staged sits in the app's
-    // own storage, and the rest exists only as the copy the history keeps (see historyAssetPreview).
-    const id = historyId();
-    const url =
-      id !== null ? await deps.api.historyAssetPreview(id, relative) : await mediaImage(relative);
-    if (url === null) return; // a preview that could not be read never became a surface — and never sounds
-    openLightbox(url, relative);
-  }
-
-  async function mediaImage(relative: string): Promise<string | null> {
-    const at = assetPreviewRoot(relative);
-    if (at === null) return null;
-    return deps.api.imagePreview(at.root, at.relative);
-  }
-
-  /** The lightbox itself, shared by a file already on the card and a variant still only online. */
-  function openLightbox(url: string, caption: string): void {
-    deps.audio.play('popup-open');
-    lightboxImage.src = url;
-    lightboxCaption.textContent = caption;
-    lightboxOpen = true;
-    lightboxEl.classList.add('is-open');
-    lightboxEl.setAttribute('aria-hidden', 'false');
-  }
-
-  function closeImage(options?: { readonly silent?: boolean }): void {
-    if (!lightboxOpen) return;
-    if (options?.silent !== true) deps.audio.play('popup-close');
-    lightboxOpen = false;
-    lightboxEl.classList.remove('is-open');
-    lightboxEl.setAttribute('aria-hidden', 'true');
-    lightboxImage.removeAttribute('src');
   }
 
   /**
@@ -1280,7 +1212,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     if (isPath) {
       entries.push({
         label: t()('gameSettings.viewImage'),
-        run: () => void showImage(items[index] ?? ''),
+        run: () => void lightbox.show(items[index] ?? ''),
       });
     }
     entries.push({
@@ -2039,7 +1971,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
 
   /** Which surface the primitives drive right now: the deepest open one wins. */
   function activeSurface(): NavSurface | 'lightbox' | 'menu' | 'form' {
-    if (lightboxOpen) return 'lightbox';
+    if (lightbox.isOpen()) return 'lightbox';
     if (deps.keyboard.isOpen()) return deps.keyboard;
     if (deps.picker.isOpen()) return deps.picker;
     if (deps.onlinePicker.isOpen()) return deps.onlinePicker;
@@ -2187,7 +2119,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     hover.arm();
     const surface = activeSurface();
     if (surface === 'lightbox') {
-      closeImage();
+      lightbox.close();
       return;
     }
     if (surface === 'menu') {
@@ -2210,7 +2142,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     hover.arm();
     const surface = activeSurface();
     if (surface === 'lightbox') {
-      closeImage();
+      lightbox.close();
       return;
     }
     if (surface === 'menu') {
@@ -2263,7 +2195,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     pendingMove = null;
     deps.audio.play('back');
     // The lightbox, the menu and the keyboard go WITH the screen — one close, one sound.
-    closeImage({ silent: true });
+    lightbox.close({ silent: true });
     menu.close({ silent: true });
     deps.keyboard.close();
     // The online surface holds an audition — real sound, which would outlive the screen otherwise.
@@ -2288,8 +2220,8 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     // A thumbnail IS the "show me this picture" affordance for the mouse; the gamepad reaches the same
     // viewer through the row's own menu. Checked before the row, or the click would also open that menu.
     if (target instanceof HTMLElement && target.classList.contains('setting-thumb')) {
-      deps.audio.play('button'); // the press; showImage plays the viewer's own `popup-open`
-      void showImage(target.dataset['path'] ?? '');
+      deps.audio.play('button'); // the press; the viewer plays its own `popup-open`
+      void lightbox.show(target.dataset['path'] ?? '');
       return;
     }
     const rowEl = target.closest<HTMLElement>('.setting-row');
@@ -2308,10 +2240,6 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       return;
     }
     activateRow(entry);
-  });
-
-  lightboxEl.querySelector<HTMLElement>('.lightbox-veil')?.addEventListener('click', () => {
-    closeImage();
   });
 
   veil?.addEventListener('click', () => navBack());
@@ -2362,7 +2290,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     columnSignature = null;
     statusSignature = null;
     hover.arm();
-    thumbnails.clear();
+    lightbox.clearCache();
     listScroller.to(0, true);
     core.setFocusIndex(0);
     model = null;
