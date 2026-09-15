@@ -30,7 +30,7 @@ import {
   splitAtCaret,
   type TextState,
 } from './osk-text.js';
-import type { TextEntrySurface } from './game-settings-screen.js';
+import type { TextEntrySurface } from './nav-surface.js';
 
 const PRESS_MS = 130;
 /** The most a single paste may bring in. A manifest field is a title or a path — never a document. */

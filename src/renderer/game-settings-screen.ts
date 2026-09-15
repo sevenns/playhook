@@ -22,7 +22,6 @@ import type {
   BrowseInfo,
   SfxName,
   ConfigMoveResult,
-  ConfigPickKind,
   ConfigPickResult,
   ConfigRootReadResult,
   ConfigSaveResult,
@@ -52,7 +51,7 @@ import { createHoverGuard } from './hover-guard.js';
 import { clampIndex, wrapIndex } from './index-math.js';
 import { createScroller, pxUnit } from './screen-scroller.js';
 import { createSidebar, type SidebarEntry } from './screen-sidebar.js';
-import type { NavSurface } from './nav-surface.js';
+import type { FilePickerSurface, NavSurface, TextEntrySurface } from './nav-surface.js';
 import type { ApplyOutcome, OnlinePickerSurface } from './online-picker.js';
 import {
   emptyFormModel,
@@ -169,42 +168,6 @@ export type GameSettingsConfirm =
   | 'cancel-move'
   // Asked by the "Find online" surface, answered here: taking the store's spelling into Title.
   | 'replace-title';
-
-/** A surface that opens ON TOP of the screen and hands a value back when it is done. */
-export interface TextEntrySurface extends NavSurface {
-  open(request: {
-    readonly value: string;
-    readonly mode: 'text' | 'id' | 'number';
-    readonly title: string;
-    readonly onDone: (value: string) => void;
-  }): void;
-  /**
-   * Dismisses the keyboard without committing. Called when a SCREEN closes under it: the keyboard is not
-   * inside any screen (see #osk in index.html), so nothing else would take it off the display — it would
-   * stay up over the carousel, still holding the focus of a screen that is gone.
-   */
-  close(): void;
-}
-
-export interface FilePickerSurface extends NavSurface {
-  open(request: {
-    /** Where picked paths are measured from. Empty for a history game — there is no card to measure
-     * against, and `historyId` names where the file is copied to instead. */
-    readonly root: string;
-    readonly kind: ConfigPickKind;
-    readonly current: string;
-    readonly multi: boolean;
-    /** The root-relative sub-directory this field is measured from, when it has one (see baseFor). */
-    readonly base?: string;
-    /**
-     * Set when the screen is editing a game from the HISTORY: what is picked is copied into that game's
-     * staging directory on this PC (the card it is for is not in), and the field stores the path the
-     * file will have on the card once the edits are applied.
-     */
-    readonly historyId?: string;
-    readonly onDone: (result: ConfigPickResult) => void;
-  }): void;
-}
 
 export interface GameSettingsScreenDeps {
   readonly audio: AudioController;

@@ -2,7 +2,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createOsk } from '../../src/renderer/osk';
 import { req } from '../../src/renderer/dom';
 import { createTranslator } from '../../src/shared/i18n/index';
-import type { TextEntrySurface } from '../../src/renderer/game-settings-screen';
+import type { TextEntrySurface } from '../../src/renderer/nav-surface';
 import { loadFixture } from './helpers/fixture';
 import { fakeAudio, type FakeAudio } from './helpers/fakes';
 import { flushAsync } from './helpers/async';

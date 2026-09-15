@@ -35,7 +35,7 @@ import {
   type ToggleId,
 } from './settings-form-model.js';
 import { rowLabelText } from './row-view-core.js';
-import type { TextEntrySurface } from './game-settings-screen.js';
+import type { TextEntrySurface } from './nav-surface.js';
 import {
   optionLabel,
   optionLabelNode,

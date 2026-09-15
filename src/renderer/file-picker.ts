@@ -23,7 +23,7 @@ import { req } from './dom.js';
 import { createHoverGuard } from './hover-guard.js';
 import { clampIndex } from './index-math.js';
 import { createScroller } from './screen-scroller.js';
-import type { FilePickerSurface } from './game-settings-screen.js';
+import type { FilePickerSurface } from './nav-surface.js';
 
 /** What the picker asks main. A seam, so app.ts owns the window.api wiring. */
 export interface FilePickerApi {
