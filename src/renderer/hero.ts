@@ -342,7 +342,7 @@ export function createHeroController(deps: HeroDeps): HeroController {
   function setWallpaper(url: string | null): void {
     wallpaperUrl = url;
     // Drop the cached wallpaper palette so a changed wallpaper recomputes its own --d1/--d2 (the cache is
-    // encapsulated in this closure — it can't be reset from app.ts; see plan F2-3).
+    // encapsulated in this closure — it can't be reset from app.ts).
     wallpaperPalette = undefined;
   }
 

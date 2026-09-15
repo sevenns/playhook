@@ -1,14 +1,13 @@
-// English dictionary — the SOURCE OF TRUTH for every user-facing string in the app (main + renderers).
-// Keys are flat with a dotted namespace per window/module: common.*, tray.*, menu.*, window.*,
-// launcher.*, format.*, settings.*, gameConfig.*, gameSettings.*, errors.*, drive.*, manifest.*.
-// `ru.ts` mirrors these
-// as a Partial (fill in gradually); the translator falls back to this file for any missing key.
+// English dictionary — the SOURCE OF TRUTH for every user-facing string in the app (main + renderer).
+// Keys are flat with a dotted namespace per module: common.*, tray.*, menu.*, launcher.*, format.*,
+// settings.*, gameConfig.*, gameSettings.*, errors.*, drive.*, manifest.*. `ru.ts` mirrors these as the
+// FULL record of the same keys — a missing translation is a type error, not a fallback to English.
 //
 // `{name}` tokens are interpolation placeholders filled at call time (see createTranslator). A literal
 // brace that is NOT a placeholder (e.g. the `{dir}` token inside a manifest message) is left untouched
 // because those messages are translated WITHOUT params — see translateIssueMessage.
 export const en = {
-  // ── Common (shared across windows) ──────────────────────────────────────────
+  // ── Common (shared by every screen) ─────────────────────────────────────────
   // The two answers used by EVERY confirmation dialog. Any confirm,
   // present or future, must ask a yes/no question and use these — never a context-specific verb like
   // "Discard"/"Replace", which is easy to confuse with the neighbouring "Cancel".
@@ -24,6 +23,8 @@ export const en = {
   'tray.steamAdd': 'Add to Steam',
   'tray.steamRemove': 'Remove from Steam',
   'tray.steamBusy': 'Working…',
+  'tray.openLogs': 'Open logs',
+  'tray.openGames': 'Open games folder',
 
   // ── Steam shortcut (steam-shortcut.ts, shown as message boxes) ─────────────
   'steam.addedTitle': 'Added to Steam',
@@ -39,7 +40,7 @@ export const en = {
   // ── Native context menus (window.ts) ───────────────────────────────────────
   'menu.copy': 'Copy',
 
-  // ── Window titles ──────────────────────────────────────────────────────────
+  // ── Screen titles (index.html data-i18n) ───────────────────────────────────
   'window.settings': 'Settings',
 
   // ── Game launcher renderer (index.html + app.ts/state-view.ts/controls.ts/hero.ts) ──
@@ -199,8 +200,6 @@ export const en = {
   'settings.onlyGlobalAmbientHint':
     "When on, only the global ambience plays — a game's own background music is ignored.",
   'settings.ambientVolume': 'Ambience volume',
-  'settings.openLogs': 'Open logs',
-  'settings.openGames': 'Open games folder',
   'settings.reset': 'Reset to defaults',
   'settings.confirmReset': 'Reset all settings to defaults?',
   // Update-status line + primary button (settings-screen.ts render()).
@@ -243,7 +242,7 @@ export const en = {
   'gameConfig.pickNeedsFile': 'Pick a file for this field.',
   'gameConfig.pickWrongType': 'That file type does not fit this field.',
   'gameConfig.listFailed': 'This folder could not be opened.',
-  // Move to card — GameConfigService.moveToCard.
+  // Move to card — GameMoveTransaction.moveToCard.
   'gameConfig.moveGameBusy': 'Wait for the current install or launch to finish, then try again.',
   'gameConfig.moveIdTaken': 'This card already has a game with the same id.',
   'gameConfig.moveIdChanged':

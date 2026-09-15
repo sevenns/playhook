@@ -549,7 +549,7 @@ export function createOsk(deps: OskDeps): TextEntrySurface {
 
   /**
    * The physical keyboard writes straight through, which is the whole point of having one. It is a
-   * CAPTURE listener that stops the event dead: controls.ts also listens on the window and would read
+   * CAPTURE listener that stops the event dead: keyboard.ts also listens on the window and would read
    * `a` as "move left" and Space as "activate", turning every typed letter into a navigation step.
    */
   window.addEventListener(

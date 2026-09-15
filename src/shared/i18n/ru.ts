@@ -6,7 +6,7 @@
 import type { MessageKey } from './en';
 
 export const ru: Record<MessageKey, string> = {
-  // ── Common (shared across windows) ───────────────────────────────────────────
+  // ── Common (shared by every screen) ──────────────────────────────────────────
   'common.yes': 'Да',
   'common.no': 'Нет',
   'common.stop': 'Прервать',
@@ -17,6 +17,8 @@ export const ru: Record<MessageKey, string> = {
   'tray.steamAdd': 'Добавить в Steam',
   'tray.steamRemove': 'Убрать из Steam',
   'tray.steamBusy': 'Выполняется…',
+  'tray.openLogs': 'Открыть логи',
+  'tray.openGames': 'Открыть папку игр',
 
   // ── Ярлык Steam ──────────────────────────────────────────────────────────────
   'steam.addedTitle': 'Добавлено в Steam',
@@ -31,7 +33,7 @@ export const ru: Record<MessageKey, string> = {
   // ── Native context menus ─────────────────────────────────────────────────────
   'menu.copy': 'Копировать',
 
-  // ── Window titles ────────────────────────────────────────────────────────────
+  // ── Screen titles ────────────────────────────────────────────────────────────
   'window.settings': 'Настройки',
 
   // ── Game launcher ────────────────────────────────────────────────────────────
@@ -166,8 +168,6 @@ export const ru: Record<MessageKey, string> = {
   'settings.onlyGlobalAmbientHint':
     'Если включено, играет только общий эмбиент — собственная фоновая музыка игры не воспроизводится.',
   'settings.ambientVolume': 'Громкость эмбиента',
-  'settings.openLogs': 'Открыть логи',
-  'settings.openGames': 'Открыть папку игр',
   'settings.reset': 'Сбросить настройки',
   'settings.confirmReset': 'Сбросить все настройки к значениям по умолчанию?',
   'settings.status.idle': 'Проверьте обновления, чтобы узнать о новой версии.',

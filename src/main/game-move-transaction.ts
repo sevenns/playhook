@@ -2,8 +2,6 @@
 // parts (which assets travel, how a slot leaves the library text) live in game-move.ts; this is the
 // orchestration — the order of the steps and the two levels of rollback — split out of GameConfigService,
 // which keeps the root guard and the game.json reads/writes the transaction is built from.
-//
-// ── Move to card: a local game leaves the PC library and lands on a card, in one transaction ───────
 import path from 'node:path';
 import fse from 'fs-extra';
 import { ipcMain } from 'electron';
@@ -120,9 +118,9 @@ export class GameMoveTransaction {
   // back everything copied to the card; `fromText` is applied ONLY after the card write has already
   // succeeded, and never otherwise (see moveToCard's own comments for exactly where).
   //
-  // Public, unlike its sibling write paths, purely so test/game-move-transaction.test.ts can drive it: the
+  // test/game-move-transaction.test.ts drives it through this method rather than a carved-out core: the
   // rollback branches are the riskiest code in the service and are reachable only through the whole
-  // sequence, so they are exercised here rather than approximated by a carved-out core.
+  // sequence.
   async moveToCard(request: GameMoveRequest): Promise<ConfigMoveResult> {
     const t = this.deps.getTranslator();
 
@@ -300,8 +298,9 @@ export class GameMoveTransaction {
     }
 
     // 5. Write the library. A failure here triggers a best-effort rollback of the card (step 4) back to
-    // its pre-move bytes — `fromText` is NEVER applied when this happens: applying it would make the game disappear from the PC library without landing on the card,
-    // which is worse than the duplicate a failed rollback leaves behind.
+    // its pre-move bytes — `fromText` is NEVER applied when this happens: applying it would make the game
+    // disappear from the PC library without landing on the card, which is worse than the duplicate a
+    // failed rollback leaves behind.
     const fromWrite = await this.deps.config.writePcLibraryText(fromText, t);
     if (!fromWrite.ok) {
       const restored = await this.rollbackCardWrite(request.toRoot, toBefore.text);

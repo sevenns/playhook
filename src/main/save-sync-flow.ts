@@ -76,9 +76,6 @@ export class SaveSyncFlow {
    * 'pc-to-card' for sync-out — i.e. the phase's old deterministic direction. Otherwise the direction is
    * chosen by which side changed since the last sync. A conflict (both changed) and a fallback are logged.
    * Throws propagate to the caller (sync-in swallows them softly; sync-out defers to pending-flush).
-   */
-  /**
-   * Runs one change-detected sync between the card and this game's PC save folder.
    *
    * `containerExists=false` (linux: the game's Wine prefix is gone — never created, or wiped by an
    * uninstall) DISCARDS the baseline. That is a data-integrity rule, not an optimisation: change-detection

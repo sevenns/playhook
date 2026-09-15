@@ -53,8 +53,8 @@ export function buildTrayMenu(t: Translator, callbacks: TrayCallbacks, steam: Tr
           },
         ]
       : []),
-    { label: t('settings.openLogs'), click: () => callbacks.onOpenLogs() },
-    { label: t('settings.openGames'), click: () => callbacks.onOpenGamesFolder() },
+    { label: t('tray.openLogs'), click: () => callbacks.onOpenLogs() },
+    { label: t('tray.openGames'), click: () => callbacks.onOpenGamesFolder() },
     { type: 'separator' },
     { label: t('tray.quit'), click: () => callbacks.onQuit() },
   ]);

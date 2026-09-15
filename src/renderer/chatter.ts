@@ -1,6 +1,6 @@
 // "Chatter": a rotating funny suffix for long busy phases (install / Proton config).
 //
-// The base status ("Установка..." / "Конфигурация Proton...") shows alone for the first MINUTE; after that
+// The base status ("Installing..." / "Configuring Proton...") shows alone for the first MINUTE; after that
 // a random funny suffix is APPENDED and swapped every 20s, so a long silent install/provision doesn't feel
 // stuck. Renderer-owned (pure presentation) — main only sets the base state. This module owns the timers
 // and the current suffix; app.ts composes the line (the base status belongs to what is ON SCREEN, which

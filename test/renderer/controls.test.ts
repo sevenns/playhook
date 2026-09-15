@@ -7,7 +7,7 @@ import { loadFixture } from './helpers/fixture';
 import { fakeAudio, fakeKeyboard, type FakeAudio } from './helpers/fakes';
 import { installRafHarness } from './helpers/raf';
 
-/** The popup's fade-out (controls.ts POPUP_FADE_MS) — what `onPopupClosed` waits for. */
+/** The popup's fade-out (popups.ts POPUP_FADE_MS) — what `onPopupClosed` waits for. */
 const POPUP_FADE_MS = 350;
 
 type Overlay = ControlsDeps['settings'] & ControlsDeps['gameSettings'] & ControlsDeps['library'];

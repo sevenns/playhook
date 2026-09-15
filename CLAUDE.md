@@ -65,7 +65,10 @@ The channel literal lives in **one** source of truth and is bridged with compile
 3. Add the literal to `src/preload/preload.ts`'s `CHANNELS` map. It is `satisfies typeof IPC`, so a
    wrong value, a typo'd key AND a forgotten channel are all compile errors — there is one window and one
    preload, so the map has to be complete.
-4. Wire the handler in `game-controller.ts` (main) and consume it in the renderer.
+4. Wire the handler in the owning service's `init()` (`settings-service.ts`, `game-config.ts`,
+   `file-picker-service.ts`, `metadata/service.ts`, … — `game-controller.ts` only for the card-session
+   channels) and consume it in the renderer. `test/ipc-channels.test.ts` also reads those `init()`s as
+   text and fails when a channel is registered twice: Electron refuses the second `handle` at runtime.
 
 The `test/ipc-channels.test.ts` suite guards the same invariant from the outside (it reads the preload
 sources as text) and would still catch it if a second window — and a second preload, back to
@@ -142,9 +145,11 @@ build does not self-update. **All OS-specific behaviour lives behind the `Platfo
 
 - Runner: **vitest** (`npm test`). Tests live in `test/`, run in plain Node with **no electron**
   (`test/stubs/electron.ts` is aliased for the `electron` import — see `vitest.config.ts`).
-- Testable = **pure / electron-free** modules. Modules that evaluate koffi FFI at import
-  (`game-launcher.ts`) are not importable in Node — extract pure logic into a util (as `launch-args.ts`
-  was) and test that.
+- Testable = **pure / electron-free** modules. The koffi-bound win32 modules (`game-launcher.ts`,
+  `registry.ts`, `window-finder.ts`) DO import under vitest on every OS — the prebuilt addon loads and the
+  DLLs bind lazily — but their FFI branches cannot be exercised without Windows, so test them through
+  the pure logic split out beside them (as `launch-args.ts` was) and hand the process waits in through
+  a seam (`ProcessControl` in `test/game-controller.test.ts`).
 - Prefer covering the risky, data-touching functions: manifest validation/anti-traversal, stats merge,
   save-sync retry, argument quoting.
 - **DOM tests of the renderer's screen controllers live in `test/renderer/**`** and run under
@@ -206,8 +211,8 @@ All three run on every PR and every push to `main` on Windows, Linux and macOS
 
 ## Tooling
 
-The first three run in CI on every PR and push to `main` (`check.yml`) and again before every release
-build. Prettier is deliberately NOT a gate.
+The first three run in CI on every PR and push to `main` (`check.yml`, followed by `npm run build`) and
+again before every release build. Prettier is deliberately NOT a gate.
 
 - `npm run typecheck` — strict `tsc`, no `any`. Covers `test/` as well as `src/`.
 - `npm run lint` — ESLint with type-aware rules (`no-non-null-assertion` — the "no `!`" rule, which

@@ -8,7 +8,7 @@
 // other, so the two cannot desync.
 //
 // A collision is possible only with a PREVIOUS copy of the SAME game (the id is already checked unique on
-// the target card before anything is copied — see GameConfigService.moveToCard), so overwriting is safe.
+// the target card before anything is copied — see GameMoveTransaction.moveToCard), so overwriting is safe.
 
 /** The file extension (with its leading dot), taken from the last path segment. '' when there is none. */
 function assetExtension(sourcePath: string): string {

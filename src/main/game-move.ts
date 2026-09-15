@@ -1,6 +1,7 @@
-// The electron-free half of "Move to card…": moving a local (PC-library) game onto a card. Pure so it
-// can be unit-tested — the transaction itself (GameMoveTransaction.moveToCard) touches fs and cannot be
-// imported in vitest, the same reason game-config-add.ts was carved out.
+// The pure half of "Move to card…": moving a local (PC-library) game onto a card — which assets travel
+// and how a slot leaves the library text, as functions of strings. Unit-tested on their own
+// (test/game-move.test.ts); the transaction that applies them to the disk (GameMoveTransaction.moveToCard)
+// is driven end to end in test/game-move-transaction.test.ts, the same split as game-config-add.ts.
 import path from 'node:path';
 import {
   movedGridAssetPath,

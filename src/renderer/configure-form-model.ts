@@ -1,5 +1,5 @@
 // Pure (DOM-free, electron-free) bridge between the Configure form and game.json TEXT — the single source
-// of truth stays the manifest text (see plan R2), so the form only ever converts to/from a string that the
+// of truth stays the manifest text, so the form only ever converts to/from a string that the
 // existing config:save pipeline writes verbatim. Testable in vitest.
 //
 // Two escape hatches keep the round-trip lossless and honest:
@@ -83,7 +83,7 @@ export interface PcModel {
 
 /**
  * All form fields, including the sections hidden by the current launch mode (they live here until
- * serialization, so switching modes and back restores what was typed — see plan R5). Numbers are kept as
+ * serialization, so switching modes and back restores what was typed). Numbers are kept as
  * TEXT (`launchTimeoutSec`, `steam.appid`) because the Fluent text-input value is a string; serialization
  * parses them.
  */
@@ -136,7 +136,7 @@ export type ParseFormResult =
       /** Known top-level keys with an invalid value type, kept raw and written back verbatim. */
       readonly corrupt: Readonly<Record<string, unknown>>;
       /** The source carried blocks for more than one launch mode (steam + install/executable) — the form
-       * activates one and a banner warns that saving drops the others (plan R5). */
+       * activates one and a banner warns that saving drops the others. */
       readonly mixed: boolean;
     }
   | { readonly ok: false; readonly message: string };
@@ -195,7 +195,7 @@ function emptyPc(): PcModel {
 
 /**
  * A pristine, all-empty form model — used for a blank drive and the empty baseline of the template-replace
- * confirm (plan R8). The mode is a PARAMETER because a blank PC library must start in `pc` mode: it is the
+ * confirm. The mode is a PARAMETER because a blank PC library must start in `pc` mode: it is the
  * only mode valid there, so defaulting to `executable` would hand the user a form whose every save is
  * rejected.
  */
@@ -294,7 +294,7 @@ function parseSteam(source: Record<string, unknown>): SteamModel | null {
 
 /**
  * Parses manifest TEXT into a form model. ok:false only for a syntax error or a non-object top-level (the
- * form cannot represent those — the caller keeps the JSON tab, plan R4). A syntactically valid but
+ * form cannot represent those — the caller keeps the JSON tab). A syntactically valid but
  * schema-invalid manifest still parses: wrong-typed known fields go to `corrupt` and are written back
  * verbatim so the server validator still reports them.
  */
@@ -424,7 +424,7 @@ function valueToFormResult(parsed: unknown): ParseFormResult {
     else corrupt['pc'] = value;
   }
 
-  // Launch mode: pc > steam > install > executable (plan R5). Presence (not validity) decides — a corrupt
+  // Launch mode: pc > steam > install > executable. Presence (not validity) decides — a corrupt
   // block still selects its mode, and its raw value is re-emitted from `corrupt` so the error shows.
   // `install` with `type: 'copy'` is the exception: it is Executable mode with the checkbox on, so it
   // must NOT be shown as an Installer (the user never chose that mode).

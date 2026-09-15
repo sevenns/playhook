@@ -977,7 +977,7 @@ export type ConfigMoveResult =
 /**
  * Payload for gameConfig:accept-path: absolute path(s) the in-launcher picker chose, and what field they
  * are for. Unlike the native dialog this comes FROM the renderer, so main re-checks everything the dialog
- * used to guarantee — see GameConfigService.acceptPickedPaths.
+ * used to guarantee — see FilePickerService.acceptPickedPaths.
  */
 export interface GameConfigAcceptRequest {
   readonly root: string;

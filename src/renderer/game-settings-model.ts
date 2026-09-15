@@ -363,7 +363,7 @@ export function buildGameSettingsModel(
   });
   // Absent while a move is pending: the id is what BOTH halves of the move are addressed by (which slot
   // leaves the PC library, which stats/saves follow the game), so a move that also renames would orphan
-  // all of it — hence the matching refusal in GameConfigService.moveToCard.
+  // all of it — hence the matching refusal in GameMoveTransaction.moveToCard.
   // Renaming stays available as an ordinary edit, before or after the move.
   if (!env.move) {
     basics.push({

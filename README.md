@@ -92,11 +92,11 @@ launcher — see [Settings and Customize](#settings-and-customize).
 ## How it works
 
 1. Playhook starts hidden in the tray. With no game card inserted, there is no window (unless you
-   enable *Always show the no-card screen* in Settings).
+   enable *Keep the launcher open without a card* in Settings).
 2. Insert a card with a valid `game.json` and a window appears: the hero art as the background and a
    bottom bar with the **Play** button on the left, the game title in the middle and the **More** (⋯)
-   button on the right (state `ready`). If the manifest has no `heroImage`, a bundled wallpaper — or
-   your own, set in Settings — is used.
+   button on the right (state `ready`). If the manifest has no `heroImage`, a bundled wallpaper is
+   used.
 3. With more than one game to show, the launcher opens on the **history carousel** instead: a row of
    game cards you flip through with **left/right**. The games on the inserted card come first (each
    marked with a dot — those you can launch right now), followed by the games you have played on this
@@ -899,7 +899,7 @@ On **Windows** and **macOS** the app registers itself via
 Login Items*).
 
 - It always starts hidden in the tray (no flag needed): the window appears only when a valid game
-  card is detected — unless *Always show the no-card screen* is enabled in Settings.
+  card is detected — unless *Keep the launcher open without a card* is enabled in Settings.
 - Guaranteed for the **NSIS installation**; for **portable** it is best-effort (the path to the
   exe may change).
 - To disable: *Settings → Apps → Startup* in Windows.

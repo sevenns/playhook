@@ -1,6 +1,6 @@
 // A ratchet on the size of the largest source files and screen factories: they may only shrink.
 //
-// The July 2026 audit split ipc.ts (→ 953 lines) and app.ts (→ 195). Six hundred commits later they were
+// The July 2026 audit split ipc.ts (now game-controller.ts, → 953 lines) and app.ts (→ 195). Six hundred commits later they were
 // 2833 and 1168, and game-settings-screen.ts had grown from nothing to 2942 — a split that is not held in
 // place mechanically does not hold. A `max-lines` threshold would not do: it measures with `skipComments`
 // (different numbers from every plan and PR description), a threshold invites arguing about the number,

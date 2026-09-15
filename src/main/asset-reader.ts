@@ -32,7 +32,7 @@ const AUDIO_MIME: Readonly<Record<string, string>> = {
 /**
  * Supported image / audio file extensions WITHOUT the leading dot, derived from the MIME maps above so
  * there is a single source of truth. The manifest editor accepts a picked file against these (see
- * game-config.ts acceptPickedPaths) — keeping the "what can be a hero image / a sound" answer in
+ * pick-rejection.ts) — keeping the "what can be a hero image / a sound" answer in
  * lockstep with what this reader actually decodes.
  */
 export const IMAGE_EXTENSIONS: readonly string[] = Object.keys(IMAGE_MIME).map((ext) => ext.slice(1));

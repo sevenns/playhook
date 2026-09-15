@@ -1427,7 +1427,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
 
   /**
    * The Save button while a move is pending — one IPC, the whole transaction runs in main (see
-   * GameConfigService.moveToCard). Closes on success exactly like `runAdd`: the game left the PC library,
+   * GameMoveTransaction.moveToCard). Closes on success exactly like `runAdd`: the game left the PC library,
    * so there is nothing here to keep editing. `deferred`/a skipped save folder are reported to the user as
    * NOTIFICATIONS main files itself (game-moved-deferred / game-move-save-skipped), not as screen status —
    * the screen is already gone by the time either matters.

@@ -838,12 +838,12 @@ void Promise.all([
 // that is the background a card whose hero never arrives is left with once the backdrop dissolves.
 void window.api.requestWallpaper().then((url) => {
   hero.setWallpaper(url);
-  boot.noteWallpaper(url);
   if (gameOf(currentState) === undefined) {
     hero.applyIdleBackground();
     // The title the empty screen used to carry belongs to render() now (a launcher card names itself).
     render(currentState);
   } else hero.showWallpaperBackdrop();
+  boot.noteWallpaper(url);
 });
 
 // The card's music is delivered on its own channel (not in AppState); load it and keep music in sync.

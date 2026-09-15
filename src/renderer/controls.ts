@@ -280,7 +280,7 @@ export function createControls(deps: ControlsDeps): Controls {
 
   // The Play button's aria-label follows the state: "Return to game" while a game is running (the
   // launcher was summoned over it), "Play" otherwise. Set at render time via the translator (not the
-  // static data-i18n-aria-label, which only re-applies on a language change) — see plan F1-5.
+  // static data-i18n-aria-label, which only re-applies on a language change).
   function applyPlayAria(): void {
     // "Return to game" only when running and NOT force-closing (during killing Play is a loader, so the
     // default "Play" label fits better than an action it won't perform).
