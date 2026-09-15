@@ -1007,11 +1007,13 @@ function pushGameSemanticIssues(
  * The items of a manifest text as the file lists them: the single game object, or every element of the
  * array form — the one top-level shape game.json takes. Null when the text is not JSON at all. The shape
  * of each item is NOT checked here; that is the caller's business (validation, a lookup by id, a count).
+ * A UTF-8 BOM is dropped first: Notepad writes one, `JSON.parse` refuses it, and `fse.readJson` (which
+ * readManifests still uses) strips it silently — so a card that loads there must parse here too.
  */
 export function parseManifestItems(text: string): readonly unknown[] | null {
   let parsed: unknown;
   try {
-    parsed = JSON.parse(text) as unknown;
+    parsed = JSON.parse(text.startsWith('\uFEFF') ? text.slice(1) : text) as unknown;
   } catch {
     return null;
   }

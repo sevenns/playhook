@@ -6,6 +6,7 @@ import {
   absoluteToPcSavePath,
   expandPcSavePath,
   manifestJsonSchema,
+  parseManifestItems,
   readManifests,
   resolveInside,
   stripCopySourcePrefix,
@@ -973,5 +974,22 @@ describe('readManifests — pc source', () => {
     const result = await readManifests(pcRoot, env, resolveInstallDir, { source: 'pc' });
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.manifests.map((m) => m.raw.id)).toEqual(['hades', 'celeste']);
+  });
+});
+
+describe('parseManifestItems', () => {
+  it('lists the single object and every element of the array form', () => {
+    expect(parseManifestItems('{"id":"a"}')).toEqual([{ id: 'a' }]);
+    expect(parseManifestItems('[{"id":"a"},{"id":"b"}]')).toEqual([{ id: 'a' }, { id: 'b' }]);
+  });
+
+  it('is null for text that is not JSON', () => {
+    expect(parseManifestItems('{"id":')).toBeNull();
+    expect(parseManifestItems('')).toBeNull();
+  });
+
+  it('drops a UTF-8 BOM, the way fse.readJson does for readManifests', () => {
+    expect(parseManifestItems('\uFEFF{"id":"a"}')).toEqual([{ id: 'a' }]);
+    expect(parseManifestItems('\uFEFF[{"id":"a"}]')).toEqual([{ id: 'a' }]);
   });
 });
