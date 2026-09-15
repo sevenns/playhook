@@ -27,7 +27,7 @@ const SLACK = 50;
 const FILE_BASELINE: Readonly<Record<string, number>> = {
   'src/main/game-controller.ts': 1468,
   'src/main/manifest.ts': 1125,
-  'src/renderer/controls.ts': 2188,
+  'src/renderer/controls.ts': 2068,
   'src/renderer/game-settings-screen.ts': 2942,
   'src/renderer/online-picker.ts': 1322,
   'src/renderer/settings-screen.ts': 1193,

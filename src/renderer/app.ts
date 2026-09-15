@@ -269,6 +269,22 @@ const toast = createToast({
 });
 
 const controls = createControls({
+  api: {
+    requestLaunch: () => window.api.requestLaunch(),
+    requestUninstall: () => window.api.requestUninstall(),
+    requestKill: () => window.api.requestKill(),
+    forgetGame: (id) => window.api.forgetGame(id),
+    openSteamDownloads: () => window.api.openSteamDownloads(),
+    requestShutdown: () => window.api.requestShutdown(),
+    requestReboot: () => window.api.requestReboot(),
+    requestSleep: () => window.api.requestSleep(),
+    requestHide: () => window.api.requestHide(),
+    requestQuit: () => window.api.requestQuit(),
+    resolveGameCollision: (answer) => window.api.resolveGameCollision(answer),
+    markNotificationsRead: () => window.api.markNotificationsRead(),
+    dismissNotification: (id) => window.api.dismissNotification(id),
+    clearNotifications: () => window.api.clearNotifications(),
+  },
   getState: () => currentState,
   getLocale: () => currentLocale,
   getNotifications: () => notificationItems,

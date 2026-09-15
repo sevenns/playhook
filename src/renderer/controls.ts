@@ -10,20 +10,19 @@
 // The popup is a state machine: one #popup element whose content + action stack switch by data-view.
 // Navigation is vertical (up/down) inside a stack; the default focus is always the BOTTOM button
 // (Close / No / Sleep), which the mockup draws filled. B/Esc/veil step BACK one level.
-import type { AppNotification, AppState, BrowseInfo, GameInfo } from '../shared/types';
-import type { Locale, MessageKey, Translator } from '../shared/i18n/index.js';
+import type { AppNotification, AppState, GameInfo } from '../shared/types';
+import type { MessageKey, Translator } from '../shared/i18n/index.js';
 import { formatNotification, formatNotificationTime } from './format.js';
 import { createScroller } from './screen-scroller.js';
 import { HOLD_DELAY_MS, NAV_REPEAT_MS, createAutoRepeatChain } from './auto-repeat.js';
 import { createGamepadController } from './gamepad.js';
 import { createWakeMeter } from './mouse-sleep.js';
 import type { NavSurface } from './nav-surface.js';
-import type { MoveResult } from './carousel.js';
 import type { SystemCardId } from './system-cards.js';
-import { type AudioController } from './audio.js';
 import { gameOf, phaseOf, steamBusy } from './state-view.js';
 import { req, reqQuery } from './dom.js';
 import type { GameCollision } from '../shared/types.js';
+import type { ControlsDeps } from './controls-deps.js';
 
 // The current popup view (mutually exclusive; 'none' = closed). Mirrors the data-view on #popup.
 type PopupView = 'none' | 'details' | 'notifications' | 'power' | 'confirm' | 'busy' | 'error';
@@ -61,125 +60,6 @@ const HOVER_WAKE_PX = 6;
 /** How long the popup takes to fade out (.popup transition in styles.css) — the window its contents
  *  must stay frozen for, so the user never watches the menu rewrite itself on the way out. */
 const POPUP_FADE_MS = 350;
-
-/** What the interaction layer needs from the rest of the renderer. */
-export interface ControlsDeps {
-  /** The current AppState snapshot (app.ts owns it; updated before it calls into here). */
-  getState(): AppState;
-  /**
-   * What is on screen (browse:update). Needed because AppState alone can no longer answer "does Play act
-   * on what I'm looking at?": while a card is inserted the state describes ITS game, but the screen may
-   * be showing a history game — pressing Play there would launch someone else.
-   */
-  getBrowse(): BrowseInfo | null;
-  /** The shared audio controller (UI sounds). */
-  audio: AudioController;
-  /** The current translator (read live so menu/confirm copy follows the language). */
-  getTranslator(): Translator;
-  /** The current UI locale — the notification list formats its timestamps with it. */
-  getLocale(): Locale;
-  /** The history carousel — the THIRD focus group, above the bar and the popup stack (see navLeft…). */
-  carousel: CarouselNav;
-  /** The Settings screen — the FOURTH surface, between the popup and the carousel (see navLeft…). */
-  settings: SettingsNav;
-  /** The Customize screen — the fifth surface, at the same level as Settings (see `overlays` below). */
-  gameSettings: GameSettingsNav;
-  /** The Library screen — the sixth surface, at that same level. */
-  library: LibraryNav;
-  /**
-   * A direction is being HELD, i.e. the strip is flipping on its own (true), or it has just been let go
-   * (false). The background subsystem holds its image for the duration — see hero.setFlipping.
-   */
-  onFlipping(flipping: boolean): void;
-  /** The inbox as main last pushed it — the popup list and the More item's dot are drawn from it. */
-  getNotifications(): readonly AppNotification[];
-  /** The popup finished closing. The toast shares this corner and holds its queue while it is up. */
-  onPopupClosed(): void;
-  /** Opens a game's detail screen (a notification about a game leads there). Owned by app.ts. */
-  openGameDetail(id: string): void;
-  /**
-   * Whether the boot screen is still up (app.ts owns the reveal). The whole UI is built and laid out
-   * behind the wallpaper — the bar sits at opacity 0, the cards are held at zero — so every surface is
-   * already drivable while nothing of it can be seen: A on the invisible row opened the Notifications
-   * card behind the boot image, and a direction flipped a carousel nobody was looking at.
-   */
-  isBooting(): boolean;
-}
-
-/**
- * What the interaction layer needs from the Settings screen. The screen owns its rows, focus and IPC
- * (settings-screen.ts); this module only routes the six primitives to it and guards the mechanisms that
- * would otherwise keep running underneath (idle timer, wheel, Y).
- */
-export interface SettingsNav extends NavSurface {
-  /** `sectionKey` deep-links to one section — an "update ready" notification lands on Updates.
-   *  `silent` suppresses the screen's own opening sound — see SettingsScreen.open. */
-  open(sectionKey?: MessageKey, options?: { readonly silent?: boolean }): void;
-  close(): void;
-  /** Runs the reset once the shared confirm popup says yes. */
-  resetSettings(): void;
-}
-
-/**
- * The same seam for the Customize screen. It is an OVERLAY like Settings — same level, never both open —
- * which is why the routing below asks "which overlay is up?" rather than naming one: a third screen
- * (adding a game) then costs one line here instead of a rewrite of every primitive.
- */
-export interface GameSettingsNav extends NavSurface {
-  open(id: string): void;
-  /** Opens the same screen for a game whose card is not in — see GameSettingsScreen.openFromHistory. */
-  openFromHistory(id: string): void;
-  /** Opens the same screen to CREATE a game — the "Add game" item of the Details menu. */
-  openNew(): void;
-  close(): void;
-  /** Whether there are unsaved edits — decides whether leaving asks first. */
-  isDirty(): boolean;
-  /** Whether the game about to be deleted is a LOCAL one, whose save backups survive the deletion. */
-  deletesLocalGame(): boolean;
-  /** The shared confirm popup said yes to one of the screen's questions. */
-  confirmAccepted(
-    kind:
-      | 'reset'
-      | 'delete'
-      | 'delete-history'
-      | 'discard'
-      | 'switch-source'
-      | 'cancel-move'
-      | 'replace-title',
-  ): void;
-}
-
-/**
- * The Library screen, the third overlay — and the one the "Add game" route runs through, which is why
- * this module opens it: the screen it hands over to (Customize in add mode) is this module's to open.
- */
-export interface LibraryNav extends NavSurface {
-  open(): void;
-  /** `silent` is a hand-over to another surface (the detail screen, Add game) — see LibraryScreen. */
-  close(silent?: boolean): void;
-}
-
-/**
- * What the interaction layer needs from the carousel. A narrow seam on purpose: the carousel owns its
- * strip and selection, this module owns which surface the buttons currently drive.
- */
-export interface CarouselNav {
-  /** 'carousel' (the strip) or 'detail' (the bar screen). */
-  screen(): 'carousel' | 'detail';
-  /** Moves the selection by `delta` cards; says whether it moved, hit an end, or was locked mid-morph. */
-  move(delta: number): MoveResult;
-  /** Enters the selected card's detail screen. */
-  activate(): void;
-  /**
-   * Whether the strip is standing on a GAME rather than one of the launcher's own cards. Down opens a
-   * game and nothing else, so it has to ask before acting (see navDown).
-   */
-  onGame(): boolean;
-  /** Steps back from a detail screen to the strip; false when the strip is already the screen. */
-  leaveDetail(): boolean;
-  /** Whether the inbox holds anything unread — the Notifications CARD wears the dot now. */
-  setUnread(unread: boolean): void;
-}
 
 export interface Controls {
   /** Refreshes the game-dependent menu item (Install/Uninstall text + visibility) from the current state. */
@@ -480,7 +360,7 @@ export function createControls(deps: ControlsDeps): Controls {
    * main is told straight away and the dot beside the More item goes out.
    */
   function openNotifications(): void {
-    window.api.markNotificationsRead();
+    deps.api.markNotificationsRead();
     setView('notifications');
     renderNotificationList();
     focusStackBottom(); // default focus: Close, as in every other view
@@ -611,7 +491,7 @@ export function createControls(deps: ControlsDeps): Controls {
     const id = button.dataset['notificationId'];
     if (id === undefined) return;
     const item = deps.getNotifications().find((candidate) => candidate.id === id);
-    window.api.dismissNotification(id);
+    deps.api.dismissNotification(id);
     // Muted when the entry leads to Settings — that screen's popup-open is the sound of the whole
     // gesture. With nowhere to go, the popup simply closes and says so.
     closePopup({ silent: item?.kind === 'update-ready' });
@@ -1327,7 +1207,7 @@ export function createControls(deps: ControlsDeps): Controls {
     // pause/resume (we can't control that programmatically).
     if (game?.steamInstalling === true) {
       audio.play('button');
-      window.api.openSteamDownloads();
+      deps.api.openSteamDownloads();
       return;
     }
     // Steam uninstall in progress (gear) → nothing useful to do, ignore the press.
@@ -1340,7 +1220,7 @@ export function createControls(deps: ControlsDeps): Controls {
     // the running state and raises the game's window instead of launching).
     if (phaseOf(state()) !== 'ready' && state().kind !== 'running') return audio.playLimit();
     audio.play('play');
-    window.api.requestLaunch();
+    deps.api.requestLaunch();
   }
 
   function triggerMore(): void {
@@ -1375,7 +1255,7 @@ export function createControls(deps: ControlsDeps): Controls {
       // The popup deliberately stays open on its empty state: "Clear all" answers "get rid of these",
       // not "take me out of here", and closing would hide the very result of the press.
       audio.play('button');
-      window.api.clearNotifications();
+      deps.api.clearNotifications();
     } else if (btn === menuCustomize) {
       // Like Settings: the menu it was opened from closes first — the screen is a surface of its own.
       closePopup({ silent: true });
@@ -1411,13 +1291,13 @@ export function createControls(deps: ControlsDeps): Controls {
       // no tray and this would be a no-op. No confirm — hiding is non-destructive. Close the popup first
       // so a re-summoned launcher shows a clean bar, not this menu.
       closePopup();
-      window.api.requestHide();
+      deps.api.requestHide();
     } else if (btn === powerQuit) {
       // The full quit. No confirm either: it is as recoverable as relaunching from the Steam library —
       // and in Game Mode this is the only way out, so a confirm would sit between the user and the exit
       // every single time.
       closePopup();
-      window.api.requestQuit();
+      deps.api.requestQuit();
     } else if (btn === confirmYes) {
       acceptConfirm();
     } else if (btn === confirmNo) {
@@ -1451,7 +1331,7 @@ export function createControls(deps: ControlsDeps): Controls {
     const collision = askedCollision;
     askedCollision = null;
     if (collision === null) return;
-    void window.api
+    void deps.api
       .resolveGameCollision({
         id: collision.id,
         choice,
@@ -1487,32 +1367,32 @@ export function createControls(deps: ControlsDeps): Controls {
     switch (mode) {
       case 'install':
         audio.play('play');
-        window.api.requestLaunch(); // main decides install vs launch from requiresInstall
+        deps.api.requestLaunch(); // main decides install vs launch from requiresInstall
         break;
       case 'uninstall':
         audio.play('button'); // neutral sound for the destructive confirm
-        window.api.requestUninstall();
+        deps.api.requestUninstall();
         break;
       case 'kill':
         audio.play('button'); // neutral sound for the destructive confirm
-        window.api.requestKill();
+        deps.api.requestKill();
         break;
       case 'forget':
         audio.play('button'); // neutral sound for the destructive confirm
-        if (forgetId !== null) window.api.forgetGame(forgetId);
+        if (forgetId !== null) deps.api.forgetGame(forgetId);
         forgetId = null;
         break;
       case 'shutdown':
         audio.play('button');
-        window.api.requestShutdown();
+        deps.api.requestShutdown();
         break;
       case 'reboot':
         audio.play('button');
-        window.api.requestReboot();
+        deps.api.requestReboot();
         break;
       case 'sleep':
         audio.play('button');
-        window.api.requestSleep();
+        deps.api.requestSleep();
         break;
       case 'reset-settings':
         audio.play('button'); // neutral sound for the destructive confirm
