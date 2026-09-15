@@ -20,7 +20,6 @@
 //    surfaces on a stack inside it, and the six primitives are routed to whichever is on top.
 import type {
   BrowseInfo,
-  SfxName,
   ConfigMoveResult,
   ConfigPickResult,
   ConfigRootReadResult,
@@ -52,7 +51,7 @@ import { wrapIndex } from './index-math.js';
 import { createScroller } from './screen-scroller.js';
 import { createSidebar, type SidebarEntry } from './screen-sidebar.js';
 import { createListScreenCore, sectionByKey, titledSections } from './list-screen-core.js';
-import { updateMarquee } from './marquee.js';
+import { createMenuStack, type MenuEntry, type MenuLevel } from './menu-stack.js';
 import type { FilePickerSurface, NavSurface, TextEntrySurface } from './nav-surface.js';
 import type { ApplyOutcome, OnlinePickerSurface } from './online-picker.js';
 import {
@@ -91,7 +90,7 @@ import {
   screenHeading,
   type RenderedGameRow,
 } from './game-settings-view.js';
-import { optionLabel, optionLabelNode, rowLabelText, type CoreOption } from './row-view-core.js';
+import { optionLabel, rowLabelText, type CoreOption } from './row-view-core.js';
 
 /** How long the screen waits after a change before asking main to validate the text. */
 const VALIDATE_DEBOUNCE_MS = 400;
@@ -245,35 +244,6 @@ export interface GameSettingsScreen extends NavSurface {
   heroCount(): number;
 }
 
-/**
- * One level of the column menu. `select` is a list of VALUES — the current one is focused and choosing
- * one is the way out, so it needs no Close. `menu` is a genuine action popup (a path's Browse/Clear, the
- * list editor): it gets a Close entry appended and opens focused on it, which is the rule every action
- * stack in this launcher follows.
- */
-interface MenuLevel {
-  readonly kind: 'select' | 'menu';
-  readonly title: string;
-  readonly entries: readonly MenuEntry[];
-  focus: number;
-  /**
-   * What X does on this level, if anything. Only the track list claims it (auditioning the focused
-   * track): everywhere else X still means nothing inside a menu and says so with the dead-end sound.
-   */
-  readonly secondary?: (index: number) => void;
-}
-
-interface MenuEntry {
-  readonly label: string;
-  /** Marks the value a dropdown currently holds (underlined, like the Settings dropdown). */
-  readonly current?: boolean;
-  /** Which sound this entry makes. One runner plays it, so a press and a click sound identical.
-   *  'none' is for an entry whose own surface speaks for it — opening the file browser or the lightbox,
-   *  where the primitive plays popup-open. */
-  readonly sound?: SfxName | 'none';
-  readonly run: () => void;
-}
-
 export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSettingsScreen {
   const app = req('app');
   const screen = req('game-settings');
@@ -286,7 +256,6 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   const titleEl = req('game-settings-title');
   const menuEl = req('game-settings-options');
   const menuListEl = req('game-settings-options-list');
-  const menuVeil = menuEl.querySelector<HTMLElement>('.settings-options-veil');
   const lightboxEl = req('lightbox');
   const lightboxImage = req<HTMLImageElement>('lightbox-image');
   const lightboxCaption = req('lightbox-caption');
@@ -413,14 +382,21 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   let moveTargets = false;
   let moveTargetsTimer = 0;
 
-  const menuStack: MenuLevel[] = [];
-  let menuButtons: readonly HTMLButtonElement[] = [];
   /** The artwork viewer is the topmost surface of all — a look at a picture, closed by B or the veil. */
   let lightboxOpen = false;
 
   const listScroller = createScroller(listEl);
-  const menuScroller = createScroller(menuListEl);
   const hover = createHoverGuard();
+  /** The column menu — a row's dropdown, a path's actions, the list editor (menu-stack.ts). */
+  const menu = createMenuStack({
+    audio: deps.audio,
+    screen,
+    menuEl,
+    listEl: menuListEl,
+    hover,
+    closeLabel: () => t()('launcher.menu.close'),
+    onLeave: () => stopMetadataWork(),
+  });
 
   /**
    * The section column. It carries this screen's actions too — Save, Discard edits, Delete, Close —
@@ -460,7 +436,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       }
       return false;
     },
-    onLeavePane: () => closeMenus(),
+    onLeavePane: () => menu.close(),
   });
 
   // ── Form state ─────────────────────────────────────────────────────────────
@@ -869,129 +845,6 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     }
   }
 
-  // ── The column menu (expanded dropdown / row actions / list editing) ────────
-
-  function menuTop(): MenuLevel | undefined {
-    return menuStack[menuStack.length - 1];
-  }
-
-  function paintMenu(): void {
-    const level = menuTop();
-    if (level === undefined) {
-      menuButtons = [];
-      menuListEl.replaceChildren();
-      screen.classList.remove('is-options-open');
-      menuEl.classList.remove('is-open');
-      menuEl.setAttribute('aria-hidden', 'true');
-      return;
-    }
-    const buttons = level.entries.map((entry, index) => {
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = 'settings-option';
-      button.append(optionLabelNode(entry.label));
-      button.classList.toggle('is-current', entry.current === true);
-      button.addEventListener('click', () => {
-        pressFlash(button);
-        level.focus = index;
-        runEntry(entry);
-      });
-      return button;
-    });
-    menuButtons = buttons;
-    menuListEl.replaceChildren(...buttons);
-    screen.classList.add('is-options-open');
-    menuEl.classList.add('is-open');
-    menuEl.setAttribute('aria-hidden', 'false');
-    // Measured synchronously: reading clientWidth flushes the layout for the nodes just inserted, which
-    // a requestAnimationFrame callback would only reach on the next frame — and never at all in a window
-    // that is not painting.
-    updateMarquee(() => menuButtons);
-    applyMenuFocus(true);
-  }
-
-  /** Plays an entry's sound exactly once, then runs it. The only way an entry is ever triggered. */
-  function runEntry(entry: MenuEntry): void {
-    if (entry.sound !== 'none') deps.audio.play(entry.sound ?? 'button');
-    entry.run();
-  }
-
-  function applyMenuFocus(instant = false): void {
-    const level = menuTop();
-    if (level === undefined) return;
-    menuButtons.forEach((button, index) =>
-      button.classList.toggle('is-focused', index === level.focus),
-    );
-    const focused = menuButtons[level.focus];
-    if (focused !== undefined) menuScroller.reveal(focused, instant);
-    updateMarquee(() => menuButtons); // only the focused label moves
-  }
-
-  /**
-   * Appends the Close entry an action popup ends with, and points the focus at it. Same shape as every
-   * popup stack in the launcher: the way out is the default, and it is at the bottom where the thumb is.
-   */
-  function asMenu(level: {
-    readonly title: string;
-    readonly entries: readonly MenuEntry[];
-    readonly secondary?: (index: number) => void;
-  }): MenuLevel {
-    const entries: MenuEntry[] = [
-      ...level.entries,
-      { label: t()('launcher.menu.close'), sound: 'none', run: () => popMenu() },
-    ];
-    return {
-      kind: 'menu',
-      title: level.title,
-      entries,
-      focus: entries.length - 1,
-      ...(level.secondary === undefined ? {} : { secondary: level.secondary }),
-    };
-  }
-
-  function pushMenu(level: MenuLevel): void {
-    hover.arm();
-    // Only the FIRST level is a surface appearing; going deeper is a step inside one already open.
-    if (menuStack.length === 0) deps.audio.play('popup-open');
-    menuStack.push(level);
-    paintMenu();
-  }
-
-  /**
-   * The single voice of leaving a level, so every way out (B, left, the Close entry, the veil) sounds the
-   * same: stepping out of a deeper level is a step INSIDE the menu and keeps `back`; leaving the last one
-   * is the menu going away.
-   */
-  /**
-   * `keepWork` is for a level the SCREEN closes because it is done with it — a question that has just
-   * been answered — rather than one the user backed out of. Leaving is normally the signal to abandon
-   * whatever was running, and the answer to a question is immediately followed by acting on it: aborting
-   * there would cancel the very download the answer just asked for.
-   */
-  function popMenu(options?: { readonly keepWork?: boolean }): void {
-    if (menuStack.length > 0) deps.audio.play(menuStack.length > 1 ? 'back' : 'popup-close');
-    menuStack.pop();
-    // Leaving a level ends whatever it had running: an audition belongs to the track list it was
-    // started from, and a download the user has walked away from has nobody left to arrive for.
-    if (options?.keepWork !== true) stopMetadataWork();
-    paintMenu();
-  }
-
-  function closeMenus(options?: { readonly silent?: boolean }): void {
-    // `silent` for a cascade — the screen closing, or a surface that already played its own close.
-    if (menuStack.length > 0 && options?.silent !== true) deps.audio.play('popup-close');
-    menuStack.length = 0;
-    stopMetadataWork();
-    paintMenu();
-  }
-
-  /** Replaces the top level in place — used after an edit so the list the user is in stays current. */
-  function replaceMenu(level: MenuLevel): void {
-    menuStack.pop();
-    menuStack.push(level);
-    paintMenu();
-  }
-
   // ── Field editing ──────────────────────────────────────────────────────────
 
   /** Writes one field of the form model by row id. Everything a row can change goes through here. */
@@ -1152,7 +1005,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
 
   function openSelectMenu(row: Extract<GameSettingsRow, { kind: 'select' }>): void {
     const options: readonly CoreOption[] = row.options;
-    pushMenu({
+    menu.push({
       kind: 'select',
       title: '',
       focus: Math.max(
@@ -1163,7 +1016,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
         label: optionLabel(option, t()),
         current: option.value === row.value,
         run: () => {
-          closeMenus();
+          menu.close();
           setSelect(row.id, option.value);
         },
       })),
@@ -1231,12 +1084,12 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       entries.push({
         label: t()('gameSettings.clear'),
         run: () => {
-          closeMenus();
+          menu.close();
           setField(row.id, '');
         },
       });
     }
-    pushMenu(asMenu({ title: rowTitle(row), entries }));
+    menu.push(menu.asMenu({ title: rowTitle(row), entries }));
   }
 
   /**
@@ -1336,10 +1189,10 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
         if (!result.ok) {
           if (!('cancelled' in result)) failWith(result.message);
           // Cancelled (or refused): the popup is still up, and the focus goes back to it.
-          applyMenuFocus();
+          menu.applyFocus();
           return;
         }
-        closeMenus({ silent: true }); // the browser's own popup-close already covered this gesture
+        menu.close({ silent: true }); // the browser's own popup-close already covered this gesture
         if (onPicked !== undefined) {
           onPicked(result.paths);
           return;
@@ -1368,7 +1221,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   // ── List editing (its own level of the column menu) ─────────────────────────
 
   function openListMenu(row: Extract<GameSettingsRow, { kind: 'list' }>): void {
-    pushMenu(buildListLevel(row.id, row.items, row.max, row.preview !== undefined, rowTitle(row)));
+    menu.push(buildListLevel(row.id, row.items, row.max, row.preview !== undefined, rowTitle(row)));
   }
 
   function buildListLevel(
@@ -1401,13 +1254,13 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
               if (value.trim() === '') return;
               const next = [...items, value];
               setList(id, next);
-              replaceMenu(buildListLevel(id, next, max, isPath, title));
+              menu.replace(buildListLevel(id, next, max, isPath, title));
             },
           });
         },
       });
     }
-    return asMenu({ title, entries });
+    return menu.asMenu({ title, entries });
   }
 
   function openItemMenu(
@@ -1421,8 +1274,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     const commit = (next: readonly string[]): void => {
       setList(id, next);
       // Back to the list itself, refreshed — the user is usually not done after one change.
-      menuStack.pop();
-      replaceMenu(buildListLevel(id, next, max, isPath, title));
+      menu.replace(buildListLevel(id, next, max, isPath, title), 2);
     };
     const entries: MenuEntry[] = [];
     if (isPath) {
@@ -1475,7 +1327,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       label: t()('gameSettings.listRemove'),
       run: () => commit(items.filter((_, i) => i !== index)),
     });
-    pushMenu(asMenu({ title: items[index] ?? '', entries }));
+    menu.push(menu.asMenu({ title: items[index] ?? '', entries }));
   }
 
   function swap(items: readonly string[], a: number, b: number): readonly string[] {
@@ -1672,13 +1524,13 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       failWith(t()('gameSettings.moveNoCards'));
       return;
     }
-    pushMenu(
-      asMenu({
+    menu.push(
+      menu.asMenu({
         title: t()('gameSettings.moveToCardTitle'),
         entries: cards.map((candidate) => ({
           label: candidate.label,
           run: () => {
-            closeMenus();
+            menu.close();
             void adoptMoveTarget(candidate);
           },
         })),
@@ -2191,25 +2043,15 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     if (deps.keyboard.isOpen()) return deps.keyboard;
     if (deps.picker.isOpen()) return deps.picker;
     if (deps.onlinePicker.isOpen()) return deps.onlinePicker;
-    if (menuStack.length > 0) return 'menu';
+    if (menu.isOpen()) return 'menu';
     return 'form';
-  }
-
-  function moveMenuFocus(delta: number): void {
-    const level = menuTop();
-    if (level === undefined || level.entries.length === 0) return;
-    const next = wrapIndex(level.focus, delta, level.entries.length);
-    if (next === level.focus) return;
-    level.focus = next;
-    deps.audio.play('navigate');
-    applyMenuFocus();
   }
 
   function navUp(): void {
     hover.arm();
     const surface = activeSurface();
     if (surface === 'lightbox') return deps.audio.playLimit(); // nothing to move in a picture
-    if (surface === 'menu') return moveMenuFocus(-1);
+    if (surface === 'menu') return menu.moveFocus(-1);
     if (surface === 'form') return sidebar.hasFocus() ? sidebar.move(-1) : core.moveRowFocus(-1);
     surface.navUp();
   }
@@ -2218,7 +2060,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     hover.arm();
     const surface = activeSurface();
     if (surface === 'lightbox') return deps.audio.playLimit();
-    if (surface === 'menu') return moveMenuFocus(1);
+    if (surface === 'menu') return menu.moveFocus(1);
     if (surface === 'form') return sidebar.hasFocus() ? sidebar.move(1) : core.moveRowFocus(1);
     surface.navDown();
   }
@@ -2233,7 +2075,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     if (surface === 'menu') {
       // Left leaves a level, the same way it leaves a popup: the column sits on the right edge, so moving
       // off it means "out". A HELD left is ignored, or one press would walk out through every level.
-      if (!repeat) popMenu();
+      if (!repeat) menu.pop();
       return;
     }
     if (surface === 'form') {
@@ -2349,10 +2191,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       return;
     }
     if (surface === 'menu') {
-      const level = menuTop();
-      const entry = level?.entries[level.focus];
-      if (entry === undefined) return;
-      runEntry(entry);
+      menu.activate();
       return;
     }
     if (surface === 'form') {
@@ -2375,7 +2214,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       return;
     }
     if (surface === 'menu') {
-      popMenu();
+      menu.pop();
       return;
     }
     if (surface !== 'form') {
@@ -2425,7 +2264,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     deps.audio.play('back');
     // The lightbox, the menu and the keyboard go WITH the screen — one close, one sound.
     closeImage({ silent: true });
-    closeMenus({ silent: true });
+    menu.close({ silent: true });
     deps.keyboard.close();
     // The online surface holds an audition — real sound, which would outlive the screen otherwise.
     deps.onlinePicker.close();
@@ -2476,9 +2315,6 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   });
 
   veil?.addEventListener('click', () => navBack());
-  menuVeil?.addEventListener('click', () => {
-    popMenu();
-  });
 
   window.addEventListener(
     'mousemove',
@@ -2489,14 +2325,8 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       if (!hover.awake(event.clientX, event.clientY)) return;
       const target = event.target;
       if (!(target instanceof Element)) return;
-      const level = menuTop();
-      if (level !== undefined) {
-        const button = target.closest<HTMLButtonElement>('.settings-option');
-        if (button === null) return;
-        const index = menuButtons.indexOf(button);
-        if (index === -1 || index === level.focus) return;
-        level.focus = index;
-        applyMenuFocus();
+      if (menu.isOpen()) {
+        menu.hover(target);
         return;
       }
       const rowEl = target.closest<HTMLElement>('.setting-row');
@@ -2628,7 +2458,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     navSecondary: (repeat = false) => {
       const surface = activeSurface();
       if (surface === 'menu') {
-        const level = menuTop();
+        const level = menu.top();
         if (level?.secondary === undefined) {
           if (!repeat) deps.audio.playLimit();
           return;
@@ -2724,7 +2554,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       deps.picker.relocalize();
       deps.onlinePicker.relocalize();
       // A menu's labels are built from the model, so it is rebuilt rather than patched.
-      if (menuStack.length > 0) paintMenu();
+      if (menu.isOpen()) menu.paint();
     },
   };
 }
