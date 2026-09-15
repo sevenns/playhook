@@ -27,11 +27,9 @@ const SLACK = 50;
 const FILE_BASELINE: Readonly<Record<string, number>> = {
   'src/main/game-controller.ts': 1468,
   'src/main/manifest.ts': 1125,
-  'src/renderer/app.ts': 1168,
-  'src/renderer/controls.ts': 2188,
-  'src/renderer/game-settings-screen.ts': 2942,
+  'src/renderer/game-settings-screen.ts': 2047,
   'src/renderer/online-picker.ts': 1322,
-  'src/renderer/settings-screen.ts': 1193,
+  'src/renderer/settings-screen.ts': 1035,
   'src/shared/types.ts': 1398,
 };
 
@@ -47,10 +45,10 @@ interface FactoryBaseline {
  * (a menu stack, a lightbox, a popup) lowers the number here.
  */
 const FACTORY_BASELINE: readonly FactoryBaseline[] = [
-  { file: 'src/renderer/game-settings-screen.ts', name: 'createGameSettingsScreen', lines: 2627 },
-  { file: 'src/renderer/controls.ts', name: 'createControls', lines: 1936 },
+  { file: 'src/renderer/game-settings-screen.ts', name: 'createGameSettingsScreen', lines: 1795 },
+  { file: 'src/renderer/controls.ts', name: 'createControls', lines: 672 },
   { file: 'src/renderer/online-picker.ts', name: 'createOnlinePicker', lines: 1174 },
-  { file: 'src/renderer/settings-screen.ts', name: 'createSettingsScreen', lines: 998 },
+  { file: 'src/renderer/settings-screen.ts', name: 'createSettingsScreen', lines: 848 },
 ];
 
 /** Source lines regardless of line endings (a Windows checkout without .gitattributes has CRLF). */

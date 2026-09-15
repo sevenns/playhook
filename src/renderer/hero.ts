@@ -3,7 +3,7 @@
 // rotation, the idle wallpaper background, and the two-color palette (compute + cache + apply). These
 // share `shownUrl`/`wallpaperUrl` so they live together — keeping the palette race gate internal rather
 // than threaded through app.ts. The controller reaches back only through the narrow `deps` seam.
-import type { HeroAssets } from '../shared/types';
+import type { HeroAssets } from '../shared/types.js';
 import { computePalette, type Palette } from './dominant-color.js';
 import { req } from './dom.js';
 

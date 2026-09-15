@@ -33,7 +33,7 @@ import {
   type MetadataResult,
   type MusicAlbum,
   type MusicTrack,
-} from '../shared/types';
+} from '../shared/types.js';
 import type { Translator } from '../shared/i18n/index.js';
 import { type AudioController } from './audio.js';
 import { req } from './dom.js';

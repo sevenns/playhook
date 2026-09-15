@@ -20,9 +20,7 @@
 //    surfaces on a stack inside it, and the six primitives are routed to whichever is on top.
 import type {
   BrowseInfo,
-  SfxName,
   ConfigMoveResult,
-  ConfigPickKind,
   ConfigPickResult,
   ConfigRootReadResult,
   ConfigSaveResult,
@@ -40,19 +38,23 @@ import type {
   ManifestSource,
   MetadataApplyRequest,
   MetadataApplyResult,
-  MetadataApplySlot,
   MetadataResult,
-} from '../shared/types';
+} from '../shared/types.js';
 import type { MessageKey, Translator } from '../shared/i18n/index.js';
-import { MAX_HERO_IMAGES } from '../shared/types';
 import { type AudioController } from './audio.js';
-import { req } from './dom.js';
+import { pressFlash, req } from './dom.js';
 import { createEntrance } from './entrance.js';
 import { createHoverGuard } from './hover-guard.js';
-import { clampIndex, wrapIndex } from './index-math.js';
-import { createScroller, pxUnit } from './screen-scroller.js';
-import { createSidebar, type SidebarEntry } from './screen-sidebar.js';
-import type { NavSurface } from './nav-surface.js';
+import { wrapIndex } from './index-math.js';
+import { createScroller } from './screen-scroller.js';
+import { createSidebar } from './screen-sidebar.js';
+import { createListScreenCore, sectionByKey } from './list-screen-core.js';
+import { createMenuStack, type MenuEntry } from './menu-stack.js';
+import { createAssetLightbox } from './asset-lightbox.js';
+import { createListEditor } from './list-editor.js';
+import { createOnlineFlow } from './online-flow.js';
+import { createManifestValidator, issueKey } from './manifest-validation.js';
+import type { FilePickerSurface, NavSurface, TextEntrySurface } from './nav-surface.js';
 import type { ApplyOutcome, OnlinePickerSurface } from './online-picker.js';
 import {
   emptyFormModel,
@@ -74,30 +76,30 @@ import {
   draftModeFor,
   hasSourceBoundValues,
   pickKindFor,
+  withField,
   withInstallType,
   withLaunchMode,
+  withList,
+  withToggle,
   type GameRowId,
   type GameSettingsModel,
   type GameSettingsRow,
 } from './game-settings-model.js';
 import {
-  applyThumbnails,
+  artworkSignature,
+  buildStatusNote,
+  columnEntries,
   isFocusable,
   patchGameRow,
   relocalizeGameRow,
   relocalizeGameSections,
   renderGameSettings,
   screenHeading,
+  statusNotes,
   type RenderedGameRow,
 } from './game-settings-view.js';
-import { optionLabel, optionLabelNode, rowLabelText, type CoreOption } from './row-view-core.js';
+import { optionLabel, rowLabelText, type CoreOption } from './row-view-core.js';
 
-/** Gamepad A doesn't trigger :active — the same press flash the rest of the UI uses. */
-const PRESS_MS = 130;
-/** How long the screen waits after a change before asking main to validate the text. */
-const VALIDATE_DEBOUNCE_MS = 400;
-/** Marquee speed for a clipped menu label, in DESIGN px per second (the Settings dropdown's constant). */
-const MARQUEE_SPEED_PX_PER_S = 60;
 /**
  * How often the screen re-asks whether there is a card to move onto. A poll rather than a push because
  * nothing announces a BLANK card: main's watcher only reports media carrying a game.json, and an empty
@@ -169,42 +171,6 @@ export type GameSettingsConfirm =
   | 'cancel-move'
   // Asked by the "Find online" surface, answered here: taking the store's spelling into Title.
   | 'replace-title';
-
-/** A surface that opens ON TOP of the screen and hands a value back when it is done. */
-export interface TextEntrySurface extends NavSurface {
-  open(request: {
-    readonly value: string;
-    readonly mode: 'text' | 'id' | 'number';
-    readonly title: string;
-    readonly onDone: (value: string) => void;
-  }): void;
-  /**
-   * Dismisses the keyboard without committing. Called when a SCREEN closes under it: the keyboard is not
-   * inside any screen (see #osk in index.html), so nothing else would take it off the display — it would
-   * stay up over the carousel, still holding the focus of a screen that is gone.
-   */
-  close(): void;
-}
-
-export interface FilePickerSurface extends NavSurface {
-  open(request: {
-    /** Where picked paths are measured from. Empty for a history game — there is no card to measure
-     * against, and `historyId` names where the file is copied to instead. */
-    readonly root: string;
-    readonly kind: ConfigPickKind;
-    readonly current: string;
-    readonly multi: boolean;
-    /** The root-relative sub-directory this field is measured from, when it has one (see baseFor). */
-    readonly base?: string;
-    /**
-     * Set when the screen is editing a game from the HISTORY: what is picked is copied into that game's
-     * staging directory on this PC (the card it is for is not in), and the field stores the path the
-     * file will have on the card once the edits are applied.
-     */
-    readonly historyId?: string;
-    readonly onDone: (result: ConfigPickResult) => void;
-  }): void;
-}
 
 export interface GameSettingsScreenDeps {
   readonly audio: AudioController;
@@ -284,35 +250,6 @@ export interface GameSettingsScreen extends NavSurface {
   heroCount(): number;
 }
 
-/**
- * One level of the column menu. `select` is a list of VALUES — the current one is focused and choosing
- * one is the way out, so it needs no Close. `menu` is a genuine action popup (a path's Browse/Clear, the
- * list editor): it gets a Close entry appended and opens focused on it, which is the rule every action
- * stack in this launcher follows.
- */
-interface MenuLevel {
-  readonly kind: 'select' | 'menu';
-  readonly title: string;
-  readonly entries: readonly MenuEntry[];
-  focus: number;
-  /**
-   * What X does on this level, if anything. Only the track list claims it (auditioning the focused
-   * track): everywhere else X still means nothing inside a menu and says so with the dead-end sound.
-   */
-  readonly secondary?: (index: number) => void;
-}
-
-interface MenuEntry {
-  readonly label: string;
-  /** Marks the value a dropdown currently holds (underlined, like the Settings dropdown). */
-  readonly current?: boolean;
-  /** Which sound this entry makes. One runner plays it, so a press and a click sound identical.
-   *  'none' is for an entry whose own surface speaks for it — opening the file browser or the lightbox,
-   *  where the primitive plays popup-open. */
-  readonly sound?: SfxName | 'none';
-  readonly run: () => void;
-}
-
 export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSettingsScreen {
   const app = req('app');
   const screen = req('game-settings');
@@ -325,10 +262,6 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   const titleEl = req('game-settings-title');
   const menuEl = req('game-settings-options');
   const menuListEl = req('game-settings-options-list');
-  const menuVeil = menuEl.querySelector<HTMLElement>('.settings-options-veil');
-  const lightboxEl = req('lightbox');
-  const lightboxImage = req<HTMLImageElement>('lightbox-image');
-  const lightboxCaption = req('lightbox-caption');
   const sourceEl = req('game-settings-source');
 
   const t = (): Translator => deps.getTranslator();
@@ -441,16 +374,6 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   let status: string | null = null;
 
   let model: GameSettingsModel | null = null;
-  /** The rows of the SELECTED section only — the pane shows one section at a time. */
-  let rendered: readonly RenderedGameRow[] = [];
-  let focusIndex = 0;
-  /** Which titled section the pane is showing, by its translation key. */
-  let sectionKey: MessageKey | null = null;
-  /** …and which one the pane is actually showing. The two differ for as long as a preview is pending. */
-  let paneKey: MessageKey | null = null;
-  let validateTimer = 0;
-  /** Guards a late answer from a validation whose text is already stale. */
-  let validateToken = 0;
   /**
    * Whether a card is plugged in for "Move to card…" to reach. Starts false: the row is offered inert
    * until the first listing says otherwise, which is the honest order — an item that looks pressable
@@ -459,14 +382,76 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   let moveTargets = false;
   let moveTargetsTimer = 0;
 
-  const menuStack: MenuLevel[] = [];
-  let menuButtons: readonly HTMLButtonElement[] = [];
-  /** The artwork viewer is the topmost surface of all — a look at a picture, closed by B or the veil. */
-  let lightboxOpen = false;
 
   const listScroller = createScroller(listEl);
-  const menuScroller = createScroller(menuListEl);
   const hover = createHoverGuard();
+  /** The column menu — a row's dropdown, a path's actions, the list editor (menu-stack.ts). */
+  const menu = createMenuStack({
+    audio: deps.audio,
+    screen,
+    menuEl,
+    listEl: menuListEl,
+    hover,
+    closeLabel: () => t()('launcher.menu.close'),
+    onLeave: () => onlineFlow.stop(),
+  });
+  /** The artwork viewer and the thumbnail strips (asset-lightbox.ts); where a path is READ from is answered here. */
+  const lightbox = createAssetLightbox({
+    audio: deps.audio,
+    locate: (path) => {
+      // A history game's files are not on any root the renderer can name: what is staged sits in the app's
+      // own storage, and the rest exists only as the copy the history keeps (see historyAssetPreview).
+      const id = historyId();
+      if (id !== null) {
+        return { key: `history:${id} ${path}`, read: () => deps.api.historyAssetPreview(id, path) };
+      }
+      const at = assetPreviewRoot(path);
+      if (at === null) return null;
+      return {
+        key: `${at.root} ${at.relative}`,
+        read: () => deps.api.imagePreview(at.root, at.relative),
+      };
+    },
+  });
+  /** The debounced whole-file validation (manifest-validation.ts); the request is assembled in runValidate. */
+  const validator = createManifestValidator({
+    validate: (root, text, source) => deps.api.validate(root, text, source),
+    getTranslator: () => deps.getTranslator(),
+    onDue: () => void runValidate(),
+  });
+  /** The list rows' editor — its own levels of the column menu (list-editor.ts). */
+  const listEditor = createListEditor({
+    menu,
+    keyboard: deps.keyboard,
+    getTranslator: () => deps.getTranslator(),
+    browse: (id, current, multi, onPicked) => browseInto(id, current, multi, onPicked),
+    showImage: (path) => void lightbox.show(path),
+    setList,
+    rowTitle,
+  });
+  /** The "Find online" half that touches this screen: the query, the downloads, the fields (online-flow.ts). */
+  const onlineFlow = createOnlineFlow({
+    api: deps.api,
+    onlinePicker: deps.onlinePicker,
+    keyboard: deps.keyboard,
+    getTranslator: () => deps.getTranslator(),
+    isOpen: () => open,
+    form: () => form,
+    // Mirrors browseInto's choice of root: a pending move is already about the TARGET card, so the
+    // assets belong there too. A history game downloads nothing — there is no game root to put a file
+    // beside, which is why the online surface offers it the TEXT only.
+    assetRoot: () => (pendingMove !== null ? pendingMove.target.root : (mediaOrigin()?.root ?? null)),
+    isHistoryGame: () => historyId() !== null,
+    setField,
+    setList,
+    mergeRest: (known) => {
+      // `rest` is the screen's own slot for keys the form model has no field for; currentText() folds it
+      // back into the manifest text, so this alone makes the screen dirty and Save carries it through.
+      rest = { ...rest, ...known };
+      updateForm(form);
+    },
+    requestTitleConfirm: (title) => deps.onConfirmRequested('replace-title', { title }),
+  });
 
   /**
    * The section column. It carries this screen's actions too — Save, Discard edits, Delete, Close —
@@ -476,14 +461,37 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   const sidebar = createSidebar<MessageKey, GameRowId>(navEl, {
     audio: deps.audio,
     onSection: (id, entered) => {
-      sectionKey = id;
+      core.selectSection(id);
       if (entered) {
-        enterPane();
+        core.enterPane();
         return;
       }
-      schedulePreview();
+      core.schedulePreview();
     },
     onAction: (id) => runAction(id),
+  });
+
+  /** The row focus, the column ⇄ pane steps and the delayed section preview — shared with Settings. */
+  const core = createListScreenCore<GameSettingsRow, RenderedGameRow>({
+    audio: deps.audio,
+    listEl,
+    sidebar,
+    scroller: listScroller,
+    hover,
+    isFocusable,
+    renderPane: () => renderPane(),
+    stepRow: (row, delta) => {
+      if (row.kind === 'select') {
+        cycleSelect(row, delta);
+        return true;
+      }
+      if (row.kind === 'number') {
+        stepNumber(row, delta);
+        return true;
+      }
+      return false;
+    },
+    onLeavePane: () => menu.close(),
   });
 
   // ── Form state ─────────────────────────────────────────────────────────────
@@ -630,10 +638,6 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
 
   // ── Rendering ──────────────────────────────────────────────────────────────
 
-  function rowsOf(next: GameSettingsModel): readonly GameSettingsRow[] {
-    return next.sections.flatMap((section) => section.rows);
-  }
-
   /** Whether two models describe the same rows in the same order (a patch is enough when they do). */
   function sameComposition(a: GameSettingsModel, b: GameSettingsModel): boolean {
     const ids = (m: GameSettingsModel): string =>
@@ -643,24 +647,13 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     return ids(a) === ids(b);
   }
 
-  /** Every artwork path the screen currently shows, so a patch can tell whether the strips are stale. */
-  function artworkSignature(from: GameSettingsModel): string {
-    return rowsOf(from)
-      .map((row) => {
-        if (row.kind === 'list' && row.preview !== undefined) return row.items.join(',');
-        if (row.kind === 'path' && row.preview !== undefined) return row.value;
-        return '';
-      })
-      .join('|');
-  }
-
   function renderMessage(text: string): void {
     listEl.replaceChildren();
     const line = document.createElement('div');
     line.className = 'settings-section-title';
     line.textContent = text;
     listEl.append(line);
-    rendered = [];
+    core.setRendered([]);
   }
 
   /** How long the staggered row entrance runs — the marks come off once it is over. */
@@ -671,64 +664,6 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   const entrance = createEntrance(listEl, '.setting-row', ENTRANCE_MS);
 
   /**
-   * How long the pane waits before showing the section the column moved onto. A held direction walks
-   * through the column faster than that, so the pane is drawn ONCE, when the movement stops, instead of
-   * being torn down and rebuilt — thumbnails and all — at every step.
-   */
-  const PREVIEW_MS = 120;
-  let previewTimer = 0;
-
-  function schedulePreview(): void {
-    if (previewTimer !== 0) window.clearTimeout(previewTimer);
-    previewTimer = window.setTimeout(() => {
-      previewTimer = 0;
-      renderPane();
-    }, PREVIEW_MS);
-  }
-
-  /**
-   * Brings the pane up to date with the selected section NOW, cancelling a pending preview. Anything that
-   * reads the rendered rows has to call this first — including the paths that never scheduled a preview
-   * at all: a MOUSE click on a section activates it without ever moving onto it, and that used to leave
-   * the focus stepping into the section the pane was showing before.
-   */
-  function flushPreview(): void {
-    if (previewTimer !== 0) {
-      window.clearTimeout(previewTimer);
-      previewTimer = 0;
-    }
-    if (paneKey !== sectionKey) renderPane();
-  }
-
-  /** A section that HAS a title — i.e. one the column can name and the pane can show. */
-  interface TitledSection {
-    readonly titleKey: MessageKey;
-    readonly rows: readonly GameSettingsRow[];
-  }
-
-  function titledSections(from: GameSettingsModel): readonly TitledSection[] {
-    return from.sections.flatMap((section) => {
-      const key = section.titleKey;
-      return key === undefined ? [] : [{ titleKey: key, rows: section.rows }];
-    });
-  }
-
-  function currentSection(from: GameSettingsModel): TitledSection | undefined {
-    const titled = titledSections(from);
-    return titled.find((section) => section.titleKey === sectionKey) ?? titled[0];
-  }
-
-  /** The rows that are NOT in any titled section: this screen's actions and its notes. */
-  function trailingRows(from: GameSettingsModel): readonly GameSettingsRow[] {
-    return from.sections.filter((s) => s.titleKey === undefined).flatMap((s) => s.rows);
-  }
-
-  /**
-   * The column: the sections, then the actions. The NOTES that share the model's last section stay out
-   * of it — they are the screen's own feedback (what the last save did, why Save is unavailable), so
-   * they go under both columns where they are readable from anywhere.
-   */
-  /**
    * What the column WOULD show — so it is only rebuilt when that actually changed. `null` means "nothing
    * is known about what is on screen", which is NOT the same as "it is empty": a re-opened screen that
    * confuses the two skips the rebuild and keeps whatever the last visit left in the DOM.
@@ -736,7 +671,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   let columnSignature: string | null = null;
 
   function renderColumn(from: GameSettingsModel): void {
-    const entries = columnEntries(from);
+    const entries = columnEntries(from, t());
     const signature = entries
       .map((entry) => `${entry.id}:${entry.label}:${entry.disabled === true ? '1' : '0'}`)
       .join('|');
@@ -751,36 +686,10 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     // sidebar's own fallback is its first entry, and it reports that to nobody, so the cursor ends up
     // naming one section while the pane still shows another. Put it back on the section actually on
     // screen: `select` only moves the cursor (no onSection), which is the point — the pane must not move.
-    if (
-      selectedBefore !== undefined &&
-      sidebar.selected()?.id !== selectedBefore &&
-      paneKey !== null
-    ) {
-      sidebar.select(paneKey);
+    const shown = core.paneKey();
+    if (selectedBefore !== undefined && sidebar.selected()?.id !== selectedBefore && shown !== null) {
+      sidebar.select(shown);
     }
-  }
-
-  function columnEntries(from: GameSettingsModel): readonly SidebarEntry<MessageKey, GameRowId>[] {
-    return [
-      ...titledSections(from).map((section) => ({
-        id: section.titleKey,
-        label: t()(section.titleKey),
-        kind: 'section' as const,
-      })),
-      ...trailingRows(from).flatMap((row) =>
-        row.kind === 'action'
-          ? [
-              {
-                id: row.id,
-                label: rowLabelText(row.label, t()),
-                kind: 'action' as const,
-                ...(row.danger === true ? { danger: true } : {}),
-                ...(row.disabled === true ? { disabled: true } : {}),
-              },
-            ]
-          : [],
-      ),
-    ];
   }
 
   /** The same, for the status strip — and the same reason for the null. */
@@ -788,27 +697,17 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
 
   /** The notes, under both columns. */
   function renderStatus(from: GameSettingsModel): void {
-    const notes = trailingRows(from).flatMap((row) => (row.kind === 'note' ? [row] : []));
+    const notes = statusNotes(from);
     const signature = notes.map((note) => `${note.tone}:${rowLabelText(note.text, t())}`).join('|');
     if (signature === statusSignature) return;
     statusSignature = signature;
-    statusEl.replaceChildren(
-      ...notes.map((note) => {
-        const el = document.createElement('div');
-        el.className = `setting-row setting-row-note is-inert is-${note.tone}`;
-        const text = document.createElement('div');
-        text.className = 'setting-note-text';
-        text.textContent = rowLabelText(note.text, t());
-        el.append(text);
-        return el;
-      }),
-    );
+    statusEl.replaceChildren(...notes.map((note) => buildStatusNote(note, t())));
   }
 
   function render(): void {
     // A pending preview means `rendered` belongs to the section BEFORE the one sectionKey now names —
     // patching it against the new section's values would write them into the old section's rows.
-    flushPreview();
+    core.flushPreview();
     const next = currentModel();
     titleEl.textContent = t()(
       mode === 'add' ? 'gameSettings.addTitle' : 'gameSettings.screenTitle',
@@ -832,10 +731,10 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     // screen's, whose entries only change when a section appears.
     renderColumn(next);
     renderStatus(next);
-    if (previous !== null && sameComposition(previous, next) && rendered.length > 0) {
+    if (previous !== null && sameComposition(previous, next) && core.rendered().length > 0) {
       const rows = visibleRows(next);
       const artworkChanged = artworkSignature(previous) !== artworkSignature(next);
-      rendered.forEach((row, index) => {
+      core.rendered().forEach((row, index) => {
         const nextRow = rows[index];
         if (nextRow !== undefined) patchGameRow(row, nextRow, t());
       });
@@ -850,50 +749,29 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
 
   /** The rows the pane currently shows — one section's worth. */
   function visibleRows(from: GameSettingsModel): readonly GameSettingsRow[] {
-    return currentSection(from)?.rows ?? [];
+    return sectionByKey(from.sections, core.sectionKey())?.rows ?? [];
   }
 
   function renderPane(): void {
     const from = model;
     if (from === null) return;
-    const section = currentSection(from);
+    const section = sectionByKey(from.sections, core.sectionKey());
     if (section === undefined) return;
-    sectionKey = section.titleKey;
-    paneKey = section.titleKey;
+    core.showSection(section.titleKey);
     // WITHOUT its title: the column beside it already names the section, and printing the name again at
     // the top of the pane says the same thing twice.
-    rendered = renderGameSettings(
-      listEl,
-      { ...from, sections: [{ rows: section.rows }] },
-      t(),
-    ).rows;
-    rendered.forEach((row, at) =>
+    core.setRendered(
+      renderGameSettings(listEl, { ...from, sections: [{ rows: section.rows }] }, t()).rows,
+    );
+    core.rendered().forEach((row, at) =>
       row.el.style.setProperty('--row-index', String(Math.min(at, ENTRANCE_STEPS))),
     );
     entrance.play();
-    focusIndex = nearestFocusable(focusIndex, 1);
-    applyRowFocus(true);
+    core.seatFocus();
+    core.applyRowFocus(true);
     listScroller.to(0, true);
     requestAnimationFrame(() => listScroller.fades());
     void refreshThumbnails();
-  }
-
-  /** Hands the focus from the column to the pane, at its first focusable row. */
-  function enterPane(): void {
-    flushPreview(); // whatever the column last moved onto is what the focus is stepping into
-    if (rendered.length === 0) return;
-    sidebar.setFocused(false);
-    focusIndex = nearestFocusable(0, 1);
-    hover.arm();
-    applyRowFocus();
-  }
-
-  /** …and back. The column is the only place the screen can be left from. */
-  function leavePane(): void {
-    closeMenus();
-    sidebar.setFocused(true);
-    hover.arm();
-    applyRowFocus();
   }
 
   /**
@@ -911,368 +789,31 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     title.textContent = t()('gameSettings.slotUnreadable', { message: unreadable ?? '' });
     section.append(title);
     listEl.append(section);
-    rendered = [];
+    core.setRendered([]);
   }
 
-  /**
-   * The thumbnails read so far, by path. Stepping back onto a section re-renders its rows, and reading
-   * every picture off the disk again for a strip that has not changed is both a round trip per image and
-   * a visible re-decode. Emptied on open, so a screen re-opened after the files moved starts fresh.
-   */
-  const thumbnails = new Map<string, string | null>();
-
-  /** Cache key includes the root: the same card-relative STRING can name different bytes in the PC
-   * library and on a move's target card (see assetPreviewRoot), and thumbnails must not conflate them. */
-  async function thumbnailFor(root: string, path: string): Promise<string | null> {
-    // A history game has no root, so its cache namespace is the game itself — otherwise every history
-    // game would share the '' key and serve each other's covers.
-    const id = historyId();
-    const key = id !== null ? `history:${id} ${path}` : `${root} ${path}`;
-    const cached = thumbnails.get(key);
-    if (cached !== undefined) return cached;
-    const url = id !== null ? await deps.api.historyAssetPreview(id, path) : await deps.api.imagePreview(root, path);
-    thumbnails.set(key, url);
-    return url;
-  }
-
-  /** Reads the artwork rows' thumbnails (one invoke per path) and drops them into their rows. */
+  /** The artwork rows' thumbnails, for the pane as it stands (see asset-lightbox.ts). */
   async function refreshThumbnails(): Promise<void> {
     if (origin === null) return;
-    // Card-relative during a pending move (see assetPreviewRoot): a hero/grid image the move carried
-    // over unedited previews from the PC library, everything else from wherever the form is pointed.
-    // A history game's assets are addressed by id inside thumbnailFor; the path travels unchanged.
-    const forHistory = historyId() !== null;
-    const thumbnailAt = (
-      path: string,
-    ): { readonly root: string; readonly relative: string } | null =>
-      forHistory ? { root: '', relative: path } : assetPreviewRoot(path);
-    for (const row of rendered) {
-      const source = row.row;
-      if (source.kind === 'list' && source.preview !== undefined) {
-        const urls = await Promise.all(
-          source.items.map((item) => {
-            const at = thumbnailAt(item);
-            return at === null ? Promise.resolve(null) : thumbnailFor(at.root, at.relative);
-          }),
-        );
-        applyThumbnails(row, urls, source.preview, source.items);
-      } else if (source.kind === 'path' && source.preview !== undefined) {
-        const at = source.value === '' ? null : thumbnailAt(source.value);
-        const url = at === null ? null : await thumbnailFor(at.root, at.relative);
-        applyThumbnails(row, [url], source.preview, [source.value]);
-      }
-    }
-  }
-
-  // ── Focus ──────────────────────────────────────────────────────────────────
-
-  /** The nearest focusable row at or after `index`, searching in `direction`; falls back to any. */
-  function nearestFocusable(index: number, direction: number): number {
-    if (rendered.length === 0) return 0;
-    const start = Math.min(Math.max(index, 0), rendered.length - 1);
-    for (let i = start; i >= 0 && i < rendered.length; i += direction) {
-      const row = rendered[i];
-      if (row !== undefined && isFocusable(row.row)) return i;
-    }
-    for (let i = start; i >= 0 && i < rendered.length; i -= direction) {
-      const row = rendered[i];
-      if (row !== undefined && isFocusable(row.row)) return i;
-    }
-    return start;
-  }
-
-  function applyRowFocus(instant = false): void {
-    const active = !sidebar.hasFocus();
-    // The pane widens to the left while it holds the focus (see .settings-list in styles.css).
-    listEl.classList.toggle('is-active', active);
-    rendered.forEach((row, index) =>
-      row.el.classList.toggle('is-focused', active && index === focusIndex),
-    );
-    if (!active) return;
-    const target = rendered[focusIndex];
-    if (target === undefined) return;
-    listScroller.reveal(target.el, instant);
-  }
-
-  /** Steps to the next FOCUSABLE row, walking past the notes and static lines in between. */
-  function moveRowFocus(delta: number): void {
-    if (rendered.length === 0) return;
-    let next = focusIndex;
-    for (;;) {
-      const stepped = clampIndex(next, delta, rendered.length);
-      if (stepped === next) {
-        deps.audio.playLimit(); // at the edge: no move, and the dead end says so
-        return;
-      }
-      next = stepped;
-      const row = rendered[next];
-      if (row !== undefined && isFocusable(row.row)) break;
-    }
-    focusIndex = next;
-    deps.audio.play('navigate');
-    applyRowFocus();
-  }
-
-  function pressFlash(el: HTMLElement): void {
-    el.classList.add('is-pressed');
-    window.setTimeout(() => el.classList.remove('is-pressed'), PRESS_MS);
-  }
-
-  // ── The column menu (expanded dropdown / row actions / list editing) ────────
-
-  function menuTop(): MenuLevel | undefined {
-    return menuStack[menuStack.length - 1];
-  }
-
-  function paintMenu(): void {
-    const level = menuTop();
-    if (level === undefined) {
-      menuButtons = [];
-      menuListEl.replaceChildren();
-      screen.classList.remove('is-options-open');
-      menuEl.classList.remove('is-open');
-      menuEl.setAttribute('aria-hidden', 'true');
-      return;
-    }
-    const buttons = level.entries.map((entry, index) => {
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = 'settings-option';
-      button.append(optionLabelNode(entry.label));
-      button.classList.toggle('is-current', entry.current === true);
-      button.addEventListener('click', () => {
-        pressFlash(button);
-        level.focus = index;
-        runEntry(entry);
-      });
-      return button;
-    });
-    menuButtons = buttons;
-    menuListEl.replaceChildren(...buttons);
-    screen.classList.add('is-options-open');
-    menuEl.classList.add('is-open');
-    menuEl.setAttribute('aria-hidden', 'false');
-    // Measured synchronously: reading clientWidth flushes the layout for the nodes just inserted, which
-    // a requestAnimationFrame callback would only reach on the next frame — and never at all in a window
-    // that is not painting.
-    updateMenuMarquee();
-    applyMenuFocus(true);
-  }
-
-  /**
-   * Marks every entry whose label does not fit as clipped (a soft fade at the cut) and scrolls the
-   * FOCUSED one. The labels here are paths and file names, so most of them will not fit — cutting them
-   * would leave the user choosing between three items that all read the same.
-   */
-  function updateMenuMarquee(): void {
-    const first = menuButtons[0]?.querySelector<HTMLElement>('.settings-option-clip');
-    if (first !== null && first !== undefined && first.clientWidth === 0) {
-      requestAnimationFrame(() => updateMenuMarquee());
-      return;
-    }
-    for (const button of menuButtons) {
-      const clip = button.querySelector<HTMLElement>('.settings-option-clip');
-      const text = button.querySelector<HTMLElement>('.settings-option-text');
-      if (clip === null || text === null) continue;
-      const overflow = text.scrollWidth - clip.clientWidth;
-      const clipped = overflow > 1;
-      button.classList.toggle('is-clipped', clipped);
-      if (clipped && button.classList.contains('is-focused')) {
-        text.style.setProperty('--marquee-shift', `${-overflow}px`);
-        text.style.setProperty(
-          '--marquee-duration',
-          `${Math.max(2, overflow / (MARQUEE_SPEED_PX_PER_S * pxUnit()))}s`,
-        );
-        button.classList.add('is-scrolling');
-      } else {
-        button.classList.remove('is-scrolling');
-        text.style.removeProperty('--marquee-shift');
-        text.style.removeProperty('--marquee-duration');
-      }
-    }
-  }
-
-  /** Plays an entry's sound exactly once, then runs it. The only way an entry is ever triggered. */
-  function runEntry(entry: MenuEntry): void {
-    if (entry.sound !== 'none') deps.audio.play(entry.sound ?? 'button');
-    entry.run();
-  }
-
-  function applyMenuFocus(instant = false): void {
-    const level = menuTop();
-    if (level === undefined) return;
-    menuButtons.forEach((button, index) =>
-      button.classList.toggle('is-focused', index === level.focus),
-    );
-    const focused = menuButtons[level.focus];
-    if (focused !== undefined) menuScroller.reveal(focused, instant);
-    updateMenuMarquee(); // only the focused label moves
-  }
-
-  /**
-   * Appends the Close entry an action popup ends with, and points the focus at it. Same shape as every
-   * popup stack in the launcher: the way out is the default, and it is at the bottom where the thumb is.
-   */
-  function asMenu(level: {
-    readonly title: string;
-    readonly entries: readonly MenuEntry[];
-    readonly secondary?: (index: number) => void;
-  }): MenuLevel {
-    const entries: MenuEntry[] = [
-      ...level.entries,
-      { label: t()('launcher.menu.close'), sound: 'none', run: () => popMenu() },
-    ];
-    return {
-      kind: 'menu',
-      title: level.title,
-      entries,
-      focus: entries.length - 1,
-      ...(level.secondary === undefined ? {} : { secondary: level.secondary }),
-    };
-  }
-
-  function pushMenu(level: MenuLevel): void {
-    hover.arm();
-    // Only the FIRST level is a surface appearing; going deeper is a step inside one already open.
-    if (menuStack.length === 0) deps.audio.play('popup-open');
-    menuStack.push(level);
-    paintMenu();
-  }
-
-  /**
-   * The single voice of leaving a level, so every way out (B, left, the Close entry, the veil) sounds the
-   * same: stepping out of a deeper level is a step INSIDE the menu and keeps `back`; leaving the last one
-   * is the menu going away.
-   */
-  /**
-   * `keepWork` is for a level the SCREEN closes because it is done with it — a question that has just
-   * been answered — rather than one the user backed out of. Leaving is normally the signal to abandon
-   * whatever was running, and the answer to a question is immediately followed by acting on it: aborting
-   * there would cancel the very download the answer just asked for.
-   */
-  function popMenu(options?: { readonly keepWork?: boolean }): void {
-    if (menuStack.length > 0) deps.audio.play(menuStack.length > 1 ? 'back' : 'popup-close');
-    menuStack.pop();
-    // Leaving a level ends whatever it had running: an audition belongs to the track list it was
-    // started from, and a download the user has walked away from has nobody left to arrive for.
-    if (options?.keepWork !== true) stopMetadataWork();
-    paintMenu();
-  }
-
-  function closeMenus(options?: { readonly silent?: boolean }): void {
-    // `silent` for a cascade — the screen closing, or a surface that already played its own close.
-    if (menuStack.length > 0 && options?.silent !== true) deps.audio.play('popup-close');
-    menuStack.length = 0;
-    stopMetadataWork();
-    paintMenu();
-  }
-
-  /** Replaces the top level in place — used after an edit so the list the user is in stays current. */
-  function replaceMenu(level: MenuLevel): void {
-    menuStack.pop();
-    menuStack.push(level);
-    paintMenu();
+    await lightbox.refreshThumbnails(core.rendered());
   }
 
   // ── Field editing ──────────────────────────────────────────────────────────
 
   /** Writes one field of the form model by row id. Everything a row can change goes through here. */
   function setField(id: GameRowId, value: string): void {
-    switch (id) {
-      case 'title': {
-        // The id follows the title until the user takes the id over, exactly as the old form did: a slug
-        // is a good first guess and a terrible override.
-        const slug = slugifyTitle(value);
-        const followed = form.id === '' || form.id === slugifyTitle(form.title);
-        updateForm({ ...form, title: value, ...(followed ? { id: slug } : {}) });
-        return;
-      }
-      case 'id':
-        // Lower case wherever it comes from, so the field agrees with the slug a title proposes — the
-        // keyboard already refuses to type anything else (osk.ts).
-        updateForm({ ...form, id: value.toLowerCase() });
-        return;
-      case 'executable':
-        updateForm({ ...form, executable: value });
-        return;
-      case 'pc.executable':
-        updateForm({ ...form, pc: { ...form.pc, executable: value } });
-        return;
-      case 'install.installer':
-        updateForm({ ...form, install: { ...form.install, installer: value } });
-        return;
-      case 'copyInstall.installer':
-        updateForm({ ...form, copyInstall: { ...form.copyInstall, installer: value } });
-        return;
-      case 'steam.appid':
-        updateForm({ ...form, steam: { ...form.steam, appid: value } });
-        return;
-      case 'gridImage':
-        updateForm({ ...form, gridImage: value });
-        return;
-      case 'saveOnCard':
-        updateForm({ ...form, saveOnCard: value });
-        return;
-      case 'pcSavePath':
-        updateForm({ ...form, pcSavePath: value });
-        return;
-      case 'backgroundMusic':
-        updateForm({ ...form, backgroundMusic: value });
-        return;
-      case 'launchTimeoutSec':
-        updateForm({ ...form, launchTimeoutSec: value });
-        return;
-      case 'killTimeoutSec':
-        updateForm({ ...form, killTimeoutSec: value });
-        return;
-      case 'umuGameId':
-        updateForm({ ...form, umuGameId: value });
-        return;
-      default:
-        return;
-    }
+    const next = withField(form, id, value);
+    if (next !== form) updateForm(next);
   }
 
   function setList(id: GameRowId, items: readonly string[]): void {
-    switch (id) {
-      case 'args':
-        updateForm({ ...form, args: items });
-        return;
-      case 'watchProcesses':
-        updateForm({ ...form, watchProcesses: items });
-        return;
-      case 'heroImage':
-        updateForm({ ...form, heroImage: items });
-        return;
-      case 'winetricks':
-        updateForm({ ...form, winetricks: items });
-        return;
-      case 'install.args':
-        updateForm({ ...form, install: { ...form.install, args: items } });
-        return;
-      case 'install.winetricks':
-        updateForm({ ...form, install: { ...form.install, winetricks: items } });
-        return;
-      default:
-        return;
-    }
+    const next = withList(form, id, items);
+    if (next !== form) updateForm(next);
   }
 
   function toggleField(id: GameRowId): void {
-    switch (id) {
-      case 'runAsAdmin':
-        updateForm({ ...form, runAsAdmin: !form.runAsAdmin });
-        return;
-      case 'copyToPc':
-        updateForm({ ...form, copyToPc: !form.copyToPc });
-        return;
-      case 'install.runAsAdmin':
-        if (form.install.type === 'custom') return; // forced off — the manifest forbids the pair
-        updateForm({ ...form, install: { ...form.install, runAsAdmin: !form.install.runAsAdmin } });
-        return;
-      default:
-        return;
-    }
+    const next = withToggle(form, id);
+    if (next !== form) updateForm(next);
   }
 
   function setSelect(id: GameRowId, value: string): void {
@@ -1320,21 +861,11 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     void adoptRoot(root);
   }
 
-  /** The title's slug, in the same shape configure-form-model's slugifyId produces. */
-  function slugifyTitle(title: string): string {
-    return title
-      .normalize('NFKD')
-      .replace(/[̀-ͯ]/g, '')
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-+|-+$/g, '');
-  }
-
   // ── Row activation ─────────────────────────────────────────────────────────
 
   function openSelectMenu(row: Extract<GameSettingsRow, { kind: 'select' }>): void {
     const options: readonly CoreOption[] = row.options;
-    pushMenu({
+    menu.push({
       kind: 'select',
       title: '',
       focus: Math.max(
@@ -1345,7 +876,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
         label: optionLabel(option, t()),
         current: option.value === row.value,
         run: () => {
-          closeMenus();
+          menu.close();
           setSelect(row.id, option.value);
         },
       })),
@@ -1402,7 +933,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     if (row.value !== '' && row.preview !== undefined) {
       entries.push({
         label: t()('gameSettings.viewImage'),
-        run: () => void showImage(row.value),
+        run: () => void lightbox.show(row.value),
       });
     }
     entries.push({
@@ -1413,12 +944,12 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       entries.push({
         label: t()('gameSettings.clear'),
         run: () => {
-          closeMenus();
+          menu.close();
           setField(row.id, '');
         },
       });
     }
-    pushMenu(asMenu({ title: rowTitle(row), entries }));
+    menu.push(menu.asMenu({ title: rowTitle(row), entries }));
   }
 
   /**
@@ -1438,43 +969,6 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       return { root: move.target.root, relative };
     }
     return media === null ? null : { root: media.root, relative };
-  }
-
-  /** Opens the artwork at full size. Nothing but a look — B (or the veil) closes it. */
-  async function showImage(relative: string): Promise<void> {
-    if (relative === '') return;
-    // A history game's files are not on any root the renderer can name: what is staged sits in the app's
-    // own storage, and the rest exists only as the copy the history keeps (see historyAssetPreview).
-    const id = historyId();
-    const url =
-      id !== null ? await deps.api.historyAssetPreview(id, relative) : await mediaImage(relative);
-    if (url === null) return; // a preview that could not be read never became a surface — and never sounds
-    openLightbox(url, relative);
-  }
-
-  async function mediaImage(relative: string): Promise<string | null> {
-    const at = assetPreviewRoot(relative);
-    if (at === null) return null;
-    return deps.api.imagePreview(at.root, at.relative);
-  }
-
-  /** The lightbox itself, shared by a file already on the card and a variant still only online. */
-  function openLightbox(url: string, caption: string): void {
-    deps.audio.play('popup-open');
-    lightboxImage.src = url;
-    lightboxCaption.textContent = caption;
-    lightboxOpen = true;
-    lightboxEl.classList.add('is-open');
-    lightboxEl.setAttribute('aria-hidden', 'false');
-  }
-
-  function closeImage(options?: { readonly silent?: boolean }): void {
-    if (!lightboxOpen) return;
-    if (options?.silent !== true) deps.audio.play('popup-close');
-    lightboxOpen = false;
-    lightboxEl.classList.remove('is-open');
-    lightboxEl.setAttribute('aria-hidden', 'true');
-    lightboxImage.removeAttribute('src');
   }
 
   /**
@@ -1518,10 +1012,10 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
         if (!result.ok) {
           if (!('cancelled' in result)) failWith(result.message);
           // Cancelled (or refused): the popup is still up, and the focus goes back to it.
-          applyMenuFocus();
+          menu.applyFocus();
           return;
         }
-        closeMenus({ silent: true }); // the browser's own popup-close already covered this gesture
+        menu.close({ silent: true }); // the browser's own popup-close already covered this gesture
         if (onPicked !== undefined) {
           onPicked(result.paths);
           return;
@@ -1547,137 +1041,10 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     return form.copyInstall.installer === '' ? null : form.copyInstall.installer;
   }
 
-  // ── List editing (its own level of the column menu) ─────────────────────────
-
-  function openListMenu(row: Extract<GameSettingsRow, { kind: 'list' }>): void {
-    pushMenu(buildListLevel(row.id, row.items, row.max, row.preview !== undefined, rowTitle(row)));
-  }
-
-  function buildListLevel(
-    id: GameRowId,
-    items: readonly string[],
-    max: number,
-    isPath: boolean,
-    title: string,
-  ): MenuLevel {
-    const entries: MenuEntry[] = items.map((item, index) => ({
-      label: item,
-      run: () => openItemMenu(id, items, index, max, isPath, title),
-    }));
-    if (max === 0 || items.length < max) {
-      entries.push({
-        label: t()('gameSettings.listAdd'),
-        run: () => {
-          if (isPath) {
-            browseInto(id, '', max !== 1, (paths) => {
-              const room = max === 0 ? paths.length : Math.max(0, max - items.length);
-              setList(id, [...items, ...paths.slice(0, room)]);
-            });
-            return;
-          }
-          deps.keyboard.open({
-            value: '',
-            mode: 'text',
-            title,
-            onDone: (value) => {
-              if (value.trim() === '') return;
-              const next = [...items, value];
-              setList(id, next);
-              replaceMenu(buildListLevel(id, next, max, isPath, title));
-            },
-          });
-        },
-      });
-    }
-    return asMenu({ title, entries });
-  }
-
-  function openItemMenu(
-    id: GameRowId,
-    items: readonly string[],
-    index: number,
-    max: number,
-    isPath: boolean,
-    title: string,
-  ): void {
-    const commit = (next: readonly string[]): void => {
-      setList(id, next);
-      // Back to the list itself, refreshed — the user is usually not done after one change.
-      menuStack.pop();
-      replaceMenu(buildListLevel(id, next, max, isPath, title));
-    };
-    const entries: MenuEntry[] = [];
-    if (isPath) {
-      entries.push({
-        label: t()('gameSettings.viewImage'),
-        run: () => void showImage(items[index] ?? ''),
-      });
-    }
-    entries.push({
-      label: t()('gameSettings.listReplace'),
-      run: () => {
-        if (isPath) {
-          browseInto(id, items[index] ?? '', false, (paths) => {
-            const picked = paths[0];
-            if (picked === undefined) return;
-            setList(
-              id,
-              items.map((item, i) => (i === index ? picked : item)),
-            );
-          });
-          return;
-        }
-        deps.keyboard.open({
-          value: items[index] ?? '',
-          mode: 'text',
-          title,
-          onDone: (value) => {
-            if (value.trim() === '') return;
-            commit(items.map((item, i) => (i === index ? value : item)));
-          },
-        });
-      },
-    });
-    // Reordering is a gamepad gesture here, not a drag: the manifest's order is load-bearing (the first
-    // hero image is the one the carousel crops its card from), and a mouse-only affordance would put that
-    // out of reach in Game Mode.
-    if (index > 0) {
-      entries.push({
-        label: t()('gameSettings.listMoveUp'),
-        run: () => commit(swap(items, index, index - 1)),
-      });
-    }
-    if (index < items.length - 1) {
-      entries.push({
-        label: t()('gameSettings.listMoveDown'),
-        run: () => commit(swap(items, index, index + 1)),
-      });
-    }
-    entries.push({
-      label: t()('gameSettings.listRemove'),
-      run: () => commit(items.filter((_, i) => i !== index)),
-    });
-    pushMenu(asMenu({ title: items[index] ?? '', entries }));
-  }
-
-  function swap(items: readonly string[], a: number, b: number): readonly string[] {
-    const next = [...items];
-    const first = next[a];
-    const second = next[b];
-    if (first === undefined || second === undefined) return items;
-    next[a] = second;
-    next[b] = first;
-    return next;
-  }
-
   // ── Validation ─────────────────────────────────────────────────────────────
 
   function scheduleValidate(): void {
-    if (validateTimer !== 0) window.clearTimeout(validateTimer);
-    validateTimer = window.setTimeout(() => {
-      validateTimer = 0;
-      void runValidate();
-    }, VALIDATE_DEBOUNCE_MS);
+    validator.schedule();
   }
 
   /**
@@ -1692,61 +1059,24 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     // off a card and has to keep validating as one.
     const root = move !== null ? move.target.root : (media?.root ?? '');
     if (origin === null || unreadable !== null) return;
-    const index = move !== null ? move.targetIndex : slotIndex;
-    const activeSlots = move !== null ? move.targetSlots : slots;
-    const token = ++validateToken;
-    const text = currentText();
-    const result = await deps.api.validate(root, text, origin.kind === 'history' ? 'card' : undefined);
-    if (token !== validateToken) return; // a newer edit already asked
-    const own = new Map<string, string>();
-    const others: string[] = [];
-    if (!result.ok) {
-      for (const issue of result.issues) {
-        const scoped = /^games\.(\d+)\.(.*)$/.exec(issue.path);
-        if (scoped === null) {
-          // An unscoped path belongs to the single-game shape — which is ours by definition.
-          own.set(issue.path, issue.message);
-          continue;
-        }
-        const idx = Number(scoped[1]);
-        const field = scoped[2] ?? '';
-        if (idx === index) own.set(field, issue.message);
-        else others.push(describeOtherIssue(activeSlots, idx, field, issue.message));
-      }
-    }
-    issues = own;
+    const verdict = await validator.run({
+      root,
+      text: currentText(),
+      ...(origin.kind === 'history' ? { source: 'card' } : {}),
+      index: move !== null ? move.targetIndex : slotIndex,
+      slots: move !== null ? move.targetSlots : slots,
+    });
+    if (verdict === null) return; // a newer edit already asked
+    issues = verdict.own;
     // Only issues this VISIT introduced block Save. For a game edited from the history the baseline is
     // its stored manifest, which — on a card written by hand years ago — can fail the editor's stricter
     // gates all by itself (see manifest.ts). Without this mirror of main's own rule the button would be
     // dead for such a card and the user would never reach the message explaining why.
-    ownIssues = [...own].some(([path, message]) => !baselineOwnIssues.has(issueKey(path, message)));
-    otherIssues = others;
+    ownIssues = [...verdict.own].some(
+      ([path, message]) => !baselineOwnIssues.has(issueKey(path, message)),
+    );
+    otherIssues = verdict.others;
     render();
-  }
-
-  /** How one issue is remembered in a baseline set — path and wording together, as main compares them. */
-  function issueKey(path: string, message: string): string {
-    return `${path}\u0000${message}`;
-  }
-
-  /** "Hades (game 3): install.args — expected array" — the other game is named when we can name it. */
-  function describeOtherIssue(
-    activeSlots: readonly GameFormState[],
-    index: number,
-    field: string,
-    message: string,
-  ): string {
-    const slot = activeSlots[index];
-    const title =
-      slot !== undefined && !isRawSlot(slot) && slot.model.title !== ''
-        ? slot.model.title
-        : t()('gameSettings.otherGameUnnamed');
-    return t()('gameSettings.otherGameIssue', {
-      game: title,
-      number: index + 1,
-      field: field === '' ? '—' : field,
-      message,
-    });
   }
 
   /**
@@ -1854,13 +1184,13 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       failWith(t()('gameSettings.moveNoCards'));
       return;
     }
-    pushMenu(
-      asMenu({
+    menu.push(
+      menu.asMenu({
         title: t()('gameSettings.moveToCardTitle'),
         entries: cards.map((candidate) => ({
           label: candidate.label,
           run: () => {
-            closeMenus();
+            menu.close();
             void adoptMoveTarget(candidate);
           },
         })),
@@ -1913,7 +1243,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     form = carried;
     rest = {};
     corrupt = {};
-    focusIndex = 0;
+    core.setFocusIndex(0);
     model = null;
     render();
     await runValidate();
@@ -2009,7 +1339,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     // Exactly as in edit mode: the baseline is the file as the screen would write it RIGHT NOW, so
     // `dirty` means "the user typed something" rather than "the screen appended an empty game".
     baseline = currentText();
-    focusIndex = 0;
+    core.setFocusIndex(0);
     model = null;
     render();
     await runValidate();
@@ -2053,7 +1383,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     mixed = ours.mixed;
     loadedId = ours.model.id;
     unreadable = null;
-    focusIndex = 0;
+    core.setFocusIndex(0);
     model = null; // force a full rebuild — the composition is entirely new
     render();
   }
@@ -2225,174 +1555,24 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     void runValidate();
   }
 
-  // ── "Find online" (the metadata:* flow — see main/metadata/) ───────────────
-  //
-  // The surface itself is online-picker.ts: one screen with the game, the cover, the backgrounds and the
-  // soundtrack as sections. What lives HERE is the half of it that touches this screen — the keyboard
-  // for a query, the downloads that land beside the game, and the form fields their paths go into.
-  // Nothing reaches the manifest until the user saves: an applied file only fills a FORM FIELD, exactly
-  // as a path chosen in the file browser does.
-
-  /** What a "yes" to the title question runs — the surface's own callback, held until the popup answers. */
-  let pendingTitleReplace: (() => void) | null = null;
-  /** Retires answers belonging to a flow the user has already left (a new search, a closed screen). */
-  let metadataToken = 0;
-  /** Whether an answer from main still belongs to the flow that asked for it. */
-  function metadataCurrent(token: number): boolean {
-    return open && token === metadataToken;
-  }
-
-  /**
-   * Where an applied file goes, and under which id it is named. Mirrors browseInto's choice of root: a
-   * pending move is already about the TARGET card, so the assets belong there too.
-   */
-  function metadataTarget(): { readonly root: string; readonly gameId: string } | null {
-    const move = pendingMove;
-    // A history game downloads nothing: there is no game root to put a file beside, which is why the
-    // online surface offers it the TEXT only (see startFindOnline).
-    const root = move !== null ? move.target.root : (mediaOrigin()?.root ?? null);
-    if (root === null) return null;
-    const id = form.id.trim();
-    return id === '' ? null : { root, gameId: id };
-  }
-
-  /**
-   * The entry point. Everything the sources offer lives on ONE surface now (online-picker.ts): the game,
-   * its cover, its backgrounds and its soundtrack, each a section of the same screen. What stays here is
-   * what only this screen can do — write into the form, and put the downloaded files beside the game.
-   *
-   * A Steam game whose appid is already filled in skips the search: that number is the very thing a
-   * search exists to find.
-   */
-  function startFindOnline(): void {
-    metadataToken += 1;
-    const appId = Number(form.steam.appid.trim());
-    const steamApp = form.launchMode === 'steam' && Number.isSafeInteger(appId) && appId > 0;
-    deps.onlinePicker.open({
-      query: form.title.trim(),
-      ...(steamApp ? { appId } : {}),
-      // A history game has no root to download a cover into — the text half of the flow still applies.
-      ...(historyId() !== null ? { textOnly: true } : {}),
-    });
-  }
-
-  /**
-   * Downloads the chosen variants and writes the resulting manifest paths into the form.
-   *
-   * The slot INDEX matters as much as the order: it names the file on disk
-   * (`assets/<id>-hero-<n>.<ext>`), so appending has to start after the backgrounds already there —
-   * writing from zero would overwrite the very files it is adding to.
-   */
-  async function applyArtwork(
-    kind: 'grid' | 'hero',
-    variantKeys: readonly string[],
-    mode: 'replace' | 'append',
-  ): Promise<ApplyOutcome> {
-    const target = metadataTarget();
-    if (target === null) return { ok: false, message: t()('metadata.needsId') };
-    const existing = mode === 'append' ? form.heroImage : [];
-    const room = kind === 'grid' ? variantKeys.length : MAX_HERO_IMAGES - existing.length;
-    const accepted = variantKeys.slice(0, Math.max(0, room));
-    const token = metadataToken;
-    const paths: string[] = [];
-    for (const [index, variantKey] of accepted.entries()) {
-      const slot: MetadataApplySlot = kind === 'grid' ? 'grid' : { hero: existing.length + index };
-      const result = await deps.api.applyMetadata({ ...target, variantKey, slot });
-      if (!metadataCurrent(token)) return { ok: false, message: '' };
-      if (!result.ok) return { ok: false, message: result.message };
-      paths.push(result.path);
-    }
-    if (kind === 'grid') {
-      setField('gridImage', paths[0] ?? '');
-    } else {
-      setList('heroImage', [...existing, ...paths]);
-    }
-    // A pick that did not fit says so: silently dropping the third of three chosen backgrounds would
-    // read as the download having failed.
-    const dropped = variantKeys.length - accepted.length;
-    return {
-      ok: true,
-      message:
-        dropped > 0
-          ? t()('metadata.appliedPartly', { count: String(dropped) })
-          : t()('metadata.applied'),
-    };
-  }
-
-  /** One variant at full size, in the screen's own lightbox (which sits above the gallery). */
-  /**
-   * Fills the manifest's non-picture facts in the background: the description, and the genres, release
-   * date and platforms a future library view will sort by. main deliberately never writes them itself —
-   * the manifest TEXT belongs to this form while the screen is open, so a write from the other side
-   * would be overwritten by the next Save (see configure-form-model.ts).
-   */
-  async function fetchMetadataDescriptions(candidate: GameCandidate): Promise<void> {
-    const token = metadataToken;
-    const result = await deps.api.metadataDescriptions(candidate.key);
-    if (!metadataCurrent(token) || !result.ok) return;
-    const { description, genres, releaseDate, platforms } = result.value;
-    const known = {
-      ...(description === undefined ? {} : { description }),
-      ...(genres === undefined ? {} : { genres }),
-      ...(releaseDate === undefined ? {} : { releaseDate }),
-      ...(platforms === undefined ? {} : { platforms }),
-    };
-    if (Object.keys(known).length === 0) return;
-    // `rest` is the screen's own slot for keys the form model has no field for; currentText() folds it
-    // back into the manifest text, so this alone makes the screen dirty and Save carries it through.
-    rest = { ...rest, ...known };
-    updateForm(form);
-  }
-
-  async function applyTrackKey(trackKey: string): Promise<ApplyOutcome> {
-    const target = metadataTarget();
-    if (target === null) return { ok: false, message: t()('metadata.needsId') };
-    const token = metadataToken;
-    const result = await deps.api.applyMetadata({
-      ...target,
-      variantKey: trackKey,
-      slot: 'music',
-    });
-    if (!metadataCurrent(token)) return { ok: false, message: '' };
-    if (!result.ok) return { ok: false, message: result.message };
-    setField('backgroundMusic', result.path);
-    return { ok: true, message: t()('metadata.applied') };
-  }
-
-  /** Everything the flow leaves running, ended in one place: whatever main is still fetching for it. */
-  function stopMetadataWork(): void {
-    metadataToken += 1;
-    deps.api.cancelMetadata();
-  }
-
   // ── The six primitives ─────────────────────────────────────────────────────
 
   /** Which surface the primitives drive right now: the deepest open one wins. */
   function activeSurface(): NavSurface | 'lightbox' | 'menu' | 'form' {
-    if (lightboxOpen) return 'lightbox';
+    if (lightbox.isOpen()) return 'lightbox';
     if (deps.keyboard.isOpen()) return deps.keyboard;
     if (deps.picker.isOpen()) return deps.picker;
     if (deps.onlinePicker.isOpen()) return deps.onlinePicker;
-    if (menuStack.length > 0) return 'menu';
+    if (menu.isOpen()) return 'menu';
     return 'form';
-  }
-
-  function moveMenuFocus(delta: number): void {
-    const level = menuTop();
-    if (level === undefined || level.entries.length === 0) return;
-    const next = wrapIndex(level.focus, delta, level.entries.length);
-    if (next === level.focus) return;
-    level.focus = next;
-    deps.audio.play('navigate');
-    applyMenuFocus();
   }
 
   function navUp(): void {
     hover.arm();
     const surface = activeSurface();
     if (surface === 'lightbox') return deps.audio.playLimit(); // nothing to move in a picture
-    if (surface === 'menu') return moveMenuFocus(-1);
-    if (surface === 'form') return sidebar.hasFocus() ? sidebar.move(-1) : moveRowFocus(-1);
+    if (surface === 'menu') return menu.moveFocus(-1);
+    if (surface === 'form') return sidebar.hasFocus() ? sidebar.move(-1) : core.moveRowFocus(-1);
     surface.navUp();
   }
 
@@ -2400,35 +1580,9 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     hover.arm();
     const surface = activeSurface();
     if (surface === 'lightbox') return deps.audio.playLimit();
-    if (surface === 'menu') return moveMenuFocus(1);
-    if (surface === 'form') return sidebar.hasFocus() ? sidebar.move(1) : moveRowFocus(1);
+    if (surface === 'menu') return menu.moveFocus(1);
+    if (surface === 'form') return sidebar.hasFocus() ? sidebar.move(1) : core.moveRowFocus(1);
     surface.navDown();
-  }
-
-  function navHorizontal(delta: number): void {
-    // From the column, RIGHT steps into the pane. Left is NOT its mirror there: inside the pane it
-    // belongs to the selects and the number steppers, so leaving is B.
-    if (sidebar.hasFocus()) {
-      // As in Settings: left off the column, and right off a row that is not a section, lead nowhere.
-      if (delta > 0 && sidebar.selected()?.kind === 'section') enterPane();
-      else deps.audio.playLimit();
-      return;
-    }
-    const target = rendered[focusIndex];
-    if (target === undefined) return;
-    const row = target.row;
-    // A checkbox is NOT stepped through: left/right belong to the rows that have a range to move along
-    // (the selects, the steppers), and a two-state row answered them by flipping — so a walk across the
-    // form changed a setting on the way past. A checkbox is switched with A, and only with A.
-    if (row.kind === 'select') {
-      cycleSelect(row, delta);
-      return;
-    }
-    if (row.kind === 'number') {
-      stepNumber(row, delta);
-      return;
-    }
-    deps.audio.playLimit(); // a checkbox, a text or a path row has no range to step along
   }
 
   function navLeft(repeat = false): void {
@@ -2441,11 +1595,11 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     if (surface === 'menu') {
       // Left leaves a level, the same way it leaves a popup: the column sits on the right edge, so moving
       // off it means "out". A HELD left is ignored, or one press would walk out through every level.
-      if (!repeat) popMenu();
+      if (!repeat) menu.pop();
       return;
     }
     if (surface === 'form') {
-      navHorizontal(-1);
+      core.navHorizontal(-1);
       return;
     }
     surface.navLeft(repeat);
@@ -2457,7 +1611,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     if (surface === 'lightbox') return deps.audio.playLimit();
     if (surface === 'menu') return deps.audio.playLimit(); // a menu is vertical — right leads nowhere
     if (surface === 'form') {
-      navHorizontal(1);
+      core.navHorizontal(1);
       return;
     }
     surface.navRight();
@@ -2500,7 +1654,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       case 'list':
         deps.audio.play('button');
         pressFlash(target.el);
-        openListMenu(row);
+        listEditor.open(row);
         return;
       case 'action':
         // Actions live in the column now; a row of this kind should never reach the pane.
@@ -2515,7 +1669,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     switch (id) {
       case 'find-online':
         deps.audio.play('button');
-        startFindOnline();
+        onlineFlow.start();
         return;
       case 'save':
         deps.audio.play('button');
@@ -2553,14 +1707,11 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     hover.arm();
     const surface = activeSurface();
     if (surface === 'lightbox') {
-      closeImage();
+      lightbox.close();
       return;
     }
     if (surface === 'menu') {
-      const level = menuTop();
-      const entry = level?.entries[level.focus];
-      if (entry === undefined) return;
-      runEntry(entry);
+      menu.activate();
       return;
     }
     if (surface === 'form') {
@@ -2568,7 +1719,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
         sidebar.activate();
         return;
       }
-      const target = rendered[focusIndex];
+      const target = core.focusedRow();
       if (target !== undefined) activateRow(target);
       return;
     }
@@ -2579,11 +1730,11 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     hover.arm();
     const surface = activeSurface();
     if (surface === 'lightbox') {
-      closeImage();
+      lightbox.close();
       return;
     }
     if (surface === 'menu') {
-      popMenu();
+      menu.pop();
       return;
     }
     if (surface !== 'form') {
@@ -2595,7 +1746,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     // screen keeps `back`; leaving it is a popup closing, and close() says so.
     if (!sidebar.hasFocus()) {
       deps.audio.play('back');
-      leavePane();
+      core.leavePane();
       return;
     }
     leaveScreen();
@@ -2632,20 +1783,14 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     pendingMove = null;
     deps.audio.play('back');
     // The lightbox, the menu and the keyboard go WITH the screen — one close, one sound.
-    closeImage({ silent: true });
-    closeMenus({ silent: true });
+    lightbox.close({ silent: true });
+    menu.close({ silent: true });
     deps.keyboard.close();
     // The online surface holds an audition — real sound, which would outlive the screen otherwise.
     deps.onlinePicker.close();
     entrance.cancel();
-    if (previewTimer !== 0) {
-      window.clearTimeout(previewTimer);
-      previewTimer = 0;
-    }
-    if (validateTimer !== 0) {
-      window.clearTimeout(validateTimer);
-      validateTimer = 0;
-    }
+    core.cancelPreview();
+    validator.cancel();
     stopWatchingMoveTargets();
     delete app.dataset['overlay'];
     screen.setAttribute('aria-hidden', 'true');
@@ -2660,18 +1805,18 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     // A thumbnail IS the "show me this picture" affordance for the mouse; the gamepad reaches the same
     // viewer through the row's own menu. Checked before the row, or the click would also open that menu.
     if (target instanceof HTMLElement && target.classList.contains('setting-thumb')) {
-      deps.audio.play('button'); // the press; showImage plays the viewer's own `popup-open`
-      void showImage(target.dataset['path'] ?? '');
+      deps.audio.play('button'); // the press; the viewer plays its own `popup-open`
+      void lightbox.show(target.dataset['path'] ?? '');
       return;
     }
     const rowEl = target.closest<HTMLElement>('.setting-row');
     if (rowEl === null) return;
-    const index = rendered.findIndex((row) => row.el === rowEl);
-    const entry = rendered[index];
+    const index = core.rendered().findIndex((row) => row.el === rowEl);
+    const entry = core.rendered()[index];
     if (entry === undefined || !isFocusable(entry.row)) return;
     sidebar.setFocused(false);
-    focusIndex = index;
-    applyRowFocus();
+    core.setFocusIndex(index);
+    core.applyRowFocus();
     const chevronEl = target.closest<HTMLElement>('.setting-chevron');
     if (chevronEl !== null) {
       const delta = chevronEl.dataset['chevron'] === 'prev' ? -1 : 1;
@@ -2682,14 +1827,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     activateRow(entry);
   });
 
-  lightboxEl.querySelector<HTMLElement>('.lightbox-veil')?.addEventListener('click', () => {
-    closeImage();
-  });
-
   veil?.addEventListener('click', () => navBack());
-  menuVeil?.addEventListener('click', () => {
-    popMenu();
-  });
 
   window.addEventListener(
     'mousemove',
@@ -2700,25 +1838,19 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       if (!hover.awake(event.clientX, event.clientY)) return;
       const target = event.target;
       if (!(target instanceof Element)) return;
-      const level = menuTop();
-      if (level !== undefined) {
-        const button = target.closest<HTMLButtonElement>('.settings-option');
-        if (button === null) return;
-        const index = menuButtons.indexOf(button);
-        if (index === -1 || index === level.focus) return;
-        level.focus = index;
-        applyMenuFocus();
+      if (menu.isOpen()) {
+        menu.hover(target);
         return;
       }
       const rowEl = target.closest<HTMLElement>('.setting-row');
       if (rowEl === null) return;
-      const index = rendered.findIndex((row) => row.el === rowEl);
-      const entry = rendered[index];
+      const index = core.rendered().findIndex((row) => row.el === rowEl);
+      const entry = core.rendered()[index];
       if (index === -1 || entry === undefined || !isFocusable(entry.row)) return;
-      if (index === focusIndex && !sidebar.hasFocus()) return;
+      if (index === core.focusIndex() && !sidebar.hasFocus()) return;
       sidebar.setFocused(false);
-      focusIndex = index;
-      applyRowFocus();
+      core.setFocusIndex(index);
+      core.applyRowFocus();
     },
     { passive: true },
   );
@@ -2735,8 +1867,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     sidebar.reset(); // a re-opened screen starts at the first section, column and pane together
     sidebar.setFocused(true); // the screen opens on its table of contents, not inside a section
     sidebar.animateIn();
-    sectionKey = null;
-    paneKey = null;
+    core.reset();
     // NOT '': an empty string is a real signature (a column with no entries, a strip with no notes),
     // and starting a visit on it made the guards claim the screen already showed that. A game left with
     // "fix the errors first" under it then kept that line for every game opened after — the strip was
@@ -2744,11 +1875,11 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     columnSignature = null;
     statusSignature = null;
     hover.arm();
-    thumbnails.clear();
+    lightbox.clearCache();
     listScroller.to(0, true);
-    focusIndex = 0;
+    core.setFocusIndex(0);
     model = null;
-    rendered = [];
+    core.setRendered([]);
     slots = [];
     slotIndex = -1;
     pendingMove = null;
@@ -2801,36 +1932,14 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     navBack,
     isDirty: dirty,
     deletesLocalGame: () => mediaOrigin()?.source === 'pc',
-    askOnlineQuery: (initial, onDone) => {
-      deps.keyboard.open({
-        value: initial,
-        mode: 'text',
-        title: t()('metadata.searchTitle'),
-        onDone: (value) => {
-          metadataToken += 1;
-          onDone(value);
-        },
-      });
-    },
-    askOnlineTitle: (title, onYes) => {
-      pendingTitleReplace = onYes;
-      deps.onConfirmRequested('replace-title', { title });
-    },
-    applyOnlineArtwork: (kind, variantKeys, mode) => applyArtwork(kind, variantKeys, mode),
-    applyOnlineTrack: (trackKey) => applyTrackKey(trackKey),
+    askOnlineQuery: (initial, onDone) => onlineFlow.askQuery(initial, onDone),
+    askOnlineTitle: (title, onYes) => onlineFlow.askTitle(title, onYes),
+    applyOnlineArtwork: (kind, variantKeys, mode) => onlineFlow.applyArtwork(kind, variantKeys, mode),
+    applyOnlineTrack: (trackKey) => onlineFlow.applyTrack(trackKey),
     applyOnlineTitle: (title) => {
       setField('title', title);
     },
-    onOnlineCandidate: (candidate) => {
-      // An empty form takes the name at once, without the question "Take the name" asks: there is
-      // nothing to replace. It is also what makes the rest of the screen usable — the id follows the
-      // title (see setField), and the id is what every downloaded file is NAMED by, so a game added
-      // through this flow could otherwise pick a background and be told it has no id to write it under.
-      if (form.title.trim() === '') setField('title', candidate.title);
-      // Only a Steam entry can be asked for facts: the others carry no appid, and the appid is what the
-      // descriptions, genres and dates are addressed by.
-      if (candidate.steamAppId !== undefined) void fetchMetadataDescriptions(candidate);
-    },
+    onOnlineCandidate: (candidate) => onlineFlow.onCandidate(candidate),
     heroCount: () => form.heroImage.length,
     // The secondary buttons belong to whatever surface is on top, exactly as the six primitives do.
     // controls.ts routes them to the open OVERLAY — that is this screen — so they die here unless they
@@ -2840,7 +1949,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     navSecondary: (repeat = false) => {
       const surface = activeSurface();
       if (surface === 'menu') {
-        const level = menuTop();
+        const level = menu.top();
         if (level?.secondary === undefined) {
           if (!repeat) deps.audio.playLimit();
           return;
@@ -2906,19 +2015,15 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
         pendingSource = null;
         if (root !== null) void adoptRoot(root);
       } else if (kind === 'cancel-move') cancelMove();
-      else if (kind === 'replace-title') {
-        const run = pendingTitleReplace;
-        pendingTitleReplace = null;
-        run?.();
-      }
+      else if (kind === 'replace-title') onlineFlow.titleConfirmed();
     },
     relocalize: () => {
       if (model !== null) {
-        const section = currentSection(model);
+        const section = sectionByKey(model.sections, core.sectionKey());
         if (section !== undefined) {
           relocalizeGameSections(listEl, { ...model, sections: [section] }, t());
         }
-        for (const row of rendered) relocalizeGameRow(row, t());
+        for (const row of core.rendered()) relocalizeGameRow(row, t());
         // The screen's own name is mode-aware and JS-set, so it is re-read here too — localizeDocument
         // does not touch it (no data-i18n) and would overwrite the mode if it did.
         titleEl.textContent = t()(
@@ -2936,7 +2041,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       deps.picker.relocalize();
       deps.onlinePicker.relocalize();
       // A menu's labels are built from the model, so it is rebuilt rather than patched.
-      if (menuStack.length > 0) paintMenu();
+      if (menu.isOpen()) menu.paint();
     },
   };
 }

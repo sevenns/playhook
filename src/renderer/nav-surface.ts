@@ -5,6 +5,10 @@
 //
 // It is a type, not a base class, precisely so a screen can satisfy it while owning its state however it
 // likes: the point is that `left` means the same thing everywhere the user presses it.
+//
+// The two surfaces that open on top of a SCREEN and hand a value back (the keyboard, the file picker) are
+// contracts here too, so their implementations depend on this module and not on the screen that uses them.
+import type { ConfigPickKind, ConfigPickResult } from '../shared/types.js';
 export interface NavSurface {
   isOpen(): boolean;
   /** `repeat` marks a hold auto-repeat, exactly as it does for navLeft — surfaces that have no use for
@@ -32,4 +36,40 @@ export interface NavSurface {
   navCommit?(): void;
   /** Re-renders every label for the current translator, keeping the focus and the scroll position. */
   relocalize(): void;
+}
+
+/** A surface that opens ON TOP of the screen and hands a value back when it is done. */
+export interface TextEntrySurface extends NavSurface {
+  open(request: {
+    readonly value: string;
+    readonly mode: 'text' | 'id' | 'number';
+    readonly title: string;
+    readonly onDone: (value: string) => void;
+  }): void;
+  /**
+   * Dismisses the keyboard without committing. Called when a SCREEN closes under it: the keyboard is not
+   * inside any screen (see #osk in index.html), so nothing else would take it off the display — it would
+   * stay up over the carousel, still holding the focus of a screen that is gone.
+   */
+  close(): void;
+}
+
+export interface FilePickerSurface extends NavSurface {
+  open(request: {
+    /** Where picked paths are measured from. Empty for a history game — there is no card to measure
+     * against, and `historyId` names where the file is copied to instead. */
+    readonly root: string;
+    readonly kind: ConfigPickKind;
+    readonly current: string;
+    readonly multi: boolean;
+    /** The root-relative sub-directory this field is measured from, when it has one (see baseFor). */
+    readonly base?: string;
+    /**
+     * Set when the screen is editing a game from the HISTORY: what is picked is copied into that game's
+     * staging directory on this PC (the card it is for is not in), and the field stores the path the
+     * file will have on the card once the edits are applied.
+     */
+    readonly historyId?: string;
+    readonly onDone: (result: ConfigPickResult) => void;
+  }): void;
 }

@@ -1,21 +1,18 @@
 // Renderer UI logic — the assembly point. Drives a persistent DOM (built once in index.html) by toggling
 // classes and data-attributes per AppState, so CSS transitions animate smoothly between states. The
 // autonomous subsystems live in their own modules: hero background + palette (hero.ts), the interaction
-// layer — popups, focus, actions (controls.ts) — and the pure state views (state-view.ts). render() here
-// wires them together and owns only the bits that don't belong to any one subsystem (phase attribute,
-// info panel, title slide, music gating).
+// layer — popups, focus, actions (controls.ts) — the boot reveal (boot.ts), the busy-phase chatter
+// (chatter.ts) and the pure state views (state-view.ts). render() here wires them together and owns only
+// the bits that don't belong to any one subsystem (phase attribute, info panel, title slide, music gating).
 // IMPORTANT: title/data come from the card (untrusted) — rendered via textContent, never innerHTML.
-import type { AppNotification, AppState, BrowseInfo, LibraryEntry, Stats } from '../shared/types';
-import {
-  createTranslator,
-  type Locale,
-  type Translator,
-  type MessageKey,
-} from '../shared/i18n/index.js';
+import type { AppNotification, AppState, BrowseInfo, LibraryEntry, Stats } from '../shared/types.js';
+import { createTranslator, type Locale, type Translator } from '../shared/i18n/index.js';
 import { localizeDocument } from './i18n-dom.js';
 import { AUTO_CHAIN_MS, NAV_REPEAT_MS } from './auto-repeat.js';
 import { createAudioController } from './audio.js';
 import { createHeroController } from './hero.js';
+import { createBootSequence } from './boot.js';
+import { createChatter } from './chatter.js';
 import { createControls } from './controls.js';
 import { createSettingsScreen, type SettingsScreenApi } from './settings-screen.js';
 import { createGameSettingsScreen, type GameSettingsScreenApi } from './game-settings-screen.js';
@@ -272,6 +269,22 @@ const toast = createToast({
 });
 
 const controls = createControls({
+  api: {
+    requestLaunch: () => window.api.requestLaunch(),
+    requestUninstall: () => window.api.requestUninstall(),
+    requestKill: () => window.api.requestKill(),
+    forgetGame: (id) => window.api.forgetGame(id),
+    openSteamDownloads: () => window.api.openSteamDownloads(),
+    requestShutdown: () => window.api.requestShutdown(),
+    requestReboot: () => window.api.requestReboot(),
+    requestSleep: () => window.api.requestSleep(),
+    requestHide: () => window.api.requestHide(),
+    requestQuit: () => window.api.requestQuit(),
+    resolveGameCollision: (answer) => window.api.resolveGameCollision(answer),
+    markNotificationsRead: () => window.api.markNotificationsRead(),
+    dismissNotification: (id) => window.api.dismissNotification(id),
+    clearNotifications: () => window.api.clearNotifications(),
+  },
   getState: () => currentState,
   getLocale: () => currentLocale,
   getNotifications: () => notificationItems,
@@ -279,7 +292,7 @@ const controls = createControls({
   openGameDetail: (id) => openGameDetail(id),
   // Read lazily, like the carousel seam: the boot state is declared further down this module, and the
   // first press cannot arrive before it exists.
-  isBooting: () => !bootRevealed,
+  isBooting: () => !boot.isRevealed(),
   getBrowse: () => currentBrowse,
   audio,
   getTranslator,
@@ -558,65 +571,9 @@ function syncMusic(): void {
   audio.setMusicPlaying(visible && !running);
 }
 
-// ── "Chatter": a rotating funny suffix for long busy phases (install / Proton config) ────────────────
-// The base status ("Установка..." / "Конфигурация Proton...") shows alone for the first MINUTE; after that
-// a random funny suffix is APPENDED and swapped every 20s, so a long silent install/provision doesn't feel
-// stuck. Renderer-owned (pure presentation) — main only sets the base state.
-const CHATTER_DELAY_MS = 60_000; // base-only for the first minute
-const CHATTER_ROTATE_MS = 20_000; // then swap the funny suffix every 20 seconds
-const INSTALL_SUFFIX_KEYS: readonly MessageKey[] = [
-  'launcher.installChatter1',
-  'launcher.installChatter2',
-  'launcher.installChatter3',
-  'launcher.installChatter4',
-  'launcher.installChatter5',
-  'launcher.installChatter6',
-  'launcher.installChatter7',
-  'launcher.installChatter8',
-  'launcher.installChatter9',
-  'launcher.installChatter10',
-];
-// Reuse the Proton funny lines as suffixes appended to "Configuring Proton..." (protonConfig1 is the base).
-const PROTON_SUFFIX_KEYS: readonly MessageKey[] = [
-  'launcher.protonConfig2',
-  'launcher.protonConfig3',
-  'launcher.protonConfig4',
-  'launcher.protonConfig5',
-  'launcher.protonConfig6',
-  'launcher.protonConfig7',
-  'launcher.protonConfig8',
-  'launcher.protonConfig9',
-  'launcher.protonConfig10',
-  'launcher.protonConfig11',
-  'launcher.protonConfig12',
-];
-
-type ChatterKind = 'installing' | 'configuringProton';
-let chatterKind: ChatterKind | null = null;
-let chatterSuffix: MessageKey | null = null;
-let chatterDelayTimer = 0;
-let chatterRotateTimer = 0;
-
-function chatterPool(kind: ChatterKind): readonly MessageKey[] {
-  return kind === 'installing' ? INSTALL_SUFFIX_KEYS : PROTON_SUFFIX_KEYS;
-}
-
-function stopChatterTimers(): void {
-  if (chatterDelayTimer !== 0) {
-    window.clearTimeout(chatterDelayTimer);
-    chatterDelayTimer = 0;
-  }
-  if (chatterRotateTimer !== 0) {
-    window.clearInterval(chatterRotateTimer);
-    chatterRotateTimer = 0;
-  }
-}
-
-function rotateChatter(kind: ChatterKind): void {
-  const pool = chatterPool(kind);
-  chatterSuffix = pool[Math.floor(Math.random() * pool.length)] ?? null;
-  applyStatus();
-}
+// ── Status line ─────────────────────────────────────────────────────────────
+// The rotating funny suffix for long busy phases lives in chatter.ts; this module composes the line.
+const chatter = createChatter({ onRotate: () => applyStatus() });
 
 // Sets the status line: the base label for the current state, plus the current funny suffix when active.
 // The status belongs to the game AppState is about, so it is blank while you look at a DIFFERENT game
@@ -638,27 +595,8 @@ function statusText(): string {
   // presence shifts the title (see [data-status] in styles.css).
   if (currentBrowse === null || (subject !== undefined && subject !== currentBrowse.id)) return '';
   const base = statusOf(currentState, translator);
-  return chatterSuffix !== null && currentState.kind === chatterKind
-    ? `${base} ${translator(chatterSuffix)}`
-    : base;
-}
-
-// (Re)starts / stops the chatter timer as the state enters/leaves a long busy phase. First suffix appears
-// at the first tick (~1 min); base-only before that. A phase change resets it (each phase gets its minute).
-function syncChatter(state: AppState): void {
-  const kind: ChatterKind | null =
-    state.kind === 'installing' || state.kind === 'configuringProton' ? state.kind : null;
-  if (kind === chatterKind) return; // same phase (or same non-phase) — keep the running timers
-  stopChatterTimers();
-  chatterKind = kind;
-  chatterSuffix = null; // base only for the first minute
-  if (kind !== null) {
-    chatterDelayTimer = window.setTimeout(() => {
-      chatterDelayTimer = 0;
-      rotateChatter(kind); // first funny suffix at 1 minute
-      chatterRotateTimer = window.setInterval(() => rotateChatter(kind), CHATTER_ROTATE_MS); // then every 20s
-    }, CHATTER_DELAY_MS);
-  }
+  const suffix = chatter.suffixFor(currentState);
+  return suffix !== null ? `${base} ${translator(suffix)}` : base;
 }
 
 // ── Render ──────────────────────────────────────────────────────────────────
@@ -755,7 +693,7 @@ function render(state: AppState): void {
   carousel.setBusyGame(busyGame);
   libraryScreen.setBusyGame(busyGame);
 
-  syncChatter(state);
+  chatter.sync(state);
   applyStatus();
 
   // Force-close popups off the ready screen, then re-apply the focus highlight (see controls.refresh).
@@ -771,136 +709,15 @@ function render(state: AppState): void {
   }
 }
 
-// ── Boot reveal ─────────────────────────────────────────────────────────────
-// index.html ships #app[data-boot], which hides the bar and the carousel strip (styles.css):
-// the launcher opens on the background alone. The order is deliberate — wallpaper, then the game's own
-// hero, then the UI:
-//   1. the bundled wallpaper is the fastest image main can hand over, so it paints on the boot backdrop
-//      (#hero-boot — a layer of its own, ABOVE the hero) and keeps the screen for WALLPAPER_HOLD_MS,
-//      however quickly the rest arrives;
-//   2. the card's hero paints on the hero layers UNDERNEATH it as soon as it lands, and the backdrop
-//      then dissolves to reveal a background that is already settled — the alternative, unwinding a
-//      shared zoom, made the picture travel backwards at the exact moment the UI arrived;
-//   3. only then does the UI fade in — so it is never seen assembling itself, and never changes colour
-//      under the user's eyes a beat after appearing.
-// The UI waits for ALL THREE seeds — the state, a settled background, and the carousel list — and never
-// appears before BOOT_MIN_MS, so the reveal reads as an intro rather than as a stutter. The list is a
-// seed in its own right because the strip's container is switched on in ONE frame (its opacity
-// transition belongs to the card morph, see styles.css): arriving after the reveal, the whole carousel
-// simply appeared, as if it had been display:none. The deadline covers a seed that never arrives
-// (unreadable wallpaper, no hero, no library at all): the UI must not stay hidden forever.
-/**
- * How long the bundled wallpaper owns the screen at startup. A hero arriving earlier is painted right
- * away but stays hidden under the backdrop, so the launcher always opens on the same picture for the
- * same beat instead of flashing whatever loaded first. It is also the length of the startup jingle's
- * FIRST half (assets/playhook-startup.mp3): the swell is the backdrop's, the tail plays over the UI
- * arriving — which is why the countdown runs from the moment the sound starts, not from window load.
- */
-const WALLPAPER_HOLD_MS = 2000;
-/** The UI never appears before this — the hold plus the cross-fade it hands over to. */
-const BOOT_MIN_MS = WALLPAPER_HOLD_MS;
-const BOOT_DEADLINE_MS = 5000;
-/** Matches the backdrop's fade in styles.css (#hero-boot.is-gone). */
-const BOOT_FADE_MS = 1000;
-const bootBackdrop = req('hero-boot');
-const bootStart = performance.now();
-let bootStateReady = false;
-let bootHeroReady = false;
-let bootLibraryReady = false;
-let bootRevealed = false;
-let revealTimer = 0;
-// When the startup jingle actually began playing; null until it does (or forever, if it can't).
-let jingleStartedAt: number | null = null;
-
-/**
- * Hands the screen over to the hero underneath: the backdrop fades out and, over the same beat, travels
- * to where that hero layer currently sits. Converging rather than parting matters because the two are
- * often the SAME image — with no game on screen the background is this very wallpaper — and any offset left
- * between them shows up as a double image sliding apart. Then it is taken out of the page entirely: it
- * has nothing left to show, and a full-screen composited layer is not free.
- */
-function dissolveBootBackdrop(): void {
-  const settled = hero.currentLayerTransform();
-  // 'none' means there is no image under it at all (no wallpaper, no hero) — then there is nothing to
-  // converge on, and pulling the backdrop back to the identity transform would be the very lurch this
-  // whole arrangement exists to avoid. It just fades where it is.
-  if (settled !== 'none') bootBackdrop.style.transform = settled;
-  bootBackdrop.classList.add('is-gone');
-  window.setTimeout(() => {
-    bootBackdrop.hidden = true;
-  }, BOOT_FADE_MS);
-}
-
-function revealUi(): void {
-  if (bootRevealed) return;
-  bootRevealed = true;
-  delete app.dataset['boot'];
-  dissolveBootBackdrop();
-  // The strip's cards were held at zero behind the boot screen — let them fan in now, so the carousel's
-  // own entrance is actually seen instead of having happened under the wallpaper.
-  carousel.playIntro();
-}
-
-/**
- * When the boot image's turn is up: BOOT_MIN_MS after the jingle started, or — when there is no jingle
- * (unreadable file, muted output, a refused autoplay) — after the window itself opened. The jingle is
- * fetched over IPC and can start a beat late; letting the hold slide with it is what keeps the swell and
- * the picture in step, rather than the sound arriving over a UI that is already up.
- */
-function bootHoldEndsAt(): number {
-  return (jingleStartedAt ?? bootStart) + BOOT_MIN_MS;
-}
-
-/** Arms (or re-arms) the reveal for the end of the hold. No-op until every seed is in. */
-function scheduleReveal(): void {
-  if (bootRevealed || !bootStateReady || !bootHeroReady || !bootLibraryReady) return;
-  if (revealTimer !== 0) window.clearTimeout(revealTimer);
-  revealTimer = window.setTimeout(revealUi, Math.max(0, bootHoldEndsAt() - performance.now()));
-}
-
-function noteBootSeed(seed: 'state' | 'hero' | 'library'): void {
-  if (seed === 'state') bootStateReady = true;
-  else if (seed === 'hero') bootHeroReady = true;
-  else bootLibraryReady = true;
-  scheduleReveal();
-}
-
-window.setTimeout(revealUi, BOOT_DEADLINE_MS);
-
-// The startup jingle, played once. Requested as early as everything else and started the moment it
-// lands; the boot hold is then re-armed around it (see bootHoldEndsAt). The deadline above is the
-// backstop: a jingle that arrives absurdly late can delay the reveal, but never hold it hostage.
-void window.api.requestStartupSound().then(async (url) => {
-  if (url === null || bootRevealed) return;
-  await audio.playStartup(url);
-  if (bootRevealed) return;
-  jingleStartedAt = performance.now();
-  scheduleReveal();
+// ── Boot reveal (see boot.ts) ───────────────────────────────────────────────
+// The seeds it waits for are reported from the wiring below: the first state, a settled background (the
+// wallpaper and the hero channel), and the carousel list.
+const boot = createBootSequence({
+  requestStartupSound: () => window.api.requestStartupSound(),
+  playStartup: (url) => audio.playStartup(url),
+  settledTransform: () => hero.currentLayerTransform(),
+  onRevealed: () => carousel.playIntro(),
 });
-
-// The startup push on the backdrop (#hero-boot in styles.css): a wider, faster drift than the hero's
-// perpetual pan, and it never unwinds — the layer dissolves mid-travel instead. Two frames of delay
-// because a transition needs its starting value painted first: set in the same frame as the load and
-// there is nothing to move from. The direction is randomized like the layers' own pan, so the launcher
-// doesn't always open drifting the same way.
-requestAnimationFrame(() => {
-  requestAnimationFrame(() => {
-    if (bootRevealed) return;
-    bootBackdrop.style.setProperty('--boot-pan', Math.random() < 0.5 ? '4.5%' : '-4.5%');
-    bootBackdrop.classList.add('is-panning');
-  });
-});
-
-// Whether the background that will STAY is up: the card's hero when it has one, the wallpaper when it
-// does not. The wallpaper alone is not enough while a hero is still expected — that is the cross-fade
-// the reveal is supposed to happen after, not during.
-let heroPayload: 'pending' | 'none' | 'present' = 'pending';
-let wallpaperPainted = false;
-
-function noteBackgroundSettled(): void {
-  if (heroPayload === 'present' || (heroPayload === 'none' && wallpaperPainted))
-    noteBootSeed('hero');
-}
 
 // ── Wiring ──────────────────────────────────────────────────────────────────
 
@@ -928,7 +745,7 @@ void window.api.getLanguage().then(applyLocale);
 window.api.onStateUpdate(render);
 void window.api.requestState().then((state) => {
   render(state);
-  noteBootSeed('state');
+  boot.noteState();
 });
 
 // What is on screen (title / stats / active / GameInfo). Subscribe BEFORE the seed, like every other
@@ -1021,15 +838,12 @@ void Promise.all([
 // that is the background a card whose hero never arrives is left with once the backdrop dissolves.
 void window.api.requestWallpaper().then((url) => {
   hero.setWallpaper(url);
-  if (url === null) bootBackdrop.hidden = true;
-  else bootBackdrop.style.backgroundImage = `url("${url}")`;
+  boot.noteWallpaper(url);
   if (gameOf(currentState) === undefined) {
     hero.applyIdleBackground();
     // The title the empty screen used to carry belongs to render() now (a launcher card names itself).
     render(currentState);
   } else hero.showWallpaperBackdrop();
-  wallpaperPainted = url !== null;
-  noteBackgroundSettled();
 });
 
 // The card's music is delivered on its own channel (not in AppState); load it and keep music in sync.
@@ -1076,15 +890,11 @@ window.api.onWindowFocus((focused) => controls.setGamepadPaused(!focused));
 // locally, so we never re-send this large payload on every state transition. See hero.applyAssets.
 window.api.onHeroUpdate((assets) => {
   hero.applyAssets(assets);
-  if (assets !== null) {
-    heroPayload = 'present';
-    noteBackgroundSettled();
-  }
+  if (assets !== null) boot.noteHero('present');
 });
 void window.api.requestHero().then((assets) => {
   hero.applyAssets(assets);
-  heroPayload = assets === null ? 'none' : 'present';
-  noteBackgroundSettled();
+  boot.noteHero(assets === null ? 'none' : 'present');
 });
 
 // The carousel list (the inserted card's games + the play history, already ordered) arrives on its own
@@ -1119,7 +929,7 @@ void window.api.requestLibrary().then((library) => {
   applyLibrary(library?.games ?? []);
   // Even an empty list counts: it settles `data-screen`, which is what decides whether the strip's
   // container is on at all. Waiting for it is what keeps the carousel from popping in afterwards.
-  noteBootSeed('library');
+  boot.noteLibrary();
 });
 
 // The notification inbox and the plates main asks us to show. The list is the popup's only source of

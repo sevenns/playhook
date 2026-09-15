@@ -1,10 +1,11 @@
-// Russian dictionary. The `Partial` type guarantees every key here is a real MessageKey (a typo fails
-// tsc); any key left absent falls back to the English value (see createTranslator). JSON field names
+// Russian dictionary. Typed as the FULL record: every key here is a real MessageKey (a typo fails tsc)
+// AND every MessageKey has to be here (a forgotten translation fails tsc too, rather than quietly showing
+// English on screen — which is what `Partial` used to allow). JSON field names
 // (executable, pcSavePath, saveOnCard, install.args, watchProcesses, {dir}, game.json, id…) and brand
 // names (Steam) stay as latin identifiers; `{name}` placeholders are preserved verbatim.
 import type { MessageKey } from './en';
 
-export const ru: Partial<Record<MessageKey, string>> = {
+export const ru: Record<MessageKey, string> = {
   // ── Common (shared across windows) ───────────────────────────────────────────
   'common.yes': 'Да',
   'common.no': 'Нет',
@@ -28,10 +29,7 @@ export const ru: Partial<Record<MessageKey, string>> = {
     'В Steam уже есть ярлык, указывающий на Playhook ({names}). Сначала уберите его в Steam, потом повторите — он добавлен вручную, поэтому Playhook не удаляет его сам.',
 
   // ── Native context menus ─────────────────────────────────────────────────────
-  'menu.cut': 'Вырезать',
   'menu.copy': 'Копировать',
-  'menu.paste': 'Вставить',
-  'menu.selectAll': 'Выделить всё',
 
   // ── Window titles ────────────────────────────────────────────────────────────
   'window.settings': 'Настройки',
@@ -47,7 +45,6 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'launcher.menu.close': 'Закрыть',
   'launcher.menu.install': 'Установить',
   'launcher.menu.uninstall': 'Удалить',
-  'launcher.menu.system': 'Система',
   'launcher.menu.shutdown': 'Выключить',
   'launcher.menu.reboot': 'Перезагрузить',
   'launcher.menu.sleep': 'Спящий режим',
@@ -56,9 +53,7 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'launcher.menu.forceClose': 'Закрыть принудительно',
   'launcher.menu.goBack': 'Вернуться назад',
   'launcher.menu.forget': 'Убрать из библиотеки',
-  'launcher.menu.notifications': 'Уведомления',
   'launcher.menu.addGame': 'Добавить игру',
-  'launcher.menu.settings': 'Настройки',
   'launcher.card.library': 'Библиотека',
   'launcher.card.notifications': 'Уведомления',
   'launcher.card.settings': 'Настройки',

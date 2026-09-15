@@ -15,15 +15,17 @@ import type {
   AutoUpdateMode,
   LanguageMode,
   UpdateStatus,
-} from '../shared/types';
+} from '../shared/types.js';
 import type { MessageKey, Translator } from '../shared/i18n/index.js';
 import { type AudioController } from './audio.js';
-import { req } from './dom.js';
+import { pressFlash, req } from './dom.js';
 import { createEntrance } from './entrance.js';
 import { createHoverGuard } from './hover-guard.js';
-import { clampIndex, wrapIndex } from './index-math.js';
-import { createScroller, pxUnit } from './screen-scroller.js';
+import { wrapIndex } from './index-math.js';
+import { createScroller } from './screen-scroller.js';
 import { createSidebar } from './screen-sidebar.js';
+import { createListScreenCore, sectionByKey, titledSections } from './list-screen-core.js';
+import { updateMarquee } from './marquee.js';
 import {
   buildSettingsModel,
   volumePercent,
@@ -35,7 +37,7 @@ import {
   type ToggleId,
 } from './settings-form-model.js';
 import { rowLabelText } from './row-view-core.js';
-import type { TextEntrySurface } from './game-settings-screen.js';
+import type { TextEntrySurface } from './nav-surface.js';
 import {
   optionLabel,
   optionLabelNode,
@@ -47,16 +49,12 @@ import {
   type RenderedRow,
 } from './settings-form-view.js';
 
-/** Gamepad A doesn't trigger :active — the same press flash the rest of the UI uses (controls.ts). */
-const PRESS_MS = 130;
 /** One keyboard/gamepad step of a volume slider, in percent. */
 const VOLUME_STEP = 5;
 /** While dragging, main is written at most this often; the release always writes the final value. */
 const DRAG_PERSIST_MS = 150;
 /** The SFX preview plays at most this often while a volume is being dragged. */
 const PREVIEW_THROTTLE_MS = 220;
-/** Marquee speed for a clipped option label, in DESIGN px per second (the 0.6 picker's own constant). */
-const MARQUEE_SPEED_PX_PER_S = 60;
 
 /** What the screen sends to main. A seam, so app.ts owns the window.api wiring (and tests can fake it). */
 export interface SettingsScreenApi {
@@ -183,12 +181,6 @@ function withSelect(settings: AppSettings, id: SelectId, value: string): AppSett
   }
 }
 
-/** A section that HAS a title — i.e. one the column can name and the pane can show. */
-interface TitledSection {
-  readonly titleKey: MessageKey;
-  readonly rows: readonly SettingsRow[];
-}
-
 function clampPercent(percent: number): number {
   return Math.min(100, Math.max(0, Math.round(percent)));
 }
@@ -215,13 +207,6 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
   let appVersion = '';
 
   let model: SettingsModel | null = null;
-  /** The rows of the SELECTED section only — the pane shows one section at a time (screen-sidebar.ts). */
-  let rendered: readonly RenderedRow[] = [];
-  let focusIndex = 0;
-  /** Which titled section the column has SELECTED, by its translation key. */
-  let sectionKey: MessageKey | null = null;
-  /** …and which one the pane is actually showing. The two differ for as long as a preview is pending. */
-  let paneKey: MessageKey | null = null;
 
   // The expanded dropdown: which row it belongs to, its option buttons and the focused option.
   let openSelect: {
@@ -239,15 +224,6 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
   let lastPersistAt = 0;
   let lastPreviewAt = 0;
 
-  function focusedRow(): RenderedRow | undefined {
-    return rendered[focusIndex];
-  }
-
-  function pressFlash(el: HTMLElement): void {
-    el.classList.add('is-pressed');
-    window.setTimeout(() => el.classList.remove('is-pressed'), PRESS_MS);
-  }
-
   // Both scrolling surfaces of this screen use the shared scroller (screen-scroller.ts) — the settings
   // list and the expanded dropdown — so they behave identically, and so do the other screens.
   const listScroller = createScroller(listEl);
@@ -260,12 +236,12 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
   const sidebar = createSidebar<MessageKey, 'reset' | 'close'>(navEl, {
     audio: deps.audio,
     onSection: (id, entered) => {
-      sectionKey = id;
+      core.selectSection(id);
       if (entered) {
-        enterPane();
+        core.enterPane();
         return;
       }
-      schedulePreview();
+      core.schedulePreview();
     },
     onAction: (id) => {
       if (id === 'reset') {
@@ -279,24 +255,30 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
     },
   });
   const optionsScroller = createScroller(optionsListEl);
+  const hover = createHoverGuard();
 
-  /**
-   * Paints the focus and keeps it on screen, with a margin: the list starts moving BEFORE the focused
-   * row reaches the edge, so there is always a row of context ahead of it and the movement is continuous
-   * rather than a jump per step at the boundary.
-   */
-  function applyRowFocus(instant = false): void {
-    const active = !sidebar.hasFocus();
-    // The pane widens to the left while it holds the focus (see .settings-list in styles.css).
-    listEl.classList.toggle('is-active', active);
-    rendered.forEach((row, index) =>
-      row.el.classList.toggle('is-focused', active && index === focusIndex),
-    );
-    if (!active) return;
-    const target = focusedRow();
-    if (target === undefined) return;
-    listScroller.reveal(target.el, instant);
-  }
+  /** The row focus, the column ⇄ pane steps and the delayed section preview — shared with Customize. */
+  const core = createListScreenCore<SettingsRow, RenderedRow>({
+    audio: deps.audio,
+    listEl,
+    sidebar,
+    scroller: listScroller,
+    hover,
+    isFocusable: () => true,
+    renderPane: () => renderPane(),
+    stepRow: (row, delta) => {
+      if (row.kind === 'select') {
+        cycleSelect(core.focusIndex(), row, delta);
+        return true;
+      }
+      if (row.kind === 'slider') {
+        stepSlider(row, delta);
+        return true;
+      }
+      return false;
+    },
+    onLeavePane: () => closeOptions(),
+  });
 
   /** The loading line, shown until the first snapshot lands (the settings window did the same). */
   function renderLoading(): void {
@@ -305,7 +287,7 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
     loading.className = 'settings-section-title';
     loading.textContent = t()('settings.loading');
     listEl.append(loading);
-    rendered = [];
+    core.setRendered([]);
   }
 
   function currentModel(): SettingsModel | null {
@@ -336,56 +318,11 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
   /** The one-shot entrance (see .setting-row.is-entering in styles.css, and entrance.ts for the shape). */
   const entrance = createEntrance(listEl, '.setting-row', ENTRANCE_MS);
 
-  /**
-   * How long the pane waits before showing the section the column moved onto. A held direction walks
-   * through the column faster than that, so the pane is drawn ONCE, when the movement stops, instead of
-   * being torn down and rebuilt at every step — which is what made the whole screen flicker under a hold.
-   * Short enough that a single press still reads as instant.
-   */
-  const PREVIEW_MS = 120;
-  let previewTimer = 0;
-
-  function schedulePreview(): void {
-    if (previewTimer !== 0) window.clearTimeout(previewTimer);
-    previewTimer = window.setTimeout(() => {
-      previewTimer = 0;
-      renderPane();
-    }, PREVIEW_MS);
-  }
-
-  /**
-   * Brings the pane up to date with the selected section NOW, cancelling a pending preview. Anything that
-   * reads the rendered rows has to call this first — including the paths that never scheduled a preview
-   * at all: a MOUSE click on a section activates it without ever moving onto it, and that used to leave
-   * the focus stepping into the section the pane was showing before.
-   */
-  function flushPreview(): void {
-    if (previewTimer !== 0) {
-      window.clearTimeout(previewTimer);
-      previewTimer = 0;
-    }
-    if (paneKey !== sectionKey) renderPane();
-  }
-
-  /** The titled sections — the ones the column offers. The title-less one is the action stack. */
-  function titledSections(from: SettingsModel): readonly TitledSection[] {
-    return from.sections.flatMap((section) => {
-      const key = section.titleKey;
-      return key === undefined ? [] : [{ titleKey: key, rows: section.rows }];
-    });
-  }
-
-  /** The section the pane is showing, falling back to the first one. */
-  function currentSection(from: SettingsModel): TitledSection | undefined {
-    const titled = titledSections(from);
-    return titled.find((section) => section.titleKey === sectionKey) ?? titled[0];
-  }
-
   /** Rebuilds or patches the screen for the current state, keeping the focus index in range. */
   function render(): void {
     // A pending preview means `rendered` belongs to the section BEFORE the one sectionKey now names —
     // patching it against the new section's values would write them into the old section's rows.
-    flushPreview();
+    core.flushPreview();
     const next = currentModel();
     versionEl.textContent = appVersion;
     if (next === null) {
@@ -396,9 +333,9 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
     const previous = model;
     model = next;
     renderColumn(next);
-    if (previous !== null && sameComposition(previous, next) && rendered.length > 0) {
+    if (previous !== null && sameComposition(previous, next) && core.rendered().length > 0) {
       const rows = visibleRows(next);
-      rendered.forEach((row, index) => {
+      core.rendered().forEach((row, index) => {
         const nextRow = rows[index];
         // A field being dragged owns its value until the pointer is released — see the module note.
         if (nextRow === undefined || (dragging !== null && dragging.rowIndex === index)) return;
@@ -416,7 +353,7 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
    */
   function renderColumn(from: SettingsModel): void {
     sidebar.render([
-      ...titledSections(from).map((section) => ({
+      ...titledSections(from.sections).map((section) => ({
         id: section.titleKey,
         label: t()(section.titleKey),
         kind: 'section' as const,
@@ -434,7 +371,7 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
 
   /** The rows the pane currently shows — one section's worth. */
   function visibleRows(from: SettingsModel): readonly SettingsRow[] {
-    return currentSection(from)?.rows ?? [];
+    return sectionByKey(from.sections, core.sectionKey())?.rows ?? [];
   }
 
   /** Draws the selected section into the pane. The column is rebuilt separately (its entries change far
@@ -442,19 +379,20 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
   function renderPane(): void {
     const from = model;
     if (from === null) return;
-    const section = currentSection(from);
+    const section = sectionByKey(from.sections, core.sectionKey());
     if (section === undefined) return;
-    sectionKey = section.titleKey;
-    paneKey = section.titleKey;
+    core.showSection(section.titleKey);
     // WITHOUT its title: the column beside it already names the section, and printing the name again at
     // the top of the pane says the same thing twice.
-    rendered = renderSettings(listEl, { ...from, sections: [{ rows: section.rows }] }, t()).rows;
-    rendered.forEach((row, at) =>
+    core.setRendered(
+      renderSettings(listEl, { ...from, sections: [{ rows: section.rows }] }, t()).rows,
+    );
+    core.rendered().forEach((row, at) =>
       row.el.style.setProperty('--row-index', String(Math.min(at, ENTRANCE_STEPS))),
     );
     entrance.play();
-    focusIndex = Math.min(Math.max(focusIndex, 0), Math.max(0, rendered.length - 1));
-    applyRowFocus(true);
+    core.seatFocus();
+    core.applyRowFocus(true);
     listScroller.to(0, true);
     // The rows were inserted THIS tick, so scrollHeight is still the pre-layout value — the fades would
     // be computed against a list that "doesn't scroll yet". Re-run them once the layout has settled.
@@ -474,26 +412,8 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
       console.warn(`[settings] no "${key}" section to open on — falling back to the first one`);
       return;
     }
-    sectionKey = key;
+    core.selectSection(key);
     renderPane();
-  }
-
-  /** Hands the focus from the column to the pane, at its first row. */
-  function enterPane(): void {
-    flushPreview(); // whatever the column last moved onto is what the focus is stepping into
-    if (rendered.length === 0) return;
-    sidebar.setFocused(false);
-    focusIndex = 0;
-    armHover();
-    applyRowFocus();
-  }
-
-  /** …and back. The column is the only place the screen can be left from. */
-  function leavePane(): void {
-    closeOptions();
-    sidebar.setFocused(true);
-    armHover();
-    applyRowFocus();
   }
 
   // ── Value changes ──────────────────────────────────────────────────────────
@@ -570,7 +490,7 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
     direction: 'prev' | 'next' | null,
   ): void {
     if (settings === null || value === row.value) return;
-    const valueEl = rendered[rowIndex]?.valueEl;
+    const valueEl = core.rendered()[rowIndex]?.valueEl;
     if (valueEl !== null && valueEl !== undefined && direction !== null) {
       valueEl.classList.add(direction === 'prev' ? 'is-shift-prev' : 'is-shift-next');
       window.setTimeout(() => valueEl.classList.remove('is-shift-prev', 'is-shift-next'), 120);
@@ -612,7 +532,7 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
         : { ...settings, musicVolume: volume };
     settings = next;
     const rowsNext = currentModel();
-    const rendered_ = rendered[indexOfRow(row.id)];
+    const rendered_ = core.rendered()[indexOfRow(row.id)];
     if (rowsNext !== null && rendered_ !== undefined) {
       const nextRow = visibleRows(rowsNext)[indexOfRow(row.id)];
       if (nextRow !== undefined) patchRow(rendered_, nextRow, t());
@@ -633,7 +553,7 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
 
   /** The rendered index of a slider row (both ids are unique across the screen). */
   function indexOfRow(id: string): number {
-    return rendered.findIndex((row) => row.row.kind !== 'update-status' && row.row.id === id);
+    return core.rendered().findIndex((row) => row.row.kind !== 'update-status' && row.row.id === id);
   }
 
   /** Writes the final value of a drag / a key step, bypassing the throttle. */
@@ -676,11 +596,11 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
     );
     const focused = openSelect?.buttons[optionIndex];
     if (focused !== undefined) optionsScroller.reveal(focused, instant);
-    updateOptionMarquee(); // the marquee follows the focus — only the focused label moves
+    updateMarquee(() => openSelect?.buttons ?? []); // only the focused label moves
   }
 
   function chooseOption(rowIndex: number, option: SettingsOption): void {
-    const row = rendered[rowIndex]?.row;
+    const row = core.rendered()[rowIndex]?.row;
     if (row === undefined || row.kind !== 'select') return;
     closeOptions();
     setSelectValue(rowIndex, row, option.value, null);
@@ -707,7 +627,7 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
     // a requestAnimationFrame callback would only get around to on the next frame — and never at all in
     // a window that isn't painting. A label that doesn't fit gets the distance it must travel to show
     // its start, and the marquee (CSS, focused option only) runs off that.
-    updateOptionMarquee();
+    updateMarquee(() => openSelect?.buttons ?? []);
     optionsEl.setAttribute('aria-hidden', 'false');
     const current = row.options.findIndex((option) => option.value === row.value);
     optionIndex = current === -1 ? 0 : current;
@@ -715,57 +635,7 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
     applyOptionFocus();
   }
 
-  /**
-   * Marks every option whose label doesn't fit as clipped (→ a soft fade at the cut) and starts the
-   * marquee on the FOCUSED one (→ both edges fade + it scrolls). Lifted from the 0.6 "Select game"
-   * picker's updateSelectGameMarquee: same measurement, same constant speed, so a long label reads at
-   * one pace whatever its length. An overflowing label is laid out from its start (flex alignment gives
-   * way to overflow), so it slides LEFT to reveal its end — hence the negative shift.
-   */
-  function updateOptionMarquee(): void {
-    if (openSelect === null) return;
-    // A window that hasn't laid out yet (or isn't painting) reports zero widths — measuring against that
-    // would mark every label as fitting. Try again on the next frame instead of guessing.
-    const first = openSelect.buttons[0]?.querySelector<HTMLElement>('.settings-option-clip');
-    if (first !== null && first !== undefined && first.clientWidth === 0) {
-      requestAnimationFrame(() => updateOptionMarquee());
-      return;
-    }
-    for (const button of openSelect.buttons) {
-      const clip = button.querySelector<HTMLElement>('.settings-option-clip');
-      const text = button.querySelector<HTMLElement>('.settings-option-text');
-      if (clip === null || text === null) continue;
-      const overflow = text.scrollWidth - clip.clientWidth;
-      const clipped = overflow > 1;
-      button.classList.toggle('is-clipped', clipped);
-      if (clipped && button.classList.contains('is-focused')) {
-        text.style.setProperty('--marquee-shift', `${-overflow}px`);
-        text.style.setProperty(
-          '--marquee-duration',
-          `${Math.max(2, overflow / (MARQUEE_SPEED_PX_PER_S * pxUnit()))}s`,
-        );
-        button.classList.add('is-scrolling');
-      } else {
-        button.classList.remove('is-scrolling');
-        text.style.removeProperty('--marquee-shift');
-        text.style.removeProperty('--marquee-duration');
-      }
-    }
-  }
-
   // ── The six primitives ─────────────────────────────────────────────────────
-
-  function moveRowFocus(delta: number): void {
-    if (rendered.length === 0) return;
-    const next = clampIndex(focusIndex, delta, rendered.length);
-    if (next === focusIndex) {
-      deps.audio.playLimit(); // the end of the list — a held direction still sounds only once
-      return;
-    }
-    focusIndex = next;
-    deps.audio.play('navigate');
-    applyRowFocus();
-  }
 
   function moveOptionFocus(delta: number): void {
     if (openSelect === null || openSelect.buttons.length === 0) return;
@@ -790,7 +660,7 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
     armHover(); // last input wins — see the mousemove handler
     if (openSelect !== null) moveOptionFocus(-1);
     else if (sidebar.hasFocus()) sidebar.move(-1);
-    else moveRowFocus(-1);
+    else core.moveRowFocus(-1);
   }
 
   function navDown(): void {
@@ -799,36 +669,13 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
     armHover();
     if (openSelect !== null) moveOptionFocus(1);
     else if (sidebar.hasFocus()) sidebar.move(1);
-    else moveRowFocus(1);
+    else core.moveRowFocus(1);
   }
 
   function navHorizontal(delta: number): void {
     armHover();
     if (openSelect !== null) return; // handled by navLeft — the expanded list is otherwise vertical
-    // From the column, RIGHT steps into the pane — the direction the layout already suggests. Left is
-    // NOT its mirror inside the pane: there it belongs to the sliders and the dropdowns, so leaving is B.
-    if (sidebar.hasFocus()) {
-      // Left off the column, and right off anything that is not a section (the actions at its foot),
-      // lead nowhere — the column is the edge of the screen in both directions.
-      if (delta > 0 && sidebar.selected()?.kind === 'section') enterPane();
-      else deps.audio.playLimit();
-      return;
-    }
-    const target = focusedRow();
-    if (target === undefined) return;
-    const row = target.row;
-    // A checkbox is NOT stepped through: left/right belong to the rows that have a range to move along
-    // (the sliders, the dropdowns), and a two-state row answered them by flipping — so a walk across the
-    // form changed a setting on the way past. A checkbox is switched with A, and only with A.
-    if (row.kind === 'select') {
-      cycleSelect(focusIndex, row, delta);
-      return;
-    }
-    if (row.kind === 'slider') {
-      stepSlider(row, delta);
-      return;
-    }
-    deps.audio.playLimit(); // a checkbox (and the static rows) has no range to step along — A flips it
+    core.navHorizontal(delta);
   }
 
   function navLeft(repeat = false): void {
@@ -904,16 +751,16 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
       return;
     }
     if (openSelect !== null) {
-      const row = rendered[openSelect.rowIndex]?.row;
+      const row = core.rendered()[openSelect.rowIndex]?.row;
       if (row === undefined || row.kind !== 'select') return;
       const option = row.options[optionIndex];
       if (option === undefined) return;
       chooseOption(openSelect.rowIndex, option);
       return;
     }
-    const target = focusedRow();
+    const target = core.focusedRow();
     if (target === undefined) return;
-    activateRow(target, focusIndex);
+    activateRow(target, core.focusIndex());
   }
 
   function close(): void {
@@ -923,10 +770,7 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
     closeOptions({ silent: true }); // leaving the screen takes the dropdown with it — one sound, not two
     deps.keyboard.close(); // …and the keyboard, which lives outside every screen (see #osk in index.html)
     entrance.cancel();
-    if (previewTimer !== 0) {
-      window.clearTimeout(previewTimer);
-      previewTimer = 0;
-    }
+    core.cancelPreview();
     delete app.dataset['overlay'];
     screen.setAttribute('aria-hidden', 'true');
     deps.onClosed();
@@ -945,7 +789,7 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
     // Only the step INSIDE the screen keeps `back`; leaving it is a popup closing, and close() says so.
     if (!sidebar.hasFocus()) {
       deps.audio.play('back');
-      leavePane();
+      core.leavePane();
       return;
     }
     close();
@@ -959,13 +803,13 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
     if (!(target instanceof Element)) return;
     const rowEl = target.closest<HTMLElement>('.setting-row');
     if (rowEl === null) return;
-    const index = rendered.findIndex((row) => row.el === rowEl);
+    const index = core.rendered().findIndex((row) => row.el === rowEl);
     if (index === -1) return;
-    const entry = rendered[index];
+    const entry = core.rendered()[index];
     if (entry === undefined) return;
     sidebar.setFocused(false);
-    focusIndex = index;
-    applyRowFocus();
+    core.setFocusIndex(index);
+    core.applyRowFocus();
     const chevronEl = target.closest<HTMLElement>('.setting-chevron');
     if (chevronEl !== null && entry.row.kind === 'select') {
       cycleSelect(index, entry.row, chevronEl.dataset['chevron'] === 'prev' ? -1 : 1);
@@ -990,11 +834,11 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
     if (track === null) return;
     const rowEl = track.closest<HTMLElement>('.setting-row');
     if (rowEl === null) return;
-    const index = rendered.findIndex((row) => row.el === rowEl);
-    const entry = rendered[index];
+    const index = core.rendered().findIndex((row) => row.el === rowEl);
+    const entry = core.rendered()[index];
     if (entry === undefined || entry.row.kind !== 'slider') return;
-    focusIndex = index;
-    applyRowFocus();
+    core.setFocusIndex(index);
+    core.applyRowFocus();
     // No transition while the knob follows the cursor: it would lag behind the pointer.
     track.closest('.setting-slider')?.classList.add('is-dragging');
     dragging = { rowIndex: index, track, pointerId: event.pointerId };
@@ -1004,14 +848,14 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
 
   listEl.addEventListener('pointermove', (event) => {
     if (dragging === null || event.pointerId !== dragging.pointerId) return;
-    const entry = rendered[dragging.rowIndex];
+    const entry = core.rendered()[dragging.rowIndex];
     if (entry === undefined || entry.row.kind !== 'slider') return;
     applyVolume(entry.row, percentAt(dragging.track, event.clientX), true);
   });
 
   function endDrag(): void {
     if (dragging === null) return;
-    const entry = rendered[dragging.rowIndex];
+    const entry = core.rendered()[dragging.rowIndex];
     dragging.track.closest('.setting-slider')?.classList.remove('is-dragging');
     const held = dragging;
     dragging = null;
@@ -1035,7 +879,6 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
    * reason to ignore hover, and it is checked too: a hidden cursor must never fight the focus it is not
    * driving.
    */
-  const hover = createHoverGuard();
   let pointerX = -1;
   let pointerY = -1;
 
@@ -1067,11 +910,11 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
       }
       const rowEl = target.closest<HTMLElement>('.setting-row');
       if (rowEl === null) return;
-      const index = rendered.findIndex((row) => row.el === rowEl);
-      if (index === -1 || (index === focusIndex && !sidebar.hasFocus())) return;
+      const index = core.rendered().findIndex((row) => row.el === rowEl);
+      if (index === -1 || (index === core.focusIndex() && !sidebar.hasFocus())) return;
       sidebar.setFocused(false);
-      focusIndex = index;
-      applyRowFocus();
+      core.setFocusIndex(index);
+      core.applyRowFocus();
     },
     { passive: true },
   );
@@ -1086,15 +929,14 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
       if (open) return;
       open = true;
       if (options?.silent !== true) deps.audio.play('button');
-      focusIndex = 0;
+      core.setFocusIndex(0);
       app.dataset['overlay'] = 'settings';
       screen.setAttribute('aria-hidden', 'false');
       sidebar.reset(); // a re-opened screen starts at the first section, column and pane together
-      sectionKey = null;
-      paneKey = null;
+      core.reset();
       // …and the pane is REBUILT rather than patched: the rows still in it belong to whichever section
       // the last visit ended on, and patching those with section one's values crosses the two.
-      rendered = [];
+      core.setRendered([]);
       sidebar.setFocused(true); // the screen opens on its table of contents, not inside a section
       sidebar.animateIn();
       armHover(); // same as the dropdown: the screen appears under wherever the mouse happens to rest
@@ -1103,7 +945,7 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
       listScroller.to(0, true);
       render();
       if (section !== undefined) selectSection(section);
-      applyRowFocus(true);
+      core.applyRowFocus(true);
     },
     close,
     navUp,
@@ -1133,23 +975,23 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
         return;
       }
       if (model !== null) {
-        const section = currentSection(model);
+        const section = sectionByKey(model.sections, core.sectionKey());
         if (section !== undefined)
           relocalizeSections(listEl, { ...model, sections: [section] }, t());
         // The column IS labels, so it is rebuilt rather than patched — it keeps its selection by id.
         renderColumn(model);
       }
-      for (const row of rendered) relocalizeRow(row, t());
+      for (const row of core.rendered()) relocalizeRow(row, t());
       // The expanded list, if any, carries labels too.
       if (openSelect !== null) {
-        const row = rendered[openSelect.rowIndex]?.row;
+        const row = core.rendered()[openSelect.rowIndex]?.row;
         if (row !== undefined && row.kind === 'select') {
           openSelect.buttons.forEach((button, index) => {
             const option = row.options[index];
             const text = button.querySelector<HTMLElement>('.settings-option-text');
             if (option !== undefined && text !== null) text.textContent = optionLabel(option, t());
           });
-          updateOptionMarquee();
+          updateMarquee(() => openSelect?.buttons ?? []);
         }
       }
     },

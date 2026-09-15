@@ -156,6 +156,9 @@ build does not self-update. **All OS-specific behaviour lives behind the `Platfo
   picker / online picker surfaces), and the translator is the real `createTranslator('en')`. Input is the
   `NavSurface` primitives called directly — no gamepad polling; the hover/veil branches are reachable
   through `hoverOver()` (they all sit behind the `mouse-asleep` class the fixture starts with).
+  **The `mouse-asleep` class on `<html>` is a contract**: `idle.ts` is its only writer, every surface's
+  hover branch reads it with `classList.contains`, and the fixture starts with it on — do not replace it
+  with a per-screen `isAsleep()` dep.
   Four rules that bite:
   - **The screens that fetch their own data open ASYNCHRONOUSLY** — `filePicker.open()` awaits `listDir`,
     `gameSettings.open(id)` awaits the manifest read, so assert after `await flushAsync()`. `SettingsScreen`
@@ -165,9 +168,11 @@ build does not self-update. **All OS-specific behaviour lives behind the `Platfo
   - **Load the fixture per test** (`beforeEach`), and create the controller after it: no controller removes
     its listeners, so a fixture shared across a file collects one live instance per test on the same nodes.
   - **`app.ts` stays out** — it touches `window.api` at module scope.
-  Covered so far: `screen-sidebar`, `osk`, `file-picker`, `settings-screen`, `game-settings-screen`. Still
-  uncovered and next in line for the same base: `controls.ts`, `online-picker.ts`, `library-screen.ts`,
-  `carousel.ts`. Anything needing real layout (`scrollHeight`, canvas) is still a manual check on the Deck.
+  Covered so far: `screen-sidebar`, `osk`, `file-picker`, `settings-screen`, `game-settings-screen`,
+  `controls` (its seams live in `controls-deps.ts`; input is a `keydown` on `window`, since the six
+  primitives are not on its public surface). Still uncovered and next in line for the same base:
+  `online-picker.ts`, `library-screen.ts`, `carousel.ts`. Anything needing real layout (`scrollHeight`,
+  canvas) is still a manual check on the Deck.
   Upgrade note: `environmentMatchGlobs` is deprecated in vitest 3 and GONE in vitest 4 — an upgrade must
   move `test/renderer/**` to `test.projects` (or a per-file `@vitest-environment` docblock) or the suites
   will quietly run in Node again and fail on `document is not defined`.

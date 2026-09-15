@@ -4,8 +4,8 @@
 // WHAT is on the screen — order, visibility, value mapping — is testable in vitest (the view and the
 // controller are DOM code, which the node-environment suite cannot reach). Mirrors the split that
 // configure-form-model.ts established for the manifest form.
-import type { AppSettings, AudioOptions, UpdateStatus } from '../shared/types';
-import type { MessageKey } from '../shared/i18n/index';
+import type { AppSettings, AudioOptions, UpdateStatus } from '../shared/types.js';
+import type { MessageKey } from '../shared/i18n/index.js';
 import type {
   CoreActionRow,
   CoreOption,
@@ -13,7 +13,7 @@ import type {
   CoreSliderRow,
   CoreTextRow,
   CoreToggleRow,
-} from './row-view-core';
+} from './row-view-core.js';
 
 /** Every toggle row, keyed by the AppSettings field it writes. */
 export type ToggleId =

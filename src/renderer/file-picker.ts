@@ -16,14 +16,14 @@ import type {
   DirEntry,
   DirRoot,
   ListDirResult,
-} from '../shared/types';
+} from '../shared/types.js';
 import type { Translator } from '../shared/i18n/index.js';
 import { type AudioController } from './audio.js';
 import { req } from './dom.js';
 import { createHoverGuard } from './hover-guard.js';
 import { clampIndex } from './index-math.js';
 import { createScroller } from './screen-scroller.js';
-import type { FilePickerSurface } from './game-settings-screen.js';
+import type { FilePickerSurface } from './nav-surface.js';
 
 /** What the picker asks main. A seam, so app.ts owns the window.api wiring. */
 export interface FilePickerApi {
