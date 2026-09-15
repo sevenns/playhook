@@ -308,6 +308,125 @@ describe('customize screen navigation', () => {
   });
 });
 
+describe('customize screen horizontal navigation', () => {
+  it('steps into the pane with right from a section, and left off the column is a dead end', async () => {
+    await open();
+
+    screen.navLeft();
+
+    expect(focusedRowLabel()).toBe(null);
+    expect(audio.limits()).toBe(1);
+
+    screen.navRight();
+
+    expect(focusedRowLabel()).toBe('Title');
+    expect(req('game-settings-list').classList.contains('is-active')).toBe(true);
+  });
+
+  it('refuses right off an action entry of the column', async () => {
+    await open();
+    focusColumn('Save');
+
+    screen.navRight();
+
+    expect(focusedRowLabel()).toBe(null);
+    expect(audio.limits()).toBe(1);
+  });
+
+  it('cycles a select sideways without opening its menu', async () => {
+    await open();
+    enterSection('Launch');
+    focusRow('Launch type');
+
+    screen.navRight();
+
+    expect(valueOf('Launch type')).toBe('Install from the card');
+    expect(req('game-settings-options').classList.contains('is-open')).toBe(false);
+    expect(screen.isDirty()).toBe(true);
+
+    screen.navLeft();
+
+    expect(valueOf('Launch type')).toBe('Run from the card');
+    expect(screen.isDirty()).toBe(false);
+  });
+
+  it('steps a number row by its step and stops at its minimum with the dead-end sound', async () => {
+    await open({
+      read: vi.fn(() =>
+        Promise.resolve({
+          ...READ_OK,
+          text: manifest([{ ...HADES, launchTimeoutSec: 5 }, BASTION]),
+        }),
+      ),
+    });
+    enterSection('Advanced');
+    focusRow('Launch timeout');
+
+    screen.navRight();
+    expect(valueOf('Launch timeout')).toBe('10');
+
+    screen.navLeft();
+    screen.navLeft();
+    expect(valueOf('Launch timeout')).toBe('1');
+    expect(audio.limits()).toBe(0);
+
+    screen.navLeft();
+
+    expect(valueOf('Launch timeout')).toBe('1');
+    expect(audio.limits()).toBe(1);
+  });
+
+  it('has no range to step on a text row: left and right are dead ends there, not a leave', async () => {
+    await open();
+    enterSection('Basics');
+    focusRow('Title');
+
+    screen.navLeft();
+    screen.navRight();
+
+    expect(focusedRowLabel()).toBe('Title');
+    expect(audio.limits()).toBe(2);
+    expect(keyboard.requests).toHaveLength(0);
+    expect(screen.isDirty()).toBe(false);
+  });
+
+  it('enters a section on its first FOCUSABLE row, past a leading note', async () => {
+    await open({
+      read: vi.fn(() =>
+        Promise.resolve({
+          ...READ_OK,
+          text: manifest([{ ...HADES, steam: { appid: 1145360 } }, BASTION]),
+        }),
+      ),
+    });
+
+    enterSection('Launch');
+
+    expect(rowLabels()[0]).toBe('');
+    expect(focusedRowLabel()).toBe('Launch type');
+
+    screen.navUp();
+
+    expect(focusedRowLabel()).toBe('Launch type');
+    expect(audio.limits()).toBe(1);
+  });
+
+  it('never lands the row focus on a note that follows the last field', async () => {
+    await open();
+    enterSection('Basics');
+    focusRow('Id');
+    screen.navActivate();
+    keyboard.commit('hades-ii');
+    await flushAsync();
+    expect(rows()).toHaveLength(3);
+
+    screen.navDown();
+
+    expect(focusedRowLabel()).toBe('Id');
+    expect(audio.limits()).toBe(1);
+  });
+});
+
 describe('customize screen text fields', () => {
   it('opens the keyboard on the field value and writes back what it commits', async () => {
     await open();
@@ -557,7 +676,9 @@ describe('customize screen for a game from the history', () => {
 
   it('refuses to open a game the history has nothing stored for', async () => {
     await openFromHistory({
-      readHistory: vi.fn(() => Promise.resolve({ ok: false as const, message: 'No settings stored' })),
+      readHistory: vi.fn(() =>
+        Promise.resolve({ ok: false as const, message: 'No settings stored' }),
+      ),
     });
 
     expect(rowLabels()).toEqual([]);
