@@ -22,43 +22,13 @@ import {
 } from '../shared/types';
 import { type Translator } from '../shared/i18n/index';
 import { AUDIO_EXTENSIONS, IMAGE_EXTENSIONS, readImageDataUrl } from './asset-reader';
-import {
-  acceptsExtensions,
-  checkPickedType,
-  listsAsFile,
-  startDirFor,
-  toCardRelative,
-  type PickRejection,
-} from './config-paths';
+import { listsAsFile, startDirFor, toCardRelative } from './config-paths';
+import { describePickRejection } from './pick-rejection';
 import { listAllMountpoints } from './drive-watcher';
 import { type PcLibraryStore } from './pc-library';
 import { resolveInside } from './manifest';
 import { describe } from './util';
 import { log } from './logger';
-
-/** The extensions a field accepts, with the two asset lists filled in from the AssetReader. */
-function extensionsFor(kind: ConfigPickKind): readonly string[] | null {
-  if (kind === 'image') return IMAGE_EXTENSIONS;
-  if (kind === 'audio') return AUDIO_EXTENSIONS;
-  return acceptsExtensions(kind);
-}
-
-/** The localized wording of a refusal from checkPickedType. */
-function rejectionMessage(rejection: PickRejection, t: Translator): string {
-  switch (rejection) {
-    case 'missing':
-      return t('gameConfig.pickMissing');
-    case 'symlink':
-      return t('gameConfig.pickSymlink');
-    case 'needs-folder':
-      return t('gameConfig.pickNeedsFolder');
-    case 'needs-file':
-      return t('gameConfig.pickNeedsFile');
-    case 'wrong-type':
-      return t('gameConfig.pickWrongType');
-  }
-}
-
 /** The root guard the picker shares with GameConfigService: the closed set of writable roots. */
 export interface WritableRootGuard {
   /** True when `root` is a current removable/non-system mountpoint or the app's own PC-library root. */
@@ -81,27 +51,6 @@ export interface FilePickerDeps {
    * win32 uses the env-based table; linux returns null (the user types the Windows-dictionary string).
    */
   readonly toManifestPcSavePath: (absolute: string) => string | null;
-}
-
-/** Whether one picked path may be used for `kind`; a localized reason when it may not, else null. */
-export async function describePickRejection(
-  absolute: string,
-  kind: ConfigPickKind,
-  t: Translator,
-): Promise<string | null> {
-  let stat: Parameters<typeof checkPickedType>[2] = null;
-  try {
-    const stats = await fs.lstat(absolute);
-    stat = {
-      isSymbolicLink: stats.isSymbolicLink(),
-      isDirectory: stats.isDirectory(),
-      isFile: stats.isFile(),
-    };
-  } catch {
-    stat = null;
-  }
-  const rejection = checkPickedType(absolute, kind, stat, extensionsFor(kind));
-  return rejection === null ? null : rejectionMessage(rejection, t);
 }
 
 export class FilePickerService {
@@ -137,7 +86,7 @@ export class FilePickerService {
    * not be a symlink, and its TYPE must match the field: an `~/.ssh/id_rsa` offered as a hero image is
    * refused before anything reads or copies it.
    */
-  async acceptPickedPaths(
+  private async acceptPickedPaths(
     root: string,
     kind: ConfigPickKind,
     absolutePaths: readonly string[],

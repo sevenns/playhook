@@ -1,6 +1,7 @@
 // The pure parts of uninstaller.win32.ts: the silent flags per installer family, the CommandLineToArgvW
-// parser behind the registry fallback, the in-dir uninstaller search and the backed-off sweep. The
-// registry path itself (advapi32 through koffi) is not driven here.
+// parser behind the registry fallback, the in-dir uninstaller search and the two resolveUninstaller
+// outcomes that never reach the registry. The registry path itself (advapi32 through koffi) is not
+// driven here; the backed-off sweep has its own suite (test/remove-with-retry.test.ts).
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -8,9 +9,10 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   findUninstallerInDir,
   parseCommandLine,
-  removeWithRetry,
+  resolveUninstaller,
   silentUninstallArgs,
 } from '../src/main/uninstaller.win32';
+import type { ResolvedInstallerRun } from '../src/main/manifest-types';
 
 describe('silentUninstallArgs', () => {
   it('knows the nsis and inno silent conventions and has none for custom', () => {
@@ -47,6 +49,15 @@ describe('parseCommandLine', () => {
     expect(parseCommandLine('')).toEqual([]);
     expect(parseCommandLine('   ')).toEqual([]);
   });
+
+  it('keeps an empty quoted token, and a quote inside a token only toggles quoting', () => {
+    expect(parseCommandLine('a "" b')).toEqual(['a', '', 'b']);
+    expect(parseCommandLine('/DIR="C:\\x" /S')).toEqual(['/DIR=C:\\x', '/S']);
+  });
+
+  it('runs an unclosed quote to the end of the line, like CommandLineToArgvW', () => {
+    expect(parseCommandLine('"C:\\x\\a b')).toEqual(['C:\\x\\a b']);
+  });
 });
 
 describe('findUninstallerInDir', () => {
@@ -80,21 +91,41 @@ describe('findUninstallerInDir', () => {
   });
 });
 
-describe('removeWithRetry', () => {
-  it('removes a directory and treats an already-missing one as done', async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'playhook-remove-'));
-    await fs.writeFile(path.join(dir, 'file'), '');
-    await removeWithRetry(dir);
-    await expect(fs.stat(dir)).rejects.toMatchObject({ code: 'ENOENT' });
-    await removeWithRetry(dir);
+describe('resolveUninstaller (the outcomes that never reach the registry)', () => {
+  let dir: string;
+
+  beforeEach(async () => {
+    dir = await fs.mkdtemp(path.join(os.tmpdir(), 'playhook-resolve-'));
   });
 
-  it('gives up after the retries with the last error, and returns silently once aborted', async () => {
-    // A NUL byte makes every attempt throw, so the loop actually retries (300 + 600 ms of back-off).
-    const bad = path.join(os.tmpdir(), 'playhook\0remove');
-    await expect(removeWithRetry(bad)).rejects.toBeInstanceOf(Error);
-    const abort = new AbortController();
-    setTimeout(() => abort.abort(), 50);
-    await expect(removeWithRetry(bad, abort.signal)).resolves.toBeUndefined();
-  }, 5000);
+  afterEach(async () => {
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  function install(type: ResolvedInstallerRun['type'], runAsAdmin = false): ResolvedInstallerRun {
+    return {
+      type,
+      installerPath: path.join(dir, 'setup.exe'),
+      runAsAdmin,
+      args: [],
+      winetricks: [],
+      dir,
+      installerDir: dir,
+    };
+  }
+
+  it('an uninstaller found in the install dir runs from there with the family silent flags', async () => {
+    await fs.writeFile(path.join(dir, 'unins000.exe'), '');
+    expect(await resolveUninstaller(install('inno', true))).toEqual({
+      file: path.join(dir, 'unins000.exe'),
+      args: ['/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART'],
+      cwd: dir,
+      runAsAdmin: true,
+    });
+  });
+
+  it('custom resolves to nothing — no FS convention and no registry fallback — so the sweep alone runs', async () => {
+    await fs.writeFile(path.join(dir, 'unins000.exe'), '');
+    expect(await resolveUninstaller(install('custom'))).toBeNull();
+  });
 });

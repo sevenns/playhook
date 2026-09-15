@@ -45,7 +45,7 @@ import {
 import { MANIFEST_FILENAME, type ResolvedManifest } from './manifest-types';
 import { type Translator } from '../shared/i18n/index';
 import { AUDIO_EXTENSIONS, IMAGE_EXTENSIONS, readImageDataUrl } from './asset-reader';
-import { describePickRejection } from './file-picker-service';
+import { describePickRejection } from './pick-rejection';
 import { type NotificationInput } from './notifications';
 import { hostPlatform } from './config-paths';
 import { describeManifestContent, listDriveCandidates } from './drive-watcher';

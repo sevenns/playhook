@@ -14,7 +14,7 @@ import { delay } from './util';
 /** Whether a thrown value is the fs "no such file" error — the benign absence every store treats as
  * a normal first run, as opposed to a read failure worth a breadcrumb. */
 export function isEnoent(cause: unknown): boolean {
-  return typeof cause === 'object' && cause !== null && (cause as { readonly code?: unknown }).code === 'ENOENT';
+  return errorCode(cause) === 'ENOENT';
 }
 
 /**

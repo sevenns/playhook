@@ -132,8 +132,14 @@ export class BrowsePresenter {
 
   /** Stores the bundled UI sound set and pushes it (every UI sound the app plays). */
   setSfxSet(set: SfxSet | null): void {
-    this.currentSfxSet = set;
+    this.storeSfxSet(set);
     this.pushSfxSet();
+  }
+
+  /** Stores the sound set WITHOUT pushing — for a caller that answers `sfxSet:request` from here while
+   *  it still has work to do before the push (refreshAudio re-reads the card's music in between). */
+  storeSfxSet(set: SfxSet | null): void {
+    this.currentSfxSet = set;
   }
 
   /** Pushes the bundled UI sound set (every UI sound the app plays). */

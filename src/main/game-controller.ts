@@ -153,7 +153,6 @@ export class GameController {
       state: this.deps.state,
       window: this.deps.window,
       stats: this.deps.stats,
-      store: this.deps.store,
       library: this.deps.library,
       settings: this.deps.settings,
       notifications: this.deps.notifications,
@@ -786,7 +785,7 @@ export class GameController {
   /**
    * Whether ANY game is currently running/installing/uninstalling (incl. a Steam op in flight) —
    * main's server-side mirror of the renderer's own isBusy (app.ts), which gates Delete on the Customize
-   * screen and — new here — Move to card (GameConfigService.moveToCard): a move started while the
+   * screen and — new here — Move to card (GameMoveTransaction.moveToCard): a move started while the
    * game is mid-launch would race the launcher's own manifest handling.
    */
   isBusy(): boolean {
@@ -1216,13 +1215,13 @@ export class GameController {
    * restarts the track.
    */
   async refreshAudio(): Promise<void> {
-    const sfxSet = await this.assets.readSfxSet();
+    this.presenter.storeSfxSet(await this.assets.readSfxSet());
     const manifest = this.current();
     this.presenter.setCardMusic(await this.presenter.cardMusicFor(manifest));
     // The carousel plays the BUNDLED set, and what you hear on screen comes from the browse channel —
     // both have to follow the setting too, or a change only lands after you flip to another card (the
     // browse music outranks the card's own, so a stale value would keep playing over it).
-    this.presenter.setSfxSet(sfxSet);
+    this.presenter.pushSfxSet();
     await this.presenter.refreshBrowseMusic();
   }
 

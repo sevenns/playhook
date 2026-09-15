@@ -23,7 +23,7 @@ import { type GameProcess, type Platform, type ProcessMonitor } from './platform
 import { normalizeImageNames } from './image-names';
 import { type SteamInstallWatch } from './steam-install-watch';
 import { type SaveSyncFlow } from './save-sync-flow';
-import { removeWithRetry } from './uninstaller.win32';
+import { removeWithRetry } from './remove-with-retry';
 import { describe, delay } from './util';
 import { log } from './logger';
 
@@ -72,7 +72,6 @@ export type SequenceDeps = Pick<
   | 'state'
   | 'window'
   | 'stats'
-  | 'store'
   | 'library'
   | 'settings'
   | 'notifications'
