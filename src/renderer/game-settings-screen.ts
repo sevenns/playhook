@@ -45,12 +45,14 @@ import type {
 import type { MessageKey, Translator } from '../shared/i18n/index.js';
 import { MAX_HERO_IMAGES } from '../shared/types';
 import { type AudioController } from './audio.js';
-import { req } from './dom.js';
+import { pressFlash, req } from './dom.js';
 import { createEntrance } from './entrance.js';
 import { createHoverGuard } from './hover-guard.js';
-import { clampIndex, wrapIndex } from './index-math.js';
-import { createScroller, pxUnit } from './screen-scroller.js';
+import { wrapIndex } from './index-math.js';
+import { createScroller } from './screen-scroller.js';
 import { createSidebar, type SidebarEntry } from './screen-sidebar.js';
+import { createListScreenCore, sectionByKey, titledSections } from './list-screen-core.js';
+import { updateMarquee } from './marquee.js';
 import type { FilePickerSurface, NavSurface, TextEntrySurface } from './nav-surface.js';
 import type { ApplyOutcome, OnlinePickerSurface } from './online-picker.js';
 import {
@@ -91,12 +93,8 @@ import {
 } from './game-settings-view.js';
 import { optionLabel, optionLabelNode, rowLabelText, type CoreOption } from './row-view-core.js';
 
-/** Gamepad A doesn't trigger :active — the same press flash the rest of the UI uses. */
-const PRESS_MS = 130;
 /** How long the screen waits after a change before asking main to validate the text. */
 const VALIDATE_DEBOUNCE_MS = 400;
-/** Marquee speed for a clipped menu label, in DESIGN px per second (the Settings dropdown's constant). */
-const MARQUEE_SPEED_PX_PER_S = 60;
 /**
  * How often the screen re-asks whether there is a card to move onto. A poll rather than a push because
  * nothing announces a BLANK card: main's watcher only reports media carrying a game.json, and an empty
@@ -404,13 +402,6 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   let status: string | null = null;
 
   let model: GameSettingsModel | null = null;
-  /** The rows of the SELECTED section only — the pane shows one section at a time. */
-  let rendered: readonly RenderedGameRow[] = [];
-  let focusIndex = 0;
-  /** Which titled section the pane is showing, by its translation key. */
-  let sectionKey: MessageKey | null = null;
-  /** …and which one the pane is actually showing. The two differ for as long as a preview is pending. */
-  let paneKey: MessageKey | null = null;
   let validateTimer = 0;
   /** Guards a late answer from a validation whose text is already stale. */
   let validateToken = 0;
@@ -439,14 +430,37 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   const sidebar = createSidebar<MessageKey, GameRowId>(navEl, {
     audio: deps.audio,
     onSection: (id, entered) => {
-      sectionKey = id;
+      core.selectSection(id);
       if (entered) {
-        enterPane();
+        core.enterPane();
         return;
       }
-      schedulePreview();
+      core.schedulePreview();
     },
     onAction: (id) => runAction(id),
+  });
+
+  /** The row focus, the column ⇄ pane steps and the delayed section preview — shared with Settings. */
+  const core = createListScreenCore<GameSettingsRow, RenderedGameRow>({
+    audio: deps.audio,
+    listEl,
+    sidebar,
+    scroller: listScroller,
+    hover,
+    isFocusable,
+    renderPane: () => renderPane(),
+    stepRow: (row, delta) => {
+      if (row.kind === 'select') {
+        cycleSelect(row, delta);
+        return true;
+      }
+      if (row.kind === 'number') {
+        stepNumber(row, delta);
+        return true;
+      }
+      return false;
+    },
+    onLeavePane: () => closeMenus(),
   });
 
   // ── Form state ─────────────────────────────────────────────────────────────
@@ -623,7 +637,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     line.className = 'settings-section-title';
     line.textContent = text;
     listEl.append(line);
-    rendered = [];
+    core.setRendered([]);
   }
 
   /** How long the staggered row entrance runs — the marks come off once it is over. */
@@ -632,54 +646,6 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   const ENTRANCE_STEPS = 8;
   /** The one-shot entrance (see .setting-row.is-entering in styles.css, and entrance.ts for the shape). */
   const entrance = createEntrance(listEl, '.setting-row', ENTRANCE_MS);
-
-  /**
-   * How long the pane waits before showing the section the column moved onto. A held direction walks
-   * through the column faster than that, so the pane is drawn ONCE, when the movement stops, instead of
-   * being torn down and rebuilt — thumbnails and all — at every step.
-   */
-  const PREVIEW_MS = 120;
-  let previewTimer = 0;
-
-  function schedulePreview(): void {
-    if (previewTimer !== 0) window.clearTimeout(previewTimer);
-    previewTimer = window.setTimeout(() => {
-      previewTimer = 0;
-      renderPane();
-    }, PREVIEW_MS);
-  }
-
-  /**
-   * Brings the pane up to date with the selected section NOW, cancelling a pending preview. Anything that
-   * reads the rendered rows has to call this first — including the paths that never scheduled a preview
-   * at all: a MOUSE click on a section activates it without ever moving onto it, and that used to leave
-   * the focus stepping into the section the pane was showing before.
-   */
-  function flushPreview(): void {
-    if (previewTimer !== 0) {
-      window.clearTimeout(previewTimer);
-      previewTimer = 0;
-    }
-    if (paneKey !== sectionKey) renderPane();
-  }
-
-  /** A section that HAS a title — i.e. one the column can name and the pane can show. */
-  interface TitledSection {
-    readonly titleKey: MessageKey;
-    readonly rows: readonly GameSettingsRow[];
-  }
-
-  function titledSections(from: GameSettingsModel): readonly TitledSection[] {
-    return from.sections.flatMap((section) => {
-      const key = section.titleKey;
-      return key === undefined ? [] : [{ titleKey: key, rows: section.rows }];
-    });
-  }
-
-  function currentSection(from: GameSettingsModel): TitledSection | undefined {
-    const titled = titledSections(from);
-    return titled.find((section) => section.titleKey === sectionKey) ?? titled[0];
-  }
 
   /** The rows that are NOT in any titled section: this screen's actions and its notes. */
   function trailingRows(from: GameSettingsModel): readonly GameSettingsRow[] {
@@ -714,18 +680,15 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     // sidebar's own fallback is its first entry, and it reports that to nobody, so the cursor ends up
     // naming one section while the pane still shows another. Put it back on the section actually on
     // screen: `select` only moves the cursor (no onSection), which is the point — the pane must not move.
-    if (
-      selectedBefore !== undefined &&
-      sidebar.selected()?.id !== selectedBefore &&
-      paneKey !== null
-    ) {
-      sidebar.select(paneKey);
+    const shown = core.paneKey();
+    if (selectedBefore !== undefined && sidebar.selected()?.id !== selectedBefore && shown !== null) {
+      sidebar.select(shown);
     }
   }
 
   function columnEntries(from: GameSettingsModel): readonly SidebarEntry<MessageKey, GameRowId>[] {
     return [
-      ...titledSections(from).map((section) => ({
+      ...titledSections(from.sections).map((section) => ({
         id: section.titleKey,
         label: t()(section.titleKey),
         kind: 'section' as const,
@@ -771,7 +734,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   function render(): void {
     // A pending preview means `rendered` belongs to the section BEFORE the one sectionKey now names —
     // patching it against the new section's values would write them into the old section's rows.
-    flushPreview();
+    core.flushPreview();
     const next = currentModel();
     titleEl.textContent = t()(
       mode === 'add' ? 'gameSettings.addTitle' : 'gameSettings.screenTitle',
@@ -795,10 +758,10 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     // screen's, whose entries only change when a section appears.
     renderColumn(next);
     renderStatus(next);
-    if (previous !== null && sameComposition(previous, next) && rendered.length > 0) {
+    if (previous !== null && sameComposition(previous, next) && core.rendered().length > 0) {
       const rows = visibleRows(next);
       const artworkChanged = artworkSignature(previous) !== artworkSignature(next);
-      rendered.forEach((row, index) => {
+      core.rendered().forEach((row, index) => {
         const nextRow = rows[index];
         if (nextRow !== undefined) patchGameRow(row, nextRow, t());
       });
@@ -813,50 +776,29 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
 
   /** The rows the pane currently shows — one section's worth. */
   function visibleRows(from: GameSettingsModel): readonly GameSettingsRow[] {
-    return currentSection(from)?.rows ?? [];
+    return sectionByKey(from.sections, core.sectionKey())?.rows ?? [];
   }
 
   function renderPane(): void {
     const from = model;
     if (from === null) return;
-    const section = currentSection(from);
+    const section = sectionByKey(from.sections, core.sectionKey());
     if (section === undefined) return;
-    sectionKey = section.titleKey;
-    paneKey = section.titleKey;
+    core.showSection(section.titleKey);
     // WITHOUT its title: the column beside it already names the section, and printing the name again at
     // the top of the pane says the same thing twice.
-    rendered = renderGameSettings(
-      listEl,
-      { ...from, sections: [{ rows: section.rows }] },
-      t(),
-    ).rows;
-    rendered.forEach((row, at) =>
+    core.setRendered(
+      renderGameSettings(listEl, { ...from, sections: [{ rows: section.rows }] }, t()).rows,
+    );
+    core.rendered().forEach((row, at) =>
       row.el.style.setProperty('--row-index', String(Math.min(at, ENTRANCE_STEPS))),
     );
     entrance.play();
-    focusIndex = nearestFocusable(focusIndex, 1);
-    applyRowFocus(true);
+    core.seatFocus();
+    core.applyRowFocus(true);
     listScroller.to(0, true);
     requestAnimationFrame(() => listScroller.fades());
     void refreshThumbnails();
-  }
-
-  /** Hands the focus from the column to the pane, at its first focusable row. */
-  function enterPane(): void {
-    flushPreview(); // whatever the column last moved onto is what the focus is stepping into
-    if (rendered.length === 0) return;
-    sidebar.setFocused(false);
-    focusIndex = nearestFocusable(0, 1);
-    hover.arm();
-    applyRowFocus();
-  }
-
-  /** …and back. The column is the only place the screen can be left from. */
-  function leavePane(): void {
-    closeMenus();
-    sidebar.setFocused(true);
-    hover.arm();
-    applyRowFocus();
   }
 
   /**
@@ -874,7 +816,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     title.textContent = t()('gameSettings.slotUnreadable', { message: unreadable ?? '' });
     section.append(title);
     listEl.append(section);
-    rendered = [];
+    core.setRendered([]);
   }
 
   /**
@@ -909,7 +851,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       path: string,
     ): { readonly root: string; readonly relative: string } | null =>
       forHistory ? { root: '', relative: path } : assetPreviewRoot(path);
-    for (const row of rendered) {
+    for (const row of core.rendered()) {
       const source = row.row;
       if (source.kind === 'list' && source.preview !== undefined) {
         const urls = await Promise.all(
@@ -925,60 +867,6 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
         applyThumbnails(row, [url], source.preview, [source.value]);
       }
     }
-  }
-
-  // ── Focus ──────────────────────────────────────────────────────────────────
-
-  /** The nearest focusable row at or after `index`, searching in `direction`; falls back to any. */
-  function nearestFocusable(index: number, direction: number): number {
-    if (rendered.length === 0) return 0;
-    const start = Math.min(Math.max(index, 0), rendered.length - 1);
-    for (let i = start; i >= 0 && i < rendered.length; i += direction) {
-      const row = rendered[i];
-      if (row !== undefined && isFocusable(row.row)) return i;
-    }
-    for (let i = start; i >= 0 && i < rendered.length; i -= direction) {
-      const row = rendered[i];
-      if (row !== undefined && isFocusable(row.row)) return i;
-    }
-    return start;
-  }
-
-  function applyRowFocus(instant = false): void {
-    const active = !sidebar.hasFocus();
-    // The pane widens to the left while it holds the focus (see .settings-list in styles.css).
-    listEl.classList.toggle('is-active', active);
-    rendered.forEach((row, index) =>
-      row.el.classList.toggle('is-focused', active && index === focusIndex),
-    );
-    if (!active) return;
-    const target = rendered[focusIndex];
-    if (target === undefined) return;
-    listScroller.reveal(target.el, instant);
-  }
-
-  /** Steps to the next FOCUSABLE row, walking past the notes and static lines in between. */
-  function moveRowFocus(delta: number): void {
-    if (rendered.length === 0) return;
-    let next = focusIndex;
-    for (;;) {
-      const stepped = clampIndex(next, delta, rendered.length);
-      if (stepped === next) {
-        deps.audio.playLimit(); // at the edge: no move, and the dead end says so
-        return;
-      }
-      next = stepped;
-      const row = rendered[next];
-      if (row !== undefined && isFocusable(row.row)) break;
-    }
-    focusIndex = next;
-    deps.audio.play('navigate');
-    applyRowFocus();
-  }
-
-  function pressFlash(el: HTMLElement): void {
-    el.classList.add('is-pressed');
-    window.setTimeout(() => el.classList.remove('is-pressed'), PRESS_MS);
   }
 
   // ── The column menu (expanded dropdown / row actions / list editing) ────────
@@ -1018,41 +906,8 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     // Measured synchronously: reading clientWidth flushes the layout for the nodes just inserted, which
     // a requestAnimationFrame callback would only reach on the next frame — and never at all in a window
     // that is not painting.
-    updateMenuMarquee();
+    updateMarquee(() => menuButtons);
     applyMenuFocus(true);
-  }
-
-  /**
-   * Marks every entry whose label does not fit as clipped (a soft fade at the cut) and scrolls the
-   * FOCUSED one. The labels here are paths and file names, so most of them will not fit — cutting them
-   * would leave the user choosing between three items that all read the same.
-   */
-  function updateMenuMarquee(): void {
-    const first = menuButtons[0]?.querySelector<HTMLElement>('.settings-option-clip');
-    if (first !== null && first !== undefined && first.clientWidth === 0) {
-      requestAnimationFrame(() => updateMenuMarquee());
-      return;
-    }
-    for (const button of menuButtons) {
-      const clip = button.querySelector<HTMLElement>('.settings-option-clip');
-      const text = button.querySelector<HTMLElement>('.settings-option-text');
-      if (clip === null || text === null) continue;
-      const overflow = text.scrollWidth - clip.clientWidth;
-      const clipped = overflow > 1;
-      button.classList.toggle('is-clipped', clipped);
-      if (clipped && button.classList.contains('is-focused')) {
-        text.style.setProperty('--marquee-shift', `${-overflow}px`);
-        text.style.setProperty(
-          '--marquee-duration',
-          `${Math.max(2, overflow / (MARQUEE_SPEED_PX_PER_S * pxUnit()))}s`,
-        );
-        button.classList.add('is-scrolling');
-      } else {
-        button.classList.remove('is-scrolling');
-        text.style.removeProperty('--marquee-shift');
-        text.style.removeProperty('--marquee-duration');
-      }
-    }
   }
 
   /** Plays an entry's sound exactly once, then runs it. The only way an entry is ever triggered. */
@@ -1069,7 +924,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     );
     const focused = menuButtons[level.focus];
     if (focused !== undefined) menuScroller.reveal(focused, instant);
-    updateMenuMarquee(); // only the focused label moves
+    updateMarquee(() => menuButtons); // only the focused label moves
   }
 
   /**
@@ -1876,7 +1731,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     form = carried;
     rest = {};
     corrupt = {};
-    focusIndex = 0;
+    core.setFocusIndex(0);
     model = null;
     render();
     await runValidate();
@@ -1972,7 +1827,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     // Exactly as in edit mode: the baseline is the file as the screen would write it RIGHT NOW, so
     // `dirty` means "the user typed something" rather than "the screen appended an empty game".
     baseline = currentText();
-    focusIndex = 0;
+    core.setFocusIndex(0);
     model = null;
     render();
     await runValidate();
@@ -2016,7 +1871,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     mixed = ours.mixed;
     loadedId = ours.model.id;
     unreadable = null;
-    focusIndex = 0;
+    core.setFocusIndex(0);
     model = null; // force a full rebuild — the composition is entirely new
     render();
   }
@@ -2355,7 +2210,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     const surface = activeSurface();
     if (surface === 'lightbox') return deps.audio.playLimit(); // nothing to move in a picture
     if (surface === 'menu') return moveMenuFocus(-1);
-    if (surface === 'form') return sidebar.hasFocus() ? sidebar.move(-1) : moveRowFocus(-1);
+    if (surface === 'form') return sidebar.hasFocus() ? sidebar.move(-1) : core.moveRowFocus(-1);
     surface.navUp();
   }
 
@@ -2364,34 +2219,8 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     const surface = activeSurface();
     if (surface === 'lightbox') return deps.audio.playLimit();
     if (surface === 'menu') return moveMenuFocus(1);
-    if (surface === 'form') return sidebar.hasFocus() ? sidebar.move(1) : moveRowFocus(1);
+    if (surface === 'form') return sidebar.hasFocus() ? sidebar.move(1) : core.moveRowFocus(1);
     surface.navDown();
-  }
-
-  function navHorizontal(delta: number): void {
-    // From the column, RIGHT steps into the pane. Left is NOT its mirror there: inside the pane it
-    // belongs to the selects and the number steppers, so leaving is B.
-    if (sidebar.hasFocus()) {
-      // As in Settings: left off the column, and right off a row that is not a section, lead nowhere.
-      if (delta > 0 && sidebar.selected()?.kind === 'section') enterPane();
-      else deps.audio.playLimit();
-      return;
-    }
-    const target = rendered[focusIndex];
-    if (target === undefined) return;
-    const row = target.row;
-    // A checkbox is NOT stepped through: left/right belong to the rows that have a range to move along
-    // (the selects, the steppers), and a two-state row answered them by flipping — so a walk across the
-    // form changed a setting on the way past. A checkbox is switched with A, and only with A.
-    if (row.kind === 'select') {
-      cycleSelect(row, delta);
-      return;
-    }
-    if (row.kind === 'number') {
-      stepNumber(row, delta);
-      return;
-    }
-    deps.audio.playLimit(); // a checkbox, a text or a path row has no range to step along
   }
 
   function navLeft(repeat = false): void {
@@ -2408,7 +2237,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       return;
     }
     if (surface === 'form') {
-      navHorizontal(-1);
+      core.navHorizontal(-1);
       return;
     }
     surface.navLeft(repeat);
@@ -2420,7 +2249,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     if (surface === 'lightbox') return deps.audio.playLimit();
     if (surface === 'menu') return deps.audio.playLimit(); // a menu is vertical — right leads nowhere
     if (surface === 'form') {
-      navHorizontal(1);
+      core.navHorizontal(1);
       return;
     }
     surface.navRight();
@@ -2531,7 +2360,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
         sidebar.activate();
         return;
       }
-      const target = rendered[focusIndex];
+      const target = core.focusedRow();
       if (target !== undefined) activateRow(target);
       return;
     }
@@ -2558,7 +2387,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     // screen keeps `back`; leaving it is a popup closing, and close() says so.
     if (!sidebar.hasFocus()) {
       deps.audio.play('back');
-      leavePane();
+      core.leavePane();
       return;
     }
     leaveScreen();
@@ -2601,10 +2430,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     // The online surface holds an audition — real sound, which would outlive the screen otherwise.
     deps.onlinePicker.close();
     entrance.cancel();
-    if (previewTimer !== 0) {
-      window.clearTimeout(previewTimer);
-      previewTimer = 0;
-    }
+    core.cancelPreview();
     if (validateTimer !== 0) {
       window.clearTimeout(validateTimer);
       validateTimer = 0;
@@ -2629,12 +2455,12 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     }
     const rowEl = target.closest<HTMLElement>('.setting-row');
     if (rowEl === null) return;
-    const index = rendered.findIndex((row) => row.el === rowEl);
-    const entry = rendered[index];
+    const index = core.rendered().findIndex((row) => row.el === rowEl);
+    const entry = core.rendered()[index];
     if (entry === undefined || !isFocusable(entry.row)) return;
     sidebar.setFocused(false);
-    focusIndex = index;
-    applyRowFocus();
+    core.setFocusIndex(index);
+    core.applyRowFocus();
     const chevronEl = target.closest<HTMLElement>('.setting-chevron');
     if (chevronEl !== null) {
       const delta = chevronEl.dataset['chevron'] === 'prev' ? -1 : 1;
@@ -2675,13 +2501,13 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       }
       const rowEl = target.closest<HTMLElement>('.setting-row');
       if (rowEl === null) return;
-      const index = rendered.findIndex((row) => row.el === rowEl);
-      const entry = rendered[index];
+      const index = core.rendered().findIndex((row) => row.el === rowEl);
+      const entry = core.rendered()[index];
       if (index === -1 || entry === undefined || !isFocusable(entry.row)) return;
-      if (index === focusIndex && !sidebar.hasFocus()) return;
+      if (index === core.focusIndex() && !sidebar.hasFocus()) return;
       sidebar.setFocused(false);
-      focusIndex = index;
-      applyRowFocus();
+      core.setFocusIndex(index);
+      core.applyRowFocus();
     },
     { passive: true },
   );
@@ -2698,8 +2524,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     sidebar.reset(); // a re-opened screen starts at the first section, column and pane together
     sidebar.setFocused(true); // the screen opens on its table of contents, not inside a section
     sidebar.animateIn();
-    sectionKey = null;
-    paneKey = null;
+    core.reset();
     // NOT '': an empty string is a real signature (a column with no entries, a strip with no notes),
     // and starting a visit on it made the guards claim the screen already showed that. A game left with
     // "fix the errors first" under it then kept that line for every game opened after — the strip was
@@ -2709,9 +2534,9 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     hover.arm();
     thumbnails.clear();
     listScroller.to(0, true);
-    focusIndex = 0;
+    core.setFocusIndex(0);
     model = null;
-    rendered = [];
+    core.setRendered([]);
     slots = [];
     slotIndex = -1;
     pendingMove = null;
@@ -2877,11 +2702,11 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     },
     relocalize: () => {
       if (model !== null) {
-        const section = currentSection(model);
+        const section = sectionByKey(model.sections, core.sectionKey());
         if (section !== undefined) {
           relocalizeGameSections(listEl, { ...model, sections: [section] }, t());
         }
-        for (const row of rendered) relocalizeGameRow(row, t());
+        for (const row of core.rendered()) relocalizeGameRow(row, t());
         // The screen's own name is mode-aware and JS-set, so it is re-read here too — localizeDocument
         // does not touch it (no data-i18n) and would overwrite the mode if it did.
         titleEl.textContent = t()(

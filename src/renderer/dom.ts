@@ -22,3 +22,12 @@ export function reqCanvas(id: string): HTMLCanvasElement {
   if (!(el instanceof HTMLCanvasElement)) throw new Error(`#${id} is not a canvas`);
   return el;
 }
+
+/** Gamepad A doesn't trigger :active — how long the press class stays on to play the scale-down. */
+export const PRESS_MS = 130;
+
+/** The same press flash the rest of the UI uses on a button that was pressed by the pad or the keyboard. */
+export function pressFlash(el: HTMLElement): void {
+  el.classList.add('is-pressed');
+  window.setTimeout(() => el.classList.remove('is-pressed'), PRESS_MS);
+}

@@ -17,10 +17,11 @@ import { createScroller } from './screen-scroller.js';
 import { HOLD_DELAY_MS, NAV_REPEAT_MS, createAutoRepeatChain } from './auto-repeat.js';
 import { createGamepadController } from './gamepad.js';
 import { createWakeMeter } from './mouse-sleep.js';
+import { createHoverGuard } from './hover-guard.js';
 import type { NavSurface } from './nav-surface.js';
 import type { SystemCardId } from './system-cards.js';
 import { gameOf, phaseOf, steamBusy } from './state-view.js';
-import { req, reqQuery } from './dom.js';
+import { pressFlash, req, reqQuery } from './dom.js';
 import type { GameCollision } from '../shared/types.js';
 import type { ControlsDeps } from './controls-deps.js';
 
@@ -53,10 +54,6 @@ type ConfirmMode =
   // The same game turned up on the card AND on this PC. Both answers are answers — "No" means "leave
   // them as they are", not "never mind" — and both are remembered (see GameCollision).
   | 'game-collision';
-// Gamepad A doesn't trigger :active, so flash a press class to play the scale-down animation.
-const PRESS_MS = 130;
-/** How far the pointer must travel before hover may take the focus again (see armHover). */
-const HOVER_WAKE_PX = 6;
 /** How long the popup takes to fade out (.popup transition in styles.css) — the window its contents
  *  must stay frozen for, so the user never watches the menu rewrite itself on the way out. */
 const POPUP_FADE_MS = 350;
@@ -143,6 +140,11 @@ export function createControls(deps: ControlsDeps): Controls {
   // The shared warmth of an auto-move, so a run handed from one direction to the next — or from the pad
   // to the keyboard — skips the initial delay instead of stalling (auto-repeat.ts).
   const autoRepeat = createAutoRepeatChain();
+  // Where the pointer was when hover was last disarmed — by a surface opening under it, or by a
+  // keyboard/gamepad step. Until the mouse travels far enough from there, hover does not move the focus:
+  // an element arriving under a still cursor is the ELEMENT moving, not the mouse, and Chromium reports
+  // both the same way (hover-guard.ts).
+  const hover = createHoverGuard();
   const state = (): AppState => deps.getState();
   const t = (): Translator => deps.getTranslator();
 
@@ -264,7 +266,7 @@ export function createControls(deps: ControlsDeps): Controls {
   function setView(view: Exclude<PopupView, 'none'>): void {
     // Every view change lays a new stack under the pointer — hover must not claim the focus the view
     // itself just set (see the mousemove handler).
-    armHover();
+    hover.arm();
     // Only the FIRST view is an opening; switching views keeps the popup on screen and keeps the
     // button/back sounds the callers already play.
     if (popupView === 'none') audio.play('popup-open');
@@ -1011,23 +1013,6 @@ export function createControls(deps: ControlsDeps): Controls {
     }, IDLE_MS);
   }
 
-  // Where the pointer was when hover was last disarmed — by a surface opening under it, or by a
-  // keyboard/gamepad step. Until the mouse travels HOVER_WAKE_PX from there, hover does not move the
-  // focus: an element arriving under a still cursor is the ELEMENT moving, not the mouse, and Chromium
-  // reports both the same way. Cleared by the first genuine move.
-  let hoverArmedAt: { readonly x: number; readonly y: number } | null = null;
-
-  function armHover(): void {
-    hoverArmedAt = { x: lastMouseX, y: lastMouseY };
-  }
-
-  function hoverAwake(x: number, y: number): boolean {
-    if (hoverArmedAt === null) return true;
-    if (Math.hypot(x - hoverArmedAt.x, y - hoverArmedAt.y) < HOVER_WAKE_PX) return false;
-    hoverArmedAt = null;
-    return true;
-  }
-
   // Gamepad/keyboard input = activity: the mouse goes to sleep at once (the user switched to the pad, so
   // the pointer parked on screen stops counting as input at all), hover is disarmed, the idle countdown
   // restarts.
@@ -1040,7 +1025,7 @@ export function createControls(deps: ControlsDeps): Controls {
     // Every keyboard/gamepad step re-arms the hover guard: last input wins. Without this, one real mouse
     // move wakes hover for good, and from then on any element that slides under the still cursor — a
     // scrolling list, a popup opening — can take the focus back off the key that just moved it.
-    armHover();
+    hover.arm();
     armIdleTimer();
   }
 
@@ -1184,11 +1169,6 @@ export function createControls(deps: ControlsDeps): Controls {
     stackIndex = next;
     audio.play('navigate');
     applyStackFocus();
-  }
-
-  function pressFlash(btn: HTMLElement): void {
-    btn.classList.add('is-pressed');
-    window.setTimeout(() => btn.classList.remove('is-pressed'), PRESS_MS);
   }
 
   // ── User-initiated actions ───────────────────────────────────────────────────
@@ -1482,12 +1462,13 @@ export function createControls(deps: ControlsDeps): Controls {
     if (event.clientX === lastMouseX && event.clientY === lastMouseY) return; // synthetic — ignore
     lastMouseX = event.clientX;
     lastMouseY = event.clientY;
+    hover.track(event.clientX, event.clientY);
     // Asleep, a move is not input — it only feeds the meter. Nothing hovers, nothing focuses and the
     // cursor stays hidden until the travel adds up to a shove. The position above is recorded either way:
     // whatever wakes the mouse next has to know where the pointer already is.
     if (mouseAsleep && !wakeMeter.moved(event.clientX, event.clientY, performance.now())) return;
     noteMouseActivity();
-    if (!hoverAwake(event.clientX, event.clientY)) return;
+    if (!hover.awake(event.clientX, event.clientY)) return;
     const element = event.target instanceof Element ? event.target : null;
     // The popup owns the pointer while it is open: its stack is the only thing hover may move.
     if (stackActive()) {
