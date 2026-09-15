@@ -764,6 +764,105 @@ export function buildGameSettingsModel(
   };
 }
 
+/** The title's slug, in the same shape configure-form-model's slugifyId produces. */
+export function slugifyTitle(title: string): string {
+  return title
+    .normalize('NFKD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+/**
+ * Writes one text / number / path field by row id. The same object comes back when the id names no such
+ * field, so a caller can tell a write from a no-op by identity.
+ */
+export function withField(
+  form: ManifestFormModel,
+  id: GameRowId,
+  value: string,
+): ManifestFormModel {
+  switch (id) {
+    case 'title': {
+      // The id follows the title until the user takes the id over, exactly as the old form did: a slug
+      // is a good first guess and a terrible override.
+      const slug = slugifyTitle(value);
+      const followed = form.id === '' || form.id === slugifyTitle(form.title);
+      return { ...form, title: value, ...(followed ? { id: slug } : {}) };
+    }
+    case 'id':
+      // Lower case wherever it comes from, so the field agrees with the slug a title proposes — the
+      // keyboard already refuses to type anything else (osk.ts).
+      return { ...form, id: value.toLowerCase() };
+    case 'executable':
+      return { ...form, executable: value };
+    case 'pc.executable':
+      return { ...form, pc: { ...form.pc, executable: value } };
+    case 'install.installer':
+      return { ...form, install: { ...form.install, installer: value } };
+    case 'copyInstall.installer':
+      return { ...form, copyInstall: { ...form.copyInstall, installer: value } };
+    case 'steam.appid':
+      return { ...form, steam: { ...form.steam, appid: value } };
+    case 'gridImage':
+      return { ...form, gridImage: value };
+    case 'saveOnCard':
+      return { ...form, saveOnCard: value };
+    case 'pcSavePath':
+      return { ...form, pcSavePath: value };
+    case 'backgroundMusic':
+      return { ...form, backgroundMusic: value };
+    case 'launchTimeoutSec':
+      return { ...form, launchTimeoutSec: value };
+    case 'killTimeoutSec':
+      return { ...form, killTimeoutSec: value };
+    case 'umuGameId':
+      return { ...form, umuGameId: value };
+    default:
+      return form;
+  }
+}
+
+/** Writes one list field by row id; the same object comes back for an id that is not a list. */
+export function withList(
+  form: ManifestFormModel,
+  id: GameRowId,
+  items: readonly string[],
+): ManifestFormModel {
+  switch (id) {
+    case 'args':
+      return { ...form, args: items };
+    case 'watchProcesses':
+      return { ...form, watchProcesses: items };
+    case 'heroImage':
+      return { ...form, heroImage: items };
+    case 'winetricks':
+      return { ...form, winetricks: items };
+    case 'install.args':
+      return { ...form, install: { ...form.install, args: items } };
+    case 'install.winetricks':
+      return { ...form, install: { ...form.install, winetricks: items } };
+    default:
+      return form;
+  }
+}
+
+/** Flips one checkbox by row id; the same object comes back for a toggle that may not flip right now. */
+export function withToggle(form: ManifestFormModel, id: GameRowId): ManifestFormModel {
+  switch (id) {
+    case 'runAsAdmin':
+      return { ...form, runAsAdmin: !form.runAsAdmin };
+    case 'copyToPc':
+      return { ...form, copyToPc: !form.copyToPc };
+    case 'install.runAsAdmin':
+      if (form.install.type === 'custom') return form; // forced off — the manifest forbids the pair
+      return { ...form, install: { ...form.install, runAsAdmin: !form.install.runAsAdmin } };
+    default:
+      return form;
+  }
+}
+
 /** Applies a new launch mode to the form state. The hidden modes' fields are kept — see the model note. */
 export function withLaunchMode(form: ManifestFormModel, mode: LaunchMode): ManifestFormModel {
   return { ...form, launchMode: mode };

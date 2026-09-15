@@ -76,8 +76,11 @@ import {
   draftModeFor,
   hasSourceBoundValues,
   pickKindFor,
+  withField,
   withInstallType,
   withLaunchMode,
+  withList,
+  withToggle,
   type GameRowId,
   type GameSettingsModel,
   type GameSettingsRow,
@@ -820,101 +823,18 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
 
   /** Writes one field of the form model by row id. Everything a row can change goes through here. */
   function setField(id: GameRowId, value: string): void {
-    switch (id) {
-      case 'title': {
-        // The id follows the title until the user takes the id over, exactly as the old form did: a slug
-        // is a good first guess and a terrible override.
-        const slug = slugifyTitle(value);
-        const followed = form.id === '' || form.id === slugifyTitle(form.title);
-        updateForm({ ...form, title: value, ...(followed ? { id: slug } : {}) });
-        return;
-      }
-      case 'id':
-        // Lower case wherever it comes from, so the field agrees with the slug a title proposes — the
-        // keyboard already refuses to type anything else (osk.ts).
-        updateForm({ ...form, id: value.toLowerCase() });
-        return;
-      case 'executable':
-        updateForm({ ...form, executable: value });
-        return;
-      case 'pc.executable':
-        updateForm({ ...form, pc: { ...form.pc, executable: value } });
-        return;
-      case 'install.installer':
-        updateForm({ ...form, install: { ...form.install, installer: value } });
-        return;
-      case 'copyInstall.installer':
-        updateForm({ ...form, copyInstall: { ...form.copyInstall, installer: value } });
-        return;
-      case 'steam.appid':
-        updateForm({ ...form, steam: { ...form.steam, appid: value } });
-        return;
-      case 'gridImage':
-        updateForm({ ...form, gridImage: value });
-        return;
-      case 'saveOnCard':
-        updateForm({ ...form, saveOnCard: value });
-        return;
-      case 'pcSavePath':
-        updateForm({ ...form, pcSavePath: value });
-        return;
-      case 'backgroundMusic':
-        updateForm({ ...form, backgroundMusic: value });
-        return;
-      case 'launchTimeoutSec':
-        updateForm({ ...form, launchTimeoutSec: value });
-        return;
-      case 'killTimeoutSec':
-        updateForm({ ...form, killTimeoutSec: value });
-        return;
-      case 'umuGameId':
-        updateForm({ ...form, umuGameId: value });
-        return;
-      default:
-        return;
-    }
+    const next = withField(form, id, value);
+    if (next !== form) updateForm(next);
   }
 
   function setList(id: GameRowId, items: readonly string[]): void {
-    switch (id) {
-      case 'args':
-        updateForm({ ...form, args: items });
-        return;
-      case 'watchProcesses':
-        updateForm({ ...form, watchProcesses: items });
-        return;
-      case 'heroImage':
-        updateForm({ ...form, heroImage: items });
-        return;
-      case 'winetricks':
-        updateForm({ ...form, winetricks: items });
-        return;
-      case 'install.args':
-        updateForm({ ...form, install: { ...form.install, args: items } });
-        return;
-      case 'install.winetricks':
-        updateForm({ ...form, install: { ...form.install, winetricks: items } });
-        return;
-      default:
-        return;
-    }
+    const next = withList(form, id, items);
+    if (next !== form) updateForm(next);
   }
 
   function toggleField(id: GameRowId): void {
-    switch (id) {
-      case 'runAsAdmin':
-        updateForm({ ...form, runAsAdmin: !form.runAsAdmin });
-        return;
-      case 'copyToPc':
-        updateForm({ ...form, copyToPc: !form.copyToPc });
-        return;
-      case 'install.runAsAdmin':
-        if (form.install.type === 'custom') return; // forced off — the manifest forbids the pair
-        updateForm({ ...form, install: { ...form.install, runAsAdmin: !form.install.runAsAdmin } });
-        return;
-      default:
-        return;
-    }
+    const next = withToggle(form, id);
+    if (next !== form) updateForm(next);
   }
 
   function setSelect(id: GameRowId, value: string): void {
@@ -960,16 +880,6 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
       return;
     }
     void adoptRoot(root);
-  }
-
-  /** The title's slug, in the same shape configure-form-model's slugifyId produces. */
-  function slugifyTitle(title: string): string {
-    return title
-      .normalize('NFKD')
-      .replace(/[̀-ͯ]/g, '')
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-+|-+$/g, '');
   }
 
   // ── Row activation ─────────────────────────────────────────────────────────
