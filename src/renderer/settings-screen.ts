@@ -15,7 +15,7 @@ import type {
   AutoUpdateMode,
   LanguageMode,
   UpdateStatus,
-} from '../shared/types';
+} from '../shared/types.js';
 import type { MessageKey, Translator } from '../shared/i18n/index.js';
 import { type AudioController } from './audio.js';
 import { pressFlash, req } from './dom.js';

@@ -5,7 +5,7 @@
 // (chatter.ts) and the pure state views (state-view.ts). render() here wires them together and owns only
 // the bits that don't belong to any one subsystem (phase attribute, info panel, title slide, music gating).
 // IMPORTANT: title/data come from the card (untrusted) — rendered via textContent, never innerHTML.
-import type { AppNotification, AppState, BrowseInfo, LibraryEntry, Stats } from '../shared/types';
+import type { AppNotification, AppState, BrowseInfo, LibraryEntry, Stats } from '../shared/types.js';
 import { createTranslator, type Locale, type Translator } from '../shared/i18n/index.js';
 import { localizeDocument } from './i18n-dom.js';
 import { AUTO_CHAIN_MS, NAV_REPEAT_MS } from './auto-repeat.js';

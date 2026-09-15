@@ -9,18 +9,18 @@
 //
 // Everything but the Updates row is drawn by row-view-core, which the Customize screen shares: this
 // module is now the Settings-specific half (the status line, its progress bar and its primary button).
-import type { SettingsModel, SettingsRow } from './settings-form-model';
-import type { Translator } from '../shared/i18n/index';
-import type { UpdateStatus } from '../shared/types';
+import type { SettingsModel, SettingsRow } from './settings-form-model.js';
+import type { Translator } from '../shared/i18n/index.js';
+import type { UpdateStatus } from '../shared/types.js';
 import {
   buildCoreRow,
   div,
   patchCoreRow,
   relocalizeCoreRow,
   type CoreRendered,
-} from './row-view-core';
+} from './row-view-core.js';
 
-export { optionLabel, optionLabelNode, applySliderPercent } from './row-view-core';
+export { optionLabel, optionLabelNode, applySliderPercent } from './row-view-core.js';
 
 /** One rendered row: the model row it came from plus the nodes the controller updates. */
 export interface RenderedRow {

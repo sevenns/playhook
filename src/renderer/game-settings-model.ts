@@ -12,15 +12,15 @@ import {
   type ConfigPickKind,
   type HostPlatform,
   type ManifestSource,
-} from '../shared/types';
-import type { MessageKey } from '../shared/i18n/index';
+} from '../shared/types.js';
+import type { MessageKey } from '../shared/i18n/index.js';
 import {
   movedGridAssetPath,
   movedHeroAssetPath,
   movedMusicAssetPath,
-} from '../shared/asset-move-names';
-import { emptyFormModel } from './configure-form-model';
-import type { InstallType, LaunchMode, ManifestFormModel } from './configure-form-model';
+} from '../shared/asset-move-names.js';
+import { emptyFormModel } from './configure-form-model.js';
+import type { InstallType, LaunchMode, ManifestFormModel } from './configure-form-model.js';
 import type {
   RowLabel,
   CoreActionRow,
@@ -33,7 +33,7 @@ import type {
   CoreStaticRow,
   CoreTextRow,
   CoreToggleRow,
-} from './row-view-core';
+} from './row-view-core.js';
 
 /**
  * Every row of this screen, named by the manifest path it edits (or by what it is, for the ones that edit

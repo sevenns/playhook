@@ -5,7 +5,7 @@
 // hover and clicks, the wheel, right-click-as-back. The idle countdown and the mouse's sleep live in
 // idle.ts. It reaches back into app.ts only through the narrow `deps` seam (controls-deps.ts); app.ts
 // drives it via applyGameButtons/clearGameButtons/refresh/showError and starts it with start().
-import type { AppState, GameInfo } from '../shared/types';
+import type { AppState, GameInfo } from '../shared/types.js';
 import type { Translator } from '../shared/i18n/index.js';
 import { NAV_REPEAT_MS, createAutoRepeatChain } from './auto-repeat.js';
 import { createGamepadController } from './gamepad.js';

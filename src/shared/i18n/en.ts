@@ -37,10 +37,7 @@ export const en = {
     'Steam already has a shortcut pointing at Playhook ({names}). Remove it in Steam first, then try again — it was added by hand, so Playhook will not delete it for you.',
 
   // ── Native context menus (window.ts) ───────────────────────────────────────
-  'menu.cut': 'Cut',
   'menu.copy': 'Copy',
-  'menu.paste': 'Paste',
-  'menu.selectAll': 'Select All',
 
   // ── Window titles ──────────────────────────────────────────────────────────
   'window.settings': 'Settings',
@@ -60,9 +57,6 @@ export const en = {
   'launcher.menu.close': 'Close',
   'launcher.menu.install': 'Install',
   'launcher.menu.uninstall': 'Uninstall',
-  // Details entry that opens the Power submenu — named "System" so it doesn't duplicate the submenu's
-  // own "Shutdown" action.
-  'launcher.menu.system': 'System',
   'launcher.menu.shutdown': 'Shutdown',
   'launcher.menu.reboot': 'Reboot',
   'launcher.menu.sleep': 'Sleep',
@@ -72,11 +66,9 @@ export const en = {
   'launcher.menu.forceClose': 'Force close',
   'launcher.menu.goBack': 'Go back',
   'launcher.menu.forget': 'Remove from library',
-  'launcher.menu.notifications': 'Notifications',
   // Details menu entry that opens the Customize screen with no game behind it — the one way to CREATE a
   // game from inside the launcher.
   'launcher.menu.addGame': 'Add game',
-  'launcher.menu.settings': 'Settings',
   // The launcher's own cards at the tail of the carousel (system-cards.ts). The first two name themselves
   // in the bar's title line while they are selected, exactly as a game does; the third shows no caption at
   // all in the mockup, so its key is only ever read as the card's aria-label.

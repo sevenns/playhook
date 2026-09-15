@@ -6,8 +6,8 @@
 //
 // Unlike the Settings view there is no screen-specific row kind here: every kind this screen draws lives
 // in row-view-core, which is why this module is as short as it is.
-import type { GameSettingsModel, GameSettingsRow } from './game-settings-model';
-import type { Translator } from '../shared/i18n/index';
+import type { GameSettingsModel, GameSettingsRow } from './game-settings-model.js';
+import type { Translator } from '../shared/i18n/index.js';
 import {
   buildCoreRow,
   div,
@@ -15,7 +15,7 @@ import {
   relocalizeCoreRow,
   rowLabelText,
   type PreviewAspect,
-} from './row-view-core';
+} from './row-view-core.js';
 
 /** One rendered row: the model row it came from plus the nodes the controller updates. */
 export interface RenderedGameRow {

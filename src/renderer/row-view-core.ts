@@ -8,7 +8,7 @@
 //    is still assignable to the `CoreToggleRow` these functions take, because `id` is readonly;
 //  • a label is `{ key }` OR `{ text }`. Settings labels are all translation keys; Customize labels are
 //    in the main dynamic (a path, a value, an item number), which no MessageKey can express.
-import type { MessageKey, Translator } from '../shared/i18n/index';
+import type { MessageKey, Translator } from '../shared/i18n/index.js';
 
 /** A row label: our own words (translated) or a value that is what it is (a path, a title, a number). */
 export type RowLabel = { readonly key: MessageKey } | { readonly text: string };

@@ -40,9 +40,9 @@ import type {
   MetadataApplyResult,
   MetadataApplySlot,
   MetadataResult,
-} from '../shared/types';
+} from '../shared/types.js';
 import type { MessageKey, Translator } from '../shared/i18n/index.js';
-import { MAX_HERO_IMAGES } from '../shared/types';
+import { MAX_HERO_IMAGES } from '../shared/types.js';
 import { type AudioController } from './audio.js';
 import { pressFlash, req } from './dom.js';
 import { createEntrance } from './entrance.js';
