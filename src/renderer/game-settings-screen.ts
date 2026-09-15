@@ -38,11 +38,9 @@ import type {
   ManifestSource,
   MetadataApplyRequest,
   MetadataApplyResult,
-  MetadataApplySlot,
   MetadataResult,
 } from '../shared/types.js';
 import type { MessageKey, Translator } from '../shared/i18n/index.js';
-import { MAX_HERO_IMAGES } from '../shared/types.js';
 import { type AudioController } from './audio.js';
 import { pressFlash, req } from './dom.js';
 import { createEntrance } from './entrance.js';
@@ -54,6 +52,7 @@ import { createListScreenCore, sectionByKey, titledSections } from './list-scree
 import { createMenuStack, type MenuEntry } from './menu-stack.js';
 import { createAssetLightbox } from './asset-lightbox.js';
 import { createListEditor } from './list-editor.js';
+import { createOnlineFlow } from './online-flow.js';
 import { createManifestValidator, issueKey } from './manifest-validation.js';
 import type { FilePickerSurface, NavSurface, TextEntrySurface } from './nav-surface.js';
 import type { ApplyOutcome, OnlinePickerSurface } from './online-picker.js';
@@ -390,7 +389,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     listEl: menuListEl,
     hover,
     closeLabel: () => t()('launcher.menu.close'),
-    onLeave: () => stopMetadataWork(),
+    onLeave: () => onlineFlow.stop(),
   });
   /** The artwork viewer and the thumbnail strips (asset-lightbox.ts); where a path is READ from is answered here. */
   const lightbox = createAssetLightbox({
@@ -425,6 +424,29 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     showImage: (path) => void lightbox.show(path),
     setList,
     rowTitle,
+  });
+  /** The "Find online" half that touches this screen: the query, the downloads, the fields (online-flow.ts). */
+  const onlineFlow = createOnlineFlow({
+    api: deps.api,
+    onlinePicker: deps.onlinePicker,
+    keyboard: deps.keyboard,
+    getTranslator: () => deps.getTranslator(),
+    isOpen: () => open,
+    form: () => form,
+    // Mirrors browseInto's choice of root: a pending move is already about the TARGET card, so the
+    // assets belong there too. A history game downloads nothing — there is no game root to put a file
+    // beside, which is why the online surface offers it the TEXT only.
+    assetRoot: () => (pendingMove !== null ? pendingMove.target.root : (mediaOrigin()?.root ?? null)),
+    isHistoryGame: () => historyId() !== null,
+    setField,
+    setList,
+    mergeRest: (known) => {
+      // `rest` is the screen's own slot for keys the form model has no field for; currentText() folds it
+      // back into the manifest text, so this alone makes the screen dirty and Save carries it through.
+      rest = { ...rest, ...known };
+      updateForm(form);
+    },
+    requestTitleConfirm: (title) => deps.onConfirmRequested('replace-title', { title }),
   });
 
   /**
@@ -1587,146 +1609,6 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     void runValidate();
   }
 
-  // ── "Find online" (the metadata:* flow — see main/metadata/) ───────────────
-  //
-  // The surface itself is online-picker.ts: one screen with the game, the cover, the backgrounds and the
-  // soundtrack as sections. What lives HERE is the half of it that touches this screen — the keyboard
-  // for a query, the downloads that land beside the game, and the form fields their paths go into.
-  // Nothing reaches the manifest until the user saves: an applied file only fills a FORM FIELD, exactly
-  // as a path chosen in the file browser does.
-
-  /** What a "yes" to the title question runs — the surface's own callback, held until the popup answers. */
-  let pendingTitleReplace: (() => void) | null = null;
-  /** Retires answers belonging to a flow the user has already left (a new search, a closed screen). */
-  let metadataToken = 0;
-  /** Whether an answer from main still belongs to the flow that asked for it. */
-  function metadataCurrent(token: number): boolean {
-    return open && token === metadataToken;
-  }
-
-  /**
-   * Where an applied file goes, and under which id it is named. Mirrors browseInto's choice of root: a
-   * pending move is already about the TARGET card, so the assets belong there too.
-   */
-  function metadataTarget(): { readonly root: string; readonly gameId: string } | null {
-    const move = pendingMove;
-    // A history game downloads nothing: there is no game root to put a file beside, which is why the
-    // online surface offers it the TEXT only (see startFindOnline).
-    const root = move !== null ? move.target.root : (mediaOrigin()?.root ?? null);
-    if (root === null) return null;
-    const id = form.id.trim();
-    return id === '' ? null : { root, gameId: id };
-  }
-
-  /**
-   * The entry point. Everything the sources offer lives on ONE surface now (online-picker.ts): the game,
-   * its cover, its backgrounds and its soundtrack, each a section of the same screen. What stays here is
-   * what only this screen can do — write into the form, and put the downloaded files beside the game.
-   *
-   * A Steam game whose appid is already filled in skips the search: that number is the very thing a
-   * search exists to find.
-   */
-  function startFindOnline(): void {
-    metadataToken += 1;
-    const appId = Number(form.steam.appid.trim());
-    const steamApp = form.launchMode === 'steam' && Number.isSafeInteger(appId) && appId > 0;
-    deps.onlinePicker.open({
-      query: form.title.trim(),
-      ...(steamApp ? { appId } : {}),
-      // A history game has no root to download a cover into — the text half of the flow still applies.
-      ...(historyId() !== null ? { textOnly: true } : {}),
-    });
-  }
-
-  /**
-   * Downloads the chosen variants and writes the resulting manifest paths into the form.
-   *
-   * The slot INDEX matters as much as the order: it names the file on disk
-   * (`assets/<id>-hero-<n>.<ext>`), so appending has to start after the backgrounds already there —
-   * writing from zero would overwrite the very files it is adding to.
-   */
-  async function applyArtwork(
-    kind: 'grid' | 'hero',
-    variantKeys: readonly string[],
-    mode: 'replace' | 'append',
-  ): Promise<ApplyOutcome> {
-    const target = metadataTarget();
-    if (target === null) return { ok: false, message: t()('metadata.needsId') };
-    const existing = mode === 'append' ? form.heroImage : [];
-    const room = kind === 'grid' ? variantKeys.length : MAX_HERO_IMAGES - existing.length;
-    const accepted = variantKeys.slice(0, Math.max(0, room));
-    const token = metadataToken;
-    const paths: string[] = [];
-    for (const [index, variantKey] of accepted.entries()) {
-      const slot: MetadataApplySlot = kind === 'grid' ? 'grid' : { hero: existing.length + index };
-      const result = await deps.api.applyMetadata({ ...target, variantKey, slot });
-      if (!metadataCurrent(token)) return { ok: false, message: '' };
-      if (!result.ok) return { ok: false, message: result.message };
-      paths.push(result.path);
-    }
-    if (kind === 'grid') {
-      setField('gridImage', paths[0] ?? '');
-    } else {
-      setList('heroImage', [...existing, ...paths]);
-    }
-    // A pick that did not fit says so: silently dropping the third of three chosen backgrounds would
-    // read as the download having failed.
-    const dropped = variantKeys.length - accepted.length;
-    return {
-      ok: true,
-      message:
-        dropped > 0
-          ? t()('metadata.appliedPartly', { count: String(dropped) })
-          : t()('metadata.applied'),
-    };
-  }
-
-  /** One variant at full size, in the screen's own lightbox (which sits above the gallery). */
-  /**
-   * Fills the manifest's non-picture facts in the background: the description, and the genres, release
-   * date and platforms a future library view will sort by. main deliberately never writes them itself —
-   * the manifest TEXT belongs to this form while the screen is open, so a write from the other side
-   * would be overwritten by the next Save (see configure-form-model.ts).
-   */
-  async function fetchMetadataDescriptions(candidate: GameCandidate): Promise<void> {
-    const token = metadataToken;
-    const result = await deps.api.metadataDescriptions(candidate.key);
-    if (!metadataCurrent(token) || !result.ok) return;
-    const { description, genres, releaseDate, platforms } = result.value;
-    const known = {
-      ...(description === undefined ? {} : { description }),
-      ...(genres === undefined ? {} : { genres }),
-      ...(releaseDate === undefined ? {} : { releaseDate }),
-      ...(platforms === undefined ? {} : { platforms }),
-    };
-    if (Object.keys(known).length === 0) return;
-    // `rest` is the screen's own slot for keys the form model has no field for; currentText() folds it
-    // back into the manifest text, so this alone makes the screen dirty and Save carries it through.
-    rest = { ...rest, ...known };
-    updateForm(form);
-  }
-
-  async function applyTrackKey(trackKey: string): Promise<ApplyOutcome> {
-    const target = metadataTarget();
-    if (target === null) return { ok: false, message: t()('metadata.needsId') };
-    const token = metadataToken;
-    const result = await deps.api.applyMetadata({
-      ...target,
-      variantKey: trackKey,
-      slot: 'music',
-    });
-    if (!metadataCurrent(token)) return { ok: false, message: '' };
-    if (!result.ok) return { ok: false, message: result.message };
-    setField('backgroundMusic', result.path);
-    return { ok: true, message: t()('metadata.applied') };
-  }
-
-  /** Everything the flow leaves running, ended in one place: whatever main is still fetching for it. */
-  function stopMetadataWork(): void {
-    metadataToken += 1;
-    deps.api.cancelMetadata();
-  }
-
   // ── The six primitives ─────────────────────────────────────────────────────
 
   /** Which surface the primitives drive right now: the deepest open one wins. */
@@ -1841,7 +1723,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     switch (id) {
       case 'find-online':
         deps.audio.play('button');
-        startFindOnline();
+        onlineFlow.start();
         return;
       case 'save':
         deps.audio.play('button');
@@ -2104,36 +1986,14 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     navBack,
     isDirty: dirty,
     deletesLocalGame: () => mediaOrigin()?.source === 'pc',
-    askOnlineQuery: (initial, onDone) => {
-      deps.keyboard.open({
-        value: initial,
-        mode: 'text',
-        title: t()('metadata.searchTitle'),
-        onDone: (value) => {
-          metadataToken += 1;
-          onDone(value);
-        },
-      });
-    },
-    askOnlineTitle: (title, onYes) => {
-      pendingTitleReplace = onYes;
-      deps.onConfirmRequested('replace-title', { title });
-    },
-    applyOnlineArtwork: (kind, variantKeys, mode) => applyArtwork(kind, variantKeys, mode),
-    applyOnlineTrack: (trackKey) => applyTrackKey(trackKey),
+    askOnlineQuery: (initial, onDone) => onlineFlow.askQuery(initial, onDone),
+    askOnlineTitle: (title, onYes) => onlineFlow.askTitle(title, onYes),
+    applyOnlineArtwork: (kind, variantKeys, mode) => onlineFlow.applyArtwork(kind, variantKeys, mode),
+    applyOnlineTrack: (trackKey) => onlineFlow.applyTrack(trackKey),
     applyOnlineTitle: (title) => {
       setField('title', title);
     },
-    onOnlineCandidate: (candidate) => {
-      // An empty form takes the name at once, without the question "Take the name" asks: there is
-      // nothing to replace. It is also what makes the rest of the screen usable — the id follows the
-      // title (see setField), and the id is what every downloaded file is NAMED by, so a game added
-      // through this flow could otherwise pick a background and be told it has no id to write it under.
-      if (form.title.trim() === '') setField('title', candidate.title);
-      // Only a Steam entry can be asked for facts: the others carry no appid, and the appid is what the
-      // descriptions, genres and dates are addressed by.
-      if (candidate.steamAppId !== undefined) void fetchMetadataDescriptions(candidate);
-    },
+    onOnlineCandidate: (candidate) => onlineFlow.onCandidate(candidate),
     heroCount: () => form.heroImage.length,
     // The secondary buttons belong to whatever surface is on top, exactly as the six primitives do.
     // controls.ts routes them to the open OVERLAY — that is this screen — so they die here unless they
@@ -2209,11 +2069,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
         pendingSource = null;
         if (root !== null) void adoptRoot(root);
       } else if (kind === 'cancel-move') cancelMove();
-      else if (kind === 'replace-title') {
-        const run = pendingTitleReplace;
-        pendingTitleReplace = null;
-        run?.();
-      }
+      else if (kind === 'replace-title') onlineFlow.titleConfirmed();
     },
     relocalize: () => {
       if (model !== null) {
