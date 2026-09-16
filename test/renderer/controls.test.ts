@@ -3,6 +3,7 @@ import { createControls, type Controls } from '../../src/renderer/controls';
 import type { ControlsApi, ControlsDeps } from '../../src/renderer/controls-deps';
 import { req } from '../../src/renderer/dom';
 import { createTranslator } from '../../src/shared/i18n/index';
+import type { BrowseInfo, GameInfo } from '../../src/shared/types';
 import { loadFixture } from './helpers/fixture';
 import { fakeAudio, fakeKeyboard, type FakeAudio } from './helpers/fakes';
 import { installRafHarness } from './helpers/raf';
@@ -56,6 +57,9 @@ function fakeControlsApi(): ControlsApi {
  * would push into a shared array. Each answers into its own harness; only the current one is asserted on.
  */
 interface Harness {
+  /** What the carousel reports it is showing, and what browse model the bar is drawn from. */
+  screen: 'carousel' | 'detail';
+  browse: BrowseInfo | null;
   /** Every `carousel.move(delta)` the router made. */
   readonly carouselMoves: number[];
   /** The primitives routed into the Settings overlay while it reports itself open. */
@@ -88,6 +92,8 @@ beforeEach(() => {
   audio = fakeAudio();
   api = fakeControlsApi();
   const own: Harness = {
+    screen: 'carousel',
+    browse: null,
     carouselMoves: [],
     settingsNav: [],
     settingsOpen: false,
@@ -108,12 +114,12 @@ beforeEach(() => {
   controls = createControls({
     api,
     getState: () => ({ kind: 'idle' }),
-    getBrowse: () => null,
+    getBrowse: () => own.browse,
     audio,
     getTranslator: () => createTranslator('en'),
     getLocale: () => 'en',
     carousel: {
-      screen: () => 'carousel',
+      screen: () => own.screen,
       move: (delta) => {
         own.carouselMoves.push(delta);
         return 'moved';
@@ -245,5 +251,63 @@ describe('controls routing', () => {
 
     expect(harness.carouselMoves).toEqual([]);
     expect(audio.played).toEqual([]);
+  });
+});
+
+const LOCAL_GAME: GameInfo = {
+  id: 'local',
+  title: 'Local',
+  lastPlayedAt: null,
+  totalPlaySeconds: 0,
+  launchCount: 0,
+  requiresInstall: false,
+  canUninstall: false,
+};
+
+function browsing(game: GameInfo): BrowseInfo {
+  return {
+    id: game.id,
+    title: game.title,
+    active: true,
+    stats: { schemaVersion: 1, totalPlaySeconds: 0, lastPlayedAt: null, launchCount: 0 },
+    game,
+  };
+}
+
+describe('controls focus ring on the detail screen', () => {
+  const focusedMain = (): string[] =>
+    ['play-button', 'more-button'].filter((id) => req(id).classList.contains('is-focused'));
+
+  it('lands on Play first for a game that can be started', () => {
+    harness.screen = 'detail';
+    harness.browse = browsing(LOCAL_GAME);
+    controls.refresh();
+
+    expect(focusedMain()).toEqual(['play-button']);
+
+    press('ArrowRight');
+
+    expect(focusedMain()).toEqual(['more-button']);
+  });
+
+  it('skips the hidden Play of a local game whose files are gone', () => {
+    harness.screen = 'detail';
+    harness.browse = browsing({ ...LOCAL_GAME, unavailable: true });
+    controls.refresh();
+
+    expect(focusedMain()).toEqual(['more-button']);
+
+    press('ArrowRight');
+
+    expect(focusedMain()).toEqual(['more-button']);
+    expect(audio.limits()).toBe(1);
+  });
+
+  it('skips the hidden Play of a local game with no launch method yet', () => {
+    harness.screen = 'detail';
+    harness.browse = browsing({ ...LOCAL_GAME, unconfigured: true });
+    controls.refresh();
+
+    expect(focusedMain()).toEqual(['more-button']);
   });
 });
