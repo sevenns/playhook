@@ -350,6 +350,20 @@ describe('customize screen horizontal navigation', () => {
     expect(screen.isDirty()).toBe(false);
   });
 
+  it('steps an omitted number from what the launcher would use, not from zero', async () => {
+    await open();
+    enterSection('Advanced');
+    focusRow('Launch timeout');
+    expect(valueOf('Launch timeout')).toBe('30 s (default)');
+
+    screen.navRight();
+    expect(valueOf('Launch timeout')).toBe('35');
+
+    screen.navLeft();
+    screen.navLeft();
+    expect(valueOf('Launch timeout')).toBe('25');
+  });
+
   it('steps a number row by its step and stops at its minimum with the dead-end sound', async () => {
     await open({
       read: vi.fn(() =>

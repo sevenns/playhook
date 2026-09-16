@@ -124,6 +124,8 @@ export interface CoreNumberRow<Id extends string = string> extends LabeledRow<Id
   readonly step: number;
   readonly min: number;
   readonly max: number;
+  /** What an omitted value means to the launcher — the first step counts from here, not from zero. */
+  readonly fallback?: number;
 }
 
 /** A path field: the current value plus Browse / Clear, both reached from the row's own sub-actions. */
