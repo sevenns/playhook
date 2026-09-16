@@ -82,7 +82,6 @@ const audio = createAudioController();
 // bleeding one game's background colors into another's.
 const hero = createHeroController({
   hasGameOnScreen: () => currentBrowse !== null,
-  getGameId: () => currentBrowse?.id ?? '',
 });
 
 // ── Settings screen (the fourth surface, see settings-screen.ts) ─────────────

@@ -245,11 +245,11 @@ export function createControls(deps: ControlsDeps): Controls {
     // Hard busy (install / uninstall / launch / save-sync): the Play button is a non-interactive activity
     // indicator (spinner/gear), so only More is focusable — it still opens Details.
     if (phaseOf(state()) === 'busy') return [moreButton];
-    // Empty screen, a HISTORY game (nothing to launch) or a requiresInstall installer/steam game → Play is
-    // hidden, only More.
+    // Empty screen, a HISTORY game, a requiresInstall installer/steam game, or a local game with nothing
+    // to start (files gone / not configured) → Play is hidden (app.ts `hasPlay`), so the ring skips it too.
     const game = screenIsActionable() ? screenGame() : undefined;
     if (game === undefined || game.requiresInstall === true) return [moreButton];
-    return [playButton, moreButton];
+    return game.unavailable === true || game.unconfigured === true ? [moreButton] : [playButton, moreButton];
   }
 
   // Main focus is meaningful on every DETAIL screen (the More button is always present there) with the

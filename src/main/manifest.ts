@@ -18,7 +18,8 @@ import {
   type ConfigValidationResult,
 } from '../shared/types';
 import { MANIFEST_FILENAME, type GameManifest, type ResolvedManifest } from './manifest-types';
-import { translateIssueMessage, type Translator } from '../shared/i18n/index';
+import { type Translator } from '../shared/i18n/index';
+import { formatZodError, issueMessage } from './manifest-issues';
 import { type InstallDirResolver } from './platform/types';
 import { isEnoent } from './json-store';
 import { describe } from './util';
@@ -54,7 +55,7 @@ const installSchema = z
   // surface beyond the read-only tasklist we use today. The app builds nsis/inno args itself, so
   // elevated is fine there.
   // Custom messages are stored as dictionary KEYS (translated later at the issue-mapping points via
-  // translateIssueMessage — see formatZodError / validateManifestText). The schema is module-private, so
+  // translateIssueMessage — see manifest-issues.ts / validateManifestText). The schema is module-private, so
   // it is never rebuilt per locale.
   .refine((v) => !(v.type === 'custom' && v.runAsAdmin), {
     message: 'manifest.installRunAsAdminCustom',
@@ -449,15 +450,6 @@ export function absoluteToPcSavePath(absolute: string, env: ManifestEnv): string
   return null;
 }
 
-function formatZodError(error: z.ZodError, t: Translator): string {
-  const first = error.issues[0];
-  if (first === undefined) return t('manifest.invalid');
-  const joined = first.path.join('.');
-  const where = joined.length > 0 ? joined : '(root)';
-  // A schema refine stores a MessageKey; a structural zod message is already localized via z.config.
-  return `${where}: ${translateIssueMessage(first.message, t)}`;
-}
-
 type InstallResolveResult =
   | {
       readonly ok: true;
@@ -630,7 +622,7 @@ async function resolveOne(
   const { t } = env;
   const parsed = manifestSchema.safeParse(rawParsed);
   if (!parsed.success) {
-    return { ok: false, message: formatZodError(parsed.error, t) };
+    return { ok: false, message: formatZodError(parsed.error, rawParsed, t) };
   }
   const raw: GameManifest = parsed.data;
 
@@ -1057,10 +1049,9 @@ export function validateManifestText(
     if (!result.success) {
       for (const issue of result.error.issues) {
         const joined = issue.path.join('.');
-        // A refine stores a MessageKey; a structural zod message is already localized via z.config.
         issues.push({
           path: joined.length > 0 ? `${prefix}${joined}` : rootPath,
-          message: translateIssueMessage(issue.message, t),
+          message: issueMessage(issue, item, t),
         });
       }
       return; // can't run semantic checks without parsed data

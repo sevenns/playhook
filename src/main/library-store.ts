@@ -302,11 +302,15 @@ export class LibraryStore {
         configuredAt: current?.configuredAt ?? null,
         collisionResolvedAt: current?.collisionResolvedAt ?? null,
       };
-      const result = upsertEntry(
-        index,
-        record,
-        typeof pristineTitle === 'string' ? pristineTitle : undefined,
-      );
+      // A PC-library game has no foreign card to collide with: its game.json IS the pristine text, so a
+      // title that differs from the record is the user's own rename, never another card's game.
+      const before =
+        typeof pristineTitle === 'string'
+          ? pristineTitle
+          : sourceKind === 'pc'
+            ? record.title
+            : undefined;
+      const result = upsertEntry(index, record, before);
       replacedForeign = result.replacedForeign;
       return result.index;
     });

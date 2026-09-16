@@ -41,6 +41,15 @@ import { createHoverGuard } from './hover-guard.js';
 import { clampIndex } from './index-math.js';
 import { createScroller } from './screen-scroller.js';
 import type { NavSurface } from './nav-surface.js';
+import {
+  PROVIDER_LABEL,
+  albumLabel,
+  busyNote,
+  captionOf,
+  formatSize,
+  heading,
+  hint,
+} from './online-picker-view.js';
 
 /** Which question the right column is answering right now. */
 export type OnlineSection = 'candidates' | 'grid' | 'hero' | 'music';
@@ -336,24 +345,6 @@ export function createOnlinePicker(deps: OnlinePickerDeps): OnlinePickerSurface 
     return [sideButton({ kind: 'apply' }, ''), sideButton({ kind: 'clear' }, '')];
   }
 
-  function albumLabel(album: MusicAlbum): string {
-    return album.trackCount === undefined ? album.title : `${album.title} (${album.trackCount})`;
-  }
-
-  function heading(text: string): HTMLElement {
-    const node = document.createElement('div');
-    node.className = 'metadata-side-heading';
-    node.textContent = text;
-    return node;
-  }
-
-  function hint(text: string): HTMLElement {
-    const node = document.createElement('div');
-    node.className = 'picker-empty';
-    node.textContent = text;
-    return node;
-  }
-
   function sideButton(action: SideAction, label: string): HTMLButtonElement {
     const button = document.createElement('button');
     button.type = 'button';
@@ -413,8 +404,10 @@ export function createOnlinePicker(deps: OnlinePickerDeps): OnlinePickerSurface 
   function paintContent(): void {
     cells = [];
     contentEl.classList.toggle('is-grid', artworkKind() !== null);
-    if (loading && section !== 'hero' && section !== 'grid') {
-      contentEl.replaceChildren(busyNote());
+    // A gallery waits visibly only for its FIRST page: "load more" keeps the pictures up and spins in
+    // the tail tile instead (syncTail). The other sections have nothing to keep up, so they always wait.
+    if (loading && (artworkKind() === null || variants.length === 0)) {
+      contentEl.replaceChildren(busyNote(t()));
       return;
     }
     if (section === 'candidates') {
@@ -559,39 +552,6 @@ export function createOnlinePicker(deps: OnlinePickerDeps): OnlinePickerSurface 
     return needsTail() && index === variants.length;
   }
 
-  function busyNote(): HTMLElement {
-    const node = document.createElement('div');
-    node.className = 'music-busy';
-    const spin = document.createElement('span');
-    spin.className = 'metadata-tile-spinner';
-    const label = document.createElement('span');
-    label.textContent = t()('metadata.searching');
-    node.append(spin, label);
-    return node;
-  }
-
-  /** `4.4 MB` — what the source claimed, so a long download is not a surprise. */
-  function formatSize(bytes: number): string {
-    const mb = bytes / (1024 * 1024);
-    return mb >= 1 ? `${mb.toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
-  }
-
-  /** Proper names, so they are not translated — one per source, never "this or else Steam". */
-  const PROVIDER_LABEL: Readonly<Record<ArtworkVariant['provider'], string>> = {
-    steam: 'Steam',
-    steamgriddb: 'SteamGridDB',
-    wallhaven: 'Wallhaven',
-    wallpapercave: 'Wallpaper Cave',
-    gog: 'GOG',
-    khinsider: 'Khinsider',
-  };
-
-  function captionOf(variant: ArtworkVariant): string {
-    const source = PROVIDER_LABEL[variant.provider];
-    if (variant.width === undefined || variant.height === undefined) return source;
-    return `${source} · ${variant.width}x${variant.height}`;
-  }
-
   function applyPicked(): void {
     cells.forEach((cell, position) => {
       const key = section === 'music' ? tracks[position]?.key : variants[position]?.key;
@@ -693,6 +653,14 @@ export function createOnlinePicker(deps: OnlinePickerDeps): OnlinePickerSurface 
 
   /** Moves to a section and loads whatever it needs, keeping everything the other sections hold. */
   async function showSection(next: OnlineSection): Promise<void> {
+    // Whatever the previous section was still waiting for is its own business: the answer must neither
+    // land in this section's grid nor keep this section from asking its own question (loadArtwork
+    // refuses to start over a request in flight). The token moves on, so a late answer is dropped.
+    if (loading) {
+      deps.api.cancel();
+      attempt += 1;
+      loading = false;
+    }
     section = next;
     index = 0;
     if (next === 'candidates') {
@@ -773,6 +741,10 @@ export function createOnlinePicker(deps: OnlinePickerDeps): OnlinePickerSurface 
       deps.api.cancel();
       loading = false;
       index = 0;
+      // The pictures on screen answer the OLD filter: with them left up, a slow answer looks like a
+      // filter that does nothing. The gallery waits from empty, like a section just opened.
+      variants = [];
+      hasMore = false;
       paintSideState();
       void loadArtwork(0, true);
       return;

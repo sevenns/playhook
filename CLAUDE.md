@@ -144,7 +144,9 @@ build does not self-update. **All OS-specific behaviour lives behind the `Platfo
 ## Tests
 
 - Runner: **vitest** (`npm test`). Tests live in `test/`, run in plain Node with **no electron**
-  (`test/stubs/electron.ts` is aliased for the `electron` import — see `vitest.config.ts`).
+  (`test/stubs/electron.ts` is aliased for the `electron` import — see `vitest.config.ts`). `test/setup.ts`
+  points the file logger at a temp dir first, so a `log.warn` a test trips never lands in your real
+  launcher log (logger.ts would otherwise fall back to userData, as it does for the GUI).
 - Testable = **pure / electron-free** modules. The koffi-bound win32 modules (`game-launcher.ts`,
   `registry.ts`, `window-finder.ts`) DO import under vitest on every OS — the prebuilt addon loads and the
   DLLs bind lazily — but their FFI branches cannot be exercised without Windows, so test them through
@@ -175,8 +177,11 @@ build does not self-update. **All OS-specific behaviour lives behind the `Platfo
   - **`app.ts` stays out** — it touches `window.api` at module scope.
   Covered so far: `screen-sidebar`, `osk`, `file-picker`, `settings-screen`, `game-settings-screen`,
   `controls` (its seams live in `controls-deps.ts`; input is a `keydown` on `window`, since the six
-  primitives are not on its public surface). Still uncovered and next in line for the same base:
-  `online-picker.ts`, `library-screen.ts`, `carousel.ts`. Anything needing real layout (`scrollHeight`,
+  primitives are not on its public surface), `hero` (with `computePalette` mocked — the canvas decode is
+  the one thing happy-dom cannot do — so a test can decide WHEN a palette lands relative to a swap).
+  `online-picker` (its stateless nodes and captions live in `online-picker-view.ts`; the artwork api is
+  answered by hand, so a test decides when a page lands relative to a filter or section change). Still
+  uncovered and next in line for the same base: `library-screen.ts`, `carousel.ts`. Anything needing real layout (`scrollHeight`,
   canvas) is still a manual check on the Deck.
   Upgrade note: `environmentMatchGlobs` is deprecated in vitest 3 and GONE in vitest 4 — an upgrade must
   move `test/renderer/**` to `test.projects` (or a per-file `@vitest-environment` docblock) or the suites

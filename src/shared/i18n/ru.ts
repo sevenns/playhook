@@ -417,6 +417,8 @@ export const ru: Record<MessageKey, string> = {
   'metadata.downloading': 'Скачивание трека',
   'metadata.noSources': 'Сейчас нет доступных источников метаданных.',
   'metadata.staleSelection': 'Этот вариант больше недоступен. Выполните поиск заново.',
+  'metadata.steamGridDbKeyRejected':
+    'SteamGridDB отклонил API-ключ. Проверьте его в Настройки → Метаданные игр.',
   'metadata.downloadFailed': 'Не удалось скачать файл.',
   'metadata.unsupportedFile': 'Скачанный файл не является поддерживаемым изображением или аудио.',
   'metadata.writeFailed': 'Не удалось сохранить скачанный файл.',
@@ -484,6 +486,7 @@ export const ru: Record<MessageKey, string> = {
   'manifest.runAsAdminWithSteam': 'runAsAdmin недопустим в режиме steam',
   'manifest.watchProcessesRequired': 'watchProcesses обязателен в режиме steam',
   'manifest.executableRequired': 'executable обязателен',
+  'manifest.fieldRequired': 'поле {field} обязательно',
   'manifest.pcWithSteam': 'pc нельзя указывать вместе со steam',
   'manifest.pcWithInstall': 'pc нельзя указывать вместе с install',
   'manifest.pcWithExecutable': 'executable недопустим в режиме pc (используйте pc.executable)',

@@ -802,7 +802,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
 
   /** Writes one field of the form model by row id. Everything a row can change goes through here. */
   function setField(id: GameRowId, value: string): void {
-    const next = withField(form, id, value);
+    const next = withField(form, id, value, mode === 'add');
     if (next !== form) updateForm(next);
   }
 
@@ -902,7 +902,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
 
   function stepNumber(row: Extract<GameSettingsRow, { kind: 'number' }>, delta: number): void {
     const parsed = Number.parseInt(row.value, 10);
-    const base = Number.isFinite(parsed) ? parsed : 0;
+    const base = Number.isFinite(parsed) ? parsed : (row.fallback ?? 0);
     const next = Math.min(row.max, Math.max(row.min, base + delta * row.step));
     if (String(next) === row.value) {
       deps.audio.playLimit(); // already at min / max

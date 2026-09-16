@@ -464,6 +464,8 @@ export const en = {
   'metadata.downloading': 'Downloading the track',
   'metadata.noSources': 'No metadata source is available right now.',
   'metadata.staleSelection': 'That choice is no longer available. Search again.',
+  'metadata.steamGridDbKeyRejected':
+    'SteamGridDB rejected the API key. Check it under Settings → Game metadata.',
   'metadata.downloadFailed': 'Could not download the file.',
   'metadata.unsupportedFile': 'The downloaded file is not a supported image or audio file.',
   'metadata.writeFailed': 'Could not save the downloaded file.',
@@ -535,6 +537,7 @@ export const en = {
   'manifest.runAsAdminWithSteam': 'runAsAdmin is not allowed in steam mode',
   'manifest.watchProcessesRequired': 'watchProcesses is required in steam mode',
   'manifest.executableRequired': 'executable is required',
+  'manifest.fieldRequired': '{field} is required',
   // PC mode (a game on this machine's own disk — see PcManifest).
   'manifest.pcWithSteam': 'pc is not allowed together with steam',
   'manifest.pcWithInstall': 'pc is not allowed together with install',

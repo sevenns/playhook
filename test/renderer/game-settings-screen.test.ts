@@ -350,6 +350,20 @@ describe('customize screen horizontal navigation', () => {
     expect(screen.isDirty()).toBe(false);
   });
 
+  it('steps an omitted number from what the launcher would use, not from zero', async () => {
+    await open();
+    enterSection('Advanced');
+    focusRow('Launch timeout');
+    expect(valueOf('Launch timeout')).toBe('30 s (default)');
+
+    screen.navRight();
+    expect(valueOf('Launch timeout')).toBe('35');
+
+    screen.navLeft();
+    screen.navLeft();
+    expect(valueOf('Launch timeout')).toBe('25');
+  });
+
   it('steps a number row by its step and stops at its minimum with the dead-end sound', async () => {
     await open({
       read: vi.fn(() =>
@@ -444,6 +458,36 @@ describe('customize screen text fields', () => {
 
     expect(valueOf('Title')).toBe('Hades II');
     expect(screen.isDirty()).toBe(true);
+  });
+
+  it("keeps an existing game's id when its title is renamed", async () => {
+    await open();
+    enterSection('Basics');
+    focusRow('Title');
+    screen.navActivate();
+
+    keyboard.commit('Hades II');
+    await flushAsync();
+
+    expect(valueOf('Title')).toBe('Hades II');
+    expect(valueOf('Id')).toBe('hades');
+  });
+
+  it("lets a new game's id follow its title until the id is edited by hand", async () => {
+    createScreen({
+      sources: vi.fn(() => Promise.resolve([CARD])),
+      readRoot: vi.fn(() => Promise.resolve(ROOT_OK)),
+    });
+    screen.openNew();
+    await flushAsync();
+    enterSection('Basics');
+    focusRow('Title');
+    screen.navActivate();
+
+    keyboard.commit('Hades II');
+    await flushAsync();
+
+    expect(valueOf('Id')).toBe('hades-ii');
   });
 
   it('asks for the id in the mode the manifest schema accepts', async () => {

@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LibraryStore } from '../src/main/library-store';
+import { log } from '../src/main/logger';
 import type { Stats } from '../src/shared/types';
 import type { ResolvedManifest } from '../src/main/manifest-types';
 
@@ -84,6 +85,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await fs.rm(baseDir, { recursive: true, force: true });
   await fs.rm(cardRoot, { recursive: true, force: true });
 });
@@ -252,6 +254,32 @@ describe('saveFromCard', () => {
     // savedAt is the artwork revision the renderer keys its cover cache by — it MUST move.
     expect(after?.savedAt).not.toBe(before?.savedAt);
     expect(await fs.readdir(path.join(baseDir, 'library', 'a'))).toEqual(['grid.jpg']);
+  });
+
+  it("flags a card that reuses another card's id under a different title", async () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+    const first = store();
+    await first.init();
+    await first.saveFromCard([manifest('a', { gridImagePath: await card('art/grid.png') })]);
+
+    const other = manifest('a', { gridImagePath: await card('art/other.png') });
+    await first.saveFromCard([{ ...other, raw: { ...other.raw, title: 'Another game' } }]);
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0]?.[0])).toContain('colliding manifest ids');
+  });
+
+  it('does not mistake a renamed PC-library game for a colliding card', async () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+    const first = store();
+    await first.init();
+    const local = manifest('a', { source: 'pc', gridImagePath: await card('art/grid.png') });
+    await first.saveFromCard([local]);
+
+    await first.saveFromCard([{ ...local, raw: { ...local.raw, title: 'A, renamed' } }]);
+
+    expect((await readIndex()).entries[0]?.title).toBe('A, renamed');
+    expect(warn).not.toHaveBeenCalled();
   });
 
   it('re-copies when only a hero image changed (the signature covers every asset)', async () => {
@@ -580,12 +608,12 @@ describe('staging an asset for a card that is not in', () => {
 
   it('keeps the extension of a non-Latin name and de-duplicates collisions', async () => {
     const library = await seeded();
-    expect(await library.importStagedAsset('a', await card('p1/обложка.png'), 'image', ['png'])).toBe(
-      'asset.png',
-    );
-    expect(await library.importStagedAsset('a', await card('p2/обложка.png'), 'image', ['png'])).toBe(
-      'asset-2.png',
-    );
+    expect(
+      await library.importStagedAsset('a', await card('p1/обложка.png'), 'image', ['png']),
+    ).toBe('asset.png');
+    expect(
+      await library.importStagedAsset('a', await card('p2/обложка.png'), 'image', ['png']),
+    ).toBe('asset-2.png');
   });
 
   it('refuses a wrong extension, a symlink and anything past the cap', async () => {
