@@ -179,8 +179,9 @@ build does not self-update. **All OS-specific behaviour lives behind the `Platfo
   `controls` (its seams live in `controls-deps.ts`; input is a `keydown` on `window`, since the six
   primitives are not on its public surface), `hero` (with `computePalette` mocked — the canvas decode is
   the one thing happy-dom cannot do — so a test can decide WHEN a palette lands relative to a swap).
-  Still uncovered and next in line for the same base:
-  `online-picker.ts`, `library-screen.ts`, `carousel.ts`. Anything needing real layout (`scrollHeight`,
+  `online-picker` (its stateless nodes and captions live in `online-picker-view.ts`; the artwork api is
+  answered by hand, so a test decides when a page lands relative to a filter or section change). Still
+  uncovered and next in line for the same base: `library-screen.ts`, `carousel.ts`. Anything needing real layout (`scrollHeight`,
   canvas) is still a manual check on the Deck.
   Upgrade note: `environmentMatchGlobs` is deprecated in vitest 3 and GONE in vitest 4 — an upgrade must
   move `test/renderer/**` to `test.projects` (or a per-file `@vitest-environment` docblock) or the suites
