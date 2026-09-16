@@ -177,7 +177,9 @@ build does not self-update. **All OS-specific behaviour lives behind the `Platfo
   - **`app.ts` stays out** — it touches `window.api` at module scope.
   Covered so far: `screen-sidebar`, `osk`, `file-picker`, `settings-screen`, `game-settings-screen`,
   `controls` (its seams live in `controls-deps.ts`; input is a `keydown` on `window`, since the six
-  primitives are not on its public surface). Still uncovered and next in line for the same base:
+  primitives are not on its public surface), `hero` (with `computePalette` mocked — the canvas decode is
+  the one thing happy-dom cannot do — so a test can decide WHEN a palette lands relative to a swap).
+  Still uncovered and next in line for the same base:
   `online-picker.ts`, `library-screen.ts`, `carousel.ts`. Anything needing real layout (`scrollHeight`,
   canvas) is still a manual check on the Deck.
   Upgrade note: `environmentMatchGlobs` is deprecated in vitest 3 and GONE in vitest 4 — an upgrade must
