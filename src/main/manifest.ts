@@ -18,7 +18,8 @@ import {
   type ConfigValidationResult,
 } from '../shared/types';
 import { MANIFEST_FILENAME, type GameManifest, type ResolvedManifest } from './manifest-types';
-import { translateIssueMessage, type Translator } from '../shared/i18n/index';
+import { type Translator } from '../shared/i18n/index';
+import { formatZodError, issueMessage } from './manifest-issues';
 import { type InstallDirResolver } from './platform/types';
 import { isEnoent } from './json-store';
 import { describe } from './util';
@@ -54,7 +55,7 @@ const installSchema = z
   // surface beyond the read-only tasklist we use today. The app builds nsis/inno args itself, so
   // elevated is fine there.
   // Custom messages are stored as dictionary KEYS (translated later at the issue-mapping points via
-  // translateIssueMessage — see formatZodError / validateManifestText). The schema is module-private, so
+  // translateIssueMessage — see manifest-issues.ts / validateManifestText). The schema is module-private, so
   // it is never rebuilt per locale.
   .refine((v) => !(v.type === 'custom' && v.runAsAdmin), {
     message: 'manifest.installRunAsAdminCustom',
@@ -447,39 +448,6 @@ export function absoluteToPcSavePath(absolute: string, env: ManifestEnv): string
     }
   }
   return null;
-}
-
-function formatZodError(error: z.ZodError, item: unknown, t: Translator): string {
-  const first = error.issues[0];
-  if (first === undefined) return t('manifest.invalid');
-  const joined = first.path.join('.');
-  const where = joined.length > 0 ? joined : '(root)';
-  return `${where}: ${issueMessage(first, item, t)}`;
-}
-
-/**
- * What one zod issue says to the user. A refine stores a MessageKey; a structural message is already
- * localized via z.config — except the one for a field that is simply MISSING, which zod words as
- * "expected string, received undefined" and the form shows under an empty row. That one says "required".
- */
-function issueMessage(issue: z.core.$ZodIssue, item: unknown, t: Translator): string {
-  if (
-    issue.code === 'invalid_type' &&
-    issue.path.length > 0 &&
-    valueAt(item, issue.path) === undefined
-  ) {
-    return t('manifest.fieldRequired', { field: issue.path.join('.') });
-  }
-  return translateIssueMessage(issue.message, t);
-}
-
-function valueAt(item: unknown, path: readonly PropertyKey[]): unknown {
-  let current: unknown = item;
-  for (const key of path) {
-    if (typeof current !== 'object' || current === null) return undefined;
-    current = (current as Record<PropertyKey, unknown>)[key];
-  }
-  return current;
 }
 
 type InstallResolveResult =

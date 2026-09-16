@@ -23,6 +23,7 @@ import { createEntrance } from './entrance.js';
 import { createHoverGuard } from './hover-guard.js';
 import { wrapIndex } from './index-math.js';
 import { createScroller } from './screen-scroller.js';
+import { createTrailingThrottle } from './trailing-throttle.js';
 import { createSidebar } from './screen-sidebar.js';
 import { createListScreenCore, sectionByKey, titledSections } from './list-screen-core.js';
 import { updateMarquee } from './marquee.js';
@@ -53,6 +54,11 @@ import {
 const VOLUME_STEP = 5;
 /** While dragging, main is written at most this often; the release always writes the final value. */
 const DRAG_PERSIST_MS = 150;
+/** What one persisted slider position is: which volume, and its 0..1 value. */
+interface VolumeWrite {
+  readonly id: 'sfxVolume' | 'musicVolume';
+  readonly volume: number;
+}
 /** The SFX preview plays at most this often while a volume is being dragged. */
 const PREVIEW_THROTTLE_MS = 220;
 
@@ -221,14 +227,12 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
     readonly track: HTMLElement;
     readonly pointerId: number;
   } | null = null;
-  let lastPersistAt = 0;
   let lastPreviewAt = 0;
-  // A step the throttle skipped is written once the burst ends (a held arrow fires faster than the
-  // throttle window), otherwise the last few steps of a hold would live only on screen.
-  let pendingPersist: {
-    readonly row: Extract<SettingsRow, { kind: 'slider' }>;
-    readonly timer: ReturnType<typeof setTimeout>;
-  } | null = null;
+  // Both sliders share one throttle; a step it held back is written once the burst ends (trailing-throttle.ts).
+  const persist = createTrailingThrottle(DRAG_PERSIST_MS, ({ id, volume }: VolumeWrite) => {
+    if (id === 'sfxVolume') deps.api.setSfxVolume(volume);
+    else deps.api.setMusicVolume(volume);
+  });
 
   // Both scrolling surfaces of this screen use the shared scroller (screen-scroller.ts) — the settings
   // list and the expanded dropdown — so they behave identically, and so do the other screens.
@@ -544,15 +548,9 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
       if (nextRow !== undefined) patchRow(rendered_, nextRow, t());
       model = rowsNext;
     }
+    if (throttle) persist.push({ id: row.id, volume });
+    else persist.writeNow({ id: row.id, volume });
     const now = performance.now();
-    if (!throttle || now - lastPersistAt >= DRAG_PERSIST_MS) {
-      lastPersistAt = now;
-      cancelPendingPersist();
-      if (row.id === 'sfxVolume') deps.api.setSfxVolume(volume);
-      else deps.api.setMusicVolume(volume);
-    } else {
-      schedulePersist(row);
-    }
     // Only the SFX slider previews itself: the music volume is already audible on the running track.
     if (row.id === 'sfxVolume' && now - lastPreviewAt >= PREVIEW_THROTTLE_MS) {
       lastPreviewAt = now;
@@ -563,39 +561,6 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
   /** The rendered index of a slider row (both ids are unique across the screen). */
   function indexOfRow(id: string): number {
     return core.rendered().findIndex((row) => row.row.kind !== 'update-status' && row.row.id === id);
-  }
-
-  /** Writes the final value of a drag / a key step, bypassing the throttle. */
-  function persistVolume(row: Extract<SettingsRow, { kind: 'slider' }>): void {
-    cancelPendingPersist();
-    if (settings === null) return;
-    const volume = row.id === 'sfxVolume' ? settings.sfxVolume : settings.musicVolume;
-    if (row.id === 'sfxVolume') deps.api.setSfxVolume(volume);
-    else deps.api.setMusicVolume(volume);
-  }
-
-  /** Arms (or re-arms) the trailing write for a throttled step: it fires once the steps stop coming. */
-  function schedulePersist(row: Extract<SettingsRow, { kind: 'slider' }>): void {
-    cancelPendingPersist();
-    pendingPersist = {
-      row,
-      timer: setTimeout(() => {
-        pendingPersist = null;
-        persistVolume(row);
-      }, DRAG_PERSIST_MS),
-    };
-  }
-
-  function cancelPendingPersist(): void {
-    if (pendingPersist === null) return;
-    clearTimeout(pendingPersist.timer);
-    pendingPersist = null;
-  }
-
-  /** Writes a step the throttle is still holding, so nothing is lost when the screen goes away. */
-  function flushPendingPersist(): void {
-    if (pendingPersist === null) return;
-    persistVolume(pendingPersist.row);
   }
 
   function stepSlider(row: Extract<SettingsRow, { kind: 'slider' }>, delta: number): void {
@@ -805,7 +770,7 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
     deps.keyboard.close(); // …and the keyboard, which lives outside every screen (see #osk in index.html)
     entrance.cancel();
     core.cancelPreview();
-    flushPendingPersist();
+    persist.flush();
     delete app.dataset['overlay'];
     screen.setAttribute('aria-hidden', 'true');
     deps.onClosed();
@@ -890,13 +855,12 @@ export function createSettingsScreen(deps: SettingsScreenDeps): SettingsScreen {
 
   function endDrag(): void {
     if (dragging === null) return;
-    const entry = core.rendered()[dragging.rowIndex];
     dragging.track.closest('.setting-slider')?.classList.remove('is-dragging');
     const held = dragging;
     dragging = null;
     if (held.track.hasPointerCapture(held.pointerId))
       held.track.releasePointerCapture(held.pointerId);
-    if (entry !== undefined && entry.row.kind === 'slider') persistVolume(entry.row);
+    persist.flush(); // the drag's final position, if the throttle was still holding it
     render(); // any push held back during the drag lands now
   }
 
