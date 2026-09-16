@@ -449,13 +449,37 @@ export function absoluteToPcSavePath(absolute: string, env: ManifestEnv): string
   return null;
 }
 
-function formatZodError(error: z.ZodError, t: Translator): string {
+function formatZodError(error: z.ZodError, item: unknown, t: Translator): string {
   const first = error.issues[0];
   if (first === undefined) return t('manifest.invalid');
   const joined = first.path.join('.');
   const where = joined.length > 0 ? joined : '(root)';
-  // A schema refine stores a MessageKey; a structural zod message is already localized via z.config.
-  return `${where}: ${translateIssueMessage(first.message, t)}`;
+  return `${where}: ${issueMessage(first, item, t)}`;
+}
+
+/**
+ * What one zod issue says to the user. A refine stores a MessageKey; a structural message is already
+ * localized via z.config — except the one for a field that is simply MISSING, which zod words as
+ * "expected string, received undefined" and the form shows under an empty row. That one says "required".
+ */
+function issueMessage(issue: z.core.$ZodIssue, item: unknown, t: Translator): string {
+  if (
+    issue.code === 'invalid_type' &&
+    issue.path.length > 0 &&
+    valueAt(item, issue.path) === undefined
+  ) {
+    return t('manifest.fieldRequired', { field: issue.path.join('.') });
+  }
+  return translateIssueMessage(issue.message, t);
+}
+
+function valueAt(item: unknown, path: readonly PropertyKey[]): unknown {
+  let current: unknown = item;
+  for (const key of path) {
+    if (typeof current !== 'object' || current === null) return undefined;
+    current = (current as Record<PropertyKey, unknown>)[key];
+  }
+  return current;
 }
 
 type InstallResolveResult =
@@ -630,7 +654,7 @@ async function resolveOne(
   const { t } = env;
   const parsed = manifestSchema.safeParse(rawParsed);
   if (!parsed.success) {
-    return { ok: false, message: formatZodError(parsed.error, t) };
+    return { ok: false, message: formatZodError(parsed.error, rawParsed, t) };
   }
   const raw: GameManifest = parsed.data;
 
@@ -1057,10 +1081,9 @@ export function validateManifestText(
     if (!result.success) {
       for (const issue of result.error.issues) {
         const joined = issue.path.join('.');
-        // A refine stores a MessageKey; a structural zod message is already localized via z.config.
         issues.push({
           path: joined.length > 0 ? `${prefix}${joined}` : rootPath,
-          message: translateIssueMessage(issue.message, t),
+          message: issueMessage(issue, item, t),
         });
       }
       return; // can't run semantic checks without parsed data

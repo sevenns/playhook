@@ -148,6 +148,27 @@ describe('validateManifestText', () => {
     expect(result.ok).toBe(false);
   });
 
+  it('says "required" for a missing field instead of quoting zod', () => {
+    const result = validateManifestText(JSON.stringify({ schemaVersion: 1, steam: {} }), t);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      const byPath = new Map(result.issues.map((issue) => [issue.path, issue.message]));
+      expect(byPath.get('id')).toBe('id is required');
+      expect(byPath.get('title')).toBe('title is required');
+      expect(byPath.get('steam.appid')).toBe('steam.appid is required');
+      expect([...byPath.values()].some((m) => m.includes('received undefined'))).toBe(false);
+    }
+  });
+
+  it('keeps the structural wording for a field of the wrong type', () => {
+    const result = validateManifestText(JSON.stringify({ schemaVersion: 1, id: 7, title: 'X' }), t);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      const id = result.issues.find((issue) => issue.path === 'id');
+      expect(id?.message).toContain('expected string');
+    }
+  });
+
   it('rejects a non-steam CARD manifest with no executable (semantic — the schema no longer requires it, to allow the PC-library draft state)', () => {
     const result = validateManifestText(
       JSON.stringify({ schemaVersion: 1, id: 'x', title: 'X' }),

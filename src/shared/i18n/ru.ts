@@ -486,6 +486,7 @@ export const ru: Record<MessageKey, string> = {
   'manifest.runAsAdminWithSteam': 'runAsAdmin недопустим в режиме steam',
   'manifest.watchProcessesRequired': 'watchProcesses обязателен в режиме steam',
   'manifest.executableRequired': 'executable обязателен',
+  'manifest.fieldRequired': 'поле {field} обязательно',
   'manifest.pcWithSteam': 'pc нельзя указывать вместе со steam',
   'manifest.pcWithInstall': 'pc нельзя указывать вместе с install',
   'manifest.pcWithExecutable': 'executable недопустим в режиме pc (используйте pc.executable)',

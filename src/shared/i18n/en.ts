@@ -537,6 +537,7 @@ export const en = {
   'manifest.runAsAdminWithSteam': 'runAsAdmin is not allowed in steam mode',
   'manifest.watchProcessesRequired': 'watchProcesses is required in steam mode',
   'manifest.executableRequired': 'executable is required',
+  'manifest.fieldRequired': '{field} is required',
   // PC mode (a game on this machine's own disk — see PcManifest).
   'manifest.pcWithSteam': 'pc is not allowed together with steam',
   'manifest.pcWithInstall': 'pc is not allowed together with install',
