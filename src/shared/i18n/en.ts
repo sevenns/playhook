@@ -464,6 +464,8 @@ export const en = {
   'metadata.downloading': 'Downloading the track',
   'metadata.noSources': 'No metadata source is available right now.',
   'metadata.staleSelection': 'That choice is no longer available. Search again.',
+  'metadata.steamGridDbKeyRejected':
+    'SteamGridDB rejected the API key. Check it under Settings → Game metadata.',
   'metadata.downloadFailed': 'Could not download the file.',
   'metadata.unsupportedFile': 'The downloaded file is not a supported image or audio file.',
   'metadata.writeFailed': 'Could not save the downloaded file.',

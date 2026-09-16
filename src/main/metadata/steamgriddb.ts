@@ -100,6 +100,16 @@ export function toArtworkOffers(items: readonly SgdbArtItem[]): readonly Artwork
   }));
 }
 
+/**
+ * A 401/403 from this host is the key being refused, not the game being unknown — said as a MessageKey
+ * (the service translates it, as manifest.ts does for its refines) rather than as the raw URL + status.
+ */
+function keyRejection(message: string): MetadataResult<never> | undefined {
+  return /: HTTP 40[13]$/.test(message)
+    ? { ok: false, message: 'metadata.steamGridDbKeyRejected' }
+    : undefined;
+}
+
 export interface SteamGridDbDeps {
   readonly http: HttpClient;
   /** Read live: the user can paste a key while the app runs, and the next search must already use it. */
@@ -123,7 +133,7 @@ export class SteamGridDbProvider implements MetadataProvider {
     const options = this.options(signal);
     if (options === undefined) return { ok: true, value: [] };
     const answer = await this.deps.http.json(autocompleteUrl(query), searchSchema, options);
-    if (!answer.ok) return answer;
+    if (!answer.ok) return keyRejection(answer.message) ?? answer;
     return {
       ok: true,
       value: answer.value.data.map((item) => ({
@@ -148,7 +158,7 @@ export class SteamGridDbProvider implements MetadataProvider {
     const target = this.artRef(ref);
     if (target === undefined) return nothing;
     const answer = await this.deps.http.json(coversUrl(target), artworkSchema, options);
-    if (!answer.ok) return answer;
+    if (!answer.ok) return keyRejection(answer.message) ?? answer;
     return { ok: true, value: { offers: toArtworkOffers(answer.value.data), hasMore: false } };
   }
 

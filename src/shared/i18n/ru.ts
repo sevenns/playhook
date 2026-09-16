@@ -417,6 +417,8 @@ export const ru: Record<MessageKey, string> = {
   'metadata.downloading': 'Скачивание трека',
   'metadata.noSources': 'Сейчас нет доступных источников метаданных.',
   'metadata.staleSelection': 'Этот вариант больше недоступен. Выполните поиск заново.',
+  'metadata.steamGridDbKeyRejected':
+    'SteamGridDB отклонил API-ключ. Проверьте его в Настройки → Метаданные игр.',
   'metadata.downloadFailed': 'Не удалось скачать файл.',
   'metadata.unsupportedFile': 'Скачанный файл не является поддерживаемым изображением или аудио.',
   'metadata.writeFailed': 'Не удалось сохранить скачанный файл.',

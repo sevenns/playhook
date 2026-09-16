@@ -196,6 +196,7 @@ describe('steamgriddb metadata provider', () => {
         pageRequest(),
       );
       expect(result.ok).toBe(false);
+      expect(result.ok === false && result.message).toBe('metadata.steamGridDbKeyRejected');
     });
   });
 });
