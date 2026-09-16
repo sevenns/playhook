@@ -1,7 +1,7 @@
 // Pure display formatters for the game info panel and the notification list (split out of app.ts). The
 // translator and locale are passed in (kept pure): plural units go through `tp`, dates through
 // toLocaleString.
-import type { AppNotification } from '../shared/types';
+import type { AppNotification } from '../shared/types.js';
 import type { Locale, Translator } from '../shared/i18n/index.js';
 
 export function formatPlaytime(totalSeconds: number, t: Translator): string {

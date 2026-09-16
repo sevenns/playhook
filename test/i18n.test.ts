@@ -9,11 +9,10 @@ import { ruPlural } from '../src/shared/i18n/ru-plural';
 import { resolveLocale } from '../src/main/locale';
 
 describe('createTranslator — fallback + interpolation', () => {
-  it('returns the Russian value when present, else falls back to English (robust to fill state)', () => {
+  it('returns the Russian value for every key', () => {
     const t = createTranslator('ru');
     for (const key of Object.keys(en) as (keyof typeof en)[]) {
-      // The fallback contract: ru[key] when filled, otherwise en[key] — never empty/undefined.
-      expect(t(key)).toBe(ru[key] ?? en[key]);
+      expect(t(key)).toBe(ru[key]);
     }
   });
 
@@ -39,9 +38,19 @@ describe('en dictionary integrity', () => {
     }
   });
 
-  // The launcher cards' captions are written from JS (no data-i18n to scan), and `ru` is a Partial — a
-  // forgotten translation compiles and merely falls back to English on screen. These three are the only
-  // guard against a Russian launcher naming its own cards in English.
+  // `ru` is typed as the full Record, so tsc already refuses a missing key. This is the guard from the
+  // outside, for the day someone finds `Partial` convenient again: a Russian launcher would then show
+  // English on screen without anything failing.
+  it('translates every English key into Russian', () => {
+    const missing = Object.keys(en).filter((key) => !(key in ru));
+    expect(missing).toEqual([]);
+    for (const [key, value] of Object.entries(ru)) {
+      expect(value.length, `ru[${key}] must be non-empty`).toBeGreaterThan(0);
+    }
+  });
+
+  // The launcher cards' captions are written from JS (no data-i18n to scan). These three are the ones a
+  // Russian launcher must not name in English — kept as a named check on top of the full-record one.
   it('names the launcher cards in BOTH locales', () => {
     for (const key of ['launcher.card.notifications', 'launcher.card.settings', 'launcher.card.system'] as const) {
       expect(en[key]?.length, `en[${key}] must be filled`).toBeGreaterThan(0);

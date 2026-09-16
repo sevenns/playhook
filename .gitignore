@@ -7,6 +7,7 @@ release/
 # umu-launcher zipapp is fetched at build time (scripts/fetch-umu.mjs), never committed.
 resources/umu/
 
-# Build artifacts must never live next to their .ts sources in src/ (see audit C3).
+# Build artifacts must never live next to their .ts sources in src/: a stale .js beside its .ts shadows
+# the source for every tool that resolves extensionless imports.
 src/**/*.js
 src/**/*.js.map

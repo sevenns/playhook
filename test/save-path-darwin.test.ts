@@ -78,7 +78,7 @@ describe('darwin SavePathResolver — reverse mapping', () => {
     expect(darwinToManifestPcSavePath(bases, '/Users/deck2/Games')).toBeNull();
   });
 
-  it('round-trips %APPDATA% but deliberately does NOT restore %LOCALLOW% (see Д3)', () => {
+  it('round-trips %APPDATA% but deliberately does NOT restore %LOCALLOW%', () => {
     const absolute = resolveDarwinPcSavePath(bases, '%LOCALLOW%/IronGate/Valheim');
     expect(absolute).not.toBeNull();
     expect(darwinToManifestPcSavePath(bases, absolute ?? '')).toBe('%APPDATA%/IronGate/Valheim');

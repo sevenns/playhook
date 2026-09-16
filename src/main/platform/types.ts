@@ -1,8 +1,8 @@
 // Platform abstraction layer (interface-DI). The launcher's OS-specific behaviour — process
 // monitoring, Steam discovery, game/installer spawning, save-path resolution and power actions — lives
 // behind these interfaces so a win32 and a linux (SteamOS/Proton) implementation can be swapped wholesale
-// by createPlatform(process.platform). See the SteamOS port plan (decisions Р3/Р4/Р5/Р9) and CLAUDE.md
-// ("Adding a new service": interface-DI is the testable shape).
+// by createPlatform(process.platform). See CLAUDE.md ("Adding a new service": interface-DI is the
+// testable shape).
 //
 // Types only — no koffi/electron here, so this file is import-safe from anywhere (incl. unit tests). The
 // concrete win32/linux implementations (which DO pull koffi on Windows) live in ./win32 and ./linux and
@@ -12,11 +12,49 @@ import type {
   LaunchTarget,
   ResolvedInstall,
   ResolvedInstallerRun,
-} from '../../shared/types';
-import type { GameProcess } from '../game-launcher';
-import type { PowerAction } from '../power';
-import type { InstallDirResolver } from '../manifest';
+} from '../manifest-types';
 import type { Translator } from '../../shared/i18n/index';
+
+/**
+ * A launched game, abstracting the launch backends so the wait loops don't care which was used.
+ * `pid` is the real pid for the normal path, 0 for the elevated path (we monitor by HANDLE there).
+ */
+export interface GameProcess {
+  readonly pid: number;
+  isAlive(): Promise<boolean>;
+  /**
+   * Force-terminates the process (force-close from the More menu). Normal path: `taskkill /PID <pid> /T
+   * /F` (the whole tree), guarded by an isAlive() re-check so a reused pid can't take down an unrelated
+   * process. Elevated path: TerminateProcess on the kept HANDLE, done synchronously (no await before the
+   * FFI call) and skipped if dispose() already closed the handle. Errors are swallowed — the caller
+   * decides success by a fact-based control poll, not this call's outcome.
+   */
+  kill(): Promise<void>;
+  /** Releases the kept HANDLE (elevated path); no-op for the normal path. */
+  dispose(): void;
+}
+
+export type PowerAction = 'shutdown' | 'reboot' | 'sleep';
+
+/**
+ * The app-controlled install directory in BOTH views. On win32 they are identical
+ * (`%LOCALAPPDATA%\playhook\games\<id>`); on linux they diverge:
+ * - `hostDir` — the real filesystem path inside the game's Wine prefix
+ *   (`<pfx>/drive_c/playhook/games/<id>`): every fs op and the resolved `executable` live under it;
+ * - `installerDir` — the SAME location as the installer sees it under Wine (`C:\playhook\games\<id>`),
+ *   fed to the silent dir-arg (`/DIR=` / `/D=`).
+ */
+export interface InstallDir {
+  readonly hostDir: string;
+  readonly installerDir: string;
+}
+
+/**
+ * Platform install-dir resolution, injected into readManifests: maps a game `id` to both views of
+ * its app-controlled install dir, or null when install mode is unsupported on this platform/config
+ * (win32 with `%LOCALAPPDATA%` unset). `id` is already validated as a safe single path segment.
+ */
+export type InstallDirResolver = (id: string) => InstallDir | null;
 
 /**
  * An atomic snapshot of the running processes (one OS call). The same snapshot answers BOTH "is a watched
@@ -33,7 +71,7 @@ export interface ProcessSnapshot {
 
 /**
  * Platform process control: the snapshot-based watched-process tracking plus targeted liveness and
- * force-kill. win32 wraps `tasklist`/`taskkill`; linux walks `/proc` and sends signals (Р3).
+ * force-kill. win32 wraps `tasklist`/`taskkill`; linux walks `/proc` and sends signals.
  */
 export interface ProcessMonitor {
   /** One atomic snapshot of all visible processes. */
@@ -56,6 +94,12 @@ export interface ProcessMonitor {
    * every process tagged with this `SteamAppId`, plus a by-name sweep as a fallback.
    */
   killSteamGame(appid: number, watchNames: readonly string[]): Promise<void>;
+  /**
+   * Force-kills the given image names ELEVATED — win32 only: a runAsAdmin game's high-integrity processes
+   * survive a plain taskkill, so this runs ONE elevated `taskkill /F /T /IM …` (a single UAC prompt).
+   * Best-effort and fire-and-forget; the caller judges success by a fact-based poll. No-op elsewhere.
+   */
+  killImagesElevated(imageNames: readonly string[]): void;
 }
 
 /** Locates the local Steam installation (the source of the steamapps libraries + compatdata prefixes). */
@@ -63,7 +107,7 @@ export interface SteamLocator {
   /**
    * The Steam install root (the dir containing `steamapps/`), or null when Steam isn't found. On win32
    * this reads the registry (Valve\Steam); on linux it probes the well-known data dirs — native,
-   * flatpak, snap (Р4). Best-effort: any error → null.
+   * flatpak, snap. Best-effort: any error → null.
    */
   locateSteam(): Promise<string | null>;
 }
@@ -71,7 +115,7 @@ export interface SteamLocator {
 /**
  * Spawns the game / installer / uninstaller. win32 dispatches to a direct `spawn` or an elevated
  * ShellExecuteEx per manifest.runAsAdmin; linux runs everything through umu-run in the game's Wine
- * prefix (Р1/Р7) with no elevation (runAsAdmin is a no-op there — Р6).
+ * prefix with no elevation (runAsAdmin is a no-op there).
  */
 export interface GameProcessLauncher {
   /**
@@ -109,7 +153,14 @@ export interface GameProcessLauncher {
   /** Launches a resolved uninstaller target silently. Throws on failure. */
   launchUninstaller(target: LaunchTarget): Promise<GameProcess>;
   /**
-   * The directory whose removal fully uninstalls the game (removed best-effort by the controller — Р7f).
+   * What to launch to uninstall an install-mode game, or null for a plain directory sweep. win32 runs
+   * the game's own uninstaller first (it must clean the shared system before the install dir is
+   * removed); linux removes the WHOLE per-game Wine prefix, so an in-prefix uninstaller is pointless
+   * (its registry/shortcut cleanup lives in the prefix about to be deleted) → always null there.
+   */
+  resolveUninstaller(install: ResolvedInstallerRun): Promise<LaunchTarget | null>;
+  /**
+   * The directory whose removal fully uninstalls the game (removed best-effort by the controller).
    * win32: the app-controlled install dir. linux: the WHOLE per-game Wine prefix — it holds the install
    * dir AND the game's provisioned runtimes (dotnet/GE-Proton env), so uninstall reclaims all of it.
    */
@@ -124,7 +175,7 @@ export interface GameProcessLauncher {
 }
 
 /**
- * Resolves the Windows-dictionary `pcSavePath` to a physical folder for THIS game (Р5). The moment of
+ * Resolves the Windows-dictionary `pcSavePath` to a physical folder for THIS game. The moment of
  * resolution moved from manifest-read to sync-time so an unresolvable location (a Wine/compatdata prefix
  * that doesn't exist yet) is a no-op sync, not a rejected card. win32 keeps the env-based mapping; linux
  * maps every prefix inside the game's Wine prefix (exe/install) or the Steam compatdata prefix (steam).
@@ -161,8 +212,8 @@ export interface SavePathResolver {
 }
 
 /**
- * Executes the OS power actions behind the launcher's Shutdown/Reboot/Sleep menu (Р9). win32 uses the
- * `shutdown` command + the powrprof SetSuspendState FFI; linux uses logind via `systemctl` (Э7). The
+ * Executes the OS power actions behind the launcher's Shutdown/Reboot/Sleep menu. win32 uses the
+ * `shutdown` command + the powrprof SetSuspendState FFI; linux uses logind via `systemctl`. The
  * PowerService (power.ts) owns the user-facing flow (confirm, quit, error copy) — this is only the OS bit.
  */
 export interface PowerBackend {
@@ -175,7 +226,7 @@ export interface PowerBackend {
 }
 
 /**
- * Mounts inserted-but-unmounted removable volumes so the drive watcher can see them (Р10). Only SteamOS
+ * Mounts inserted-but-unmounted removable volumes so the drive watcher can see them. Only SteamOS
  * **Game Mode** wires this, as a safety net: the session normally mounts the card itself, but one that
  * lands there unmounted is just a block device with no mountpoint, and `scan()` (which walks mountpoints)
  * can never find it. win32 and the KDE desktop session mount on their own → no-op there. The caller
@@ -268,7 +319,7 @@ export interface Platform {
   readonly powerBackend: PowerBackend;
   readonly removableMounter: RemovableMounter;
   /**
-   * Resolves the app-controlled install directory for an install-mode game id (Р7), injected into
+   * Resolves the app-controlled install directory for an install-mode game id, injected into
    * readManifests. win32 derives `%LOCALAPPDATA%\playhook\games\<id>`; linux the game's Wine prefix.
    */
   readonly resolveInstallDir: InstallDirResolver;
@@ -280,7 +331,7 @@ export interface PlatformDeps {
   readonly getDocuments: () => string;
   /** app.getPath('userData') — the base for per-game Wine prefixes on linux (`<userData>/prefixes/<id>`). */
   readonly userData: string;
-  /** Absolute path to the bundled umu-run zipapp (extraResources), run via system python3 on linux (Р1).
+  /** Absolute path to the bundled umu-run zipapp (extraResources), run via system python3 on linux.
    * Unused on win32. */
   readonly umuRunPath: string;
   /**

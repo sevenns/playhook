@@ -24,7 +24,7 @@ function record(appIdU32: number, name: string, exe: string): ShortcutRecord {
   };
 }
 
-/** The idempotency rule from the plan: compare BOTH sides in one representation. */
+/** The idempotency rule: compare BOTH sides in one representation. */
 function findIndexByAppId(records: readonly ShortcutRecord[], appIdU32: number): number {
   return records.findIndex((entry) => {
     const raw = entry['appid'];
@@ -164,7 +164,7 @@ describe('editing an existing file', () => {
 
   it('removal by appid leaves a foreign record with the same Exe untouched', () => {
     // A shortcut the user added by hand through Steam's UI gets a RANDOM appid, so it must survive our
-    // removal even though it points at the same binary (see the plan, §7.13).
+    // removal even though it points at the same binary.
     const userAdded = record(1234567890, 'Playhook', '/opt/Playhook.AppImage');
     const records = [userAdded, ours];
     const kept = records.filter((_, i) => i !== findIndexByAppId(records, 2789208654));

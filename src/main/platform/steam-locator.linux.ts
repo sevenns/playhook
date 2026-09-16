@@ -1,4 +1,4 @@
-// Linux SteamLocator (Р4): probe the well-known Steam data directories and accept the first that carries a
+// Linux SteamLocator: probe the well-known Steam data directories and accept the first that carries a
 // `steamapps/libraryfolders.vdf` (Steam's own library index — the same file the .acf walk reads). Covers
 // the native install, the `~/.steam/steam` symlink, the flatpak install and the snap install. The candidate
 // list + validity path are pure (unit-tested); locateSteam does the fs probe.

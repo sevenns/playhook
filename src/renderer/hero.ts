@@ -3,7 +3,7 @@
 // rotation, the idle wallpaper background, and the two-color palette (compute + cache + apply). These
 // share `shownUrl`/`wallpaperUrl` so they live together — keeping the palette race gate internal rather
 // than threaded through app.ts. The controller reaches back only through the narrow `deps` seam.
-import type { HeroAssets } from '../shared/types';
+import type { HeroAssets } from '../shared/types.js';
 import { computePalette, type Palette } from './dominant-color.js';
 import { req } from './dom.js';
 
@@ -13,8 +13,6 @@ const HERO_ROTATE_MS = 60_000;
 export interface HeroDeps {
   /** Whether a game (not the idle/empty screen) is currently on screen. */
   hasGameOnScreen(): boolean;
-  /** The current game's id (for the per-hero palette cache key); '' when none. */
-  getGameId(): string;
 }
 
 export interface HeroController {
@@ -67,6 +65,11 @@ export function createHeroController(deps: HeroDeps): HeroController {
   // Fallback wallpaper (data URL from main) for the empty / idle screen, and its cached palette.
   let wallpaperUrl: string | null = null;
   let wallpaperPalette: Palette | null | undefined;
+  // Keyed by the IMAGE, never by the game or the slot it sits in: a palette is a property of the pixels.
+  // A key like `${gameId}#${index}` looked the same but could lie — the browse info for the next game
+  // lands before its hero payload, so a repaint in between computed the OLD picture's colours under the
+  // NEW game's key, and the new picture then wore them (the cache is cleared per payload, but a
+  // computation still in flight writes after the clear).
   const paletteCache = new Map<string, Palette | null>();
 
   // ── Palette (two dominant colors) ─────────────────────────────────────────
@@ -81,17 +84,16 @@ export function createHeroController(deps: HeroDeps): HeroController {
     app.style.setProperty('--d2', palette.d2);
   }
 
-  // Computes (or reuses a cached) palette for an arbitrary image, keyed by an arbitrary cache key
-  // (per-hero: `${gameId}#${index}`). Applies it only if that image is STILL the one on screen, so a
-  // slow compute for a rotated-away image can't clobber the current palette.
-  function updatePaletteFor(url: string, cacheKey: string): void {
-    const cached = paletteCache.get(cacheKey);
+  // Computes (or reuses a cached) palette for an image. Applies it only if that image is STILL the one
+  // on screen, so a slow compute for a rotated-away image can't clobber the current palette.
+  function updatePaletteFor(url: string): void {
+    const cached = paletteCache.get(url);
     if (cached !== undefined) {
       applyPalette(cached);
       return;
     }
     void computePalette(url).then((palette) => {
-      paletteCache.set(cacheKey, palette);
+      paletteCache.set(url, palette);
       if (shownUrl === url) applyPalette(palette);
     });
   }
@@ -269,10 +271,9 @@ export function createHeroController(deps: HeroDeps): HeroController {
   function showHeroAt(index: number): void {
     const url = heroImages[index];
     if (url === undefined) return;
-    const id = deps.getGameId();
     requestImage(url, () => {
       if (url === wallpaperUrl) applyWallpaperPalette();
-      else updatePaletteFor(url, `${id}#${index}`);
+      else updatePaletteFor(url);
     });
   }
 
@@ -313,10 +314,8 @@ export function createHeroController(deps: HeroDeps): HeroController {
   function applyAssets(assets: HeroAssets | null, replaceWhenEmpty = false): void {
     heroImages = assets?.images ?? [];
     heroIndex = 0;
-    // A fresh payload can carry the same per-game key `${id}#${index}` mapped to a DIFFERENT image — e.g.
-    // after the user reorders hero images on the Customize screen and saves. The palette cache is keyed by
-    // position, not content, so drop it here: the new first image must recompute --d1/--d2 rather than
-    // reuse the previous image's colors. (Intra-card rotation still fills and reuses the cache.)
+    // The cache is keyed by image, so a fresh payload cannot hand one picture another's colours; it is
+    // still dropped here so the map never outgrows one payload's worth of images (a data URL apiece).
     paletteCache.clear();
     stopRotation();
     if (deps.hasGameOnScreen()) {
@@ -342,7 +341,7 @@ export function createHeroController(deps: HeroDeps): HeroController {
   function setWallpaper(url: string | null): void {
     wallpaperUrl = url;
     // Drop the cached wallpaper palette so a changed wallpaper recomputes its own --d1/--d2 (the cache is
-    // encapsulated in this closure — it can't be reset from app.ts; see plan F2-3).
+    // encapsulated in this closure — it can't be reset from app.ts).
     wallpaperPalette = undefined;
   }
 

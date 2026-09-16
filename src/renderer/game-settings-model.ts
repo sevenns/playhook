@@ -12,15 +12,15 @@ import {
   type ConfigPickKind,
   type HostPlatform,
   type ManifestSource,
-} from '../shared/types';
-import type { MessageKey } from '../shared/i18n/index';
+} from '../shared/types.js';
+import type { MessageKey } from '../shared/i18n/index.js';
 import {
   movedGridAssetPath,
   movedHeroAssetPath,
   movedMusicAssetPath,
-} from '../shared/asset-move-names';
-import { emptyFormModel } from './configure-form-model';
-import type { InstallType, LaunchMode, ManifestFormModel } from './configure-form-model';
+} from '../shared/asset-move-names.js';
+import { emptyFormModel } from './configure-form-model.js';
+import type { InstallType, LaunchMode, ManifestFormModel } from './configure-form-model.js';
 import type {
   RowLabel,
   CoreActionRow,
@@ -33,7 +33,7 @@ import type {
   CoreStaticRow,
   CoreTextRow,
   CoreToggleRow,
-} from './row-view-core';
+} from './row-view-core.js';
 
 /**
  * Every row of this screen, named by the manifest path it edits (or by what it is, for the ones that edit
@@ -116,7 +116,7 @@ export interface GameSettingsEnv {
    * inferring all of that from the length of a list reads like a puzzle.
    */
   readonly mode: 'edit' | 'add';
-  /** A "Move to card…" target has been chosen (Р2.2) — Save is labelled and routed for a move instead of
+  /** A "Move to card…" target has been chosen — Save is labelled and routed for a move instead of
    * an ordinary edit; Reset/Delete make no sense mid-move and are left out by the screen's own canDelete. */
   readonly move: boolean;
   /** Where a NEW game may go — the roots offered by the source row. Empty in edit mode (no such row). */
@@ -141,7 +141,7 @@ export interface GameSettingsEnv {
   readonly mixed: boolean;
   /** This game's validation problems, by the field path the validator reported (already localized). */
   readonly issues: ReadonlyMap<string, string>;
-  /** Problems in OTHER games of a multi-game file, already worded for display (see the plan, Э4). */
+  /** Problems in OTHER games of a multi-game file, already worded for display. */
   readonly otherIssues: readonly string[];
   /** A status line under the actions: what the last save did, or why Save is unavailable. */
   readonly status: string | null;
@@ -215,8 +215,8 @@ function lockedForHistory(rows: readonly GameSettingsRow[]): readonly GameSettin
 
 /**
  * The launch modes a source allows. A card cannot host a `pc` game (or the `none` draft state — a card
- * is portable and must stay resolvable on its own, see the plan's assumption 3); a local game is only
- * ever one, but may also be a draft with none configured yet (Р1).
+ * is portable and must stay resolvable on its own); a local game is only ever one, but may also be a
+ * draft with none configured yet.
  */
 export function launchModesFor(source: ManifestSource): readonly LaunchMode[] {
   return source === 'pc' ? ['pc', 'steam', 'none'] : ['executable', 'installer', 'steam'];
@@ -363,7 +363,7 @@ export function buildGameSettingsModel(
   });
   // Absent while a move is pending: the id is what BOTH halves of the move are addressed by (which slot
   // leaves the PC library, which stats/saves follow the game), so a move that also renames would orphan
-  // all of it — see the plan's assumption 4, and the matching refusal in GameConfigService.moveToCard.
+  // all of it — hence the matching refusal in GameMoveTransaction.moveToCard.
   // Renaming stays available as an ordinary edit, before or after the move.
   if (!env.move) {
     basics.push({
@@ -598,6 +598,7 @@ export function buildGameSettingsModel(
       step: 5,
       min: 1,
       max: 3600,
+      fallback: 30,
       hint: { key: 'gameSettings.launchTimeoutHint' },
       ...error('launchTimeoutSec'),
     },
@@ -610,6 +611,7 @@ export function buildGameSettingsModel(
       step: 5,
       min: 1,
       max: 3600,
+      fallback: 60,
       hint: { key: 'gameSettings.killTimeoutHint' },
       ...error('killTimeoutSec'),
     },
@@ -764,6 +766,108 @@ export function buildGameSettingsModel(
   };
 }
 
+/** The title's slug, in the same shape configure-form-model's slugifyId produces. */
+export function slugifyTitle(title: string): string {
+  return title
+    .normalize('NFKD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+/**
+ * Writes one text / number / path field by row id. The same object comes back when the id names no such
+ * field, so a caller can tell a write from a no-op by identity.
+ *
+ * `idFollowsTitle` is the Add-game rule: the id tracks the title's slug until the user takes the id
+ * over, because a slug is a good first guess. For an EXISTING game it is a trap — its id keys the
+ * playtime, the saves backup and the library entry, and a rename must not quietly detach all three —
+ * so the editor passes false and the id only changes when the user edits the id row itself.
+ */
+export function withField(
+  form: ManifestFormModel,
+  id: GameRowId,
+  value: string,
+  idFollowsTitle = false,
+): ManifestFormModel {
+  switch (id) {
+    case 'title': {
+      const followed = idFollowsTitle && (form.id === '' || form.id === slugifyTitle(form.title));
+      return { ...form, title: value, ...(followed ? { id: slugifyTitle(value) } : {}) };
+    }
+    case 'id':
+      // Lower case wherever it comes from, so the field agrees with the slug a title proposes — the
+      // keyboard already refuses to type anything else (osk.ts).
+      return { ...form, id: value.toLowerCase() };
+    case 'executable':
+      return { ...form, executable: value };
+    case 'pc.executable':
+      return { ...form, pc: { ...form.pc, executable: value } };
+    case 'install.installer':
+      return { ...form, install: { ...form.install, installer: value } };
+    case 'copyInstall.installer':
+      return { ...form, copyInstall: { ...form.copyInstall, installer: value } };
+    case 'steam.appid':
+      return { ...form, steam: { ...form.steam, appid: value } };
+    case 'gridImage':
+      return { ...form, gridImage: value };
+    case 'saveOnCard':
+      return { ...form, saveOnCard: value };
+    case 'pcSavePath':
+      return { ...form, pcSavePath: value };
+    case 'backgroundMusic':
+      return { ...form, backgroundMusic: value };
+    case 'launchTimeoutSec':
+      return { ...form, launchTimeoutSec: value };
+    case 'killTimeoutSec':
+      return { ...form, killTimeoutSec: value };
+    case 'umuGameId':
+      return { ...form, umuGameId: value };
+    default:
+      return form;
+  }
+}
+
+/** Writes one list field by row id; the same object comes back for an id that is not a list. */
+export function withList(
+  form: ManifestFormModel,
+  id: GameRowId,
+  items: readonly string[],
+): ManifestFormModel {
+  switch (id) {
+    case 'args':
+      return { ...form, args: items };
+    case 'watchProcesses':
+      return { ...form, watchProcesses: items };
+    case 'heroImage':
+      return { ...form, heroImage: items };
+    case 'winetricks':
+      return { ...form, winetricks: items };
+    case 'install.args':
+      return { ...form, install: { ...form.install, args: items } };
+    case 'install.winetricks':
+      return { ...form, install: { ...form.install, winetricks: items } };
+    default:
+      return form;
+  }
+}
+
+/** Flips one checkbox by row id; the same object comes back for a toggle that may not flip right now. */
+export function withToggle(form: ManifestFormModel, id: GameRowId): ManifestFormModel {
+  switch (id) {
+    case 'runAsAdmin':
+      return { ...form, runAsAdmin: !form.runAsAdmin };
+    case 'copyToPc':
+      return { ...form, copyToPc: !form.copyToPc };
+    case 'install.runAsAdmin':
+      if (form.install.type === 'custom') return form; // forced off — the manifest forbids the pair
+      return { ...form, install: { ...form.install, runAsAdmin: !form.install.runAsAdmin } };
+    default:
+      return form;
+  }
+}
+
 /** Applies a new launch mode to the form state. The hidden modes' fields are kept — see the model note. */
 export function withLaunchMode(form: ManifestFormModel, mode: LaunchMode): ManifestFormModel {
   return { ...form, launchMode: mode };
@@ -815,7 +919,7 @@ export function hasSourceBoundValues(form: ManifestFormModel): boolean {
  * radio button was changed.
  */
 /**
- * Moves a LOADED PC-library form onto a card (Р2.2 — the pure half of "Move to card…"). Unlike
+ * Moves a LOADED PC-library form onto a card (the pure half of "Move to card…"). Unlike
  * `carryFormAcrossSources` (which starts a NEW, half-filled ADD form and has nothing of the old root's to
  * keep), this carries a REAL game's data across: everything the card dialect can express survives,
  * including the artwork/music, whose paths become the DETERMINISTIC names the game gets on the

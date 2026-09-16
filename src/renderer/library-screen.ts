@@ -7,7 +7,7 @@
 // holds hundreds of covers rather than a dozen rows. That is why the maths of a step lives in
 // library-grid.ts, the artwork behind a bounded cache with a request queue in card-art.ts, and this
 // module only paints what the two decide.
-import type { LibraryEntry } from '../shared/types';
+import type { LibraryEntry } from '../shared/types.js';
 import type { MessageKey, Translator } from '../shared/i18n/index.js';
 import { type AudioController } from './audio.js';
 import { artKey, type CardArtCache } from './card-art.js';

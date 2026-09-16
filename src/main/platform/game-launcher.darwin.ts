@@ -1,4 +1,4 @@
-// macOS GameProcessLauncher: run a NATIVE mac game — a bare mach-o binary or a `.app` bundle (Д2).
+// macOS GameProcessLauncher: run a NATIVE mac game — a bare mach-o binary or a `.app` bundle.
 //
 // A `.app` is a directory, so it cannot be spawned; the real binary at `Contents/MacOS/<CFBundleExecutable>`
 // is resolved first and spawned directly. `open -a` would be the obvious alternative and is deliberately
@@ -8,11 +8,10 @@
 // What this launcher REFUSES, each with its own message rather than a generic failure:
 //  • a Windows `*.exe` — the card is cross-platform, macOS is not (Wine/CrossOver is out of scope);
 //  • install mode — `resolveInstallDir` is null on darwin, so an install-mode card never resolves anyway;
-//  • a Gatekeeper-blocked binary (Р6) — a quarantined game downloaded from the internet is SIGKILLed by
+//  • a Gatekeeper-blocked binary — a quarantined game downloaded from the internet is SIGKILLed by
 //    syspolicyd with no UI at all, so an instant death right after spawn is reported as what it is.
 import { spawn } from 'node:child_process';
-import type { GameProcessLauncher, ProcessMonitor } from './types';
-import type { GameProcess } from '../game-launcher';
+import type { GameProcess, GameProcessLauncher, ProcessMonitor } from './types';
 import type { Translator } from '../../shared/i18n/index';
 import { isAppBundlePath, resolveAppBundleExecutable } from './app-bundle.darwin';
 import { delay } from '../util';
@@ -20,7 +19,7 @@ import { log } from '../logger';
 
 /**
  * How long a freshly spawned game is watched for the instant, UI-less SIGKILL that Gatekeeper delivers to a
- * quarantined binary (Р6). Only the RESOLVE of the launch is delayed by this, never the game itself; a real
+ * quarantined binary. Only the RESOLVE of the launch is delayed by this, never the game itself; a real
  * game is still alive when the window closes.
  */
 const GATEKEEPER_PROBE_MS = 500;
@@ -102,7 +101,7 @@ export function createDarwinGameLauncher(deps: DarwinGameLauncherDeps): GameProc
     async launchGame(manifest): Promise<GameProcess> {
       const t = deps.getTranslator();
       if (manifest.raw.runAsAdmin) {
-        // Symmetric with linux (Р6): there is no elevation to ask for here, and refusing would break a
+        // Symmetric with linux: there is no elevation to ask for here, and refusing would break a
         // legitimate two-platform card that sets runAsAdmin for its Windows side.
         log.warn(`[launch] runAsAdmin ignored on macOS (no elevation) id=${manifest.raw.id}`);
       }
@@ -127,6 +126,7 @@ export function createDarwinGameLauncher(deps: DarwinGameLauncherDeps): GameProc
     launchInstaller: () => refuseInstall(),
     prepareInstallDir: () => refuseInstall(),
     launchUninstaller: () => refuseInstall(),
+    resolveUninstaller: () => Promise.resolve(null),
     // Never reached (install mode never resolves on darwin); returns the same dir win32 would, so the
     // interface stays total rather than throwing from a getter-shaped method.
     uninstallDir: (install) => install.dir,

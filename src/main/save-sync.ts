@@ -68,7 +68,7 @@ export async function syncDir(src: string, dest: string): Promise<void> {
 // compare is unreliable across FAT32/DST). A side "changed" iff a file was added/removed or a common
 // file's mtime grew beyond a tolerance. Deletions are caught for free: a file present in the snapshot but
 // missing now means that side changed → it becomes the source, and the folder-level replace carries the
-// deletion across. See the plan (part B) for the full rationale.
+// deletion across.
 
 /** A snapshot of a save folder: relative file path (POSIX-normalized) → mtimeMs. Empty for a missing folder. */
 export type TreeSnapshot = Record<string, number>;

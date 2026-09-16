@@ -4,7 +4,8 @@
 // delivery (setHero/setCardMusic push to the window); this class only reads bytes and encodes them.
 import path from 'node:path';
 import fse from 'fs-extra';
-import { type HeroAssets, type ResolvedManifest, type SfxName, type SfxSet } from '../shared/types';
+import { type HeroAssets, type SfxName, type SfxSet } from '../shared/types';
+import type { ResolvedManifest } from './manifest-types';
 import { log } from './logger';
 import { describe } from './util';
 
@@ -31,7 +32,7 @@ const AUDIO_MIME: Readonly<Record<string, string>> = {
 /**
  * Supported image / audio file extensions WITHOUT the leading dot, derived from the MIME maps above so
  * there is a single source of truth. The manifest editor accepts a picked file against these (see
- * game-config.ts acceptPickedPaths) — keeping the "what can be a hero image / a sound" answer in
+ * pick-rejection.ts) — keeping the "what can be a hero image / a sound" answer in
  * lockstep with what this reader actually decodes.
  */
 export const IMAGE_EXTENSIONS: readonly string[] = Object.keys(IMAGE_MIME).map((ext) => ext.slice(1));
@@ -44,7 +45,7 @@ export const AUDIO_EXTENSIONS: readonly string[] = Object.keys(AUDIO_MIME).map((
  * An extension this reader does not know is REFUSED rather than served as `application/octet-stream`.
  * That fallback used to be harmless (only manifest-referenced files reached it), but the in-launcher
  * picker lets the renderer name the path — and "read any file on the machine as base64" is exactly what
- * the octet-stream branch would have granted (see the plan, Р5.1).
+ * the octet-stream branch would have granted.
  */
 export async function readImageDataUrl(filePath: string): Promise<string | undefined> {
   const mime = IMAGE_MIME[path.extname(filePath).toLowerCase()];

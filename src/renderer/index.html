@@ -224,7 +224,7 @@
       <!-- Settings: the fourth surface (not a carousel screen — the strip keeps its position underneath).
            Openness is published as #app[data-overlay="settings"]; the veil + the column are built from
            JS (settings-screen.ts) into #settings-list. Hidden state is opacity + pointer-events, never
-           display:none — see the plan §3.1. -->
+           display:none, so the fade in and out can run. -->
       <section id="settings" class="settings" aria-hidden="true">
         <div class="settings-veil"></div>
         <div class="settings-column">
@@ -294,7 +294,7 @@
 
         <!-- File browser. The native dialog cannot be driven with a gamepad over a fullscreen window, and
              in Game Mode it is a dead end — so browsing lives here, read-only, with the acceptance checks
-             in main (see the plan, Р5). -->
+             in main. -->
         <div class="picker" id="file-picker" aria-hidden="true">
           <div class="picker-veil"></div>
           <div class="picker-panel">

@@ -1,7 +1,7 @@
 // Shared "X hides to tray instead of quitting" window behavior. GameWindow and
 // SettingsWindow both had an identical forceClosing flag + on('close')→preventDefault/hide + allowClose
-// pair; this centralizes it. `onClose` runs on every close attempt regardless of the guard (e.g. the
-// settings window detaches its updater there).
+// pair; this centralizes it. `onClose` runs on every close attempt regardless of the guard (the
+// settings window used it to detach its updater; today no caller passes one).
 import { type BrowserWindow } from 'electron';
 
 export interface HideOnCloseGuard {

@@ -30,7 +30,7 @@ export function loadFixture(): void {
   document.documentElement.className = 'mouse-asleep';
 }
 
-/** Drops `mouse-asleep`, as controls.ts does on the first real move — every hover branch is behind it. */
+/** Drops `mouse-asleep`, as idle.ts does on the first real move — every hover branch is behind it. */
 export function wakeMouse(): void {
   document.documentElement.classList.remove('mouse-asleep');
 }

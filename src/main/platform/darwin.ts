@@ -3,14 +3,14 @@
 // mode are out of scope and refuse with their own message rather than failing obscurely.
 //
 // Per-service notes:
-//   ProcessMonitor → `ps` (process-monitor.darwin.ts; Д1 — no readable env of foreign processes, so a Steam
+//   ProcessMonitor → `ps` (process-monitor.darwin.ts — no readable env of foreign processes, so a Steam
 //                    game is matched by the watched image names, as on win32)
-//   SteamLocator   → `~/Library/Application Support/Steam` (steam-locator.darwin.ts; Д8)
-//   GameLauncher   → direct spawn / `.app` bundle resolution (game-launcher.darwin.ts; Д2)
-//   SavePathResolver → the Windows dictionary mapped onto the mac profile (save-path.darwin.ts; Д3)
-//   PowerBackend   → `pmset sleepnow` + System Events via osascript (Д4)
+//   SteamLocator   → `~/Library/Application Support/Steam` (steam-locator.darwin.ts)
+//   GameLauncher   → direct spawn / `.app` bundle resolution (game-launcher.darwin.ts)
+//   SavePathResolver → the Windows dictionary mapped onto the mac profile (save-path.darwin.ts)
+//   PowerBackend   → `pmset sleepnow` + System Events via osascript
 //   SteamShortcuts → unsupported (Game Mode is a Steam Deck thing)
-//   RemovableMounter → no-op: macOS automounts removable volumes into /Volumes (Д9)
+//   RemovableMounter → no-op: macOS automounts removable volumes into /Volumes
 //   resolveInstallDir → null: install mode is unsupported, so no card can resolve one
 import os from 'node:os';
 import { execFile } from 'node:child_process';
@@ -36,7 +36,7 @@ const execFileAsync = promisify(execFile);
 // Shutdown/restart have no such command (`shutdown` itself does require root), so they ask System Events
 // via osascript, the same route the Apple menu takes.
 //
-// Д4: sending Apple Events from a PACKAGED app requires `NSAppleEventsUsageDescription` in Info.plist
+// Sending Apple Events from a PACKAGED app requires `NSAppleEventsUsageDescription` in Info.plist
 // (electron-builder `mac.extendInfo`) AND the user's consent in the TCC prompt. In dev the responsible
 // process is the terminal, which already has that consent — so this path can only be finally verified on a
 // packaged build. A refusal comes back as osascript error -1743, reported here in words the user can act on.
@@ -89,7 +89,7 @@ function createSteamShortcuts(): SteamShortcuts {
 }
 
 // ── RemovableMounter (no-op) ─────────────────────────────────────────────────
-// Д9: macOS mounts removable media itself (an exFAT card appears under /Volumes, executable), so there is
+// macOS mounts removable media itself (an exFAT card appears under /Volumes, executable), so there is
 // nothing to sweep — same situation as Windows.
 
 function createRemovableMounter(): RemovableMounter {

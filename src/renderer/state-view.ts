@@ -1,7 +1,7 @@
 // Pure views over AppState shared by the renderer modules. No DOM — just the mapping from a
 // state to the UI phase, the status label, the Steam-busy flag and the current game. Kept in one place
 // so app.ts (render/title-slide) and controls.ts (focus/actions) read the same derivations.
-import type { AppState, GameInfo } from '../shared/types';
+import type { AppState, GameInfo } from '../shared/types.js';
 import type { Translator } from '../shared/i18n/index.js';
 
 export type Phase = 'idle' | 'ready' | 'busy' | 'error';
@@ -34,7 +34,7 @@ export function statusOf(state: AppState, t: Translator): string {
     case 'uninstalling':
       return t('launcher.state.uninstalling');
     case 'configuringProton':
-      // Base label; the renderer appends a rotating funny suffix after a minute (Р7j).
+      // Base label; the renderer appends a rotating funny suffix after a minute.
       return t('launcher.protonConfig1');
     case 'syncing-in':
       return t('launcher.state.syncingIn');

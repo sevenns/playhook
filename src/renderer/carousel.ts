@@ -9,7 +9,7 @@
 // attribute. What is SHOWN for the selected card (title, stats, background, music) is main's answer to
 // `browseGame(id)` — this module never derives it; a launcher card answers `browseNone()`, which is main's
 // "nothing is on screen". The geometry lives in carousel-geometry.ts (pure).
-import type { LibraryEntry } from '../shared/types';
+import type { LibraryEntry } from '../shared/types.js';
 import type { Translator } from '../shared/i18n/index.js';
 import {
   MAX_STRIP_GAMES,

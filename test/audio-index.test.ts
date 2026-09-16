@@ -1,5 +1,5 @@
 // The build-time enumeration that produces dist/audio/index.json (the sound-set + ambience listing the
-// settings window reads at runtime). Guards the filtering: .DS_Store and other non-directories are not
+// Settings screen reads at runtime). Guards the filtering: .DS_Store and other non-directories are not
 // sound sets, an incomplete set (no move.wav) is skipped, and only supported audio files are ambience.
 import type { Dirent } from 'node:fs';
 import { describe, expect, it } from 'vitest';

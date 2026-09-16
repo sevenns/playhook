@@ -113,7 +113,7 @@ export class GameWindow {
 
     // Closing the window with the X doesn't quit the app — we hide it to the tray. In SteamOS Game Mode
     // there is no tray and Steam ends a non-Steam game by closing its window, so the guard is skipped
-    // (`hideToTrayOnClose: false`): the close proceeds and main quits on window-all-closed (see Р8, point 5).
+    // (`hideToTrayOnClose: false`): the close proceeds and main quits on window-all-closed.
     if (opts.hideToTrayOnClose ?? true) {
       this.closeGuard = installHideOnClose(window);
     }
@@ -133,6 +133,16 @@ export class GameWindow {
 
   get browserWindow(): BrowserWindow | null {
     return this.window;
+  }
+
+  /**
+   * Pushes one message to the renderer — a no-op before the window exists and after it is destroyed, so
+   * every push from main can be unconditional. The channel is a string, not `IPC[...]`, on purpose: the
+   * services that push (notifications, the controller) already name their channels through the IPC table.
+   */
+  send(channel: string, payload: unknown): void {
+    const window = this.window;
+    if (window !== null && !window.isDestroyed()) window.webContents.send(channel, payload);
   }
 
   /**

@@ -1251,9 +1251,9 @@ html:not(.mouse-asleep) .rect-button:hover,
   color: var(--fg);
 }
 
-/* Error detail: muted, полупрозрачный белый (как на макете — alpha поверх hero), и перенос
-   произвольного текста ошибки (сырой describe(cause) может дать длинный токен без пробелов, напр.
-   путь/URL) — при right-align он иначе вылезет за правый край. */
+/* Error detail: muted, translucent white (as in the mockup — alpha over the hero), and wrapping for an
+   arbitrary error text (a raw describe(cause) can be one long token without spaces, e.g. a path or a
+   URL) — right-aligned, it would otherwise run past the right edge. */
 #error-message {
   color: color-mix(in srgb, var(--fg) 75%, transparent);
   overflow-wrap: anywhere;
@@ -2861,7 +2861,7 @@ html:not(.mouse-asleep) .osk-key:hover,
 /* ── File browser ───────────────────────────────────────────────────────────
    Read-only, and unrestricted on purpose: where to browse is the user's business (the commonest install
    path there is, `…/steamapps/common`, is a system directory by any definition). What is guarded is what
-   main ACCEPTS back — see the plan, Р5.2. */
+   main ACCEPTS back. */
 
 .picker {
   position: absolute;

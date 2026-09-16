@@ -1,5 +1,5 @@
-// Deterministic, id-based names a locally moved game's assets get on the DESTINATION card (see the plan,
-// Р2.4). The card's game.json is written verbatim (never re-serialized — see game-config.ts), so the
+// Deterministic, id-based names a locally moved game's assets get on the DESTINATION card. The card's
+// game.json is written verbatim (never re-serialized — see game-config.ts), so the
 // target file names must be known BEFORE anything is written, not derived from what main happens to copy.
 //
 // Pure and shared between the renderer (which writes these paths into the target game.json text as part
@@ -8,7 +8,7 @@
 // other, so the two cannot desync.
 //
 // A collision is possible only with a PREVIOUS copy of the SAME game (the id is already checked unique on
-// the target card before anything is copied — see GameConfigService.moveToCard), so overwriting is safe.
+// the target card before anything is copied — see GameMoveTransaction.moveToCard), so overwriting is safe.
 
 /** The file extension (with its leading dot), taken from the last path segment. '' when there is none. */
 function assetExtension(sourcePath: string): string {

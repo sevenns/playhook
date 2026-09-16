@@ -57,7 +57,7 @@ export function extractGameSlot(text: string, id: string): SlotResult {
  *
  * The file is re-serialized, so hand-authored formatting of the OTHER slots is lost — their DATA is not,
  * unknown keys included. That trade is deliberate: a range-level text replacement would be both dearer
- * and more fragile (see the plan, п.7).
+ * and more fragile.
  */
 export function replaceGameSlot(text: string, id: string, slot: GameSlot): SlotTextResult {
   const items = parseSlots(text);

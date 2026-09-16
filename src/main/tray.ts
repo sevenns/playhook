@@ -4,8 +4,11 @@
 // A background app lives in the tray; closing the window doesn't quit the program.
 import path from 'node:path';
 import { Tray, Menu, nativeImage, type NativeImage } from 'electron';
-import { APP_NAME } from '../shared/types';
 import { type Translator } from '../shared/i18n/index';
+
+/** Display name (window title / tray tooltip). The %APPDATA% data folder is derived separately by
+ * Electron from package.json `name` (currently "playhook"). */
+const APP_NAME = 'Playhook' as const;
 
 export interface TrayCallbacks {
   readonly onShow: () => void;
@@ -50,8 +53,8 @@ export function buildTrayMenu(t: Translator, callbacks: TrayCallbacks, steam: Tr
           },
         ]
       : []),
-    { label: t('settings.openLogs'), click: () => callbacks.onOpenLogs() },
-    { label: t('settings.openGames'), click: () => callbacks.onOpenGamesFolder() },
+    { label: t('tray.openLogs'), click: () => callbacks.onOpenLogs() },
+    { label: t('tray.openGames'), click: () => callbacks.onOpenGamesFolder() },
     { type: 'separator' },
     { label: t('tray.quit'), click: () => callbacks.onQuit() },
   ]);
@@ -83,7 +86,7 @@ function menuBarImage(source: NativeImage): NativeImage {
 export function createTray(t: Translator, callbacks: TrayCallbacks, steam: TraySteamState): Tray {
   // The app icon doubles as the tray icon (the separate icon-tray.* files are gone), copied into dist by
   // copy-assets. Windows uses the .ico; Linux (Desktop Mode/KDE) and macOS need a PNG — a .ico yields an
-  // empty image via nativeImage there (Р8). Falls back to an empty image if the file is missing.
+  // empty image via nativeImage there. Falls back to an empty image if the file is missing.
   const iconFile = process.platform === 'win32' ? '../icon.ico' : '../icon.png';
   const iconPath = path.join(__dirname, iconFile);
   const loaded = nativeImage.createFromPath(iconPath);

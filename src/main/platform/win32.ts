@@ -1,12 +1,13 @@
 // Windows implementations of the platform services. These wrap the existing win32 code (tasklist/taskkill
 // process control, the registry Steam lookup, the spawn/ShellExecuteEx launchers, the env-based save-path
 // mapping, the `shutdown` command + powrprof suspend). Behaviour is 1:1 with the pre-port code — the port
-// only routes it through the interfaces so a linux implementation can take its place (Р3/Р4/Р5/Р9).
+// only routes it through the interfaces so a linux implementation can take its place.
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import type {
   GameProcessLauncher,
+  InstallDirResolver,
   Platform,
   PlatformDeps,
   PowerBackend,
@@ -18,19 +19,18 @@ import type {
   SteamShortcuts,
 } from './types';
 import {
+  killImagesElevated,
   launchGame,
   launchInstaller,
   launchUninstaller,
 } from '../game-launcher';
+import { resolveUninstaller } from '../uninstaller.win32';
 import { getSteamPath } from '../registry';
 import { suspendToSleep } from '../power-native';
-import {
-  expandPcSavePath,
-  absoluteToPcSavePath,
-  type ManifestEnv,
-  type InstallDirResolver,
-} from '../manifest';
+import { expandPcSavePath, absoluteToPcSavePath, type ManifestEnv } from '../manifest';
 import { createTranslator } from '../../shared/i18n/index';
+import { log } from '../logger';
+import { describe } from '../util';
 
 const execFileAsync = promisify(execFile);
 
@@ -53,7 +53,10 @@ function createProcessMonitor(): ProcessMonitor {
       try {
         const { stdout } = await execFileAsync('tasklist', ['/NH', '/FO', 'CSV'], { windowsHide: true });
         return makeWin32Snapshot(stdout.toLowerCase());
-      } catch {
+      } catch (cause) {
+        // An empty snapshot reads as "everything exited" to the waits, so a tasklist failure must at
+        // least leave a trace — a game that quietly "ended" is otherwise impossible to diagnose.
+        log.warn('[process-monitor] tasklist failed — empty snapshot:', describe(cause));
         return makeWin32Snapshot('');
       }
     },
@@ -94,6 +97,7 @@ function createProcessMonitor(): ProcessMonitor {
     killSteamGame(_appid, watchNames): Promise<void> {
       return monitor.killByName(watchNames);
     },
+    killImagesElevated: (imageNames) => killImagesElevated(imageNames),
   };
   return monitor;
 }
@@ -132,6 +136,9 @@ function createGameLauncher(monitor: ProcessMonitor): GameProcessLauncher {
     // pre-clean, and `copy` can write into it straight away.
     prepareInstallDir: () => Promise.resolve(),
     launchUninstaller: (target) => launchUninstaller(target, monitor),
+    // The game's own uninstaller first (FS search in the install dir → registry fallback): it must clean
+    // the shared system before the install dir is removed.
+    resolveUninstaller: (install) => resolveUninstaller(install),
     // win32: no Wine prefix — uninstall removes the app-controlled install dir (after the game's own
     // uninstaller runs). 1:1 with the pre-port behaviour.
     uninstallDir: (install) => install.dir,
@@ -141,7 +148,7 @@ function createGameLauncher(monitor: ProcessMonitor): GameProcessLauncher {
 }
 
 // ── SavePathResolver (env-based %PREFIX% mapping) ────────────────────────────
-// Reuses the existing pure expanders. The resolver contract returns null on failure (Р5: "nothing to
+// Reuses the existing pure expanders. The resolver contract returns null on failure ("nothing to
 // sync"), so the translator only matters for messages we never surface here — a fixed 'en' one suffices.
 
 const noopTranslator = createTranslator('en');

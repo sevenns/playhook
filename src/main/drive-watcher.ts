@@ -6,8 +6,10 @@
 import path from 'node:path';
 import fse from 'fs-extra';
 import { list } from 'drivelist';
-import { MANIFEST_FILENAME, type DriveCandidate } from '../shared/types';
+import { type DriveCandidate } from '../shared/types';
+import { MANIFEST_FILENAME } from './manifest-types';
 import { type Translator } from '../shared/i18n/index';
+import { parseManifestItems } from './manifest';
 import { log } from './logger';
 
 const DEFAULT_INTERVAL_MS = 1000;
@@ -86,7 +88,7 @@ export async function listDriveCandidates(
  * Every mounted volume on the machine, as plain paths — the STARTING points the in-launcher file picker
  * offers in its left column. Deliberately unfiltered, unlike listDriveCandidates: a game is installed
  * wherever the user installed it (the usual `C:\Program Files (x86)\Steam\steamapps\common\…` is a system
- * disk by any definition), and where to browse is the user's call, not ours. See the plan, Р5.2.
+ * disk by any definition), and where to browse is the user's call, not ours.
  */
 export async function listAllMountpoints(): Promise<readonly string[]> {
   const drives = await list();
@@ -143,10 +145,10 @@ export async function describeManifestContent(
   if (!hasManifest) return { suffix: blank, signature: '' };
   const invalid: ManifestDescription = { suffix: t('drive.invalid'), signature: 'invalid' };
   try {
-    const parsed: unknown = await fse.readJson(manifestPath);
     // game.json holds a single game object (legacy) OR a non-empty array of them (multi-game card) — the
     // same top-level union readManifests accepts.
-    const games: readonly unknown[] = Array.isArray(parsed) ? parsed : [parsed];
+    const games = parseManifestItems(await fse.readFile(manifestPath, 'utf8'));
+    if (games === null) return invalid;
     const first = games[0];
     if (typeof first !== 'object' || first === null) return invalid;
     const signature = gameIdsSignature(games);
@@ -193,8 +195,8 @@ export class DriveWatcher {
   private errorHandler: ((error: Error) => void) | null = null;
 
   /**
-   * @param automount Optional sweep that mounts an inserted-but-unmounted removable card before scanning
-   *   (Р10). Wired ONLY in a SteamOS Game Mode session, as a SAFETY NET: the session normally mounts the
+   * @param automount Optional sweep that mounts an inserted-but-unmounted removable card before scanning.
+   *   Wired ONLY in a SteamOS Game Mode session, as a SAFETY NET: the session normally mounts the
    *   card itself, but a card that arrives without a mountpoint has no path for scan() to look under and
    *   would stay invisible. null everywhere else (Windows and the KDE desktop session mount on their
    *   own). Must never throw.

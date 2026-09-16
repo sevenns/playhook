@@ -1,5 +1,5 @@
 // The refusals every asset import passes through — the PC library's `assets/`, and the history's staging
-// directory that reuses them (see the history-config plan, Р9).
+// directory that reuses them.
 //
 // They were implicit while the only way in was a native dialog whose filters the OS enforced; the
 // in-launcher picker names the path from the renderer instead, so the limits are stated here, in the one

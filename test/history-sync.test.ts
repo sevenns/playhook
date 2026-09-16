@@ -13,7 +13,8 @@ import {
   syncHistoryConfig,
 } from '../src/main/history-sync';
 import type { HistorySyncResult } from '../src/main/history-sync';
-import type { ResolvedManifest, Stats } from '../src/shared/types';
+import type { Stats } from '../src/shared/types';
+import type { ResolvedManifest } from '../src/main/manifest-types';
 
 const NO_STATS: Stats = { schemaVersion: 1, totalPlaySeconds: 0, lastPlayedAt: null, launchCount: 0 };
 const t = createTranslator('en');
@@ -68,7 +69,7 @@ async function seed(cardSlot: Record<string, unknown> = slot()): Promise<void> {
 
 /**
  * One insertion's worth of the sync: the card write, then the history-side commit the caller runs once the
- * card has read back (see ipc.ts loadCardBody). Split in the source, so it is split here too — the tests
+ * card has read back (see game-controller.ts loadCardBody). Split in the source, so it is split here too — the tests
  * that care about the SPLIT call the two halves themselves.
  */
 const sync = async (): Promise<HistorySyncResult> => {

@@ -1,4 +1,4 @@
-// Resolving the real executable inside a macOS `.app` bundle (Д2). A `.app` is a DIRECTORY, so it cannot
+// Resolving the real executable inside a macOS `.app` bundle. A `.app` is a DIRECTORY, so it cannot
 // be spawned — the binary lives at `Contents/MacOS/<CFBundleExecutable>`, named by the bundle's Info.plist.
 // Spawning that binary directly (rather than `open -a`) is what keeps the pid valid, so the existing
 // pid-based tracking works for a local mac game exactly as it does for a Windows .exe.

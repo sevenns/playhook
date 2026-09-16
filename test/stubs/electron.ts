@@ -1,4 +1,4 @@
-// Minimal `electron` stub for the vitest node run (audit C1/M-4). The main modules under test import
+// Minimal `electron` stub for the vitest node run. The main modules under test import
 // `electron` transitively (e.g. logger.ts → app.getPath), but there is no electron runtime in plain
 // Node. vitest aliases the bare `electron` specifier to this file (see vitest.config.ts), so those
 // imports resolve to inert no-ops. It exposes only what the tested import graph touches; extend as
@@ -71,6 +71,46 @@ function makeImage(size: { width: number; height: number } | null): NativeImageS
   };
 }
 
+type IpcListener = (event: unknown, ...args: unknown[]) => unknown;
+
+const ipcHandlers = new Map<string, IpcListener>();
+const ipcListeners = new Map<string, IpcListener>();
+
+/**
+ * `ipcMain` records what a service registers instead of wiring anything, so a test can pick the handler
+ * of one channel out of `handlers` / `listeners` and call it the way the renderer would
+ * (test/game-controller.test.ts). A later registration on the same channel replaces the earlier one —
+ * every test builds its own service, and the last one built is the one under test.
+ */
+export const ipcMain = {
+  handlers: ipcHandlers,
+  listeners: ipcListeners,
+  handle(channel: string, handler: IpcListener): void {
+    ipcHandlers.set(channel, handler);
+  },
+  on(channel: string, listener: IpcListener): void {
+    ipcListeners.set(channel, listener);
+  },
+};
+
+export const clipboard = {
+  readText(): string {
+    return '';
+  },
+};
+
+/**
+ * `shell.openExternal` records the URIs instead of opening anything — the Steam sequences launch,
+ * install and uninstall by opening `steam://` URIs (test/game-controller.test.ts asserts on them).
+ */
+export const shell = {
+  opened: [] as string[],
+  openExternal(url: string): Promise<void> {
+    shell.opened.push(url);
+    return Promise.resolve();
+  },
+};
+
 export const contextBridge = {
   exposeInMainWorld(): void {},
 };
@@ -83,4 +123,4 @@ export const ipcRenderer = {
   },
 };
 
-export default { app, Menu, nativeImage, contextBridge, ipcRenderer };
+export default { app, Menu, nativeImage, ipcMain, clipboard, shell, contextBridge, ipcRenderer };

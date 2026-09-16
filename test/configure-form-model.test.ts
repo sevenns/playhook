@@ -213,7 +213,7 @@ describe('copy install type ("move game to PC" — a checkbox inside Executable 
   });
 });
 
-describe('winetricks round-trip (game + installer prefix provisioning — Р7b)', () => {
+describe('winetricks round-trip (game + installer prefix provisioning)', () => {
   it('parses top-level and install.winetricks into the model', () => {
     const text =
       '{"schemaVersion":1,"id":"g","title":"G","executable":"g.exe","heroImage":"h.jpg",' +
@@ -441,7 +441,7 @@ describe('pc mode (a local game on this PC)', () => {
   });
 });
 
-describe('none mode (PC-library draft — no launch method chosen yet, Р1)', () => {
+describe('none mode (PC-library draft — no launch method chosen yet)', () => {
   it('emits no launch block at all, but keeps args/runAsAdmin/winetricks/umuGameId', () => {
     const model: ManifestFormModel = {
       ...emptyFormModel('none'),
@@ -635,7 +635,7 @@ describe('multi-game wrapper (textToGames / gamesToText)', () => {
 
   // The per-game editor makes this reachable: readManifests SKIPS a game that does not resolve, the rest
   // of the card stays playable, and the user edits one of them. Saving must not take the broken neighbour
-  // with it — hence the raw slot (see the plan, Р2).
+  // with it — hence the raw slot.
   it('writes an unrepresentable neighbour back VERBATIM instead of dropping it', () => {
     const source = `[${gameText('a')}, ["not", "a game"]]`;
     const parsed = textToGames(source);
