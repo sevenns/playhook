@@ -144,7 +144,9 @@ build does not self-update. **All OS-specific behaviour lives behind the `Platfo
 ## Tests
 
 - Runner: **vitest** (`npm test`). Tests live in `test/`, run in plain Node with **no electron**
-  (`test/stubs/electron.ts` is aliased for the `electron` import — see `vitest.config.ts`).
+  (`test/stubs/electron.ts` is aliased for the `electron` import — see `vitest.config.ts`). `test/setup.ts`
+  points the file logger at a temp dir first, so a `log.warn` a test trips never lands in your real
+  launcher log (logger.ts would otherwise fall back to userData, as it does for the GUI).
 - Testable = **pure / electron-free** modules. The koffi-bound win32 modules (`game-launcher.ts`,
   `registry.ts`, `window-finder.ts`) DO import under vitest on every OS — the prebuilt addon loads and the
   DLLs bind lazily — but their FFI branches cannot be exercised without Windows, so test them through
