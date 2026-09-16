@@ -777,19 +777,22 @@ export function slugifyTitle(title: string): string {
 /**
  * Writes one text / number / path field by row id. The same object comes back when the id names no such
  * field, so a caller can tell a write from a no-op by identity.
+ *
+ * `idFollowsTitle` is the Add-game rule: the id tracks the title's slug until the user takes the id
+ * over, because a slug is a good first guess. For an EXISTING game it is a trap — its id keys the
+ * playtime, the saves backup and the library entry, and a rename must not quietly detach all three —
+ * so the editor passes false and the id only changes when the user edits the id row itself.
  */
 export function withField(
   form: ManifestFormModel,
   id: GameRowId,
   value: string,
+  idFollowsTitle = false,
 ): ManifestFormModel {
   switch (id) {
     case 'title': {
-      // The id follows the title until the user takes the id over, exactly as the old form did: a slug
-      // is a good first guess and a terrible override.
-      const slug = slugifyTitle(value);
-      const followed = form.id === '' || form.id === slugifyTitle(form.title);
-      return { ...form, title: value, ...(followed ? { id: slug } : {}) };
+      const followed = idFollowsTitle && (form.id === '' || form.id === slugifyTitle(form.title));
+      return { ...form, title: value, ...(followed ? { id: slugifyTitle(value) } : {}) };
     }
     case 'id':
       // Lower case wherever it comes from, so the field agrees with the slug a title proposes — the

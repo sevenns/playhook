@@ -802,7 +802,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
 
   /** Writes one field of the form model by row id. Everything a row can change goes through here. */
   function setField(id: GameRowId, value: string): void {
-    const next = withField(form, id, value);
+    const next = withField(form, id, value, mode === 'add');
     if (next !== form) updateForm(next);
   }
 
