@@ -109,6 +109,10 @@ export class AppSettingsStore {
   // firing a burst of patch()) can't interleave read-modify-write and lose updates, and never race on the
   // shared `${settingsPath}.tmp` file. Reads stay OFF the queue (a queued op reads directly — see enqueue).
   private tail: Promise<void> = Promise.resolve();
+  // The last parse, keyed by the file's mtime and size: settings are read from a dozen places per browse,
+  // and a corrupt file would otherwise be re-parsed — and re-warned about — on every one of them. The
+  // stamp changes on any write, ours or the user's, so a stale snapshot is never served.
+  private cached: { readonly stamp: string; readonly value: AppSettings } | null = null;
 
   /**
    * @param baseDir where settings.json lives (the GUI passes app.getPath('userData')).
@@ -148,8 +152,22 @@ export class AppSettingsStore {
    * Reads settings; returns the default when the file is missing or corrupted (a warn is logged on
    * corruption).
    */
-  read(): Promise<AppSettings> {
-    return readJsonValidated(this.settingsPath, settingsSchema, DEFAULT_SETTINGS);
+  async read(): Promise<AppSettings> {
+    const stamp = await this.stamp();
+    if (stamp !== null && this.cached?.stamp === stamp) return this.cached.value;
+    const value = await readJsonValidated(this.settingsPath, settingsSchema, DEFAULT_SETTINGS);
+    this.cached = stamp === null ? null : { stamp, value };
+    return value;
+  }
+
+  /** `mtime:size` of settings.json, or null when it cannot be stat'ed (missing, or a racing write). */
+  private async stamp(): Promise<string | null> {
+    try {
+      const stat = await fse.stat(this.settingsPath);
+      return `${stat.mtimeMs}:${stat.size}`;
+    } catch {
+      return null;
+    }
   }
 
   /** The actual atomic write — called ONLY from inside a queued op, so it never enqueues (would deadlock). */
@@ -163,6 +181,7 @@ export class AppSettingsStore {
       this.onWriteFailed?.(cause);
       throw cause;
     }
+    this.cached = null;
     this.onChange?.(next);
   }
 

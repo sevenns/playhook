@@ -5,10 +5,11 @@
 // Plus the two rules the Settings-screen move added: a `theme` key from an older file is tolerated (and
 // dropped on the next write), and every write notifies the onChange listener (that push is what the
 // screen renders from).
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { log } from '../src/main/logger';
 import { AppSettingsStore, DEFAULT_SETTINGS } from '../src/main/app-settings';
 import type { AppSettings } from '../src/shared/types';
 
@@ -19,7 +20,33 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await fs.rm(baseDir, { recursive: true, force: true });
+});
+
+describe('AppSettingsStore — cached read', () => {
+  it('parses a corrupt file once, not on every read', async () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined);
+    await fs.writeFile(path.join(baseDir, 'settings.json'), '{ "schemaVersion": 1, "musicVol', 'utf8');
+    const store = new AppSettingsStore(baseDir);
+
+    expect((await store.read()).musicVolume).toBe(DEFAULT_SETTINGS.musicVolume);
+    await store.read();
+    await store.read();
+
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it('sees a file rewritten behind its back', async () => {
+    const store = new AppSettingsStore(baseDir);
+    await store.patch({ musicVolume: 0.3 });
+    expect((await store.read()).musicVolume).toBe(0.3);
+
+    const rewritten = { ...DEFAULT_SETTINGS, musicVolume: 0.9, sfxVolume: 0.1 };
+    await fs.writeFile(path.join(baseDir, 'settings.json'), JSON.stringify(rewritten), 'utf8');
+
+    expect((await store.read()).musicVolume).toBe(0.9);
+  });
 });
 
 describe('AppSettingsStore — write queue', () => {
