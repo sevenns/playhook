@@ -308,11 +308,31 @@ export function createHeroController(deps: HeroDeps): HeroController {
     heroTimer = null;
   }
 
+  /**
+   * Whether a payload carries exactly the images already held. Main re-sends a game's heroes whenever the
+   * user commits to it (opening its screen asks for them immediately), and that replay is not a new game:
+   * resetting the cursor for it threw a rotated-to image back to the first one. An empty payload is never
+   * "the same" — what it means depends on the channel, which is applyAssets' business.
+   */
+  function isSamePayload(incoming: readonly string[]): boolean {
+    return (
+      incoming.length > 0 &&
+      incoming.length === heroImages.length &&
+      incoming.every((url, index) => url === heroImages[index])
+    );
+  }
+
   // New hero payload: reset the cursor, paint the first image if a game is already on screen (channels are
   // independent — render may have landed first), and restart the rotation from fresh. `replaceWhenEmpty`
   // decides what an EMPTY payload means — see the branch below.
   function applyAssets(assets: HeroAssets | null, replaceWhenEmpty = false): void {
-    heroImages = assets?.images ?? [];
+    const incoming = assets?.images ?? [];
+    if (isSamePayload(incoming)) {
+      if (deps.hasGameOnScreen()) showHeroAt(heroIndex);
+      startRotation();
+      return;
+    }
+    heroImages = incoming;
     heroIndex = 0;
     // The cache is keyed by image, so a fresh payload cannot hand one picture another's colours; it is
     // still dropped here so the map never outgrows one payload's worth of images (a data URL apiece).

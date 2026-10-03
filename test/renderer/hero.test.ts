@@ -93,3 +93,35 @@ describe('hero palette', () => {
     expect(d1()).toBe(RED.d1);
   });
 });
+
+describe('hero rotation', () => {
+  const shown = (): string =>
+    req('app').querySelector('.hero-layer.is-active')?.getAttribute('style') ?? '';
+
+  it('keeps the rotated-to image when the same payload is replayed', async () => {
+    const hero = createHeroController({ hasGameOnScreen: () => hasGame });
+
+    hero.applyBrowseAssets({ images: [A, B] });
+    await vi.advanceTimersByTimeAsync(60_000 + 1000);
+    expect(shown()).toContain(B);
+
+    hero.applyBrowseAssets({ images: [A, B] });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(shown()).toContain(B);
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(shown()).toContain(A);
+  });
+
+  it('starts from the first image when the payload differs', async () => {
+    const hero = createHeroController({ hasGameOnScreen: () => hasGame });
+
+    hero.applyBrowseAssets({ images: [A, B] });
+    await vi.advanceTimersByTimeAsync(60_000 + 1000);
+    expect(shown()).toContain(B);
+
+    hero.applyBrowseAssets({ images: [B, A] });
+    await vi.advanceTimersByTimeAsync(60_000 + 1000);
+    expect(shown()).toContain(A);
+  });
+});
