@@ -109,6 +109,10 @@ interface Harness {
   installerWritesExe: boolean;
   /** Which launcher step fails next — the in-body `failSequence` branches that return early. */
   failAt: FailPoint | null;
+  /** The id main last put on screen (`browse:update`), or null for the empty screen. */
+  readonly browsedId: () => string | null;
+  /** Drops a game from what the fake PC library reads next — the file after a delete was saved. */
+  readonly removeLocalGame: (id: string) => void;
 }
 
 type Mode = 'normal' | 'install' | 'prefix-cleanup' | 'steam';
@@ -125,6 +129,11 @@ interface HarnessOptions {
   readonly sweepDir?: string;
   /** Whether the install-mode game has an uninstaller of its own (the default resolves none). */
   readonly uninstaller?: boolean;
+  /**
+   * Extra local games listed AFTER the default one in the library file, with when each was last played —
+   * the row orders by that, so the file's first game need not be the row's.
+   */
+  readonly extraGames?: readonly { readonly id: string; readonly lastPlayedAt: string }[];
 }
 
 const STEAM_APPID = 480;
@@ -185,6 +194,15 @@ async function harness(opts: HarnessOptions): Promise<Harness> {
       : {}),
   };
 
+  const lastPlayed = new Map((opts.extraGames ?? []).map((game) => [game.id, game.lastPlayedAt]));
+  let localGames: readonly ResolvedManifest[] = [
+    manifest,
+    ...(opts.extraGames ?? []).map(
+      (game): ResolvedManifest => ({ ...manifest, raw: { ...manifest.raw, id: game.id, title: game.id } }),
+    ),
+  ];
+  let browsedId: string | null = null;
+
   const journal: string[] = [];
   const state = new StateManager();
   state.subscribe((next) => journal.push(`state:${next.kind}`));
@@ -221,12 +239,18 @@ async function harness(opts: HarnessOptions): Promise<Harness> {
     if (h.exitRequested) gate.release();
     return gate.opened;
   };
-  const readStats = (): Promise<Stats> =>
-    h.failStats ? Promise.reject(new Error('stats boom')) : Promise.resolve(ZERO_STATS);
+  const readStats = (id?: string): Promise<Stats> =>
+    h.failStats
+      ? Promise.reject(new Error('stats boom'))
+      : Promise.resolve({
+          ...ZERO_STATS,
+          lastPlayedAt: (id === undefined ? undefined : lastPlayed.get(id)) ?? null,
+        });
 
   const window: ControllerWindow = {
-    send: (channel) => {
+    send: (channel, payload) => {
       if (channel === IPC.errorShow) journal.push('send:error');
+      if (channel === IPC.browseUpdate) browsedId = browseIdOf(payload);
     },
     showAndFocus: () => journal.push('window:showAndFocus'),
     hide: () => journal.push('window:hide'),
@@ -268,7 +292,7 @@ async function harness(opts: HarnessOptions): Promise<Harness> {
     stagedFilePath: (_id, name) => name,
   };
   const pcLibrary: ControllerPcLibrary = {
-    read: () => Promise.resolve({ manifests: [manifest], intact: true }),
+    read: () => Promise.resolve({ manifests: localGames, intact: true }),
     gcOrphans: () => Promise.resolve(),
   };
   const watcher: ControllerWatcher = {
@@ -399,7 +423,16 @@ async function harness(opts: HarnessOptions): Promise<Harness> {
       h.release?.();
     },
     insert: (root) => h.insert(root),
+    browsedId: () => browsedId,
+    removeLocalGame: (id) => {
+      localGames = localGames.filter((game) => game.raw.id !== id);
+    },
   };
+}
+
+function browseIdOf(payload: unknown): string | null {
+  if (typeof payload !== 'object' || payload === null || !('id' in payload)) return null;
+  return typeof payload.id === 'string' ? payload.id : null;
 }
 
 function fire(channel: string): void {
@@ -725,6 +758,25 @@ describe('GameController sequences', () => {
       // The sweep backs off 300 ms between attempts and only then reads the signal.
       await settled(h.journal, 'window:hide');
       expect(h.journal).toEqual(['state:uninstalling', 'state:error', 'window:hide']);
+    });
+  });
+
+  describe('local game removed', () => {
+    it('retargets to the first game of the ROW, not of the library file', async () => {
+      h = await harness({
+        mode: 'normal',
+        extraGames: [
+          { id: 'older', lastPlayedAt: '2026-09-01T00:00:00.000Z' },
+          { id: 'newest', lastPlayedAt: '2026-10-01T00:00:00.000Z' },
+        ],
+      });
+      expect(h.state.get()).toMatchObject({ kind: 'ready', game: { id: 'newest' } });
+
+      h.removeLocalGame('newest');
+      await h.controller.reloadPcLibrary();
+
+      expect(h.state.get()).toMatchObject({ kind: 'ready', game: { id: 'older' } });
+      expect(h.browsedId()).toBe('older');
     });
   });
 

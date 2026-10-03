@@ -709,7 +709,8 @@ export class GameController {
       await this.loadPcLibrary();
       // A local game may have just been edited or removed: rebuild what is on screen so the detail screen
       // (title, "Game files not found", Play/Uninstall) matches the manifest that was saved.
-      const selected = this.current();
+      const selected = this.games.find((game) => game.raw.id === this.selectedId) ?? this.firstCarouselGame();
+      this.selectedId = selected?.raw.id ?? this.selectedId;
       if (selected !== null && !this.cardPresent && this.deps.state.get().kind === 'ready') {
         const stats = this.statsById.get(selected.raw.id) ?? (await this.deps.stats.read(selected.raw.id));
         this.enterReady(await this.buildGameInfo(selected, stats));
