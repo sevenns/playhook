@@ -1072,8 +1072,8 @@ export class GameController {
    */
   private async onSelectRequested(idRaw: unknown): Promise<void> {
     if (typeof idRaw !== 'string') return;
-    const snapshot = this.deps.state.get();
-    if (snapshot.kind !== 'ready' || this.sequences.isLocked || this.sequences.inFlight || this.reloadInFlight) return;
+    const steamBusyElsewhere = (this.steamBusyId ?? idRaw) !== idRaw;
+    if (this.deps.state.get().kind !== 'ready' || this.sequences.isLocked || this.sequences.inFlight || this.reloadInFlight || steamBusyElsewhere) return;
     const manifest = this.games.find((m) => m.raw.id === idRaw);
     if (manifest === undefined) {
       log.warn(`[select] no game with id="${idRaw}" on the current card or in the PC library — ignoring`);

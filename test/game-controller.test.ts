@@ -162,17 +162,20 @@ async function harness(opts: HarnessOptions): Promise<Harness> {
   const steamRoot = opts.mode === 'steam' ? await fakeSteamRoot(tmp, STEAM_APPID) : null;
   const executablePath =
     opts.mode === 'install' ? path.join(installDir, 'game.exe') : path.join(gameDir, 'game.exe');
+  const baseRaw = {
+    schemaVersion: 1,
+    id: 'g1',
+    title: 'Game One',
+    args: [],
+    runAsAdmin: false,
+    launchTimeoutSec: 1,
+    killTimeoutSec: 1,
+    winetricks: [],
+  } as const;
   const manifest: ResolvedManifest = {
     raw: {
-      schemaVersion: 1,
-      id: 'g1',
-      title: 'Game One',
+      ...baseRaw,
       ...(opts.mode === 'steam' ? { steam: { appid: STEAM_APPID } } : { executable: 'game.exe' }),
-      args: [],
-      runAsAdmin: false,
-      launchTimeoutSec: 1,
-      killTimeoutSec: 1,
-      winetricks: [],
     },
     root: gameDir,
     source: 'pc',
@@ -194,11 +197,23 @@ async function harness(opts: HarnessOptions): Promise<Harness> {
       : {}),
   };
 
+  // The extra games are never Steam ones, whatever the mode: two games sharing one appid would both be
+  // "the game Steam is busy with".
+  const plainManifest: ResolvedManifest = {
+    raw: { ...baseRaw, executable: 'game.exe' },
+    root: gameDir,
+    source: 'pc',
+    executablePath: path.join(gameDir, 'game.exe'),
+    cwd: gameDir,
+  };
   const lastPlayed = new Map((opts.extraGames ?? []).map((game) => [game.id, game.lastPlayedAt]));
   let localGames: readonly ResolvedManifest[] = [
     manifest,
     ...(opts.extraGames ?? []).map(
-      (game): ResolvedManifest => ({ ...manifest, raw: { ...manifest.raw, id: game.id, title: game.id } }),
+      (game): ResolvedManifest => ({
+        ...plainManifest,
+        raw: { ...plainManifest.raw, id: game.id, title: game.id },
+      }),
     ),
   ];
   let browsedId: string | null = null;
@@ -435,10 +450,10 @@ function browseIdOf(payload: unknown): string | null {
   return typeof payload.id === 'string' ? payload.id : null;
 }
 
-function fire(channel: string): void {
+function fire(channel: string, ...args: readonly unknown[]): void {
   const listener = ipcMain.listeners.get(channel);
   if (listener === undefined) throw new Error(`no listener registered for ${channel}`);
-  listener(undefined);
+  listener(undefined, ...args);
 }
 
 /** A NUL byte makes every fs call on the path throw, so `removeWithRetry` retries (and reads its signal). */
@@ -832,6 +847,33 @@ describe('GameController sequences', () => {
       await waitFor(uninstalling, 'the optimistic steamUninstalling flag');
       expect(h.journal).toEqual(['state:ready']);
       expect(h.state.get()).toMatchObject({ kind: 'ready', game: { canUninstall: false } });
+    });
+  });
+
+  describe('steam download in flight', () => {
+    it('refuses to select another game, so the download keeps its place in the state', async () => {
+      h = await harness({
+        mode: 'steam',
+        extraGames: [{ id: 'other', lastPlayedAt: '2026-10-01T00:00:00.000Z' }],
+      });
+      const built = h;
+      await fs.writeFile(
+        path.join(built.tmp, 'steam', 'steamapps', `appmanifest_${STEAM_APPID}.acf`),
+        `"AppState"\n{\n\t"appid"\t\t"${STEAM_APPID}"\n\t"StateFlags"\t\t"1026"\n}\n`,
+      );
+      fire(IPC.actionSelect, 'g1');
+      await waitFor(() => {
+        const state = built.state.get();
+        return state.kind === 'ready' && state.game.steamInstalling === true;
+      }, 'the steam game to report its download');
+
+      fire(IPC.actionSelect, 'other');
+      await new Promise<void>((resolve) => setTimeout(resolve, 50));
+
+      expect(built.state.get()).toMatchObject({
+        kind: 'ready',
+        game: { id: 'g1', steamInstalling: true },
+      });
     });
   });
 
