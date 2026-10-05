@@ -133,10 +133,10 @@ export interface GameLibrary {
  * What is currently ON SCREEN — the source of truth for the title, the stats, the background and the
  * music, whether that game is on the inserted card or only in the history.
  *
- * It exists BECAUSE AppState cannot answer that question: AppState is the state machine of ONE game's
- * process (idle/ready/installing/running…), so browsing game B while game A installs, or showing a
- * history game with no card in (`kind: 'idle'`), has no representation there. AppState stays the truth
- * for the PHASE and the STATUS text; BrowseInfo is the truth for what you are looking at.
+ * It exists BECAUSE AppState cannot answer that question: AppState is the state machine of the ONE game
+ * session (idle/ready/launching/running…), so browsing game B while game A runs, or showing a history game
+ * with no card in (`kind: 'idle'`), has no representation there. AppState is the truth for the session's
+ * phase, the ActivityMap for each game's installs and removals, and BrowseInfo for what you are looking at.
  */
 export interface BrowseInfo {
   readonly id: string;
@@ -220,16 +220,18 @@ export interface GameInfo {
   readonly unconfigured?: boolean;
 }
 
-/** The flow state machine (discriminated union). */
+/**
+ * The game session's state machine (discriminated union): at most one game is launched, played and synced
+ * at a time. Installs, removals and Steam's downloads are not part of it — they are per-game activities
+ * (shared/activity.ts, pushed on activity:update) and run side by side with the session.
+ */
 export type AppState =
   | { readonly kind: 'idle' }
   | { readonly kind: 'ready'; readonly game: GameInfo }
-  | { readonly kind: 'installing'; readonly game: GameInfo }
-  | { readonly kind: 'uninstalling'; readonly game: GameInfo }
   /**
-   * Linux-only: the game's Wine prefix is being provisioned (winetricks) before the installer/game
-   * runs. A transient screen shown WITHIN installing/launching; the renderer shows "Configuring Proton..."
-   * and appends a rotating funny suffix after a minute. Reverts to the prior state when done.
+   * Linux-only: the game's Wine prefix is being provisioned (winetricks) before the game runs. A transient
+   * screen shown WITHIN launching; the renderer shows "Configuring Proton..." and appends a rotating funny
+   * suffix after a minute. Reverts to the prior state when done. Installs provision as their own activity.
    */
   | { readonly kind: 'configuringProton'; readonly game: GameInfo }
   | { readonly kind: 'syncing-in'; readonly game: GameInfo }

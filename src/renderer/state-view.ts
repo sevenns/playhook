@@ -15,8 +15,6 @@ export function phaseOf(state: AppState): Phase {
       return 'ready';
     case 'error':
       return 'error';
-    case 'installing':
-    case 'uninstalling':
     case 'configuringProton':
     case 'syncing-in':
     case 'launching':
@@ -30,10 +28,6 @@ export function statusOf(state: AppState, t: Translator): string {
   // Plain "..." instead of the "…" glyph: in M PLUS Rounded 1c (a CJK font) the ellipsis
   // glyph is centered vertically (Japanese convention), which looks misaligned in a Latin UI.
   switch (state.kind) {
-    case 'installing':
-      return t('launcher.state.installing');
-    case 'uninstalling':
-      return t('launcher.state.uninstalling');
     case 'configuringProton':
       // Base label; the renderer appends a rotating funny suffix after a minute.
       return t('launcher.protonConfig1');
@@ -67,8 +61,6 @@ export type BusyKind = 'none' | 'system' | 'game' | 'running';
 
 export function busyKindOf(state: AppState): BusyKind {
   switch (state.kind) {
-    case 'installing':
-    case 'uninstalling':
     case 'configuringProton':
       return 'system';
     case 'syncing-in':

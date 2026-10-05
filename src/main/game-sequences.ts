@@ -1,11 +1,11 @@
-// The game's process lifecycle: the launch / install / uninstall / prefix-cleanup sequences, the Steam
-// pair (fire-and-forget), the force-close, and the save sync around a session. Split out of
+// The game's process lifecycle: the launch sequence, the Steam pair (fire-and-forget), the force-close,
+// and the save sync around a session. Installs and removals are background jobs (game-jobs.ts). Split out of
 // GameController, which keeps the card session (insert / remove / collision) and DISPATCHES here from
 // the renderer's actions; what the sequences need back from it (GameInfo, the ready transition, "is this
 // game's source still there") comes through the SequenceHost seam. The save sync a session is bracketed
 // with lives in save-sync-flow.ts.
 //
-// The four blocking sequences share one scaffold, `runSequence`: launchInFlight + an AbortController for
+// The blocking launch sequence runs inside one scaffold, `runSequence`: launchInFlight + an AbortController for
 // the span, the entering state, the LaunchAbortedError guard (a card swap or shutdown unwinds silently),
 // `failSequence` for anything else, and a finally that releases the owned process, clears the flags and
 // replays a card that was swapped in mid-flight. Launch alone adds to the finally (the lock and the
@@ -78,7 +78,7 @@ export type SequenceDeps = Pick<
   readonly host: SequenceHost;
 };
 
-type SequencePhase = 'launch' | 'install' | 'uninstall';
+type SequencePhase = 'launch';
 
 /** The process a sequence spawned, if any — held by reference so the shared finally can dispose it. */
 interface OwnedProcess {
@@ -174,9 +174,9 @@ export class GameSequences {
 
   /**
    * Linux prefix provisioning (winetricks) started/finished — the launcher's onProvisioning callback
-   * On start: stash the current installing/launching state and show the rotating "Configuring
-   * Proton" screen. On finish: stop the rotation and restore the stashed state (the launch/install
-   * sequence then continues from where it was). No-op on win32 (the launcher never fires this).
+   * On start: stash the current launching state and show the rotating "Configuring Proton" screen. On
+   * finish: stop the rotation and restore the stashed state (the launch sequence then continues from where
+   * it was). No-op on win32 (the launcher never fires this).
    */
   private setProvisioning(active: boolean, game: GameInfo): void {
     if (active) {
@@ -411,7 +411,7 @@ export class GameSequences {
    */
   private async runSequence(
     phase: SequencePhase,
-    entering: 'syncing-in' | 'installing' | 'uninstalling',
+    entering: 'syncing-in',
     info: GameInfo,
     body: (abort: AbortController, owned: OwnedProcess) => Promise<void>,
     onFinally?: () => void,
@@ -664,13 +664,12 @@ export class GameSequences {
   }
 
   /**
-   * A launch/install/uninstall attempt failed: return to the 'ready' screen with the SAME info and
-   * surface the reason in the error popup. The info is unchanged, so the flags recompute to the pre-attempt
-   * button (launch → "Play", failed install → still "Install", failed uninstall → still "Uninstall"); the
-   * user can read the error, close it (B / veil) and retry. Only the log prefix differs per phase.
+   * A launch attempt failed: return to the 'ready' screen with the SAME info and surface the reason in the
+   * error popup. The info is unchanged, so the button stays "Play"; the user can read the error, close it
+   * (B / veil) and retry.
    */
   private failSequence(
-    phase: 'launch' | 'install' | 'uninstall',
+    phase: SequencePhase,
     game: GameInfo,
     message: string,
   ): void {

@@ -972,15 +972,9 @@ export class GameController {
     if (
       kind === 'running' ||
       kind === 'launching' ||
-      kind === 'installing' ||
-      kind === 'uninstalling' ||
       kind === 'syncing-in' ||
       kind === 'syncing-out'
     ) {
-      // During install, removal is also expected: the installer reads from the card, so yanking
-      // it makes the install fail → <exe> won't appear → we stay on "Install"; next attempt pre-cleans.
-      // During uninstall it targets the PC, so it completes; runUninstallSequence then sees cardPresent
-      // = false and goes idle + hide on its own.
       return;
     }
     this.clearCard();
