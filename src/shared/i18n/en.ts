@@ -264,6 +264,8 @@ export const en = {
   'notifications.updateReady': 'Update {version} is ready — it will be installed on restart',
   'notifications.gameInstalled': '{title} is installed',
   'notifications.gameUninstalled': '{title} has been removed',
+  'notifications.gameInstallFailed': '{title} could not be installed: {reason}',
+  'notifications.gameUninstallFailed': '{title} could not be removed: {reason}',
   'notifications.gameAddedDeferred':
     '{title} was written to the card. It shows up once that card is the active one.',
   'notifications.gameMovedDeferred':
@@ -486,6 +488,8 @@ export const en = {
   'errors.startInstaller': 'failed to start the installer: {cause}',
   'errors.installIncomplete': 'installation did not complete (the game executable did not appear)',
   'errors.copyGameFailed': 'failed to copy the game to the PC: {cause}',
+  'errors.jobCardRemoved': 'the card was removed before it finished',
+  'errors.jobGameGone': 'the game is no longer in the library',
   'errors.copyExeNotFound':
     'the game was copied, but the executable is not there: {path} — check that the game directory points at the game’s own root',
   'errors.copyExeNotFoundCase':

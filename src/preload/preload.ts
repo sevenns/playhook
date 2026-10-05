@@ -63,6 +63,7 @@ const CHANNELS = {
   activityUpdate: 'activity:update',
   activityRequest: 'activity:request',
   actionLaunch: 'action:launch',
+  actionCancelJob: 'action:cancel-job',
   actionUninstall: 'action:uninstall',
   actionHide: 'action:hide',
   actionQuit: 'action:quit',
@@ -186,6 +187,9 @@ const api: RendererApi = {
   },
   requestUninstall(): void {
     ipcRenderer.send(CHANNELS.actionUninstall);
+  },
+  cancelJob(id: string): void {
+    ipcRenderer.send(CHANNELS.actionCancelJob, id);
   },
   requestHide(): void {
     ipcRenderer.send(CHANNELS.actionHide);

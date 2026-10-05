@@ -194,6 +194,12 @@ export class GameWindow {
     return window !== null && window.isVisible() && !window.isMinimized();
   }
 
+  /** Whether the launcher window has the OS focus right now. */
+  isFocused(): boolean {
+    const window = this.window;
+    return window !== null && !window.isDestroyed() && window.isFocused();
+  }
+
   /** Allows the window to actually close (when quitting the app). */
   allowClose(): void {
     this.closeGuard?.allowClose();

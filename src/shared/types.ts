@@ -4,7 +4,7 @@
 // the file-name constants) lives next to its implementation under `src/main/` instead.
 import type { Locale } from './i18n/index';
 import type { ArtworkQuality } from './artwork-filter';
-import type { ActivityMap } from './activity';
+import type { ActivityMap, GameJobFailure } from './activity';
 
 // ── Card format: the few facts both sides must agree on ───────────────────────────────────────
 
@@ -408,6 +408,8 @@ export type AppNotification =
       readonly gameId: string;
       readonly gameTitle: string;
     })
+  | (NotificationBase & GameJobFailure & { readonly kind: 'game-install-failed' })
+  | (NotificationBase & GameJobFailure & { readonly kind: 'game-uninstall-failed' })
   /**
    * A game was added to a card that is NOT the active one, so it was written to disk and nothing else
    * happened: the launcher's library cannot show it until that card becomes active. There is no `gameId`
@@ -474,6 +476,8 @@ export const IPC = {
   actionLaunch: 'action:launch',
   /** renderer → main: the user confirmed "Uninstall" — remove the installed install-mode game. */
   actionUninstall: 'action:uninstall',
+  /** renderer → main: cancel the queued or running install of the game with the given id. */
+  actionCancelJob: 'action:cancel-job',
   /** renderer → main: hide the launcher window to the tray (the "Hide" button on the empty screen). */
   actionHide: 'action:hide',
   /** renderer → main: quit the whole app. In Game Mode (gamescope) the power menu's primary item becomes
@@ -1181,6 +1185,8 @@ export interface RendererApi {
   requestActivities(): Promise<ActivityMap>;
   requestLaunch(): void;
   requestUninstall(): void;
+  /** Cancel the queued or running install of game `id`. */
+  cancelJob(id: string): void;
   requestHide(): void;
   /** Quit the whole app (Game Mode's "Close Playhook" — no tray to minimize into). */
   requestQuit(): void;

@@ -16,6 +16,13 @@ export type GameActivity =
   | { readonly kind: 'steam-updating'; readonly paused: boolean; readonly pausedProgress?: number }
   | { readonly kind: 'steam-uninstalling' };
 
+/** What a failed install or uninstall notification names: the game, and why it failed. */
+export interface GameJobFailure {
+  readonly gameId: string;
+  readonly gameTitle: string;
+  readonly reason: string;
+}
+
 /** Every game's activity, keyed by game id. */
 export type ActivityMap = Readonly<Record<string, GameActivity>>;
 

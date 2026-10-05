@@ -222,6 +222,8 @@ export const ru: Record<MessageKey, string> = {
   'notifications.updateReady': 'Обновление {version} готово - установится при перезапуске',
   'notifications.gameInstalled': '{title} установлена',
   'notifications.gameUninstalled': '{title} удалена',
+  'notifications.gameInstallFailed': 'Не удалось установить {title}: {reason}',
+  'notifications.gameUninstallFailed': 'Не удалось удалить {title}: {reason}',
   'notifications.gameAddedDeferred':
     '{title} записана на карту. Появится, когда эта карта станет активной.',
   'notifications.gameMovedDeferred':
@@ -438,6 +440,8 @@ export const ru: Record<MessageKey, string> = {
   'errors.gameDidNotStart': 'игра не запустилась (истекло время ожидания процесса)',
   'errors.startInstaller': 'не удалось запустить установщик: {cause}',
   'errors.installIncomplete': 'установка не завершена (исполняемый файл игры не появился)',
+  'errors.jobCardRemoved': 'карту вынули до завершения',
+  'errors.jobGameGone': 'игры больше нет в библиотеке',
   'errors.copyGameFailed': 'не удалось скопировать игру на ПК: {cause}',
   'errors.copyExeNotFound':
     'игра скопирована, но исполняемого файла на месте нет: {path} - проверьте, что директория игры указывает на её собственный корень',
