@@ -151,7 +151,8 @@ export class SteamActivityWatch {
       const stillListed = new Set(this.deps.listSteamGames().map((game) => game.id));
       for (const game of games) {
         if (!stillListed.has(game.id)) continue;
-        this.apply(game, statuses.get(game.appid) ?? { state: 'absent' });
+        const status = statuses.get(game.appid);
+        if (status !== undefined) this.apply(game, status);
       }
     } catch (cause) {
       log.warn('[steam-watch] tick failed:', describe(cause));

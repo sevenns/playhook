@@ -125,7 +125,7 @@ interface Harness {
   readonly setSteamState: (state: SteamAcfState) => Promise<void>;
 }
 
-type SteamAcfState = 'installed' | 'downloading';
+type SteamAcfState = 'installed' | 'downloading' | 'absent';
 
 type Mode = 'normal' | 'install' | 'copy' | 'prefix-cleanup' | 'steam';
 
@@ -156,6 +156,10 @@ const STEAM_APPID = 480;
 
 /** Writes the one library's `.acf` of `appid`: StateFlags 4 is fully installed, 1026 a download. */
 async function writeSteamAcf(root: string, appid: number, state: SteamAcfState): Promise<void> {
+  if (state === 'absent') {
+    await fs.rm(path.join(root, 'steamapps', `appmanifest_${appid}.acf`), { force: true });
+    return;
+  }
   const flags = state === 'installed' ? 4 : 1026;
   await fs.writeFile(
     path.join(root, 'steamapps', `appmanifest_${appid}.acf`),
@@ -932,7 +936,9 @@ describe('GameController sequences', () => {
       });
       const built = h;
       const release = built.holdCopies();
-      await selectThenLaunch(built, 'g1');
+      const cardGame = built.controller.findManifest('g1');
+      if (cardGame === null) throw new Error('the card game is missing');
+      built.controller.jobs.startInstall(cardGame);
       await reached(built.journal, 'activity:g1:installing');
       await selectThenLaunch(built, 'other');
       await reached(built.journal, 'state:running');
@@ -1163,6 +1169,104 @@ describe('GameController sequences', () => {
       await waitFor(() => !built.activities.has('g1'), 'the update to finish');
       await pause(100);
       expect(built.journal.filter((entry) => entry.startsWith('notify:'))).toEqual([]);
+    });
+  });
+
+  describe('actions by id', () => {
+    const pause = (ms: number): Promise<void> => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+    /** Launches the plain 'other' game and waits until it runs: the session the actions happen beside. */
+    async function runOther(built: Harness): Promise<void> {
+      built.journal.length = 0;
+      fire(IPC.actionSelect, 'other');
+      await reached(built.journal, 'state:ready');
+      await pause(30);
+      fire(IPC.actionLaunch, 'other');
+      await reached(built.journal, 'state:running');
+      built.journal.length = 0;
+    }
+
+    const OTHER = [{ id: 'other', lastPlayedAt: '2026-10-01T00:00:00.000Z' }] as const;
+
+    it('while another game runs, Install for an uninstalled game starts a background job and leaves the session alone', async () => {
+      h = await harness({ mode: 'install', extraGames: OTHER });
+      const built = h;
+      await runOther(built);
+      fire(IPC.actionLaunch, 'g1');
+      await reached(built.journal, 'activity:g1:installing');
+      await pause(30);
+      expect(built.journal.filter((entry) => entry.startsWith('state:'))).toEqual([]);
+      expect(built.state.get()).toMatchObject({ kind: 'running', game: { id: 'other' } });
+    });
+
+    it('two quick presses for the same game make one job', async () => {
+      h = await harness({ mode: 'install', extraGames: OTHER });
+      const built = h;
+      await runOther(built);
+      fire(IPC.actionLaunch, 'g1');
+      fire(IPC.actionLaunch, 'g1');
+      await reached(built.journal, 'activity:g1:installing');
+      await pause(50);
+      expect(built.journal.filter((entry) => entry === 'activity:g1:installing')).toHaveLength(1);
+    });
+
+    it('while another game runs, Play for an installed game does nothing at all', async () => {
+      h = await harness({ mode: 'normal', extraGames: OTHER });
+      const built = h;
+      await runOther(built);
+      fire(IPC.actionLaunch, 'g1');
+      await pause(50);
+      expect(built.journal).toEqual([]);
+      expect(built.state.get()).toMatchObject({ kind: 'running', game: { id: 'other' } });
+    });
+
+    it("while another game runs, Uninstall works for that game and is refused for the session's own", async () => {
+      h = await harness({ mode: 'install', extraGames: OTHER });
+      const built = h;
+      await fs.mkdir(path.join(built.tmp, 'installed'), { recursive: true });
+      await fs.writeFile(path.join(built.tmp, 'installed', 'game.exe'), '');
+      await built.controller.reloadPcLibrary();
+      await runOther(built);
+      fire(IPC.actionUninstall, 'other');
+      fire(IPC.actionUninstall, 'g1');
+      await reached(built.journal, 'notify:game-uninstalled');
+      expect(built.journal.some((entry) => entry.startsWith('activity:other'))).toBe(false);
+      expect(built.state.get()).toMatchObject({ kind: 'running', game: { id: 'other' } });
+    });
+
+    it('a game whose source is gone is refused', async () => {
+      h = await harness({ mode: 'copy', copySource: 'card', extraGames: OTHER });
+      const built = h;
+      await runOther(built);
+      fire(IPC.actionLaunch, 'g1');
+      await pause(50);
+      expect(built.journal).toEqual([]);
+    });
+
+    it("while another game runs, a Steam game's Install and Uninstall go to Steam and leave the state alone", async () => {
+      h = await harness({ mode: 'steam', steamState: 'absent', extraGames: OTHER });
+      const built = h;
+      await runOther(built);
+      fire(IPC.actionLaunch, 'g1');
+      await waitFor(() => shell.opened.length > 0, 'the steam://install URI');
+      expect(shell.opened).toEqual([`steam://install/${STEAM_APPID}`]);
+      await built.setSteamState('installed');
+      await waitFor(() => built.journal.includes('activity:g1:clear') || !built.activities.has('g1'), 'Steam to settle');
+      fire(IPC.actionUninstall, 'g1');
+      await waitFor(() => shell.opened.length > 1, 'the steam://uninstall URI');
+      expect(shell.opened[1]).toBe(`steam://uninstall/${STEAM_APPID}`);
+      await waitFor(() => built.activities.get('g1')?.kind === 'steam-uninstalling', 'the uninstalling activity');
+      expect(built.journal.filter((entry) => entry.startsWith('state:'))).toEqual([]);
+      expect(built.state.get()).toMatchObject({ kind: 'running', game: { id: 'other' } });
+    });
+
+    it('with the session free, an action for a game that is not selected selects it first', async () => {
+      h = await harness({ mode: 'install', extraGames: OTHER });
+      const built = h;
+      expect(built.state.get()).toMatchObject({ kind: 'ready', game: { id: 'other' } });
+      fire(IPC.actionLaunch, 'g1');
+      await reached(built.journal, 'activity:g1:installing');
+      expect(built.state.get()).toMatchObject({ kind: 'ready', game: { id: 'g1' } });
     });
   });
 

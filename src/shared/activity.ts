@@ -3,7 +3,7 @@
  * the single game session AppState describes. A game absent from the ActivityMap is free.
  */
 export type GameActivity =
-  | { readonly kind: 'queued' }
+  | { readonly kind: 'queued'; readonly reason?: 'session'; readonly removal?: true }
   | { readonly kind: 'installing' }
   | { readonly kind: 'configuringProton' }
   | { readonly kind: 'uninstalling' }

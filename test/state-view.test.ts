@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
-  activityBusyKind,
   activityStatus,
   busyIds,
   opensSteamDownloads,
   sameIds,
+  screenActions,
   screenActivityOf,
   statusOf,
 } from '../src/renderer/state-view';
@@ -67,22 +67,6 @@ describe('activityStatus', () => {
   });
 });
 
-describe('activityBusyKind', () => {
-  it('shows the gear for an activity and falls back to the session otherwise', () => {
-    expect(activityBusyKind({ kind: 'steam-uninstalling' }, { kind: 'ready', game: GAME })).toBe(
-      'system',
-    );
-    expect(activityBusyKind(undefined, { kind: 'ready', game: GAME })).toBe('none');
-    expect(activityBusyKind(undefined, { kind: 'launching', game: GAME })).toBe('game');
-    expect(
-      activityBusyKind(
-        { kind: 'steam-installing', paused: false },
-        { kind: 'running', game: GAME, since: 0 },
-      ),
-    ).toBe('system');
-  });
-});
-
 describe('screenActivityOf', () => {
   it("is the activity of the game on screen, never another game's", () => {
     const activities = { other: { kind: 'steam-uninstalling' } } as const;
@@ -124,5 +108,92 @@ describe('sameIds', () => {
     expect(sameIds(new Set(['a', 'b']), new Set(['b', 'a']))).toBe(true);
     expect(sameIds(new Set(['a']), new Set(['a', 'b']))).toBe(false);
     expect(sameIds(new Set(['a']), new Set(['b']))).toBe(false);
+  });
+});
+
+describe('screenActions', () => {
+  const OTHER: GameInfo = { ...GAME, id: 'other', title: 'Other' };
+  const UNINSTALLED: GameInfo = { ...GAME, requiresInstall: true };
+  const browsing = (game: GameInfo): BrowseInfo => ({ ...BROWSE, id: game.id, title: game.title, game });
+  const running = { kind: 'running', game: OTHER, since: 0 } as const;
+
+  it('an installed free game: Play launches, Uninstall as offered', () => {
+    const actions = screenActions({ kind: 'ready', game: GAME }, browsing({ ...GAME, canUninstall: true }), undefined);
+    expect(actions).toMatchObject({ canPlay: true, canUninstall: true, canInstall: false, playView: 'play' });
+  });
+
+  it('an uninstalled game: Play hidden, Install offered — also while another game runs', () => {
+    expect(screenActions({ kind: 'ready', game: UNINSTALLED }, browsing(UNINSTALLED), undefined)).toMatchObject({
+      canInstall: true,
+      canPlay: false,
+      playView: 'hidden',
+    });
+    expect(screenActions(running, browsing(UNINSTALLED), undefined)).toMatchObject({
+      canInstall: true,
+      playView: 'hidden',
+      canForceClose: false,
+    });
+  });
+
+  it('an installed game while another one runs: Play shows but never starts it, Uninstall still offered', () => {
+    expect(screenActions(running, browsing({ ...GAME, canUninstall: true }), undefined)).toMatchObject({
+      canPlay: false,
+      canUninstall: true,
+      playView: 'play',
+      canForceClose: false,
+    });
+  });
+
+  it("the session's own game: return to it while running, Force close there only", () => {
+    expect(screenActions(running, browsing(OTHER), undefined)).toMatchObject({
+      canPlay: true,
+      canForceClose: true,
+      canInstall: false,
+      canUninstall: false,
+      playView: 'resume',
+    });
+    expect(screenActions({ ...running, killing: true }, browsing(OTHER), undefined)).toMatchObject({
+      canPlay: false,
+      canForceClose: false,
+      playView: 'spinner',
+    });
+    expect(screenActions({ kind: 'launching', game: OTHER }, browsing(OTHER), undefined).playView).toBe('spinner');
+  });
+
+  it("the game's own activity wins: the gear, Cancel for an install, Play only for Steam's downloads", () => {
+    expect(screenActions(running, browsing(GAME), { kind: 'installing' })).toMatchObject({
+      playView: 'gear',
+      canCancel: true,
+      canPlay: false,
+    });
+    expect(screenActions(running, browsing(GAME), { kind: 'queued', reason: 'session', removal: true })).toMatchObject({
+      canCancel: false,
+    });
+    expect(screenActions({ kind: 'ready', game: GAME }, browsing(GAME), { kind: 'steam-installing', paused: false })).toMatchObject({
+      canPlay: true,
+      playView: 'gear',
+    });
+  });
+
+  it('a history game or nothing on screen offers nothing', () => {
+    expect(screenActions({ kind: 'ready', game: GAME }, { ...BROWSE, active: false }, undefined)).toMatchObject({
+      game: undefined,
+      playView: 'hidden',
+    });
+    expect(screenActions({ kind: 'idle' }, null, undefined).game).toBeUndefined();
+  });
+
+  it('never borrows the session game for another game whose info has not arrived', () => {
+    expect(screenActions(running, { ...BROWSE, game: undefined }, undefined).game).toBeUndefined();
+  });
+});
+
+describe('queued statuses', () => {
+  it('names what a queued job waits for', () => {
+    expect(activityStatus({ kind: 'queued' }, t)).toBe('Waiting to install...');
+    expect(activityStatus({ kind: 'queued', reason: 'session' }, t)).toBe('Will install after you quit the game');
+    expect(activityStatus({ kind: 'queued', reason: 'session', removal: true }, t)).toBe(
+      'Will uninstall after you quit the game',
+    );
   });
 });

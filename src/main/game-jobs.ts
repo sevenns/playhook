@@ -45,6 +45,8 @@ export interface JobFacts {
   readonly interactive?: boolean;
   /** Preparing the install's prefix would run winetricks. */
   readonly provisions?: boolean;
+  /** A removal runs the game's own (third-party) uninstaller, not just a directory sweep. */
+  readonly uninstaller?: boolean;
 }
 
 export interface StartContext {
@@ -56,30 +58,36 @@ export interface StartContext {
   readonly laneLimit: number;
 }
 
-/** Start now, wait in the queue, or look the facts up first and then decide. */
-export type StartVerdict = 'start' | 'wait' | 'learn';
+/** Start now, wait for a free slot, wait for the session to end, or look the facts up first. */
+export type StartVerdict = 'start' | 'wait' | 'wait-session' | 'learn';
 
 /**
  * Whether a queued job may start. Installer runs: at most `laneLimit` at once (MSI's global mutex fails a
  * second one with 1618, repacks eat the machine), never an interactive or elevated one during a session
  * (a wizard or a UAC prompt over the game), and under gamescope none at all while a game runs — the game has
  * the only surface there, and even a silent installer opens windows. A copy waits under gamescope only when
- * its prefix still needs winetricks, for the same reason. Removals always start.
+ * its prefix still needs winetricks, for the same reason. A removal that runs the game's own uninstaller
+ * follows the installer rules for the session (a window or a UAC prompt of its own); other removals start.
  */
 export function startVerdict(lane: JobLane, facts: JobFacts, ctx: StartContext): StartVerdict {
-  if (lane === 'uninstall' || lane === 'prefix-cleanup') return 'start';
-  if (ctx.runningInLane >= ctx.laneLimit) return 'wait';
+  if (lane === 'prefix-cleanup') return 'start';
   const gameUnderGamescope = ctx.gamescope && ctx.session === 'running';
+  if (lane === 'uninstall') {
+    if (ctx.session === 'free' || !(gameUnderGamescope || ctx.elevated)) return 'start';
+    if (facts.uninstaller === undefined) return 'learn';
+    return facts.uninstaller ? 'wait-session' : 'start';
+  }
+  if (ctx.runningInLane >= ctx.laneLimit) return 'wait';
   if (lane === 'copy') {
     if (!gameUnderGamescope) return 'start';
     if (facts.provisions === undefined) return 'learn';
-    return facts.provisions ? 'wait' : 'start';
+    return facts.provisions ? 'wait-session' : 'start';
   }
-  if (gameUnderGamescope) return 'wait';
+  if (gameUnderGamescope) return 'wait-session';
   if (ctx.session === 'free') return 'start';
-  if (ctx.elevated) return 'wait';
+  if (ctx.elevated) return 'wait-session';
   if (facts.interactive === undefined) return 'learn';
-  return facts.interactive ? 'wait' : 'start';
+  return facts.interactive ? 'wait-session' : 'start';
 }
 
 /** The session phase of an AppState: settled, busy around a game, or with the game itself running. */
@@ -333,10 +341,7 @@ export class GameJobs {
     };
     this.jobs.set(id, job);
     this.pump();
-    if (!job.running) {
-      this.deps.activities.set(id, { kind: 'queued' });
-      log.info(`[jobs] queued ${lane} id=${id}`);
-    }
+    if (!job.running) log.info(`[jobs] queued ${lane} id=${id}`);
     return true;
   }
 
@@ -354,22 +359,31 @@ export class GameJobs {
     });
   }
 
-  /** Looks up what a queued install's start depends on, then re-checks the queue. */
+  /** Looks up what a queued job's start depends on, then re-checks the queue. */
   private async learn(job: Job): Promise<void> {
-    if (job.learning || job.install === null) return;
+    const install = job.install;
+    if (job.learning || install === null) return;
     job.learning = true;
     try {
+      if (job.lane === 'uninstall') {
+        job.facts = {
+          uninstaller:
+            install.type !== 'copy' &&
+            (await this.deps.platform.gameLauncher.resolveUninstaller(install)) !== null,
+        };
+        return;
+      }
       const [settings, provisions] = await Promise.all([
         this.deps.settings.read(),
-        this.deps.platform.gameLauncher.needsProvisioning(job.install),
+        this.deps.platform.gameLauncher.needsProvisioning(install),
       ]);
       job.facts = { interactive: settings.disableSilentInstall, provisions };
     } catch (cause) {
       log.warn(
-        `[jobs] could not look up how id=${job.id} installs — treating it as interactive:`,
+        `[jobs] could not look up how id=${job.id} runs — treating it as interactive:`,
         describe(cause),
       );
-      job.facts = { interactive: true, provisions: true };
+      job.facts = { interactive: true, provisions: true, uninstaller: true };
     } finally {
       job.learning = false;
       this.pump();
@@ -404,8 +418,16 @@ export class GameJobs {
     for (const job of [...this.jobs.values()]) {
       if (job.running || job.abortReason !== null) continue;
       const verdict = this.verdict(job);
-      if (verdict === 'start') this.launch(job);
-      else if (verdict === 'learn') void this.learn(job);
+      if (verdict === 'start') {
+        this.launch(job);
+        continue;
+      }
+      this.deps.activities.set(job.id, {
+        kind: 'queued',
+        ...(verdict === 'wait-session' ? { reason: 'session' as const } : {}),
+        ...(job.kind === 'install' ? {} : { removal: true as const }),
+      });
+      if (verdict === 'learn') void this.learn(job);
     }
   }
 

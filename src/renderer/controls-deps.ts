@@ -21,8 +21,8 @@ import type { NavSurface } from './nav-surface.js';
  */
 export interface ControlsApi {
   /** Play / the install confirm's Yes — main decides install vs launch from `requiresInstall`. */
-  requestLaunch(): void;
-  requestUninstall(): void;
+  requestLaunch(id?: string): void;
+  requestUninstall(id?: string): void;
   /** "Cancel installation": stops the queued or running install of game `id`. */
   cancelJob(id: string): void;
   requestKill(): void;

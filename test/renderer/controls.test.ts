@@ -522,3 +522,62 @@ describe('controls quit with background jobs', () => {
     expect(message()).toBe('Quit Playhook?');
   });
 });
+
+describe('controls while another game runs', () => {
+  const SESSION: GameInfo = { ...LOCAL_GAME, id: 'session', title: 'Session' };
+  const UNINSTALLED: GameInfo = { ...LOCAL_GAME, id: 'later', title: 'Later', requiresInstall: true, installVia: 'copy' };
+  const focusedMain = (): string[] =>
+    ['play-button', 'more-button'].filter((id) => req(id).classList.contains('is-focused'));
+
+  beforeEach(() => {
+    harness.state = { kind: 'running', game: SESSION, since: 0 };
+  });
+
+  it("an installed game's Play is out of the ring and refuses — it never starts a second game", () => {
+    harness.screen = 'detail';
+    harness.browse = browsing(LOCAL_GAME);
+    controls.refresh();
+    press('ArrowRight');
+
+    expect(focusedMain()).toEqual(['more-button']);
+
+    req('play-button').click();
+
+    expect(api.requestLaunch).not.toHaveBeenCalled();
+    expect(audio.limits()).toBe(1);
+  });
+
+  it("the session game's Play returns to it, by its id", () => {
+    harness.screen = 'detail';
+    harness.browse = browsing(SESSION);
+    controls.refresh();
+    req('play-button').click();
+
+    expect(api.requestLaunch).toHaveBeenCalledWith('session');
+  });
+
+  it("an uninstalled game's Install question sends its own id, fixed when the question opened", () => {
+    harness.screen = 'detail';
+    harness.browse = browsing(UNINSTALLED);
+    req('more-button').click();
+    req('menu-install-toggle').click();
+
+    expect(popup().dataset['mode']).toBe('install');
+
+    req('confirm-yes').click();
+
+    expect(api.requestLaunch).toHaveBeenCalledWith('later');
+  });
+
+  it('closes the open question when main moves the screen onto another game, so its Yes cannot hit that one', () => {
+    harness.screen = 'detail';
+    harness.browse = browsing(UNINSTALLED);
+    req('more-button').click();
+    req('menu-install-toggle').click();
+    harness.browse = browsing(SESSION);
+    controls.refresh();
+
+    expect(popup().classList.contains('is-open')).toBe(false);
+    expect(api.requestLaunch).not.toHaveBeenCalled();
+  });
+});

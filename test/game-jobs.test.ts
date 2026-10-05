@@ -64,6 +64,8 @@ interface Fixture {
   readonly writesExe: Set<string>;
   /** Games whose prefix still needs winetricks. */
   readonly provisions: Set<string>;
+  /** Games that come with an uninstaller of their own. */
+  readonly uninstallers: Set<string>;
   focused: boolean;
   session: string | null;
   interactive: boolean;
@@ -84,6 +86,7 @@ function build(options: BuildOptions = {}): Fixture {
   const installers = new Map<string, Gate>();
   const writesExe = new Set<string>();
   const provisions = new Set<string>();
+  const uninstallers = new Set<string>();
   const flags = { focused: false, session: null as string | null, interactive: false };
   const host: GameJobsHost = {
     sessionGameId: () => flags.session,
@@ -124,7 +127,12 @@ function build(options: BuildOptions = {}): Fixture {
           procIds.set(proc, id);
           return proc;
         },
-        resolveUninstaller: () => Promise.resolve(null),
+        resolveUninstaller: (install) =>
+          Promise.resolve(
+            uninstallers.has(path.basename(install.dir))
+              ? { file: path.join(install.dir, 'unins000.exe'), args: [], cwd: install.dir, runAsAdmin: false }
+              : null,
+          ),
         launchUninstaller: () => Promise.resolve(procOf('uninstaller')),
         uninstallDir: (install) => install.dir,
         prefixCleanupDir: (id) => Promise.resolve(path.join(tmp, 'prefixes', id)),
@@ -164,6 +172,7 @@ function build(options: BuildOptions = {}): Fixture {
     installers,
     writesExe,
     provisions,
+    uninstallers,
     get focused() {
       return flags.focused;
     },
@@ -502,7 +511,7 @@ describe('GameJobs installer runs', () => {
     fixture.state.set({ kind: 'running', game: SESSION_GAME, since: 0 });
     fixture.jobs.startInstall(a);
     await new Promise<void>((resolve) => setTimeout(resolve, 30));
-    expect(fixture.registry.get('a')).toEqual({ kind: 'queued' });
+    expect(fixture.registry.get('a')).toEqual({ kind: 'queued', reason: 'session' });
     expect(fixture.journal).not.toContain('installer:a');
     fixture.state.set({ kind: 'syncing-out', game: SESSION_GAME });
     await new Promise<void>((resolve) => setTimeout(resolve, 30));
@@ -565,6 +574,22 @@ describe('GameJobs under gamescope', () => {
     fixture.installers.get('a')?.open();
   });
 
+  it('holds a removal that runs its own uninstaller, and lets a plain sweep through', async () => {
+    const a = await installerGame('a');
+    const b = await installerGame('b');
+    fixture.uninstallers.add('a');
+    fixture.jobs.startUninstall(a);
+    fixture.jobs.startUninstall(b);
+    await waitFor(() => !fixture.jobs.has('b'), 'the plain sweep to finish');
+    await waitFor(
+      () => fixture.registry.get('a')?.kind === 'queued',
+      'the uninstaller to be held for the session',
+    );
+    expect(fixture.registry.get('a')).toEqual({ kind: 'queued', reason: 'session', removal: true });
+    fixture.state.set({ kind: 'ready', game: SESSION_GAME });
+    await waitFor(() => !fixture.jobs.has('a'), 'the held removal once the game is over');
+  });
+
   it('holds a copy whose prefix still needs winetricks, and lets one that does not through', async () => {
     const a = await copyGame('a');
     const b = await copyGame('b');
@@ -588,11 +613,16 @@ describe('startVerdict', () => {
     ...patch,
   });
 
-  it('removals always start', () => {
-    expect(startVerdict('uninstall', {}, ctx({ session: 'running', gamescope: true }))).toBe(
-      'start',
-    );
-    expect(startVerdict('prefix-cleanup', {}, ctx({ runningInLane: 5 }))).toBe('start');
+  it('a removal starts unless its own uninstaller would interrupt the game', () => {
+    const gamescope = ctx({ session: 'running', gamescope: true });
+    expect(startVerdict('prefix-cleanup', {}, gamescope)).toBe('start');
+    expect(startVerdict('uninstall', {}, ctx({ runningInLane: 5 }))).toBe('start');
+    expect(startVerdict('uninstall', {}, ctx({ session: 'running' }))).toBe('start');
+    expect(startVerdict('uninstall', {}, gamescope)).toBe('learn');
+    expect(startVerdict('uninstall', { uninstaller: false }, gamescope)).toBe('start');
+    expect(startVerdict('uninstall', { uninstaller: true }, gamescope)).toBe('wait-session');
+    const elevated = ctx({ session: 'active', elevated: true });
+    expect(startVerdict('uninstall', { uninstaller: true }, elevated)).toBe('wait-session');
   });
 
   it('a full lane waits', () => {
@@ -604,21 +634,21 @@ describe('startVerdict', () => {
     expect(startVerdict('installer', {}, ctx())).toBe('start');
     expect(startVerdict('installer', {}, ctx({ session: 'active' }))).toBe('learn');
     expect(startVerdict('installer', { interactive: true }, ctx({ session: 'active' }))).toBe(
-      'wait',
+      'wait-session',
     );
     expect(startVerdict('installer', { interactive: false }, ctx({ session: 'running' }))).toBe(
       'start',
     );
     expect(
       startVerdict('installer', { interactive: false }, ctx({ session: 'active', elevated: true })),
-    ).toBe('wait');
+    ).toBe('wait-session');
   });
 
   it('under gamescope a running game holds every installer and a copy that provisions', () => {
     const gamescope = ctx({ session: 'running', gamescope: true });
-    expect(startVerdict('installer', { interactive: false }, gamescope)).toBe('wait');
+    expect(startVerdict('installer', { interactive: false }, gamescope)).toBe('wait-session');
     expect(startVerdict('copy', {}, gamescope)).toBe('learn');
-    expect(startVerdict('copy', { provisions: true }, gamescope)).toBe('wait');
+    expect(startVerdict('copy', { provisions: true }, gamescope)).toBe('wait-session');
     expect(startVerdict('copy', { provisions: false }, gamescope)).toBe('start');
     expect(
       startVerdict(

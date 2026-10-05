@@ -246,6 +246,20 @@ describe('SteamActivityWatch pre-loads', () => {
   });
 });
 
+describe('SteamActivityWatch and a half-written .acf', () => {
+  it('an .acf caught mid-rewrite changes nothing, so the finished download still notifies', async () => {
+    await fixture.acf(A.appid, 'downloading');
+    await fixture.watch.scanNow();
+    await fs.writeFile(path.join(root, 'steamapps', `appmanifest_${A.appid}.acf`), '"AppState"\n{\n');
+    await fixture.watch.scanNow();
+    expect(fixture.registry.get('a')).toEqual({ kind: 'steam-installing', paused: false });
+    expect(fixture.events).toEqual(['changed:a']);
+    await fixture.acf(A.appid, 'installed');
+    await fixture.watch.scanNow();
+    expect(fixture.events).toEqual(['changed:a', 'changed:a', 'installed:a']);
+  });
+});
+
 describe('SteamActivityWatch uninstall requests', () => {
   it('shows uninstalling while the game is still installed, then notifies once it is gone', async () => {
     await fixture.acf(A.appid, 'installed');

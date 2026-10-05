@@ -25,7 +25,7 @@ const SLACK = 50;
 
 /** Baseline `wc -l` per file over the free limit at the time of writing (playhook v0.8.1). */
 const FILE_BASELINE: Readonly<Record<string, number>> = {
-  'src/main/game-controller.ts': 1468,
+  'src/main/game-controller.ts': 1397,
   'src/main/manifest.ts': 1125,
   'src/renderer/game-settings-screen.ts': 2047,
   'src/renderer/online-picker.ts': 1322,
@@ -46,7 +46,7 @@ interface FactoryBaseline {
  */
 const FACTORY_BASELINE: readonly FactoryBaseline[] = [
   { file: 'src/renderer/game-settings-screen.ts', name: 'createGameSettingsScreen', lines: 1795 },
-  { file: 'src/renderer/controls.ts', name: 'createControls', lines: 672 },
+  { file: 'src/renderer/controls.ts', name: 'createControls', lines: 611 },
   { file: 'src/renderer/online-picker.ts', name: 'createOnlinePicker', lines: 1174 },
   { file: 'src/renderer/settings-screen.ts', name: 'createSettingsScreen', lines: 848 },
 ];

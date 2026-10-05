@@ -105,15 +105,15 @@ function fraction(num: number | null, den: number | null): number | null {
   return Math.max(0, Math.min(1, num / den));
 }
 
-async function readAcfState(acfPath: string): Promise<AcfState | null> {
+async function readAcfState(acfPath: string): Promise<AcfState | 'missing' | 'unreadable'> {
   let content: string;
   try {
     content = await fse.readFile(acfPath, 'utf8');
   } catch {
-    return null; // no .acf in this library
+    return 'missing'; // no .acf in this library
   }
   const flags = readAcfNumber(content, 'StateFlags');
-  if (flags === null) return null;
+  if (flags === null) return 'unreadable';
   // Staged progress matches Steam's displayed percent best; fall back to download progress.
   const progress =
     fraction(readAcfNumber(content, 'BytesStaged'), readAcfNumber(content, 'BytesToStage')) ??
@@ -131,14 +131,20 @@ async function readAcfState(acfPath: string): Promise<AcfState | null> {
 
 /**
  * Where `appid` stands across the given Steam library roots: the `appmanifest_<appid>.acf` walk shared by
- * the single lookup and the batch one below.
+ * the single lookup and the batch one below. Null when the only `.acf` found could not be parsed — most
+ * likely caught halfway through Steam rewriting it — so the state is unknown rather than "absent".
  */
-async function statusInLibraries(appid: number, libs: readonly string[]): Promise<SteamInstallStatus> {
+async function statusInLibraries(appid: number, libs: readonly string[]): Promise<SteamInstallStatus | null> {
   let downloading: SteamInstallStatus | null = null;
+  let unreadable = false;
   for (const lib of libs) {
     const acfPath = path.join(lib, 'steamapps', `appmanifest_${appid}.acf`);
     const acf = await readAcfState(acfPath);
-    if (acf === null) continue;
+    if (acf === 'missing') continue;
+    if (acf === 'unreadable') {
+      unreadable = true;
+      continue;
+    }
     if (acf.fullyInstalled) return { state: 'installed' };
     // .acf exists but not fully installed → downloading/updating in this library. The percent is only
     // trustworthy when paused (byte counters are stale while actively downloading).
@@ -149,7 +155,8 @@ async function statusInLibraries(appid: number, libs: readonly string[]): Promis
       preloaded: acf.preloaded,
     };
   }
-  return downloading ?? { state: 'absent' };
+  if (downloading !== null) return downloading;
+  return unreadable ? null : { state: 'absent' };
 }
 
 /**
@@ -164,7 +171,7 @@ export async function steamInstallStatus(
   try {
     const steamPath = await locator.locateSteam();
     if (steamPath === null) return { state: 'absent' };
-    return await statusInLibraries(appid, await steamLibraryDirs(steamPath));
+    return (await statusInLibraries(appid, await steamLibraryDirs(steamPath))) ?? { state: 'absent' };
   } catch (cause) {
     log.warn(
       '[steam] install check failed:',
@@ -177,7 +184,8 @@ export async function steamInstallStatus(
 /**
  * Where each of `appids` stands locally, from ONE Steam lookup and ONE library listing for the whole batch.
  * Null when Steam is not found or the lookup fails, so a caller polling many games keeps what it last knew
- * instead of reading every one of them as removed.
+ * instead of reading every one of them as removed; an appid whose `.acf` could not be parsed is left out of
+ * the map for the same reason.
  */
 export async function steamInstallStatuses(
   appids: readonly number[],
@@ -190,7 +198,9 @@ export async function steamInstallStatuses(
     const statuses = await Promise.all(
       appids.map(async (appid) => [appid, await statusInLibraries(appid, libs)] as const),
     );
-    return new Map(statuses);
+    return new Map(
+      statuses.flatMap(([appid, status]) => (status === null ? [] : [[appid, status] as const])),
+    );
   } catch (cause) {
     log.warn(
       '[steam] batch install check failed:',

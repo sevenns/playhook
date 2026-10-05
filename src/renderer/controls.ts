@@ -5,7 +5,7 @@
 // hover and clicks, the wheel, right-click-as-back. The idle countdown and the mouse's sleep live in
 // idle.ts. It reaches back into app.ts only through the narrow `deps` seam (controls-deps.ts); app.ts
 // drives it via applyGameButtons/clearGameButtons/refresh/showError and starts it with start().
-import type { AppState, GameInfo } from '../shared/types.js';
+import type { AppState } from '../shared/types.js';
 import type { Translator } from '../shared/i18n/index.js';
 import { NAV_REPEAT_MS, createAutoRepeatChain } from './auto-repeat.js';
 import { createGamepadController } from './gamepad.js';
@@ -15,7 +15,7 @@ import { createPopups } from './popups.js';
 import { createHoverGuard } from './hover-guard.js';
 import type { NavSurface } from './nav-surface.js';
 import type { SystemCardId } from './system-cards.js';
-import { gameOf, opensSteamDownloads, phaseOf } from './state-view.js';
+import { gameOf, opensSteamDownloads, phaseOf, screenActions, type ScreenActions } from './state-view.js';
 import { pressFlash, req } from './dom.js';
 import type { GameCollision } from '../shared/types.js';
 import type { QuitAction } from '../shared/quit.js';
@@ -113,26 +113,9 @@ export function createControls(deps: ControlsDeps): Controls {
   const state = (): AppState => deps.getState();
   const t = (): Translator => deps.getTranslator();
 
-  /**
-   * The GameInfo of what is on screen, or undefined when the screen shows a history game (nothing to
-   * install, uninstall or launch there). Everything that used to read `gameOf(state())` for a SCREEN
-   * decision goes through here; `state()` is still read for PHASE decisions (busy / running / killing).
-   */
-  const screenGame = (): GameInfo | undefined => {
-    const browse = deps.getBrowse();
-    if (browse === null) return gameOf(state()); // no browse model yet (first paint) — behave as before
-    return browse.active ? (browse.game ?? gameOf(state())) : undefined;
-  };
-
-  /** Whether the launch/uninstall actions apply to what is on screen: it must be a card game AND the one
-   * AppState is currently about (you can browse game B while game A is busy — B is not actionable). */
-  const screenIsActionable = (): boolean => {
-    const browse = deps.getBrowse();
-    if (browse === null) return true; // pre-browse behaviour
-    if (!browse.active) return false;
-    const subject = gameOf(state())?.id;
-    return subject === undefined || subject === browse.id;
-  };
+  /** What can be done with the game on screen, judged by that game alone (state-view's screenActions). */
+  const screenActionsNow = (): ScreenActions =>
+    screenActions(state(), deps.getBrowse(), deps.getScreenActivity());
 
   /**
    * The full-screen overlays, as a set rather than as a named one. Every mechanism that has to stand down
@@ -202,9 +185,7 @@ export function createControls(deps: ControlsDeps): Controls {
   const popups = createPopups({
     ...deps,
     hover,
-    screenGame,
-    screenIsActionable,
-    screenActivity: () => deps.getScreenActivity(),
+    screenActions: screenActionsNow,
     onFocusChanged: () => applyFocus(),
   });
 
@@ -226,22 +207,7 @@ export function createControls(deps: ControlsDeps): Controls {
     // The carousel has no bar to focus at all: Play is the selected card's invisible stand-in for the
     // morph (styles.css) and More is hidden there — the launcher-level actions are cards in the row now.
     if (deps.carousel.screen() === 'carousel') return [];
-    // Steam install/uninstall indicator up (phase stays 'ready'): the gear opens Steam's Downloads page
-    // and More opens Details — both focusable.
-    if (deps.getScreenActivity() !== undefined) return [playButton, moreButton];
-    // Running with the launcher summoned over the game: Play returns to the game, so it's focusable too —
-    // EXCEPT while a force-close is in flight (killing), when Play is a non-interactive loading spinner.
-    const running = state();
-    if (running.kind === 'running')
-      return running.killing === true ? [moreButton] : [playButton, moreButton];
-    // Hard busy (install / uninstall / launch / save-sync): the Play button is a non-interactive activity
-    // indicator (spinner/gear), so only More is focusable — it still opens Details.
-    if (phaseOf(state()) === 'busy') return [moreButton];
-    // Empty screen, a HISTORY game, a requiresInstall installer/steam game, or a local game with nothing
-    // to start (files gone / not configured) → Play is hidden (app.ts `hasPlay`), so the ring skips it too.
-    const game = screenIsActionable() ? screenGame() : undefined;
-    if (game === undefined || game.requiresInstall === true) return [moreButton];
-    return game.unavailable === true || game.unconfigured === true ? [moreButton] : [playButton, moreButton];
+    return screenActionsNow().canPlay ? [playButton, moreButton] : [moreButton];
   }
 
   // Main focus is meaningful on every DETAIL screen (the More button is always present there) with the
@@ -315,25 +281,9 @@ export function createControls(deps: ControlsDeps): Controls {
       audio.play('button');
       return deps.api.openSteamDownloads();
     }
-    // Steam uninstall in progress (gear) → nothing useful to do, ignore the press.
-    if (deps.getScreenActivity() !== undefined) return audio.playLimit();
-    // Play acts on the game AppState is about, so it must be the one on screen: a history game has
-    // nothing to launch, and while you browse game B, "Play" must not start game A behind your back.
-    if (!screenIsActionable()) return audio.playLimit();
-    const game = screenGame();
-    // A local game whose files are gone: there is nothing to start, and the status line already says so.
-    if (game?.unavailable === true) return audio.playLimit();
-    // A local game with no launch method configured yet: same dead end, different reason.
-    if (game?.unconfigured === true) return audio.playLimit();
-    // Force-close in flight: Play is a loading spinner, not return-to-game — ignore the press.
-    const s = state();
-    if (s.kind === 'running' && s.killing === true) return audio.playLimit();
-    // In a hard-busy phase the Play button is just an activity indicator (spinner/gear) — no launch.
-    // EXCEPT `running`: the launcher was summoned over the game and Play returns to it (main branches on
-    // the running state and raises the game's window instead of launching).
-    if (phaseOf(state()) !== 'ready' && state().kind !== 'running') return audio.playLimit();
+    if (!screenActionsNow().canPlay) return audio.playLimit();
     audio.play('play');
-    deps.api.requestLaunch();
+    deps.api.requestLaunch(deps.getBrowse()?.id ?? gameOf(state())?.id);
   }
 
   function triggerMore(): void {

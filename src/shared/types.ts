@@ -1188,8 +1188,8 @@ export interface RendererApi {
   /** Every game's background activity, pushed in full on each change. */
   onActivityUpdate(callback: (activities: ActivityMap) => void): void;
   requestActivities(): Promise<ActivityMap>;
-  requestLaunch(): void;
-  requestUninstall(): void;
+  requestLaunch(id?: string): void;
+  requestUninstall(id?: string): void;
   /** Cancel the queued or running install of game `id`. */
   cancelJob(id: string): void;
   requestHide(): void;

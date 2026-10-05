@@ -126,6 +126,8 @@ export const ru: Record<MessageKey, string> = {
   'launcher.state.installingPaused': 'Установка приостановлена...',
   'launcher.state.installingPausedPercent': 'Установка приостановлена на {percent}%...',
   'launcher.state.queued': 'Ожидает установки...',
+  'launcher.state.queuedUntilGameExit': 'Установится после выхода из игры',
+  'launcher.state.queuedRemovalUntilGameExit': 'Удалится после выхода из игры',
   'launcher.state.updating': 'Обновление...',
   'launcher.state.updatingPaused': 'Обновление приостановлено...',
   'launcher.state.preloaded': 'Предзагрузка завершена',

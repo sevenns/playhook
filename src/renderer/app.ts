@@ -25,7 +25,7 @@ import { createCardArtCache } from './card-art.js';
 import { createLibraryScreen } from './library-screen.js';
 import { createToast } from './toast.js';
 import { formatDate, formatNotification, formatPlaytime } from './format.js';
-import { activityBusyKind, activityStatus, busyIds, gameOf, jobCountOf, phaseOf, screenActivityOf, statusOf } from './state-view.js';
+import { activityStatus, busyIds, busyKindOfView, gameOf, jobCountOf, phaseOf, screenActions, screenActivityOf, statusOf } from './state-view.js';
 import { req } from './dom.js';
 
 const app = req('app');
@@ -267,8 +267,8 @@ const toast = createToast({
 
 const controls = createControls({
   api: {
-    requestLaunch: () => window.api.requestLaunch(),
-    requestUninstall: () => window.api.requestUninstall(),
+    requestLaunch: (id) => window.api.requestLaunch(id),
+    requestUninstall: (id) => window.api.requestUninstall(id),
     cancelJob: (id) => window.api.cancelJob(id),
     requestKill: () => window.api.requestKill(),
     forgetGame: (id) => window.api.forgetGame(id),
@@ -663,7 +663,8 @@ function render(state: AppState): void {
   else delete app.dataset['activity'];
 
   // Play-button busy visual: gear (system activity) vs spinner (game phases). Absent when not busy.
-  const busyKind = activityBusyKind(screenActivity, state);
+  const actions = screenActions(state, browse, screenActivity);
+  const busyKind = busyKindOfView(actions.playView);
   if (busyKind !== 'none') app.dataset['busy'] = busyKind;
   else delete app.dataset['busy'];
 
@@ -678,13 +679,10 @@ function render(state: AppState): void {
   // (c) a LOCAL game whose executable is no longer on disk: it is active (it is in the library and keeps
   // its art and stats) but there is nothing to start, so it gets the same title + More layout, with the
   // status line saying why.
-  const hasPlay =
-    browse !== null &&
-    browse.active &&
-    browse.game?.unavailable !== true &&
-    browse.game?.unconfigured !== true &&
-    !(phase === 'ready' && browse.game?.requiresInstall === true && screenActivity === undefined);
+  const hasPlay = browse !== null && browse.active && actions.playView !== 'hidden';
   app.dataset['cardMorph'] = hasPlay ? 'on' : 'off';
+  if (actions.playView === 'play' && !actions.canPlay) app.dataset['playLocked'] = 'true';
+  else delete app.dataset['playLocked'];
 
   // Only on the detail screen: in the carousel Play is hidden anyway, and the attribute's `.title{left:0}`
   // half would fight the carousel's own title placement.

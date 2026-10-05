@@ -11,9 +11,8 @@ import type {
   AppState,
   BrowseInfo,
   GameCollision,
-  GameInfo,
 } from '../shared/types.js';
-import type { GameActivity } from '../shared/activity.js';
+import type { ScreenActions } from './state-view.js';
 import { quitQuestion, type QuitAction } from '../shared/quit.js';
 import { createDeferredQuestions } from './deferred-questions.js';
 import type { Locale, MessageKey, Translator } from '../shared/i18n/index.js';
@@ -70,14 +69,8 @@ export interface PopupsDeps {
   readonly library: LibraryNav;
   /** The shared hover guard: every view change lays a new stack under the pointer (see setView). */
   readonly hover: Pick<HoverGuard, 'arm'>;
-  /**
-   * The GameInfo of what is on screen, and whether the launch/uninstall actions apply to it — the two
-   * screen decisions controls.ts derives from the state and the browse model (see there).
-   */
-  screenGame(): GameInfo | undefined;
-  screenIsActionable(): boolean;
-  /** The activity of the game on screen, or undefined when it is free. */
-  screenActivity(): GameActivity | undefined;
+  /** What can be done with the game on screen (state-view's screenActions, derived in controls.ts). */
+  screenActions(): ScreenActions;
   /** How many background installs / uninstalls are queued or running. */
   getJobCount(): number;
   /** Opens a game's detail screen (a notification about a game leads there). Owned by app.ts. */
@@ -123,8 +116,6 @@ export interface Popups extends NavSurface {
 export function createPopups(deps: PopupsDeps): Popups {
   const { audio } = deps;
   const t = (): Translator => deps.getTranslator();
-  const screenGame = (): GameInfo | undefined => deps.screenGame();
-  const screenIsActionable = (): boolean => deps.screenIsActionable();
   // SteamOS Game Mode (gamescope): no tray, so the power menu's primary item quits instead of minimizing.
   // Seeded once at startup (setGameMode); false until then — the power menu isn't reachable that early.
   let gameMode = false;
@@ -133,9 +124,7 @@ export function createPopups(deps: PopupsDeps): Popups {
     getBrowse: () => deps.getBrowse(),
     getTranslator: () => deps.getTranslator(),
     carousel: deps.carousel,
-    screenGame,
-    screenIsActionable,
-    screenActivity: () => deps.screenActivity(),
+    screenActions: () => deps.screenActions(),
     isFrozen: () => menuFrozen(),
   });
 
@@ -503,7 +492,7 @@ export function createPopups(deps: PopupsDeps): Popups {
     const copy = describeConfirm(
       mode,
       {
-        game: screenIsActionable() ? screenGame() : undefined,
+        game: deps.screenActions().game,
         browse: deps.getBrowse(),
         collision: askedCollision,
         deletesLocalGame: () => deps.gameSettings.deletesLocalGame(),
@@ -884,6 +873,7 @@ export function createPopups(deps: PopupsDeps): Popups {
         return id;
       },
       mergeCollision: () => answerCollision('merge'),
+      targetId: confirmBrowseId,
     });
   }
 
@@ -976,8 +966,7 @@ export function createPopups(deps: PopupsDeps): Popups {
       if (
         popupView === 'confirm' &&
         (confirmMode === 'install' || confirmMode === 'uninstall') &&
-        (screenGame() === undefined ||
-          deps.screenActivity() !== undefined ||
+        (!(confirmMode === 'install' ? deps.screenActions().canInstall : deps.screenActions().canUninstall) ||
           (deps.getBrowse()?.id ?? null) !== confirmBrowseId)
       ) {
         closePopup();

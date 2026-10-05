@@ -185,11 +185,11 @@ const api: RendererApi = {
   requestActivities(): Promise<ActivityMap> {
     return ipcRenderer.invoke(CHANNELS.activityRequest) as Promise<ActivityMap>;
   },
-  requestLaunch(): void {
-    ipcRenderer.send(CHANNELS.actionLaunch);
+  requestLaunch(id?: string): void {
+    ipcRenderer.send(CHANNELS.actionLaunch, id);
   },
-  requestUninstall(): void {
-    ipcRenderer.send(CHANNELS.actionUninstall);
+  requestUninstall(id?: string): void {
+    ipcRenderer.send(CHANNELS.actionUninstall, id);
   },
   cancelJob(id: string): void {
     ipcRenderer.send(CHANNELS.actionCancelJob, id);

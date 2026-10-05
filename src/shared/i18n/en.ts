@@ -153,6 +153,8 @@ export const en = {
   'launcher.state.installingPaused': 'Installing paused...',
   'launcher.state.installingPausedPercent': 'Installing paused on {percent}%...',
   'launcher.state.queued': 'Waiting to install...',
+  'launcher.state.queuedUntilGameExit': 'Will install after you quit the game',
+  'launcher.state.queuedRemovalUntilGameExit': 'Will uninstall after you quit the game',
   'launcher.state.updating': 'Updating...',
   'launcher.state.updatingPaused': 'Updating paused...',
   'launcher.state.preloaded': 'Pre-load complete',

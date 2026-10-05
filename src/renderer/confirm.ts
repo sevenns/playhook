@@ -220,6 +220,8 @@ export interface ConfirmActionDeps {
   takeForgetId(): string | null;
   /** The collision question's "yes". */
   mergeCollision(): void;
+  /** The game an install / uninstall question was opened for — fixed then, never re-read on Yes. */
+  readonly targetId: string | null;
 }
 
 /**
@@ -234,11 +236,11 @@ export function runConfirmedAction(
   switch (mode) {
     case 'install':
       audio.play('play');
-      deps.api.requestLaunch(); // main decides install vs launch from requiresInstall
+      deps.api.requestLaunch(deps.targetId ?? undefined); // main decides install vs launch from requiresInstall
       break;
     case 'uninstall':
       audio.play('button'); // neutral sound for the destructive confirm
-      deps.api.requestUninstall();
+      deps.api.requestUninstall(deps.targetId ?? undefined);
       break;
     case 'kill':
       audio.play('button'); // neutral sound for the destructive confirm

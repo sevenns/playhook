@@ -1026,6 +1026,9 @@ html:not(.mouse-asleep) .rect-button:hover,
 #app[data-layout='no-play'] .title {
   left: 0;
 }
+#app[data-play-locked] #play-button {
+  opacity: 0.4;
+}
 
 .status {
   position: absolute;
