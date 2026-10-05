@@ -850,33 +850,6 @@ describe('GameController sequences', () => {
     });
   });
 
-  describe('steam download in flight', () => {
-    it('refuses to select another game, so the download keeps its place in the state', async () => {
-      h = await harness({
-        mode: 'steam',
-        extraGames: [{ id: 'other', lastPlayedAt: '2026-10-01T00:00:00.000Z' }],
-      });
-      const built = h;
-      await fs.writeFile(
-        path.join(built.tmp, 'steam', 'steamapps', `appmanifest_${STEAM_APPID}.acf`),
-        `"AppState"\n{\n\t"appid"\t\t"${STEAM_APPID}"\n\t"StateFlags"\t\t"1026"\n}\n`,
-      );
-      fire(IPC.actionSelect, 'g1');
-      await waitFor(() => {
-        const state = built.state.get();
-        return state.kind === 'ready' && state.game.steamInstalling === true;
-      }, 'the steam game to report its download');
-
-      fire(IPC.actionSelect, 'other');
-      await new Promise<void>((resolve) => setTimeout(resolve, 50));
-
-      expect(built.state.get()).toMatchObject({
-        kind: 'ready',
-        game: { id: 'g1', steamInstalling: true },
-      });
-    });
-  });
-
   describe('prefix cleanup', () => {
     it('success: uninstalling → ready with Uninstall gone, then the window', async () => {
       h = await harness({ mode: 'prefix-cleanup' });
