@@ -973,7 +973,8 @@ describe('GameController sequences', () => {
       fire(IPC.actionLaunch);
       await pause(50);
       expect(shell.opened).toEqual([]);
-      expect(built.journal).toEqual([]);
+      expect(built.journal.filter((entry) => entry !== 'state:ready')).toEqual([]);
+      expect(built.state.get()).toMatchObject({ kind: 'ready', game: { id: 'g1' } });
     });
 
     it('the selected game finishing its download flips to Play and notifies once', async () => {
