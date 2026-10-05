@@ -150,6 +150,8 @@ export const en = {
   'launcher.state.syncingOut': 'Saving progress...',
   'launcher.state.installingPaused': 'Installing paused...',
   'launcher.state.installingPausedPercent': 'Installing paused on {percent}%...',
+  'launcher.state.updating': 'Updating...',
+  'launcher.state.updatingPaused': 'Updating paused...',
 
   // ── Display formatters (format.ts) ──────────────────────────────────────────
   'format.never': 'never',
@@ -474,7 +476,6 @@ export const en = {
   'errors.finishBeforeApply': 'Finish what’s running before applying the config',
   'errors.reloadInProgress': 'a reload is already in progress',
   'errors.steamNotInstalled': 'Steam is not installed',
-  'errors.steamBusyOther': 'Another game is being downloaded or removed in Steam. Wait for it to finish.',
   'errors.steamOpenInstall': 'failed to open Steam install: {cause}',
   'errors.steamOpenDownloads': 'failed to open Steam downloads: {cause}',
   'errors.steamOpenUninstall': 'failed to open Steam uninstall: {cause}',

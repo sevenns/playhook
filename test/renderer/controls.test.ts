@@ -3,7 +3,9 @@ import { createControls, type Controls } from '../../src/renderer/controls';
 import type { ControlsApi, ControlsDeps } from '../../src/renderer/controls-deps';
 import { req } from '../../src/renderer/dom';
 import { createTranslator } from '../../src/shared/i18n/index';
-import type { BrowseInfo, GameInfo } from '../../src/shared/types';
+import type { AppState, BrowseInfo, GameInfo } from '../../src/shared/types';
+import type { ActivityMap } from '../../src/shared/activity';
+import { screenActivityOf } from '../../src/renderer/state-view';
 import { loadFixture } from './helpers/fixture';
 import { fakeAudio, fakeKeyboard, type FakeAudio } from './helpers/fakes';
 import { installRafHarness } from './helpers/raf';
@@ -60,6 +62,9 @@ interface Harness {
   /** What the carousel reports it is showing, and what browse model the bar is drawn from. */
   screen: 'carousel' | 'detail';
   browse: BrowseInfo | null;
+  /** Every game's activity, as app.ts would hold it. */
+  activities: ActivityMap;
+  state: AppState;
   /** Every `carousel.move(delta)` the router made. */
   readonly carouselMoves: number[];
   /** The primitives routed into the Settings overlay while it reports itself open. */
@@ -94,6 +99,8 @@ beforeEach(() => {
   const own: Harness = {
     screen: 'carousel',
     browse: null,
+    activities: {},
+    state: { kind: 'idle' },
     carouselMoves: [],
     settingsNav: [],
     settingsOpen: false,
@@ -113,8 +120,9 @@ beforeEach(() => {
   };
   controls = createControls({
     api,
-    getState: () => ({ kind: 'idle' }),
+    getState: () => own.state,
     getBrowse: () => own.browse,
+    getScreenActivity: () => screenActivityOf(own.browse, own.activities),
     audio,
     getTranslator: () => createTranslator('en'),
     getLocale: () => 'en',
@@ -309,5 +317,66 @@ describe('controls focus ring on the detail screen', () => {
     controls.refresh();
 
     expect(focusedMain()).toEqual(['more-button']);
+  });
+});
+
+describe('controls Play with per-game activities', () => {
+  const focusedMain = (): string[] =>
+    ['play-button', 'more-button'].filter((id) => req(id).classList.contains('is-focused'));
+  const STEAM_GAME: GameInfo = { ...LOCAL_GAME, id: 'steam', title: 'Steam', requiresInstall: true, installVia: 'steam' };
+
+  it('keeps the gear of a download on screen focusable, and Play opens the Steam downloads', () => {
+    harness.screen = 'detail';
+    harness.browse = browsing(STEAM_GAME);
+    harness.activities = { steam: { kind: 'steam-installing', paused: false } };
+    controls.refresh();
+    press('ArrowLeft');
+
+    expect(focusedMain()).toEqual(['play-button']);
+
+    req('play-button').click();
+
+    expect(api.openSteamDownloads).toHaveBeenCalledTimes(1);
+    expect(api.requestLaunch).not.toHaveBeenCalled();
+  });
+
+  it('opens the Steam downloads for an update too', () => {
+    harness.screen = 'detail';
+    harness.browse = browsing({ ...STEAM_GAME, requiresInstall: false });
+    harness.activities = { steam: { kind: 'steam-updating', paused: true } };
+    controls.refresh();
+
+    req('play-button').click();
+
+    expect(api.openSteamDownloads).toHaveBeenCalledTimes(1);
+    expect(api.requestLaunch).not.toHaveBeenCalled();
+  });
+
+  it('refuses Play while the game on screen is being removed', () => {
+    harness.screen = 'detail';
+    harness.browse = browsing({ ...STEAM_GAME, requiresInstall: false, canUninstall: true });
+    harness.activities = { steam: { kind: 'steam-uninstalling' } };
+    controls.refresh();
+
+    req('play-button').click();
+
+    expect(audio.limits()).toBe(1);
+    expect(api.requestLaunch).not.toHaveBeenCalled();
+    expect(api.openSteamDownloads).not.toHaveBeenCalled();
+  });
+
+  it("launches the game on screen while ANOTHER game downloads: someone else's activity is not this game's", () => {
+    harness.screen = 'detail';
+    harness.browse = browsing(LOCAL_GAME);
+    harness.state = { kind: 'ready', game: LOCAL_GAME };
+    harness.activities = { steam: { kind: 'steam-installing', paused: false } };
+    controls.refresh();
+
+    expect(focusedMain()).toEqual(['play-button']);
+
+    req('play-button').click();
+
+    expect(api.requestLaunch).toHaveBeenCalledTimes(1);
+    expect(api.openSteamDownloads).not.toHaveBeenCalled();
   });
 });

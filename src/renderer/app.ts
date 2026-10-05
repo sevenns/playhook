@@ -6,6 +6,7 @@
 // the bits that don't belong to any one subsystem (phase attribute, info panel, title slide, music gating).
 // IMPORTANT: title/data come from the card (untrusted) — rendered via textContent, never innerHTML.
 import type { AppNotification, AppState, BrowseInfo, LibraryEntry, Stats } from '../shared/types.js';
+import type { ActivityMap } from '../shared/activity.js';
 import { createTranslator, type Locale, type Translator } from '../shared/i18n/index.js';
 import { localizeDocument } from './i18n-dom.js';
 import { AUTO_CHAIN_MS, NAV_REPEAT_MS } from './auto-repeat.js';
@@ -24,7 +25,7 @@ import { createCardArtCache } from './card-art.js';
 import { createLibraryScreen } from './library-screen.js';
 import { createToast } from './toast.js';
 import { formatDate, formatNotification, formatPlaytime } from './format.js';
-import { busyKindOf, gameOf, phaseOf, statusOf, steamBusy } from './state-view.js';
+import { activityBusyKind, activityStatus, busyIds, gameOf, phaseOf, screenActivityOf, statusOf } from './state-view.js';
 import { req } from './dom.js';
 
 const app = req('app');
@@ -38,6 +39,7 @@ let currentState: AppState = { kind: 'idle' };
 // stays the truth for the PHASE (busy/ready/error) and the status text. null = neither card nor history,
 // i.e. the genuine "Insert a game card" screen. See BrowseInfo in shared/types.
 let currentBrowse: BrowseInfo | null = null;
+let currentActivities: ActivityMap = {};
 // The carousel hid the title + status for a pending selection change; the next render reveals the new one.
 let textSwapPending = false;
 // A direction is being held. While it is, the title/status stay hidden rather than being re-revealed on
@@ -224,11 +226,11 @@ const gameSettingsScreen = createGameSettingsScreen({
   showError: (text) => controls.showError(text),
   // Editing while the game runs is legal; DELETING it is not — the launcher would be left holding a
   // manifest the file no longer has.
-  isBusy: () =>
+  isBusy: (id) =>
     currentState.kind === 'running' ||
     currentState.kind === 'installing' ||
     currentState.kind === 'uninstalling' ||
-    steamBusy(currentState),
+    currentActivities[id] !== undefined,
 });
 
 // ── The notification toast (see toast.ts) ────────────────────────────────────
@@ -293,6 +295,7 @@ const controls = createControls({
   // first press cannot arrive before it exists.
   isBooting: () => !boot.isRevealed(),
   getBrowse: () => currentBrowse,
+  getScreenActivity: () => screenActivityOf(currentBrowse, currentActivities),
   audio,
   getTranslator,
   settings: settingsScreen,
@@ -557,7 +560,7 @@ function buildInfoPanel(stats: Stats): void {
 // ── Title / status busy layout ──────────────────────────────────────────────
 // While busy (or during a Steam install/uninstall indicator) the title drops DOWN and the status line
 // fades in above it — a two-line block that keeps the long title fully visible (it no longer slides
-// right into the More button). Both moves are pure CSS, keyed off #app[data-phase]/[data-steam-busy]
+// right into the More button). Both moves are pure CSS, keyed off #app[data-phase]/[data-status]
 // (see styles.css), so there's no JS measurement here anymore.
 
 // ── Background music gating ──────────────────────────────────────────────────
@@ -588,6 +591,8 @@ function applyStatus(): void {
 
 /** The status line for what is ON SCREEN — empty while looking at a game the state isn't about. */
 function statusText(): string {
+  const activity = screenActivityOf(currentBrowse, currentActivities);
+  if (activity !== undefined) return activityStatus(activity, translator);
   const subject = gameOf(currentState)?.id;
   // Nothing on screen is a state of its own now — a launcher card — and the state's status belongs to a
   // game, so it says nothing there: "Installing…" under "Settings" would be a lie, and the line's mere
@@ -650,14 +655,12 @@ function render(state: AppState): void {
   // screen; stop otherwise, e.g. on the idle screen). Idempotent — see hero.startRotation.
   hero.startRotation();
 
-  // Steam non-blocking install/uninstall indicator: reuse the busy visuals (loader/status/slid title)
-  // via a dedicated attribute, while the logical phase stays 'ready' (window hideable, card pullable).
-  const busySteam = steamBusy(state);
-  if (busySteam) app.dataset['steamBusy'] = 'true';
-  else delete app.dataset['steamBusy'];
+  const screenActivity = screenActivityOf(browse, currentActivities);
+  if (screenActivity !== undefined) app.dataset['activity'] = screenActivity.kind;
+  else delete app.dataset['activity'];
 
   // Play-button busy visual: gear (system activity) vs spinner (game phases). Absent when not busy.
-  const busyKind = busyKindOf(state);
+  const busyKind = activityBusyKind(screenActivity, state);
   if (busyKind !== 'none') app.dataset['busy'] = busyKind;
   else delete app.dataset['busy'];
 
@@ -677,7 +680,7 @@ function render(state: AppState): void {
     browse.active &&
     browse.game?.unavailable !== true &&
     browse.game?.unconfigured !== true &&
-    !(phase === 'ready' && browse.game?.requiresInstall === true && !busySteam);
+    !(phase === 'ready' && browse.game?.requiresInstall === true && screenActivity === undefined);
   app.dataset['cardMorph'] = hasPlay ? 'on' : 'off';
 
   // Only on the detail screen: in the carousel Play is hidden anyway, and the attribute's `.title{left:0}`
@@ -688,9 +691,9 @@ function render(state: AppState): void {
 
   // The busy game keeps a pulsing dot on its own card, so "game A is installing" stays visible while you
   // browse game B (whose status line is blank — see applyStatus).
-  const busyGame = phase === 'busy' || busySteam ? (gameOf(state)?.id ?? null) : null;
-  carousel.setBusyGame(busyGame);
-  libraryScreen.setBusyGame(busyGame);
+  const busy = busyIds(state, currentActivities);
+  carousel.setBusyGames(busy);
+  libraryScreen.setBusyGames(busy);
 
   chatter.sync(state);
   applyStatus();
@@ -740,6 +743,15 @@ function applyLocale(locale: Locale): void {
 }
 window.api.onLanguageUpdate(applyLocale);
 void window.api.getLanguage().then(applyLocale);
+
+window.api.onActivityUpdate((activities) => {
+  currentActivities = activities;
+  render(currentState);
+});
+void window.api.requestActivities().then((activities) => {
+  currentActivities = activities;
+  render(currentState);
+});
 
 window.api.onStateUpdate(render);
 void window.api.requestState().then((state) => {

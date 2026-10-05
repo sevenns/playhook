@@ -24,6 +24,8 @@ import {
   type ProcessControl,
 } from '../src/main/controller-deps';
 import { StateManager } from '../src/main/state';
+import { ActivityRegistry } from '../src/main/activity-registry';
+import type { ActivityMap } from '../src/shared/activity';
 import { LaunchAbortedError } from '../src/main/launch-errors';
 import { DEFAULT_SETTINGS } from '../src/main/app-settings';
 import { createTranslator } from '../src/shared/i18n/index';
@@ -113,7 +115,13 @@ interface Harness {
   readonly browsedId: () => string | null;
   /** Drops a game from what the fake PC library reads next — the file after a delete was saved. */
   readonly removeLocalGame: (id: string) => void;
+  /** Every game's activity (the controller's registry). */
+  readonly activities: ActivityRegistry;
+  /** Rewrites the Steam game's `.acf` — the way Steam reports a download starting or finishing. */
+  readonly setSteamState: (state: SteamAcfState) => Promise<void>;
 }
+
+type SteamAcfState = 'installed' | 'downloading';
 
 type Mode = 'normal' | 'install' | 'prefix-cleanup' | 'steam';
 
@@ -134,18 +142,26 @@ interface HarnessOptions {
    * the row orders by that, so the file's first game need not be the row's.
    */
   readonly extraGames?: readonly { readonly id: string; readonly lastPlayedAt: string }[];
+  /** What the Steam game's `.acf` says at startup (steam mode only; installed by default). */
+  readonly steamState?: SteamAcfState;
 }
 
 const STEAM_APPID = 480;
 
-/** A Steam root whose one library reports `appid` fully installed — enough for steamInstallStatus. */
-async function fakeSteamRoot(tmp: string, appid: number): Promise<string> {
-  const root = path.join(tmp, 'steam');
-  await fs.mkdir(path.join(root, 'steamapps'), { recursive: true });
+/** Writes the one library's `.acf` of `appid`: StateFlags 4 is fully installed, 1026 a download. */
+async function writeSteamAcf(root: string, appid: number, state: SteamAcfState): Promise<void> {
+  const flags = state === 'installed' ? 4 : 1026;
   await fs.writeFile(
     path.join(root, 'steamapps', `appmanifest_${appid}.acf`),
-    `"AppState"\n{\n\t"appid"\t\t"${appid}"\n\t"StateFlags"\t\t"4"\n}\n`,
+    `"AppState"\n{\n\t"appid"\t\t"${appid}"\n\t"StateFlags"\t\t"${flags}"\n}\n`,
   );
+}
+
+/** A Steam root whose one library reports `appid` in `state` — enough for steamInstallStatus. */
+async function fakeSteamRoot(tmp: string, appid: number, state: SteamAcfState): Promise<string> {
+  const root = path.join(tmp, 'steam');
+  await fs.mkdir(path.join(root, 'steamapps'), { recursive: true });
+  await writeSteamAcf(root, appid, state);
   return root;
 }
 
@@ -159,7 +175,8 @@ async function harness(opts: HarnessOptions): Promise<Harness> {
   if (opts.mode === 'prefix-cleanup' && opts.sweepDir === undefined) {
     await fs.mkdir(installDir, { recursive: true });
   }
-  const steamRoot = opts.mode === 'steam' ? await fakeSteamRoot(tmp, STEAM_APPID) : null;
+  const steamRoot =
+    opts.mode === 'steam' ? await fakeSteamRoot(tmp, STEAM_APPID, opts.steamState ?? 'installed') : null;
   const executablePath =
     opts.mode === 'install' ? path.join(installDir, 'game.exe') : path.join(gameDir, 'game.exe');
   const baseRaw = {
@@ -221,6 +238,15 @@ async function harness(opts: HarnessOptions): Promise<Harness> {
   const journal: string[] = [];
   const state = new StateManager();
   state.subscribe((next) => journal.push(`state:${next.kind}`));
+  const activities = new ActivityRegistry();
+  let lastActivities: ActivityMap = {};
+  activities.subscribe((next) => {
+    for (const id of new Set([...Object.keys(lastActivities), ...Object.keys(next)])) {
+      const kind = next[id]?.kind ?? 'clear';
+      if (kind !== (lastActivities[id]?.kind ?? 'clear')) journal.push(`activity:${id}:${kind}`);
+    }
+    lastActivities = next;
+  });
   const h: {
     failStats: boolean;
     exitRequested: boolean;
@@ -389,6 +415,7 @@ async function harness(opts: HarnessOptions): Promise<Harness> {
   };
   const deps: ControllerDeps = {
     state,
+    activities,
     window,
     store,
     stats,
@@ -441,6 +468,10 @@ async function harness(opts: HarnessOptions): Promise<Harness> {
     browsedId: () => browsedId,
     removeLocalGame: (id) => {
       localGames = localGames.filter((game) => game.raw.id !== id);
+    },
+    activities,
+    setSteamState: async (next) => {
+      if (steamRoot !== null) await writeSteamAcf(steamRoot, STEAM_APPID, next);
     },
   };
 }
@@ -835,18 +866,140 @@ describe('GameController sequences', () => {
       ]);
     });
 
-    it('uninstall is fire-and-forget: opens steam://uninstall and shows "Uninstalling…" without a blocking state', async () => {
+    it('uninstall is fire-and-forget: opens steam://uninstall and shows "Uninstalling…" as an activity, not a state', async () => {
       h = await harness({ mode: 'steam' });
+      const built = h;
       fire(IPC.actionUninstall);
       await waitFor(() => shell.opened.length > 0, 'the steam://uninstall URI');
       expect(shell.opened).toEqual([`steam://uninstall/${STEAM_APPID}`]);
-      const uninstalling = (): boolean => {
-        const state = h?.state.get();
-        return state?.kind === 'ready' && state.game.steamUninstalling === true;
-      };
-      await waitFor(uninstalling, 'the optimistic steamUninstalling flag');
-      expect(h.journal).toEqual(['state:ready']);
-      expect(h.state.get()).toMatchObject({ kind: 'ready', game: { canUninstall: false } });
+      await waitFor(() => built.activities.has('g1'), 'the optimistic steam-uninstalling activity');
+      expect(built.activities.get('g1')).toEqual({ kind: 'steam-uninstalling' });
+      expect(built.journal).toEqual(['activity:g1:steam-uninstalling']);
+      expect(built.state.get()).toMatchObject({ kind: 'ready', game: { canUninstall: true } });
+    });
+
+    it('a second Uninstall while Steam is removing the game is ignored', async () => {
+      h = await harness({ mode: 'steam' });
+      const built = h;
+      fire(IPC.actionUninstall);
+      await waitFor(() => built.activities.has('g1'), 'the steam-uninstalling activity');
+      fire(IPC.actionUninstall);
+      await new Promise<void>((resolve) => setTimeout(resolve, 50));
+      expect(shell.opened).toEqual([`steam://uninstall/${STEAM_APPID}`]);
+    });
+  });
+
+  describe('steam activities', () => {
+    beforeEach(() => {
+      process.env['PLAYHOOK_STEAM_POLL_MS'] = '20';
+    });
+    afterEach(() => {
+      delete process.env['PLAYHOOK_STEAM_POLL_MS'];
+    });
+
+    const downloading = (built: Harness): boolean => built.activities.get('g1')?.kind === 'steam-installing';
+    const pause = (ms: number): Promise<void> => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+    it('a download in flight at startup shows up as an activity without selecting the game', async () => {
+      h = await harness({
+        mode: 'steam',
+        steamState: 'downloading',
+        extraGames: [{ id: 'other', lastPlayedAt: '2026-10-01T00:00:00.000Z' }],
+      });
+      const built = h;
+      await waitFor(() => downloading(built), 'the steam-installing activity');
+      expect(built.activities.get('g1')).toEqual({ kind: 'steam-installing', paused: false });
+      expect(built.journal.filter((entry) => entry.startsWith('state:'))).toEqual([]);
+    });
+
+    it('selecting another game while one downloads goes through, and the download keeps its activity', async () => {
+      h = await harness({
+        mode: 'steam',
+        steamState: 'downloading',
+        extraGames: [{ id: 'other', lastPlayedAt: '2026-10-01T00:00:00.000Z' }],
+      });
+      const built = h;
+      fire(IPC.actionSelect, 'g1');
+      await waitFor(() => built.state.get().kind === 'ready' && built.browsedId() === 'g1', 'g1 selected');
+      await waitFor(() => downloading(built), 'the steam-installing activity');
+
+      fire(IPC.actionSelect, 'other');
+      await waitFor(() => {
+        const state = built.state.get();
+        return state.kind === 'ready' && state.game.id === 'other';
+      }, 'the selection to move onto the other game');
+
+      expect(downloading(built)).toBe(true);
+    });
+
+    it('another game launches and runs while one downloads; the finished download notifies without touching the session', async () => {
+      h = await harness({
+        mode: 'steam',
+        steamState: 'downloading',
+        extraGames: [{ id: 'other', lastPlayedAt: '2026-10-01T00:00:00.000Z' }],
+      });
+      const built = h;
+      await waitFor(() => downloading(built), 'the steam-installing activity');
+      built.journal.length = 0;
+      fire(IPC.actionSelect, 'other');
+      await reached(built.journal, 'state:ready');
+      await pause(50);
+      expect(built.state.get()).toMatchObject({ kind: 'ready', game: { id: 'other' } });
+      built.journal.length = 0;
+
+      fire(IPC.actionLaunch);
+      await reached(built.journal, 'state:running');
+      await built.setSteamState('installed');
+      await reached(built.journal, 'notify:game-installed');
+      await pause(100);
+
+      expect(built.journal).toEqual([
+        'state:syncing-in',
+        'state:launching',
+        'state:running',
+        'activity:g1:clear',
+        'notify:game-installed',
+      ]);
+      expect(built.state.get()).toMatchObject({ kind: 'running', game: { id: 'other' } });
+      built.exit();
+      await settled(built.journal, 'proc:dispose');
+    });
+
+    it('a game with an activity is not launched', async () => {
+      h = await harness({ mode: 'steam', steamState: 'downloading' });
+      const built = h;
+      await waitFor(() => downloading(built), 'the steam-installing activity');
+      built.journal.length = 0;
+      fire(IPC.actionLaunch);
+      await pause(50);
+      expect(shell.opened).toEqual([]);
+      expect(built.journal).toEqual([]);
+    });
+
+    it('the selected game finishing its download flips to Play and notifies once', async () => {
+      h = await harness({ mode: 'steam', steamState: 'downloading' });
+      const built = h;
+      await waitFor(() => downloading(built), 'the steam-installing activity');
+      expect(built.state.get()).toMatchObject({ kind: 'ready', game: { id: 'g1', requiresInstall: true } });
+      await built.setSteamState('installed');
+      await reached(built.journal, 'notify:game-installed');
+      await waitFor(() => {
+        const state = built.state.get();
+        return state.kind === 'ready' && !state.game.requiresInstall;
+      }, 'the game to flip to Play');
+      await pause(100);
+      expect(built.journal.filter((entry) => entry.startsWith('notify:'))).toEqual(['notify:game-installed']);
+    });
+
+    it('an update of an installed game reads as updating and finishes without a notification', async () => {
+      h = await harness({ mode: 'steam' });
+      const built = h;
+      await built.setSteamState('downloading');
+      await waitFor(() => built.activities.get('g1')?.kind === 'steam-updating', 'the steam-updating activity');
+      await built.setSteamState('installed');
+      await waitFor(() => !built.activities.has('g1'), 'the update to finish');
+      await pause(100);
+      expect(built.journal.filter((entry) => entry.startsWith('notify:'))).toEqual([]);
     });
   });
 

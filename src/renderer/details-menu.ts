@@ -3,10 +3,11 @@
 // has no tray for. Their visibility rules live here; the popup (popups.ts) owns the stack they sit in,
 // which is why it can hold them still during its fade-out (`isFrozen`).
 import type { AppState, BrowseInfo, GameInfo } from '../shared/types.js';
+import type { GameActivity } from '../shared/activity.js';
 import type { Translator } from '../shared/i18n/index.js';
 import type { CarouselNav } from './controls-deps.js';
 import { req } from './dom.js';
-import { phaseOf, steamBusy } from './state-view.js';
+import { phaseOf } from './state-view.js';
 
 export interface DetailsMenuDeps {
   getState(): AppState;
@@ -15,6 +16,8 @@ export interface DetailsMenuDeps {
   readonly carousel: Pick<CarouselNav, 'screen'>;
   screenGame(): GameInfo | undefined;
   screenIsActionable(): boolean;
+  /** The activity of the game on screen, or undefined when it is free. */
+  screenActivity(): GameActivity | undefined;
   /** The popup is fading out: its items must not rewrite themselves in view (see popups.ts). */
   isFrozen(): boolean;
 }
@@ -61,7 +64,7 @@ export function createDetailsMenu(deps: DetailsMenuDeps): DetailsMenu {
     const game = screenIsActionable() ? screenGame() : undefined;
     // While an install/uninstall (card or Steam) is in flight, the Install/Uninstall item is hidden —
     // acting on it mid-operation makes no sense (Details still opens for the stats + power actions).
-    const busy = phaseOf(state()) === 'busy' || steamBusy(state());
+    const busy = phaseOf(state()) === 'busy' || deps.screenActivity() !== undefined;
     const showInstall = !busy && game?.requiresInstall === true;
     const showUninstall = !busy && game?.canUninstall === true;
     const show = showInstall || showUninstall;

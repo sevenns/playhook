@@ -4,6 +4,7 @@
 // the file-name constants) lives next to its implementation under `src/main/` instead.
 import type { Locale } from './i18n/index';
 import type { ArtworkQuality } from './artwork-filter';
+import type { ActivityMap } from './activity';
 
 // ── Card format: the few facts both sides must agree on ───────────────────────────────────────
 
@@ -202,31 +203,6 @@ export interface GameInfo {
    * the "uninstall from PC" one. Undefined for install/steam/copy modes and on Windows.
    */
   readonly prefixCleanupOnly?: boolean;
-  /**
-   * Steam mode only: a download/update is in progress (the `.acf` exists but isn't fully installed).
-   * Drives a non-blocking "Installing…" indicator — NOT a blocking `installing` state (a Steam download
-   * can run for hours; the window stays usable). No percent: Steam exposes no reliable real-time
-   * progress in the files we can read (see steam.ts AcfState). Undefined when not downloading.
-   */
-  readonly steamInstalling?: boolean;
-  /**
-   * Steam mode only: the in-progress download is PAUSED (Steam's `UpdateResult` is non-zero). Only
-   * meaningful together with `steamInstalling` — flips the indicator text to "Installing paused…".
-   */
-  readonly steamPaused?: boolean;
-  /**
-   * Steam mode only: completion fraction (0..1) captured at pause. Steam's byte counters are only fresh
-   * while paused, so this is present ONLY with `steamPaused` (and may still be absent if uncomputable) —
-   * renders as "Installing paused on N%…".
-   */
-  readonly steamPausedProgress?: number;
-  /**
-   * Steam mode only: a Steam uninstall we requested is in progress. Drives a non-blocking
-   * "Uninstalling…" indicator (no percentage — removal isn't a download). Set optimistically right
-   * after opening `steam://uninstall`; cleared when Steam drops the `.acf` (→ "Install") or, if the
-   * user cancelled Steam's dialog, by a timeout in the background poller (→ back to "Play"/"Uninstall").
-   */
-  readonly steamUninstalling?: boolean;
   /**
    * PC mode only: the game's executable is not on disk right now (deleted, or an external drive is
    * unplugged). The card stays in the library with its art, stats and save backup — only Play is
@@ -486,6 +462,10 @@ export const IPC = {
   stateUpdate: 'state:update',
   /** renderer → main: request the current state (on window startup). */
   stateRequest: 'state:request',
+  /** main → renderer: every game's background activity (ActivityMap), pushed in full on each change. */
+  activityUpdate: 'activity:update',
+  /** renderer → main (invoke): the current ActivityMap, seeded on window startup. */
+  activityRequest: 'activity:request',
   /** main → game-renderer: the launcher window gained (true) / lost (false) OS focus. The renderer gates
    * gamepad input on this so a BACKGROUND launcher (e.g. under gamescope, where Chromium keeps feeding the
    * unfocused window gamepad input) doesn't act on presses meant for the running game. */
@@ -1196,6 +1176,9 @@ export interface RendererApi {
   /** Launcher window focus changes (true = foreground). Used to gate gamepad input while backgrounded. */
   onWindowFocus(callback: (focused: boolean) => void): void;
   requestState(): Promise<AppState>;
+  /** Every game's background activity, pushed in full on each change. */
+  onActivityUpdate(callback: (activities: ActivityMap) => void): void;
+  requestActivities(): Promise<ActivityMap>;
   requestLaunch(): void;
   requestUninstall(): void;
   requestHide(): void;

@@ -1,3 +1,5 @@
+import { ipcMain } from 'electron';
+import { IPC } from '../shared/types';
 import { sameActivity, type ActivityMap, type GameActivity } from '../shared/activity';
 
 type ActivityListener = (activities: ActivityMap) => void;
@@ -6,6 +8,12 @@ type ActivityListener = (activities: ActivityMap) => void;
 export class ActivityRegistry {
   private activities: ActivityMap = {};
   private readonly listeners = new Set<ActivityListener>();
+
+  /** Answers the renderer's seed request and pushes every change to the window as a full snapshot. */
+  init(send: (channel: string, activities: ActivityMap) => void): void {
+    ipcMain.handle(IPC.activityRequest, (): ActivityMap => this.snapshot());
+    this.subscribe((activities) => send(IPC.activityUpdate, activities));
+  }
 
   /** The activity of `id`, or undefined when the game is free. */
   get(id: string): GameActivity | undefined {

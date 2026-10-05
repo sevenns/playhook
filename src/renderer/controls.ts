@@ -15,7 +15,7 @@ import { createPopups } from './popups.js';
 import { createHoverGuard } from './hover-guard.js';
 import type { NavSurface } from './nav-surface.js';
 import type { SystemCardId } from './system-cards.js';
-import { gameOf, phaseOf, steamBusy } from './state-view.js';
+import { gameOf, opensSteamDownloads, phaseOf } from './state-view.js';
 import { pressFlash, req } from './dom.js';
 import type { GameCollision } from '../shared/types.js';
 import type { ControlsDeps } from './controls-deps.js';
@@ -211,6 +211,7 @@ export function createControls(deps: ControlsDeps): Controls {
     hover,
     screenGame,
     screenIsActionable,
+    screenActivity: () => deps.getScreenActivity(),
     openGameDetail: (id) => deps.openGameDetail(id),
     onPopupClosed: () => deps.onPopupClosed(),
     onFocusChanged: () => applyFocus(),
@@ -236,7 +237,7 @@ export function createControls(deps: ControlsDeps): Controls {
     if (deps.carousel.screen() === 'carousel') return [];
     // Steam install/uninstall indicator up (phase stays 'ready'): the gear opens Steam's Downloads page
     // and More opens Details — both focusable.
-    if (steamBusy(state())) return [playButton, moreButton];
+    if (deps.getScreenActivity() !== undefined) return [playButton, moreButton];
     // Running with the launcher summoned over the game: Play returns to the game, so it's focusable too —
     // EXCEPT while a force-close is in flight (killing), when Play is a non-interactive loading spinner.
     const running = state();
@@ -317,6 +318,14 @@ export function createControls(deps: ControlsDeps): Controls {
 
   function triggerPlay(): void {
     if (!focusActive()) return; // the bar is not the surface driving the press — not a dead end
+    // Steam download in progress: the gear opens Steam's Downloads page, where the user can
+    // pause/resume (we can't control that programmatically).
+    if (opensSteamDownloads(deps.getScreenActivity())) {
+      audio.play('button');
+      return deps.api.openSteamDownloads();
+    }
+    // Steam uninstall in progress (gear) → nothing useful to do, ignore the press.
+    if (deps.getScreenActivity() !== undefined) return audio.playLimit();
     // Play acts on the game AppState is about, so it must be the one on screen: a history game has
     // nothing to launch, and while you browse game B, "Play" must not start game A behind your back.
     if (!screenIsActionable()) return audio.playLimit();
@@ -325,15 +334,6 @@ export function createControls(deps: ControlsDeps): Controls {
     if (game?.unavailable === true) return audio.playLimit();
     // A local game with no launch method configured yet: same dead end, different reason.
     if (game?.unconfigured === true) return audio.playLimit();
-    // Steam download in progress: the gear opens Steam's Downloads page, where the user can
-    // pause/resume (we can't control that programmatically).
-    if (game?.steamInstalling === true) {
-      audio.play('button');
-      deps.api.openSteamDownloads();
-      return;
-    }
-    // Steam uninstall in progress (gear) → nothing useful to do, ignore the press.
-    if (game?.steamUninstalling === true) return audio.playLimit();
     // Force-close in flight: Play is a loading spinner, not return-to-game — ignore the press.
     const s = state();
     if (s.kind === 'running' && s.killing === true) return audio.playLimit();
@@ -730,7 +730,7 @@ export function createControls(deps: ControlsDeps): Controls {
     popups.refresh();
     // When an active state (install / launch / uninstall / steam) APPEARS, drop the bar highlight so it
     // doesn't sit on a button the user didn't choose. It wakes again on a gamepad move or a mouse hover.
-    const active = phaseOf(state()) === 'busy' || steamBusy(state());
+    const active = phaseOf(state()) === 'busy' || deps.getScreenActivity() !== undefined;
     if (active && !wasActive) focusRevealed = false;
     wasActive = active;
     applyFocus();

@@ -23,6 +23,7 @@ import { type Platform } from './platform';
 import { type AppSettingsStore } from './app-settings';
 import { type NotificationsService } from './notifications';
 import { type focusGameWindow } from './window-finder';
+import { type ActivityRegistry } from './activity-registry';
 
 /**
  * What the collision answer needs from the Customize backend (GameConfigService). Attached after
@@ -88,6 +89,7 @@ export type ControllerPcLibrary = Pick<PcLibraryStore, 'read' | 'gcOrphans'>;
 export type ControllerWatcher = Pick<DriveWatcher, 'onInsert' | 'onRemove' | 'onError' | 'stop'>;
 export type ControllerSettings = Pick<AppSettingsStore, 'read'>;
 export type ControllerNotifications = Pick<NotificationsService, 'notify'>;
+export type ControllerActivities = Pick<ActivityRegistry, 'get' | 'has' | 'set' | 'clear'>;
 
 export interface ControllerDeps {
   readonly state: ControllerState;
@@ -107,6 +109,8 @@ export interface ControllerDeps {
    * `installing` at all, so "it finished" cannot be read off the state machine.
    */
   readonly notifications: ControllerNotifications;
+  /** Every game's background activity by id (Steam downloads and removals), apart from the session. */
+  readonly activities: ControllerActivities;
   /** Platform services (process monitor, Steam locator, launcher, save-path resolver, power) for the OS. */
   readonly platform: Platform;
   /** The process waits + the koffi-bound helpers (see ProcessControl). */
