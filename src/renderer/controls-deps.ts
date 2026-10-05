@@ -8,6 +8,7 @@ import type {
   ConfigSaveResult,
   GameCollisionAnswer,
 } from '../shared/types.js';
+import type { GameActivity } from '../shared/activity.js';
 import type { Locale, MessageKey, Translator } from '../shared/i18n/index.js';
 import type { AudioController } from './audio.js';
 import type { MoveResult } from './carousel.js';
@@ -53,6 +54,8 @@ export interface ControlsDeps {
    * be showing a history game — pressing Play there would launch someone else.
    */
   getBrowse(): BrowseInfo | null;
+  /** The activity of the game on screen (a Steam download, a removal), or undefined when it is free. */
+  getScreenActivity(): GameActivity | undefined;
   /** The shared audio controller (UI sounds). */
   audio: AudioController;
   /** The current translator (read live so menu/confirm copy follows the language). */

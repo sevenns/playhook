@@ -38,7 +38,7 @@ import { AssetReader } from './asset-reader';
 import { BrowsePresenter } from './browse-presenter';
 import { GameSequences } from './game-sequences';
 import { SaveSyncFlow } from './save-sync-flow';
-import { SteamInstallWatch } from './steam-install-watch';
+import { SteamActivityWatch, type SteamWatchEntry } from './steam-activity-watch';
 import { describe } from './util';
 import { log } from './logger';
 
@@ -72,10 +72,6 @@ export class GameController {
   // True while a collision answer is being carried out. The merge writes the card and reloads it, which
   // re-enters loadCard — and the detection at the end of it would ask the very question being answered.
   private collisionInFlight = false;
-  // The id of the game with a Steam download/removal in flight, or null. Steam operations are the one
-  // kind of activity that leaves the state `ready`, so this is what stops a SECOND game from being
-  // launched or installed underneath them (see onLaunchRequested).
-  private steamBusyId: string | null = null;
   // Mirror of AppSettings.keepOpenWithoutCard (seeded at startup, toggled live from the settings
   // window): when true the launcher stays on screen with no card in instead of hiding to the tray.
   // Initialized to the SCHEMA's default so the sliver between constructing this controller and the seed
@@ -112,28 +108,8 @@ export class GameController {
     readBrowseAssets: (id) => this.deps.library.readBrowseAssets(id),
     onlyGlobalAmbient: async () => (await this.deps.settings.read()).onlyGlobalAmbient,
   });
-  // Steam-mode background re-detect poller (timer + tick + optimistic uninstall request), extracted from
-  // this controller. Reaches back only through the narrow accessor seam below.
-  private readonly steamWatch: SteamInstallWatch = new SteamInstallWatch({
-    getManifest: () => this.current(),
-    isLaunchInFlight: () => this.sequences.inFlight,
-    getState: () => this.deps.state.get(),
-    isSourceAvailable: () => this.currentSourceAvailable(),
-    enterReady: (info) => this.enterReady(info),
-    onInstallCompleted: (game) =>
-      this.deps.notifications.notify({
-        kind: 'game-installed',
-        gameId: game.id,
-        gameTitle: game.title,
-      }),
-    onUninstallCompleted: (game) =>
-      this.deps.notifications.notify({
-        kind: 'game-uninstalled',
-        gameId: game.id,
-        gameTitle: game.title,
-      }),
-    steamLocator: () => this.deps.platform.steamLocator,
-  });
+  // Polls Steam's .acf state of every available Steam game and keeps each one's activity in the registry.
+  private readonly steamWatch: SteamActivityWatch;
   // The process lifecycle (launch / install / uninstall / prefix cleanup, force-close, the save sync
   // around a session) — see game-sequences.ts. Dispatched to from the renderer's actions below; it
   // reaches back through the SequenceHost seam for the card session's answers and transitions.
@@ -143,6 +119,26 @@ export class GameController {
   private readonly saveSync: SaveSyncFlow;
 
   constructor(private readonly deps: ControllerDeps) {
+    this.steamWatch = new SteamActivityWatch({
+      listSteamGames: () => this.steamGames(),
+      registry: this.deps.activities,
+      sessionGameId: () => this.sessionGameId(),
+      onGameChanged: (id) =>
+        void this.onGameChanged(id).catch((cause: unknown) => log.warn('[steam-watch] refresh failed:', describe(cause))),
+      onInstallCompleted: (game) =>
+        this.deps.notifications.notify({
+          kind: 'game-installed',
+          gameId: game.id,
+          gameTitle: game.title,
+        }),
+      onUninstallCompleted: (game) =>
+        this.deps.notifications.notify({
+          kind: 'game-uninstalled',
+          gameId: game.id,
+          gameTitle: game.title,
+        }),
+      steamLocator: () => this.deps.platform.steamLocator,
+    });
     this.saveSync = new SaveSyncFlow({
       store: this.deps.store,
       stats: this.deps.stats,
@@ -159,6 +155,7 @@ export class GameController {
       platform: this.deps.platform,
       processControl: this.deps.processControl,
       getTranslator: this.deps.getTranslator,
+      activities: this.deps.activities,
       steamWatch: this.steamWatch,
       saveSync: this.saveSync,
       host: {
@@ -167,7 +164,6 @@ export class GameController {
         enterReady: (info) => this.enterReady(info),
         sourceAvailable: (manifest) => this.sourceAvailable(manifest),
         currentSourceAvailable: () => this.currentSourceAvailable(),
-        sourceAvailableFor: (id) => this.sourceAvailableFor(id),
         cardGoneAfterSequence: () => this.cardGoneAfterSequence(),
         browseToUnlessPinned: (id) => this.browseToUnlessPinned(id),
         refreshLibrary: () => this.refreshLibrary(),
@@ -244,14 +240,13 @@ export class GameController {
     return manifest !== null && this.sourceAvailable(manifest);
   }
 
-  /**
-   * sourceAvailable for a game named by id — for the callers that hold a GameInfo, not a manifest. An
-   * unknown id is `false` on purpose: `games` hides a local game shadowed by the card (see the getter),
-   * and there is nothing to poll about a game that cannot be acted on right now.
-   */
-  private sourceAvailableFor(id: string): boolean {
-    const manifest = this.games.find((m) => m.raw.id === id);
-    return manifest !== undefined && this.sourceAvailable(manifest);
+  /** Every Steam game whose source is available right now — what the Steam activity watch polls. */
+  private steamGames(): readonly SteamWatchEntry[] {
+    return this.games.flatMap((manifest) =>
+      manifest.steam !== undefined && this.sourceAvailable(manifest)
+        ? [{ id: manifest.raw.id, title: manifest.raw.title, appid: manifest.steam.appid }]
+        : [],
+    );
   }
 
   /**
@@ -274,12 +269,6 @@ export class GameController {
   /** Clears all card-scoped state (games, selection, lock, audio/hero/library channels). The caller sets
    * the follow-up AppState (idle/error) and window visibility, exactly as before. */
   private clearCard(): void {
-    // Only a CARD game's Steam operation stops being ours to guard when the card goes: a local game's
-    // download keeps running and must keep refusing a second launch/install on top of it. Read before the
-    // list is emptied — afterwards there is no way to tell whose id it was.
-    if (this.steamBusyId !== null && this.cardGames.some((m) => m.raw.id === this.steamBusyId)) {
-      this.steamBusyId = null;
-    }
     this.cardGames = [];
     // The selection falls back to whatever is still there (a local game), or to nothing — see current().
     this.selectedId = null;
@@ -295,6 +284,7 @@ export class GameController {
     // games, and the browse cursor moves onto whatever is left (a history entry, or nothing).
     this.refreshLibrary();
     void this.reseedBrowse();
+    void this.steamWatch.scanNow();
   }
 
   /**
@@ -412,25 +402,13 @@ export class GameController {
     this.presenter.dispose();
     this.sequences.abortInFlight();
     this.steamWatch.stop();
-    this.steamWatch.clearUninstallRequest();
     this.deps.watcher.stop();
   }
 
-  // ── Ready transition + Steam re-detect poller ──────────────────────────────
+  // ── Ready transition ───────────────────────────────────────────────────────
 
-  /**
-   * The single entry point for the `ready` state. Besides setting the state, it manages the Steam
-   * background re-detect poller: started when the current game is a Steam game still showing "Install"
-   * (and the card is present), stopped otherwise. ALL ready transitions go through here so the poller's
-   * lifecycle is governed in exactly one place (StateManager is not a controller hook).
-   */
+  /** The single entry point for the `ready` state; also re-pushes the browse info of the same game. */
   private enterReady(info: GameInfo): void {
-    // Remember WHICH game Steam is busy with. A Steam download/removal keeps the state `ready` (it is
-    // non-blocking by design — it can run for hours), so the usual `kind !== 'ready'` guard does not cover
-    // it; and switching to another game rebuilds AppState around THAT game, which would otherwise erase
-    // the only trace of the operation. Cleared by the same game reporting itself idle again.
-    if (info.steamInstalling === true || info.steamUninstalling === true) this.steamBusyId = info.id;
-    else if (this.steamBusyId === info.id) this.steamBusyId = null;
     this.deps.state.set({ kind: 'ready', game: info });
     // AppState and BrowseInfo carry the SAME GameInfo whenever they are about the same game — and the
     // detail screen reads the BROWSE one (`browse.game.requiresInstall` decides whether Play is there,
@@ -444,16 +422,25 @@ export class GameController {
     if (browse !== null && browse.id === info.id && browse.active) {
       this.presenter.pushBrowse({ ...browse, game: info });
     }
-    // Poll for ANY steam game whose source is available: it catches install completion (Install→Play),
-    // uninstall completion (Play→Install) — incl. an uninstall the user triggers in Steam directly — and
-    // download progress. A LOCAL steam game's source is always available, so this poll is no longer bounded
-    // by how long a card stays in: the launcher sitting on such a game polls it for as long as it is shown.
-    // The .acf read is cheap enough for that to be an acceptable price.
-    if (info.installVia === 'steam' && this.sourceAvailableFor(info.id)) {
-      this.steamWatch.start();
-    } else {
-      this.steamWatch.stop();
+  }
+
+  /**
+   * Steam changed what can be done with game `id`: rebuilds its GameInfo and puts it wherever it is shown.
+   * Re-checked after the await: the state is only replaced while it is still `ready` on this very game
+   * with nothing in flight, otherwise only the browse info of the game on screen is refreshed.
+   */
+  private async onGameChanged(id: string): Promise<void> {
+    const manifest = this.games.find((m) => m.raw.id === id);
+    if (manifest === undefined) return;
+    const info = await this.buildGameInfo(manifest, this.statsById.get(id) ?? (await this.deps.stats.read(id)));
+    if (!this.games.includes(manifest)) return;
+    const snapshot = this.deps.state.get();
+    if (snapshot.kind === 'ready' && snapshot.game.id === id && !this.sequences.inFlight && !this.reloadInFlight) {
+      this.enterReady(info);
+      return;
     }
+    const browse = this.presenter.browse;
+    if (browse !== null && browse.id === id && browse.active) this.presenter.pushBrowse({ ...browse, game: info });
   }
 
   // ── Reaction to card insertion ───────────────────────────────────────────
@@ -620,6 +607,7 @@ export class GameController {
     // Last, and only now: a game that lives on this card AND on this PC needs an answer from the user,
     // and asking for one is not allowed to hold the card up (see askAboutCollisions).
     this.askAboutCollisions(root);
+    void this.steamWatch.scanNow();
     return { ok: true };
   }
 
@@ -650,6 +638,7 @@ export class GameController {
       this.statsById.set(manifest.raw.id, await this.deps.stats.read(manifest.raw.id));
     }
     this.refreshLibrary();
+    void this.steamWatch.scanNow();
     // With no card in, the local games are what the launcher has to show: leave `idle` for the first of
     // them instead of the empty screen. A card (or any activity) present → don't touch the state machine.
     if (!this.cardPresent && this.deps.state.get().kind === 'idle' && !this.sequences.inFlight) {
@@ -784,19 +773,27 @@ export class GameController {
   }
 
   /**
-   * Whether ANY game is currently running/installing/uninstalling (incl. a Steam op in flight) —
-   * main's server-side mirror of the renderer's own isBusy (app.ts), which gates Delete on the Customize
-   * screen and — new here — Move to card (GameMoveTransaction.moveToCard): a move started while the
-   * game is mid-launch would race the launcher's own manifest handling.
+   * Without `id`: whether the session is busy (a game launching / running / installing / uninstalling).
+   * With `id`: whether that game is the session's or carries an activity of its own — main's server-side
+   * mirror of the renderer's own isBusy (app.ts), which gates Delete on the Customize screen and Move to
+   * card (GameMoveTransaction.moveToCard): a move started while the game is mid-launch would race the
+   * launcher's own manifest handling.
    */
-  isBusy(): boolean {
-    const kind = this.deps.state.get().kind;
+  isBusy(id?: string): boolean {
+    const sessionId = this.sessionGameId();
+    if (id === undefined) return sessionId !== null;
+    return sessionId === id || this.deps.activities.has(id);
+  }
+
+  /** The id of the game the session is busy with, or null while the state is settled. */
+  private sessionGameId(): string | null {
+    const snapshot = this.deps.state.get();
     // Stated as the SETTLED states rather than the busy ones (the shape UpdaterService.isBusy uses): the
     // list of things a game can be in the middle of grew — launching, either save sync, the Proton prefix
     // — and an allow-list that has to be extended for each of them is the reason those four were missing
     // from the deny-list this replaced, JSDoc promise of mid-launch cover notwithstanding.
-    const settled = kind === 'idle' || kind === 'ready' || kind === 'error';
-    return !settled || this.steamBusyId !== null;
+    if (snapshot.kind === 'idle' || snapshot.kind === 'ready' || snapshot.kind === 'error') return null;
+    return snapshot.game.id;
   }
 
   /** Logs the local games the inserted card currently shadows (same id — the card wins, see `games`). */
@@ -946,10 +943,6 @@ export class GameController {
       // = false and goes idle + hide on its own.
       return;
     }
-    // ready / error / idle → no card. Stop any Steam re-detect poller (the card is gone; a Steam game in
-    // `ready` reaches here since its kind is never running/installing).
-    this.steamWatch.stop();
-    this.steamWatch.clearUninstallRequest();
     this.clearCard();
     // A local game is still playable with no card in, so pulling one must not collapse the launcher to the
     // empty screen: stay `ready` on the first card of the row clearCard just rebuilt (NOT the first entry
@@ -1022,20 +1015,15 @@ export class GameController {
       this.sendError(this.t('launcher.state.launchNotConfigured'));
       return;
     }
-    // A Steam download/removal of ANOTHER game is in flight. Every other kind of activity moves the state
-    // out of `ready` and is caught by the guard above; a Steam operation deliberately does not (it can run
-    // for hours and the window stays usable), so it needs this explicit check — otherwise a second game
-    // could be launched or installed on top of it from the carousel.
-    if (this.steamBusyId !== null && this.steamBusyId !== manifest.raw.id) {
-      log.info(`[launch] refused id=${manifest.raw.id}: a Steam operation is in flight for id=${this.steamBusyId}`);
-      this.sendError(this.t('errors.steamBusyOther'));
+    if (this.deps.activities.has(manifest.raw.id)) {
+      log.info(`[launch] refused id=${manifest.raw.id}: the game has an activity in flight`);
       return;
     }
     // Steam mode: not yet installed → open steam://install (fire-and-forget); otherwise launch via
     // steam://rungameid. Both inside runSteamInstall / runLaunchSequence's steam branch.
     if (manifest.steam !== undefined) {
       if (snapshot.game.requiresInstall) {
-        void this.sequences.runSteamInstall(manifest, snapshot.game);
+        void this.sequences.runSteamInstall(manifest);
       } else {
         void this.sequences.runLaunchSequence(manifest, snapshot.game);
       }
@@ -1072,8 +1060,7 @@ export class GameController {
    */
   private async onSelectRequested(idRaw: unknown): Promise<void> {
     if (typeof idRaw !== 'string') return;
-    const steamBusyElsewhere = (this.steamBusyId ?? idRaw) !== idRaw;
-    if (this.deps.state.get().kind !== 'ready' || this.sequences.isLocked || this.sequences.inFlight || this.reloadInFlight || steamBusyElsewhere) return;
+    if (this.deps.state.get().kind !== 'ready' || this.sequences.isLocked || this.sequences.inFlight || this.reloadInFlight) return;
     const manifest = this.games.find((m) => m.raw.id === idRaw);
     if (manifest === undefined) {
       log.warn(`[select] no game with id="${idRaw}" on the current card or in the PC library — ignoring`);
@@ -1096,10 +1083,10 @@ export class GameController {
     if (snapshot.kind !== 'ready' || this.sequences.inFlight || this.reloadInFlight) return;
     const manifest = this.current();
     if (manifest === null) return;
-    if (!snapshot.game.canUninstall) return; // nothing installed to remove
+    if (!snapshot.game.canUninstall || this.deps.activities.has(manifest.raw.id)) return; // nothing installed to remove
     // Steam: delegate removal to Steam (steam://uninstall) — fire-and-forget, the poller flips to Install.
     if (manifest.steam !== undefined) {
-      void this.sequences.runSteamUninstall(manifest, snapshot.game);
+      void this.sequences.runSteamUninstall(manifest);
       return;
     }
     if (manifest.install === undefined) {
@@ -1139,9 +1126,6 @@ export class GameController {
     let canUninstall: boolean;
     let installVia: 'steam' | 'copy' | undefined;
     let prefixCleanupOnly = false;
-    let steamInstalling = false;
-    let steamPaused = false;
-    let steamPausedProgress: number | undefined;
     if (manifest.steam !== undefined) {
       // Steam mode: "installed" is Steam's own .acf state; uninstall is managed in Steam (never here).
       const status = await steamInstallStatus(manifest.steam.appid, this.deps.platform.steamLocator);
@@ -1149,11 +1133,6 @@ export class GameController {
       // Steam uninstall is delegated to Steam (steam://uninstall) — available once installed.
       canUninstall = status.state === 'installed';
       installVia = 'steam';
-      // Non-blocking "Installing…" indicator while Steam is downloading (no live percent — see types.ts);
-      // `paused` flips it to "Installing paused on N%…" using the snapshot percent.
-      steamInstalling = status.state === 'downloading';
-      steamPaused = status.state === 'downloading' && status.paused;
-      steamPausedProgress = status.state === 'downloading' ? (status.progress ?? undefined) : undefined;
     } else if (manifest.install !== undefined) {
       // Card-install mode: installed ⇔ the resolved executable exists; that also enables Uninstall.
       const installed = await fse.pathExists(manifest.executablePath);
@@ -1196,9 +1175,6 @@ export class GameController {
       ...(manifest.install !== undefined ? { installDir: manifest.install.installerDir } : {}),
       ...(installVia !== undefined ? { installVia } : {}),
       ...(prefixCleanupOnly ? { prefixCleanupOnly: true } : {}),
-      ...(steamInstalling ? { steamInstalling: true } : {}),
-      ...(steamPaused ? { steamPaused: true } : {}),
-      ...(steamPausedProgress !== undefined ? { steamPausedProgress } : {}),
       ...(unavailable ? { unavailable: true } : {}),
       ...(unconfigured ? { unconfigured: true } : {}),
     };
@@ -1432,7 +1408,6 @@ export class GameController {
     this.selectedId = null;
     this.presenter.setHero(null);
     this.presenter.setCardMusic(null);
-    this.steamWatch.stop();
     this.deps.state.set({ kind: 'idle' });
   }
 

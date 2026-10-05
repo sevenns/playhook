@@ -27,6 +27,7 @@ import { systemCardIcon } from './system-card-icons.js';
 import { req, reqCanvas } from './dom.js';
 import { FALLBACK_COLOUR, JELLY, createFocusJelly, jellyBoxOf } from './focus-jelly.js';
 import { pxUnit } from './screen-scroller.js';
+import { sameIds } from './state-view.js';
 
 /** The two levels of the launcher screen (mirrors `#app[data-screen]`). */
 export type Screen = 'carousel' | 'detail';
@@ -98,8 +99,8 @@ export interface Carousel {
    * never arrive, and the row sits there under the launcher's idle background.
    */
   announce(): void;
-  /** Marks the game AppState is busy with, so its card can pulse wherever it sits in the list. */
-  setBusyGame(id: string | null): void;
+  /** Marks the games that are busy (an activity or the session), so their cards pulse wherever they sit. */
+  setBusyGames(ids: ReadonlySet<string>): void;
   /** Whether the inbox holds anything unread — the Notifications card wears the same dot a game does. */
   setUnread(unread: boolean): void;
   /**
@@ -153,7 +154,7 @@ export function createCarousel(deps: CarouselDeps): Carousel {
   let items: readonly CarouselItem[] = [...systemItems];
   let index = 0;
   let screen: Screen = 'detail';
-  let busyId: string | null = null;
+  let busyIds: ReadonlySet<string> = new Set();
   // Whether the inbox holds unread entries (main's push, relayed by app.ts) — the Notifications card's dot.
   let unread = false;
   // While the strip is coming back from the detail screen the selected card is still growing out of the
@@ -202,7 +203,7 @@ export function createCarousel(deps: CarouselDeps): Carousel {
    */
   function showsDot(item: CarouselItem): boolean {
     if (item.kind === 'system') return item.card.id === 'notifications' && unread;
-    return (item.game.active && item.game.unconfigured !== true) || item.game.id === busyId;
+    return (item.game.active && item.game.unconfigured !== true) || busyIds.has(item.game.id);
   }
 
   /**
@@ -269,7 +270,7 @@ export function createCarousel(deps: CarouselDeps): Carousel {
       const card = cards.get(key);
       if (card === undefined) return;
       card.classList.toggle('is-selected', key === currentKey);
-      card.classList.toggle('is-busy', item.kind === 'game' && item.game.id === busyId);
+      card.classList.toggle('is-busy', item.kind === 'game' && busyIds.has(item.game.id));
       card.classList.toggle('shows-dot', showsDot(item));
       // Past the shown window (see VISIBLE_CARDS): still laid out — the strip's offset is positional and
       // a removed node would shift every card after it — but faded out, so it slides in softly when the
@@ -599,9 +600,9 @@ export function createCarousel(deps: CarouselDeps): Carousel {
     announce(): void {
       announceSelection();
     },
-    setBusyGame(id: string | null): void {
-      if (id === busyId) return;
-      busyId = id;
+    setBusyGames(ids: ReadonlySet<string>): void {
+      if (sameIds(ids, busyIds)) return;
+      busyIds = ids;
       applyLayout();
     },
   };

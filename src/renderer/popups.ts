@@ -13,6 +13,7 @@ import type {
   GameCollision,
   GameInfo,
 } from '../shared/types.js';
+import type { GameActivity } from '../shared/activity.js';
 import type { Locale, MessageKey, Translator } from '../shared/i18n/index.js';
 import type { AudioController } from './audio.js';
 import {
@@ -72,6 +73,8 @@ export interface PopupsDeps {
    */
   screenGame(): GameInfo | undefined;
   screenIsActionable(): boolean;
+  /** The activity of the game on screen, or undefined when it is free. */
+  screenActivity(): GameActivity | undefined;
   /** Opens a game's detail screen (a notification about a game leads there). Owned by app.ts. */
   openGameDetail(id: string): void;
   /** The popup finished closing. The toast shares this corner and holds its queue while it is up. */
@@ -125,6 +128,7 @@ export function createPopups(deps: PopupsDeps): Popups {
     carousel: deps.carousel,
     screenGame,
     screenIsActionable,
+    screenActivity: () => deps.screenActivity(),
     isFrozen: () => menuFrozen(),
   });
 

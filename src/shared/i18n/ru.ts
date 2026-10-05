@@ -123,6 +123,9 @@ export const ru: Record<MessageKey, string> = {
   'launcher.state.syncingOut': 'Сохранение прогресса...',
   'launcher.state.installingPaused': 'Установка приостановлена...',
   'launcher.state.installingPausedPercent': 'Установка приостановлена на {percent}%...',
+  'launcher.state.updating': 'Обновление...',
+  'launcher.state.updatingPaused': 'Обновление приостановлено...',
+  'launcher.state.preloaded': 'Предзагрузка завершена',
 
   // ── Display formatters ───────────────────────────────────────────────────────
   'format.never': 'никогда',
@@ -427,8 +430,6 @@ export const ru: Record<MessageKey, string> = {
   'errors.finishBeforeApply': 'Завершите текущие операции перед применением конфигурации',
   'errors.reloadInProgress': 'перезагрузка уже выполняется',
   'errors.steamNotInstalled': 'Steam не установлен',
-  'errors.steamBusyOther':
-    'В Steam сейчас качается или удаляется другая игра. Дождитесь завершения.',
   'errors.steamOpenInstall': 'не удалось открыть установку в Steam: {cause}',
   'errors.steamOpenDownloads': 'не удалось открыть загрузки Steam: {cause}',
   'errors.steamOpenUninstall': 'не удалось открыть удаление в Steam: {cause}',

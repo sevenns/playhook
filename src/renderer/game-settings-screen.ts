@@ -191,8 +191,8 @@ export interface GameSettingsScreenDeps {
    * title with X?" is about a candidate the popup has never heard of.
    */
   onConfirmRequested(kind: GameSettingsConfirm, options?: { readonly title?: string }): void;
-  /** Whether the game is running / installing / being force-closed — Delete is hidden then. */
-  isBusy(): boolean;
+  /** Whether game `id` is running / installing / carries an activity — Delete is hidden then. */
+  isBusy(id: string): boolean;
   /** A game was added AND applied: the launcher's library has it now, so the carousel goes to it. */
   onAdded(id: string): void;
   /**
@@ -531,7 +531,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     // Deleting a history game would mean deleting it from a card that is not here. "Remove from history"
     // in the carousel menu is the action that DOES apply there, and it is a different thing entirely.
     const at = mediaOrigin();
-    if (at === null || deps.isBusy()) return false;
+    if (at === null || deps.isBusy(gameId)) return false;
     return at.source === 'pc' ? true : slots.length >= 2;
   }
 
@@ -540,7 +540,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
   function canMove(): boolean {
     if (pendingMove !== null) return false;
     const at = mediaOrigin();
-    if (at === null || deps.isBusy()) return false;
+    if (at === null || deps.isBusy(gameId)) return false;
     return at.source === 'pc';
   }
 

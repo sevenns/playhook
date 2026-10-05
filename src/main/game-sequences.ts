@@ -21,7 +21,7 @@ import { LaunchAbortedError } from './launch-errors';
 import { openSteamUri } from './steam-uri';
 import { type GameProcess, type Platform, type ProcessMonitor } from './platform';
 import { normalizeImageNames } from './image-names';
-import { type SteamInstallWatch } from './steam-install-watch';
+import { type SteamActivityWatch } from './steam-activity-watch';
 import { type SaveSyncFlow } from './save-sync-flow';
 import { removeWithRetry } from './remove-with-retry';
 import { describe, delay } from './util';
@@ -54,7 +54,6 @@ export interface SequenceHost {
   enterReady(info: GameInfo): void;
   sourceAvailable(manifest: ResolvedManifest): boolean;
   currentSourceAvailable(): boolean;
-  sourceAvailableFor(id: string): boolean;
   /** The "the card went away while we were busy" landing. */
   cardGoneAfterSequence(): void;
   browseToUnlessPinned(id: string): Promise<void>;
@@ -78,8 +77,9 @@ export type SequenceDeps = Pick<
   | 'platform'
   | 'processControl'
   | 'getTranslator'
+  | 'activities'
 > & {
-  readonly steamWatch: Pick<SteamInstallWatch, 'start' | 'stop' | 'requestUninstall'>;
+  readonly steamWatch: Pick<SteamActivityWatch, 'scanNow' | 'requestUninstall'>;
   /** The card↔PC save sync the launch sequence brackets the game with. */
   readonly saveSync: Pick<SaveSyncFlow, 'resolvePcSavePath' | 'runSaveSync' | 'performSyncOut'>;
   readonly host: SequenceHost;
@@ -360,12 +360,12 @@ export class GameSequences {
   /**
    * Steam install action: fire-and-forget. Opens `steam://install/<appid>` (Steam shows its own dialog
    * and the download — possibly hours/GBs) and returns WITHOUT entering a blocking `installing` state.
-   * We stay on the `ready` ("Install") screen; the background re-detect poller (started by enterReady)
-   * flips the button to "Play" once Steam's .acf reports the game fully installed. Steam itself collapses
+   * We stay on the `ready` ("Install") screen; the Steam activity watch picks the download up on its next
+   * poll and flips the button to "Play" once Steam's .acf reports the game fully installed. Steam itself collapses
    * repeated `steam://install` calls, so no debounce is needed. Pre-checks `steamLocator.locateSteam()`: openExternal
    * doesn't reliably reject when steam:// is unregistered.
    */
-  async runSteamInstall(manifest: ResolvedManifest, info: GameInfo): Promise<void> {
+  async runSteamInstall(manifest: ResolvedManifest): Promise<void> {
     const appid = manifest.steam?.appid;
     if (appid === undefined) return; // defensive: onLaunchRequested only calls this in steam mode
     if ((await this.deps.platform.steamLocator.locateSteam()) === null) {
@@ -379,24 +379,16 @@ export class GameSequences {
       this.host.sendError(this.t('errors.steamOpenInstall', { cause: describe(cause) }));
       return;
     }
-    // Ensure the re-detect poller is running so the button flips to "Play" when the download completes
-    // (no-op if already running; info confirms this is a steam game still requiring install).
-    if (
-      info.installVia === 'steam' &&
-      info.requiresInstall &&
-      this.host.sourceAvailableFor(info.id)
-    ) {
-      this.deps.steamWatch.start();
-    }
+    void this.deps.steamWatch.scanNow();
   }
 
   /**
    * Steam uninstall action: fire-and-forget, mirroring runSteamInstall. Opens `steam://uninstall/<appid>`
    * (Steam shows its own confirmation/removal UI) and returns WITHOUT a blocking `uninstalling` state. We
-   * stay on the `ready` ("Play"/"Uninstall") screen; the background poller flips the button back to
+   * stay on the `ready` ("Play"/"Uninstall") screen; the Steam activity watch flips the button back to
    * "Install" once Steam removes the .acf. Pre-checks `steamLocator.locateSteam()`.
    */
-  async runSteamUninstall(manifest: ResolvedManifest, info: GameInfo): Promise<void> {
+  async runSteamUninstall(manifest: ResolvedManifest): Promise<void> {
     const appid = manifest.steam?.appid;
     if (appid === undefined) return; // defensive: onUninstallRequested only calls this in steam mode
     if ((await this.deps.platform.steamLocator.locateSteam()) === null) {
@@ -410,11 +402,9 @@ export class GameSequences {
       this.host.sendError(this.t('errors.steamOpenUninstall', { cause: describe(cause) }));
       return;
     }
-    // Optimistically show "Uninstalling…": record the request and flip the UI. The poller clears it when
-    // the .acf is gone (→ Install) or on timeout (assumed cancel → back to Play/Uninstall). enterReady
-    // (re)arms the poller for the inserted steam card.
     this.deps.steamWatch.requestUninstall(appid);
-    this.host.enterReady({ ...info, steamUninstalling: true, canUninstall: false });
+    this.deps.activities.set(manifest.raw.id, { kind: 'steam-uninstalling' });
+    void this.deps.steamWatch.scanNow();
   }
 
   // ── The blocking sequences ──────────────────────────────────────────────────
@@ -955,7 +945,6 @@ export class GameSequences {
   private abandonWatchedLaunch(game: GameInfo): void {
     log.info('[launch] watched game never appeared — returning without recording a session');
     if (!this.host.currentSourceAvailable()) {
-      this.deps.steamWatch.stop();
       this.host.cardGoneAfterSequence();
       return;
     }

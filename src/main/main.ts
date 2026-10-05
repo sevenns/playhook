@@ -14,6 +14,7 @@ import { LibraryStore } from './library-store';
 import { PcLibraryStore } from './pc-library';
 import { DriveWatcher } from './drive-watcher';
 import { GameController } from './game-controller';
+import { ActivityRegistry } from './activity-registry';
 import {
   waitForExit,
   waitForStart,
@@ -280,8 +281,11 @@ async function bootstrap(): Promise<void> {
   );
 
   windowRef = window;
+  const activities = new ActivityRegistry();
+  activities.init((channel, payload) => window.send(channel, payload));
   const controller = new GameController({
     state,
+    activities,
     window,
     store,
     stats,

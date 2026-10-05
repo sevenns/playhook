@@ -55,10 +55,13 @@ import type {
 } from '../shared/types';
 import type { IPC } from '../shared/types';
 import type { Locale } from '../shared/i18n/index';
+import type { ActivityMap } from '../shared/activity';
 
 const CHANNELS = {
   stateUpdate: 'state:update',
   stateRequest: 'state:request',
+  activityUpdate: 'activity:update',
+  activityRequest: 'activity:request',
   actionLaunch: 'action:launch',
   actionUninstall: 'action:uninstall',
   actionHide: 'action:hide',
@@ -169,6 +172,14 @@ const api: RendererApi = {
   },
   requestState(): Promise<AppState> {
     return ipcRenderer.invoke(CHANNELS.stateRequest) as Promise<AppState>;
+  },
+  onActivityUpdate(callback: (activities: ActivityMap) => void): void {
+    ipcRenderer.on(CHANNELS.activityUpdate, (_event: IpcRendererEvent, activities: ActivityMap) => {
+      callback(activities);
+    });
+  },
+  requestActivities(): Promise<ActivityMap> {
+    return ipcRenderer.invoke(CHANNELS.activityRequest) as Promise<ActivityMap>;
   },
   requestLaunch(): void {
     ipcRenderer.send(CHANNELS.actionLaunch);
