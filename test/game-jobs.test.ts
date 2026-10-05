@@ -3,7 +3,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ActivityRegistry } from '../src/main/activity-registry';
-import { GameJobs, maxParallelCopyInstalls, partialDirOf, type GameJobsHost } from '../src/main/game-jobs';
+import {
+  GameJobs,
+  maxParallelCopyInstalls,
+  partialDirOf,
+  type GameJobsHost,
+} from '../src/main/game-jobs';
 import { createTranslator } from '../src/shared/i18n/index';
 import type { ResolvedManifest } from '../src/main/manifest-types';
 import type { GameProcess } from '../src/main/platform/types';
@@ -70,17 +75,19 @@ function build(maxParallelCopies = 2): Fixture {
     dispose: () => journal.push('proc:dispose'),
   };
   const jobs = new GameJobs({
-    registry,
-    launcher: {
-      prepareInstallDir: (install) => {
-        const id = path.basename(install.dir);
-        journal.push(`prepare:${id}`);
-        return gates.get(id)?.promise ?? Promise.resolve();
+    activities: registry,
+    platform: {
+      gameLauncher: {
+        prepareInstallDir: (install) => {
+          const id = path.basename(install.dir);
+          journal.push(`prepare:${id}`);
+          return gates.get(id)?.promise ?? Promise.resolve();
+        },
+        resolveUninstaller: () => Promise.resolve(null),
+        launchUninstaller: () => Promise.resolve(proc),
+        uninstallDir: (install) => install.dir,
+        prefixCleanupDir: (id) => Promise.resolve(path.join(tmp, 'prefixes', id)),
       },
-      resolveUninstaller: () => Promise.resolve(null),
-      launchUninstaller: () => Promise.resolve(proc),
-      uninstallDir: (install) => install.dir,
-      prefixCleanupDir: (id) => Promise.resolve(path.join(tmp, 'prefixes', id)),
     },
     processControl: { waitForExit: () => Promise.resolve() },
     notifications: {
@@ -222,11 +229,16 @@ describe('GameJobs copy installs', () => {
     const a = await copyGame('a');
     fixture.gates.set('a', gate());
     fixture.jobs.startInstall(a);
-    fixture.jobs.abortWhere((job) => job.kind === 'install' && job.source === 'card', 'card-removed');
+    fixture.jobs.abortWhere(
+      (job) => job.kind === 'install' && job.source === 'card',
+      'card-removed',
+    );
     fixture.gates.get('a')?.open();
     await waitFor(() => !fixture.jobs.has('a'), 'the aborted copy to unwind');
     expect(await exists(installedExe('a'))).toBe(false);
-    expect(fixture.journal).toContain('notify:game-install-failed:the card was removed before it finished');
+    expect(fixture.journal).toContain(
+      'notify:game-install-failed:the card was removed before it finished',
+    );
   });
 
   it('a failure in the body clears the activity, notifies, and shows the error only while the window has focus', async () => {
@@ -237,7 +249,9 @@ describe('GameJobs copy installs', () => {
     fixture.gates.get('a')?.fail(new Error('prefix boom'));
     await waitFor(() => !fixture.jobs.has('a'), 'the failed copy to unwind');
     expect(fixture.registry.has('a')).toBe(false);
-    expect(fixture.journal).toContain('notify:game-install-failed:failed to copy the game to the PC: prefix boom');
+    expect(fixture.journal).toContain(
+      'notify:game-install-failed:failed to copy the game to the PC: prefix boom',
+    );
     expect(fixture.journal).toContain('error:failed to copy the game to the PC: prefix boom');
 
     const b = await copyGame('b');
@@ -255,7 +269,9 @@ describe('GameJobs copy installs', () => {
     fixture.jobs.startInstall(a);
     await waitFor(() => !fixture.jobs.has('a'), 'the copy to fail');
     expect(await exists(path.join(tmp, 'installed', 'a'))).toBe(false);
-    expect(fixture.journal.some((entry) => entry.startsWith('notify:game-install-failed:'))).toBe(true);
+    expect(fixture.journal.some((entry) => entry.startsWith('notify:game-install-failed:'))).toBe(
+      true,
+    );
   });
 
   it('refuses a game that already has an activity, a job, or is the session game', async () => {
@@ -304,6 +320,15 @@ describe('GameJobs uninstall and prefix cleanup', () => {
 });
 
 describe('GameJobs shutdown', () => {
+  it('the activity is gone by the time anyone hears the job ended', async () => {
+    const a = await copyGame('a');
+    const seen: boolean[] = [];
+    fixture.registry.subscribe(() => seen.push(fixture.jobs.anyActive()));
+    fixture.jobs.startInstall(a);
+    await waitFor(() => !fixture.jobs.has('a'), 'the copy to finish');
+    expect(seen).toEqual([true, false]);
+  });
+
   it('abortAll stops everything and resolves only once each job has cleaned up, silently', async () => {
     const games = await Promise.all(['a', 'b', 'c'].map((id) => copyGame(id)));
     for (const id of ['a', 'b']) fixture.gates.set(id, gate());
@@ -314,7 +339,8 @@ describe('GameJobs shutdown', () => {
     expect(fixture.jobs.anyActive()).toBe(false);
     expect(fixture.registry.snapshot()).toEqual({});
     expect(fixture.journal.filter((entry) => entry.startsWith('notify:'))).toEqual([]);
-    for (const id of ['a', 'b']) expect(await exists(partialDirOf(path.join(tmp, 'installed', id)))).toBe(false);
+    for (const id of ['a', 'b'])
+      expect(await exists(partialDirOf(path.join(tmp, 'installed', id)))).toBe(false);
   });
 });
 

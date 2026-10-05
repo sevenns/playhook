@@ -5,7 +5,6 @@
 // stuck. Renderer-owned (pure presentation) — main only sets the base state. This module owns the timers
 // and the current suffix; app.ts composes the line (the base status belongs to what is ON SCREEN, which
 // only app.ts knows).
-import type { AppState } from '../shared/types.js';
 import type { MessageKey } from '../shared/i18n/index.js';
 
 const CHATTER_DELAY_MS = 60_000; // base-only for the first minute
@@ -45,10 +44,10 @@ export interface ChatterDeps {
 }
 
 export interface Chatter {
-  /** (Re)starts / stops the timers as the state enters / leaves a long busy phase. */
-  sync(state: AppState): void;
-  /** The suffix to append for `state`, or null while the base label shows alone (or for another phase). */
-  suffixFor(state: AppState): MessageKey | null;
+  /** (Re)starts / stops the timers as the shown phase (a session state or an activity) enters / leaves a long busy one. */
+  sync(kind: string): void;
+  /** The suffix to append for phase `kind`, or null while the base label shows alone (or for another phase). */
+  suffixFor(kind: string): MessageKey | null;
 }
 
 function chatterPool(kind: ChatterKind): readonly MessageKey[] {
@@ -80,9 +79,8 @@ export function createChatter(deps: ChatterDeps): Chatter {
 
   // First suffix appears at the first tick (~1 min); base-only before that. A phase change resets it
   // (each phase gets its minute).
-  function sync(state: AppState): void {
-    const next: ChatterKind | null =
-      state.kind === 'installing' || state.kind === 'configuringProton' ? state.kind : null;
+  function sync(of: string): void {
+    const next: ChatterKind | null = of === 'installing' || of === 'configuringProton' ? of : null;
     if (next === kind) return; // same phase (or same non-phase) — keep the running timers
     stopTimers();
     kind = next;
@@ -98,6 +96,6 @@ export function createChatter(deps: ChatterDeps): Chatter {
 
   return {
     sync,
-    suffixFor: (state) => (suffix !== null && state.kind === kind ? suffix : null),
+    suffixFor: (of) => (suffix !== null && of === kind ? suffix : null),
   };
 }

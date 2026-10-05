@@ -10,20 +10,17 @@
 // `failSequence` for anything else, and a finally that releases the owned process, clears the flags and
 // replays a card that was swapped in mid-flight. Launch alone adds to the finally (the lock and the
 // running-game fields) through `onFinally`.
-import path from 'node:path';
 import fse from 'fs-extra';
 import { type AppState, type GameInfo, type Stats } from '../shared/types';
-import type { ResolvedCopyInstall, ResolvedManifest } from './manifest-types';
+import type { ResolvedManifest } from './manifest-types';
 import { type Translator } from '../shared/i18n/index';
 import { type ControllerDeps } from './controller-deps';
-import { findCaseInsensitiveName } from './manifest';
 import { LaunchAbortedError } from './launch-errors';
 import { openSteamUri } from './steam-uri';
 import { type GameProcess, type Platform, type ProcessMonitor } from './platform';
 import { normalizeImageNames } from './image-names';
 import { type SteamActivityWatch } from './steam-activity-watch';
 import { type SaveSyncFlow } from './save-sync-flow';
-import { removeWithRetry } from './remove-with-retry';
 import { describe, delay } from './util';
 import { log } from './logger';
 
@@ -444,34 +441,6 @@ export class GameSequences {
     }
   }
 
-  /**
-   * Clears a normal executable game's Wine prefix (Linux). No installer/uninstaller is involved — the game
-   * lives on the card, its only PC footprint is the prefix — so this is just the directory sweep + the same
-   * card-swap / rebuild-info handling as runUninstallSequence, minus the uninstaller run.
-   */
-  async runPrefixCleanupSequence(manifest: ResolvedManifest, info: GameInfo): Promise<void> {
-    const dir = await this.deps.platform.gameLauncher.prefixCleanupDir(manifest.raw.id);
-    if (dir === null) return; // defensive: canUninstall was set only when the prefix existed
-    const { window, stats } = this.deps;
-    await this.runSequence('uninstall', 'uninstalling', info, async (abort) => {
-      await removeWithRetry(dir, abort.signal);
-      if (abort.signal.aborted) return;
-      // Card yanked mid-cleanup (this targets the PC, so it completed): idle + hide, like runUninstall.
-      // A local game's source cannot go away, so it always continues to the rebuild below.
-      if (!this.host.sourceAvailable(manifest)) {
-        this.host.cardGoneAfterSequence();
-        return;
-      }
-      // Prefix gone → prefixCleanupDir now returns null → canUninstall recomputes false → "Uninstall"
-      // disappears, leaving just "Play".
-      const currentStats = await stats.read(manifest.raw.id);
-      const updatedInfo = await this.host.buildGameInfo(manifest, currentStats);
-      log.info(`[prefix-cleanup] removed "${dir}" id=${manifest.raw.id}`);
-      this.host.enterReady(updatedInfo);
-      window.showAndFocus();
-    });
-  }
-
   async runLaunchSequence(manifest: ResolvedManifest, info: GameInfo): Promise<void> {
     const { state, window, stats } = this.deps;
     // Lock the launcher on this game for the launching→running span: a game switch is refused and the
@@ -705,10 +674,7 @@ export class GameSequences {
       // a bogus "Play". We're (re)installing anyway, so a clean directory is safe.
       await fse.remove(install.dir);
 
-      if (install.type === 'copy') {
-        // "Move game to PC": no installer to run — copy the card's game directory into the install dir.
-        if (!(await this.runCopyInstall(install, manifest, info, abort))) return;
-      } else {
+      if (install.type !== 'copy') {
         // Silent by default; a user who enabled "disable silent installer mode" gets the visible wizard
         // (needed for repacks that skip a crack/patch step under silent — `skipifsilent`).
         const silent = !(await this.deps.settings.read()).disableSilentInstall;
@@ -760,72 +726,6 @@ export class GameSequences {
   }
 
   /**
-   * The `copy` install type ("move game to PC"): instead of running an installer, copy the game
-   * directory from the card into the app-controlled install dir. Called by runInstallSequence, which
-   * owns the state/abort infrastructure and the shared tail — this only covers copy's own steps.
-   *
-   * Returns true when the game is in place and the caller should finish the sequence; false when it must
-   * stop (a failure was already surfaced, or the sequence was aborted and must unwind silently).
-   */
-  private async runCopyInstall(
-    install: ResolvedCopyInstall,
-    manifest: ResolvedManifest,
-    info: GameInfo,
-    abort: AbortController,
-  ): Promise<boolean> {
-    // Prepare the destination's environment BEFORE the files land in it (linux: create + provision the
-    // Wine prefix; win32: no-op). This is what launchInstaller does implicitly on the installer path —
-    // without it a copied game would sit in a bare prefix with none of the baseline runtimes that the
-    // installer it originally came from would have pulled in. A failure here propagates to the caller's
-    // catch (it is an environment fault, like a failed installer launch).
-    await this.launcher.prepareInstallDir(install, (active) => this.setProvisioning(active, info));
-
-    try {
-      // `dereference: false` — copy symlinks as symlinks (a game's own internal links stay internal).
-      await fse.copy(install.installerPath, install.dir, { dereference: false });
-    } catch (cause) {
-      // fse.copy takes no AbortSignal, so a card swap mid-copy surfaces as a plain ENOENT (the source
-      // vanished) rather than a LaunchAbortedError. Check the flag before reporting: the new card is
-      // already on screen, and an error popup about the old one over it would be nonsense.
-      if (abort.signal.aborted) return false;
-      this.failSequence(
-        'install',
-        info,
-        this.t('errors.copyGameFailed', { cause: describe(cause) }),
-      );
-      return false;
-    }
-
-    // Same reason as in runUninstallSequence: the copy itself isn't interruptible, so check the abort
-    // flag manually before touching any state.
-    if (abort.signal.aborted) return false;
-
-    // A single existence check, not pollForExecutable: the grace-poll exists for installers that fork a
-    // child and exit early, whereas fse.copy is done when it resolves. Polling would only add
-    // launchTimeoutSec of waiting on an already-known-bad path.
-    if (!(await fse.pathExists(manifest.executablePath))) {
-      // The usual cause is a wrong source root: `executable` is card-relative in the form, but here it
-      // resolves inside the copied directory. Second most likely on linux: a Windows-authored card whose
-      // exe case doesn't match the files copied onto a case-sensitive FS — say so instead of "not found".
-      const shown = manifest.raw.executable ?? path.basename(manifest.executablePath);
-      const found = await findCaseInsensitiveName(manifest.executablePath);
-      this.failSequence(
-        'install',
-        info,
-        found !== null
-          ? this.t('errors.copyExeNotFoundCase', { path: shown, found })
-          : this.t('errors.copyExeNotFound', { path: shown }),
-      );
-      return false;
-    }
-
-    log.info(
-      `[install] copied id=${manifest.raw.id} from="${install.installerPath}" to="${install.dir}"`,
-    );
-    return true;
-  }
-
-  /**
    * Polls for the game executable to appear within `timeoutSec` (grace window after the installer
    * exits). Throws LaunchAbortedError if aborted, so a mid-install card swap unwinds WITHOUT
    * setting state over the new card — never returns false on abort.
@@ -842,72 +742,6 @@ export class GameSequences {
       if (Date.now() >= deadline) return false;
       await delay(INSTALL_POLL_INTERVAL_MS);
     }
-  }
-
-  /**
-   * Uninstalls an installed install-mode game (mirrors runInstallSequence's infrastructure:
-   * launchInFlight/abort, the LaunchAbortedError guard, the pendingRoot replay). Runs the game's own
-   * uninstaller (best-effort — it cleans the registry/shortcuts), then ALWAYS sweeps the app-controlled
-   * install dir, so on success the executable is gone → requiresInstall recomputes true → "Install".
-   */
-  async runUninstallSequence(manifest: ResolvedManifest, info: GameInfo): Promise<void> {
-    const install = manifest.install;
-    if (install === undefined) return; // defensive: onUninstallRequested only calls this in install mode
-    const { window, stats } = this.deps;
-    await this.runSequence('uninstall', 'uninstalling', info, async (abort, owned) => {
-      // Run the game's own uninstaller if we can resolve one (FS search → registry fallback). Any
-      // launch/wait failure is NON-fatal: we log it and fall through to the directory sweep. Only a
-      // LaunchAbortedError (from waitForExit on a card swap) propagates to unwind cleanly.
-      //
-      // `copy` is skipped entirely: nothing was installed, so there is no uninstaller of OURS to run.
-      // A copied game directory is one that was installed on some OTHER machine, so any `unins*.exe`
-      // inside it belongs to that install — running it would clean a foreign registry and might pop a
-      // wizard. Straight to the sweep instead (which is the whole uninstall for copy).
-      if (install.type !== 'copy') {
-        const target = await this.launcher.resolveUninstaller(install);
-        if (target !== null) {
-          try {
-            const proc = await this.launcher.launchUninstaller(target);
-            owned.proc = proc;
-            await this.deps.processControl.waitForExit(proc, abort.signal);
-          } catch (cause) {
-            if (cause instanceof LaunchAbortedError) throw cause;
-            log.warn(`[uninstall] uninstaller failed, continuing to cleanup: ${describe(cause)}`);
-          }
-        }
-      }
-
-      // Sweep the platform's uninstall target — after the uninstaller, and as the fallback when no target
-      // was resolved (custom / nothing found). win32: the install dir. linux: the whole per-game Wine
-      // prefix (game files + provisioned runtimes), so the full disk footprint is reclaimed.
-      const uninstallDir = this.launcher.uninstallDir(install);
-      await removeWithRetry(uninstallDir, abort.signal);
-
-      // fse.remove is NOT interrupted by the signal (unlike waitForExit), so check the abort flag
-      // manually — strictly BEFORE reading cardPresent / rebuilding info — so a mid-uninstall card swap
-      // doesn't set state over the new card (the finally → resumePendingInsert handles it).
-      if (abort.signal.aborted) return;
-
-      // The card may have been yanked during the uninstall (it targets the PC, so it completed): no card
-      // → idle + hide, mirroring abandonWatchedLaunch / onRemove's cleanup.
-      if (!this.host.sourceAvailable(manifest)) {
-        this.host.cardGoneAfterSequence();
-        return;
-      }
-
-      // Done: rebuild GameInfo so requiresInstall recomputes true and canUninstall false (the executable
-      // is gone) → the button flips back to "Install" and "Uninstall" disappears.
-      const currentStats = await stats.read(manifest.raw.id);
-      const updatedInfo = await this.host.buildGameInfo(manifest, currentStats);
-      log.info(`[uninstall] completed id=${manifest.raw.id} removed="${uninstallDir}"`);
-      this.host.enterReady(updatedInfo);
-      this.deps.notifications.notify({
-        kind: 'game-uninstalled',
-        gameId: manifest.raw.id,
-        gameTitle: updatedInfo.title,
-      });
-      window.showAndFocus();
-    });
   }
 
   /** Replays a card insertion deferred during an in-flight launch/install. No-op if none pending. */

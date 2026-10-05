@@ -7,7 +7,7 @@ import type { GameActivity } from '../shared/activity.js';
 import type { Translator } from '../shared/i18n/index.js';
 import type { CarouselNav } from './controls-deps.js';
 import { req } from './dom.js';
-import { phaseOf } from './state-view.js';
+import { cancellableInstall, phaseOf } from './state-view.js';
 
 export interface DetailsMenuDeps {
   getState(): AppState;
@@ -59,6 +59,12 @@ export function createDetailsMenu(deps: DetailsMenuDeps): DetailsMenu {
     if (deps.isFrozen()) return;
     if (!onGameScreen()) {
       menuInstallToggle.classList.add('is-hidden');
+      return;
+    }
+    if (cancellableInstall(deps.screenActivity())) {
+      menuInstallToggle.classList.remove('is-hidden');
+      menuInstallToggle.textContent = t()('launcher.menu.cancelInstall');
+      menuInstallToggle.dataset['action'] = 'cancel';
       return;
     }
     const game = screenIsActionable() ? screenGame() : undefined;

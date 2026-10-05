@@ -39,6 +39,7 @@ import { BrowsePresenter } from './browse-presenter';
 import { GameSequences } from './game-sequences';
 import { SaveSyncFlow } from './save-sync-flow';
 import { SteamActivityWatch, type SteamWatchEntry } from './steam-activity-watch';
+import { GameJobs } from './game-jobs';
 import { describe } from './util';
 import { log } from './logger';
 
@@ -108,8 +109,8 @@ export class GameController {
     readBrowseAssets: (id) => this.deps.library.readBrowseAssets(id),
     onlyGlobalAmbient: async () => (await this.deps.settings.read()).onlyGlobalAmbient,
   });
-  // Polls Steam's .acf state of every available Steam game and keeps each one's activity in the registry.
   private readonly steamWatch: SteamActivityWatch;
+  readonly jobs: GameJobs;
   // The process lifecycle (launch / install / uninstall / prefix cleanup, force-close, the save sync
   // around a session) — see game-sequences.ts. Dispatched to from the renderer's actions below; it
   // reaches back through the SequenceHost seam for the card session's answers and transitions.
@@ -123,8 +124,7 @@ export class GameController {
       listSteamGames: () => this.steamGames(),
       registry: this.deps.activities,
       sessionGameId: () => this.sessionGameId(),
-      onGameChanged: (id) =>
-        void this.onGameChanged(id).catch((cause: unknown) => log.warn('[steam-watch] refresh failed:', describe(cause))),
+      onGameChanged: (id) => this.refreshGame(id),
       onInstallCompleted: (game) =>
         this.deps.notifications.notify({
           kind: 'game-installed',
@@ -138,6 +138,15 @@ export class GameController {
           gameTitle: game.title,
         }),
       steamLocator: () => this.deps.platform.steamLocator,
+    });
+    this.jobs = new GameJobs({
+      ...this.deps,
+      host: {
+        sessionGameId: () => this.sessionGameId(),
+        onGameChanged: (id) => this.refreshGame(id),
+        isWindowFocused: () => this.deps.window.isFocused(),
+        sendError: (message) => this.sendError(message),
+      },
     });
     this.saveSync = new SaveSyncFlow({
       store: this.deps.store,
@@ -318,6 +327,7 @@ export class GameController {
     watcher.onInsert((root) => void this.onInsert(root));
     watcher.onRemove(() => this.onRemove());
     watcher.onError((error) => log.error('[drive-watcher]', error));
+    this.jobs.init();
 
     ipcMain.handle(IPC.stateRequest, (): AppState => state.get());
     // Static for the process lifetime — seeds the renderer's Game Mode UI (e.g. "Close Playhook").
@@ -402,6 +412,7 @@ export class GameController {
     this.presenter.dispose();
     this.sequences.abortInFlight();
     this.steamWatch.stop();
+    void this.jobs.abortAll('shutdown');
     this.deps.watcher.stop();
   }
 
@@ -424,8 +435,13 @@ export class GameController {
     }
   }
 
+  /** onGameChanged for the watch and the jobs, which fire and forget it. */
+  private refreshGame(id: string): void {
+    void this.onGameChanged(id).catch((cause: unknown) => log.warn(`[refresh] id=${id} failed:`, describe(cause)));
+  }
+
   /**
-   * Steam changed what can be done with game `id`: rebuilds its GameInfo and puts it wherever it is shown.
+   * Steam or a job changed what can be done with game `id`: rebuilds its GameInfo and puts it wherever it is shown.
    * Re-checked after the await: the state is only replaced while it is still `ready` on this very game
    * with nothing in flight, otherwise only the browse info of the game on screen is refreshed.
    */
@@ -706,6 +722,7 @@ export class GameController {
         await this.browseToUnlessPinned(selected.raw.id);
       }
       await this.refreshBrowsedLocalGame();
+      this.jobs.abortGone(this.games.map((manifest) => manifest.raw.id));
       return { ok: true };
     } finally {
       this.reloadInFlight = false;
@@ -916,7 +933,9 @@ export class GameController {
     if (this.reloadInFlight) return { ok: false, message: this.t('errors.reloadInProgress') };
     this.reloadInFlight = true;
     try {
-      return await this.loadCard(root, { focus: false });
+      const result = await this.loadCard(root, { focus: false });
+      this.jobs.abortGone(this.games.map((manifest) => manifest.raw.id));
+      return result;
     } finally {
       this.reloadInFlight = false;
     }
@@ -925,6 +944,7 @@ export class GameController {
   // ── Reaction to card removal ─────────────────────────────────────────────
 
   private onRemove(): void {
+    this.jobs.abortWhere((job) => job.kind === 'install' && job.source === 'card', 'card-removed');
     this.cardPresent = false;
     const kind = this.deps.state.get().kind;
     // During play/sync, removal is expected: the flow continues, sync-out
@@ -1031,7 +1051,9 @@ export class GameController {
     }
     // Card-install mode + not yet installed → run the installer; otherwise it's an ordinary launch
     // (this includes a fully-installed game, whose executable now exists → requiresInstall=false).
-    if (manifest.install !== undefined && snapshot.game.requiresInstall) {
+    if (manifest.install?.type === 'copy' && snapshot.game.requiresInstall) {
+      this.jobs.startInstall(manifest);
+    } else if (manifest.install !== undefined && snapshot.game.requiresInstall) {
       void this.sequences.runInstallSequence(manifest, snapshot.game);
     } else {
       void this.sequences.runLaunchSequence(manifest, snapshot.game);
@@ -1092,12 +1114,10 @@ export class GameController {
     if (manifest.install === undefined) {
       // Normal executable game: the only "uninstall" is clearing its Wine prefix (Linux; the game stays on
       // the card). canUninstall is set only when that prefix exists — see buildGameInfo / prefixCleanupOnly.
-      if (snapshot.game.prefixCleanupOnly === true) {
-        void this.sequences.runPrefixCleanupSequence(manifest, snapshot.game);
-      }
+      if (snapshot.game.prefixCleanupOnly === true) this.jobs.startPrefixCleanup(manifest);
       return;
     }
-    void this.sequences.runUninstallSequence(manifest, snapshot.game);
+    this.jobs.startUninstall(manifest);
   }
 
   /**

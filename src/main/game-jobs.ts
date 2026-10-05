@@ -5,8 +5,8 @@ import { IPC, type ManifestSource } from '../shared/types';
 import { type GameActivity } from '../shared/activity';
 import { type Translator } from '../shared/i18n/index';
 import type { ResolvedCopyInstall, ResolvedInstall, ResolvedManifest } from './manifest-types';
-import { type ControllerActivities, type ControllerNotifications, type ProcessControl } from './controller-deps';
-import { type GameProcess, type GameProcessLauncher } from './platform';
+import { type ControllerDeps } from './controller-deps';
+import { type GameProcess } from './platform';
 import { findCaseInsensitiveName } from './manifest';
 import { LaunchAbortedError } from './launch-errors';
 import { removeWithRetry } from './remove-with-retry';
@@ -50,19 +50,25 @@ export interface GameJobsHost {
   sendError(message: string): void;
 }
 
-export interface GameJobsDeps {
-  readonly registry: ControllerActivities;
-  readonly launcher: Pick<
-    GameProcessLauncher,
-    'prepareInstallDir' | 'resolveUninstaller' | 'launchUninstaller' | 'uninstallDir' | 'prefixCleanupDir'
-  >;
-  readonly processControl: Pick<ProcessControl, 'waitForExit'>;
-  readonly notifications: ControllerNotifications;
-  readonly getTranslator: () => Translator;
+export type GameJobsDeps = Pick<
+  ControllerDeps,
+  'activities' | 'notifications' | 'getTranslator'
+> & {
+  readonly platform: {
+    readonly gameLauncher: Pick<
+      ControllerDeps['platform']['gameLauncher'],
+      | 'prepareInstallDir'
+      | 'resolveUninstaller'
+      | 'launchUninstaller'
+      | 'uninstallDir'
+      | 'prefixCleanupDir'
+    >;
+  };
+  readonly processControl: Pick<ControllerDeps['processControl'], 'waitForExit'>;
   readonly host: GameJobsHost;
   /** How many copy installs run at once; the rest wait as `queued`. */
   readonly maxParallelCopies?: number;
-}
+};
 
 /** A failure the job reports with its own message rather than the cause's. */
 class JobFailure extends Error {}
@@ -140,6 +146,11 @@ export class GameJobs {
     }
   }
 
+  /** Stops the jobs of games no longer among `ids`: a reload dropped them, and nothing names them now. */
+  abortGone(ids: readonly string[]): void {
+    this.abortWhere((job) => !ids.includes(job.id), 'game-gone');
+  }
+
   /** Stops every job and resolves once each has run its cleanup. */
   async abortAll(reason: JobAbortReason): Promise<void> {
     const pending = [...this.jobs.values()].map((job) => job.done);
@@ -161,9 +172,17 @@ export class GameJobs {
     return this.jobs.size;
   }
 
-  private enqueue(manifest: ResolvedManifest, kind: GameJobKind, body: (job: Job) => Promise<void>): boolean {
+  private enqueue(
+    manifest: ResolvedManifest,
+    kind: GameJobKind,
+    body: (job: Job) => Promise<void>,
+  ): boolean {
     const id = manifest.raw.id;
-    if (this.jobs.has(id) || this.deps.registry.has(id) || this.deps.host.sessionGameId() === id) {
+    if (
+      this.jobs.has(id) ||
+      this.deps.activities.has(id) ||
+      this.deps.host.sessionGameId() === id
+    ) {
       log.info(`[jobs] refused ${kind} id=${id}: the game is busy`);
       return false;
     }
@@ -186,7 +205,7 @@ export class GameJobs {
     };
     this.jobs.set(id, job);
     if (kind === 'install' && this.runningCopies() >= this.maxParallelCopies) {
-      this.deps.registry.set(id, { kind: 'queued' });
+      this.deps.activities.set(id, { kind: 'queued' });
       log.info(`[jobs] queued install id=${id}`);
       return true;
     }
@@ -200,7 +219,9 @@ export class GameJobs {
 
   private launch(job: Job): void {
     job.running = true;
-    this.deps.registry.set(job.id, { kind: job.kind === 'install' ? 'installing' : 'uninstalling' });
+    this.deps.activities.set(job.id, {
+      kind: job.kind === 'install' ? 'installing' : 'uninstalling',
+    });
     log.info(`[jobs] started ${job.kind} id=${job.id}`);
     void this.execute(job);
   }
@@ -211,7 +232,9 @@ export class GameJobs {
     job.abort.abort();
     log.info(`[jobs] stopping ${job.kind} id=${job.id} reason=${reason}`);
     if (job.running) {
-      void job.proc?.kill().catch((cause: unknown) => log.warn(`[jobs] kill failed id=${job.id}:`, describe(cause)));
+      void job.proc
+        ?.kill()
+        .catch((cause: unknown) => log.warn(`[jobs] kill failed id=${job.id}:`, describe(cause)));
       return;
     }
     this.failed(job, new LaunchAbortedError());
@@ -227,14 +250,14 @@ export class GameJobs {
 
   private finish(job: Job): void {
     job.proc?.dispose();
-    this.deps.registry.clear(job.id);
     this.jobs.delete(job.id);
+    this.deps.activities.clear(job.id);
     job.settle();
     this.pump();
   }
 
   private setActivity(job: Job, activity: GameActivity): void {
-    if (job.abortReason === null) this.deps.registry.set(job.id, activity);
+    if (job.abortReason === null) this.deps.activities.set(job.id, activity);
   }
 
   private async execute(job: Job): Promise<void> {
@@ -251,7 +274,6 @@ export class GameJobs {
 
   private succeeded(job: Job): void {
     log.info(`[jobs] ${job.kind} completed id=${job.id}`);
-    this.deps.registry.clear(job.id);
     this.deps.host.onGameChanged(job.id);
     if (job.kind === 'prefix-cleanup') return;
     this.deps.notifications.notify({
@@ -262,7 +284,6 @@ export class GameJobs {
   }
 
   private failed(job: Job, cause: unknown): void {
-    this.deps.registry.clear(job.id);
     this.deps.host.onGameChanged(job.id);
     const reason = this.failureReason(job, cause);
     if (reason === null) {
@@ -292,7 +313,9 @@ export class GameJobs {
       case null:
         if (cause instanceof LaunchAbortedError) return null;
         if (cause instanceof JobFailure) return cause.message;
-        return job.kind === 'install' ? this.t('errors.copyGameFailed', { cause: describe(cause) }) : describe(cause);
+        return job.kind === 'install'
+          ? this.t('errors.copyGameFailed', { cause: describe(cause) })
+          : describe(cause);
     }
   }
 
@@ -300,7 +323,10 @@ export class GameJobs {
     try {
       await removeWithRetry(partialDirOf(install.dir));
     } catch (cause) {
-      log.warn(`[jobs] leftover ${PARTIAL_SUFFIX} of id=${job.id} could not be removed:`, describe(cause));
+      log.warn(
+        `[jobs] leftover ${PARTIAL_SUFFIX} of id=${job.id} could not be removed:`,
+        describe(cause),
+      );
     }
   }
 
@@ -309,12 +335,16 @@ export class GameJobs {
    * `dir` only once complete and holding the executable, so a stopped copy never leaves a playable-looking
    * game behind (`requiresInstall` is "the executable is missing").
    */
-  private async runCopy(job: Job, manifest: ResolvedManifest, install: ResolvedCopyInstall): Promise<void> {
+  private async runCopy(
+    job: Job,
+    manifest: ResolvedManifest,
+    install: ResolvedCopyInstall,
+  ): Promise<void> {
     try {
       const partial = partialDirOf(install.dir);
       await fse.remove(install.dir);
       await fse.remove(partial);
-      await this.deps.launcher.prepareInstallDir(install, (active) =>
+      await this.deps.platform.gameLauncher.prepareInstallDir(install, (active) =>
         this.setActivity(job, { kind: active ? 'configuringProton' : 'installing' }),
       );
       throwIfAborted(job);
@@ -332,7 +362,8 @@ export class GameJobs {
       }
       throwIfAborted(job);
       const staged = path.join(partial, path.relative(install.dir, manifest.executablePath));
-      if (!(await fse.pathExists(staged))) throw new JobFailure(await this.missingExeMessage(manifest, staged));
+      if (!(await fse.pathExists(staged)))
+        throw new JobFailure(await this.missingExeMessage(manifest, staged));
       await fse.remove(install.dir);
       await fse.move(partial, install.dir);
       log.info(`[install] copied id=${job.id} from="${install.installerPath}" to="${install.dir}"`);
@@ -355,10 +386,10 @@ export class GameJobs {
    */
   private async runUninstall(job: Job, install: ResolvedInstall): Promise<void> {
     if (install.type !== 'copy') {
-      const target = await this.deps.launcher.resolveUninstaller(install);
+      const target = await this.deps.platform.gameLauncher.resolveUninstaller(install);
       if (target !== null) {
         try {
-          job.proc = await this.deps.launcher.launchUninstaller(target);
+          job.proc = await this.deps.platform.gameLauncher.launchUninstaller(target);
           await this.deps.processControl.waitForExit(job.proc, job.abort.signal);
         } catch (cause) {
           if (cause instanceof LaunchAbortedError) throw cause;
@@ -367,14 +398,14 @@ export class GameJobs {
       }
     }
     throwIfAborted(job);
-    const dir = this.deps.launcher.uninstallDir(install);
+    const dir = this.deps.platform.gameLauncher.uninstallDir(install);
     await removeWithRetry(dir, job.abort.signal);
     log.info(`[uninstall] removed id=${job.id} dir="${dir}"`);
   }
 
   /** Clears a plain game's Wine prefix (Linux): the game stays on its card, only the prefix goes. */
   private async runPrefixCleanup(job: Job): Promise<void> {
-    const dir = await this.deps.launcher.prefixCleanupDir(job.id);
+    const dir = await this.deps.platform.gameLauncher.prefixCleanupDir(job.id);
     if (dir === null) return;
     await removeWithRetry(dir, job.abort.signal);
     log.info(`[prefix-cleanup] removed "${dir}" id=${job.id}`);

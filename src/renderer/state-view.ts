@@ -89,7 +89,7 @@ export function busyKindOf(state: AppState): BusyKind {
 export function activityStatus(activity: GameActivity, t: Translator): string {
   switch (activity.kind) {
     case 'queued':
-      return '';
+      return t('launcher.state.queued');
     case 'installing':
       return t('launcher.state.installing');
     case 'configuringProton':
@@ -127,6 +127,11 @@ export function opensSteamDownloads(activity: GameActivity | undefined): boolean
 export function busyIds(state: AppState, activities: ActivityMap): ReadonlySet<string> {
   const session = phaseOf(state) === 'busy' ? gameOf(state)?.id : undefined;
   return new Set([...Object.keys(activities), ...(session === undefined ? [] : [session])]);
+}
+
+/** Whether the activity is an install the user can still cancel from the launcher. */
+export function cancellableInstall(activity: GameActivity | undefined): boolean {
+  return activity?.kind === 'queued' || activity?.kind === 'installing' || activity?.kind === 'configuringProton';
 }
 
 /** Whether two id sets hold the same ids. */

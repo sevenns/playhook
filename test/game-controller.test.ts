@@ -10,7 +10,7 @@ import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ipcMain, shell } from './stubs/electron';
 import { GameController } from '../src/main/game-controller';
 import {
@@ -117,13 +117,17 @@ interface Harness {
   readonly removeLocalGame: (id: string) => void;
   /** Every game's activity (the controller's registry). */
   readonly activities: ActivityRegistry;
+  /** Holds every copy install at its prepare step until the returned release is called. */
+  readonly holdCopies: () => () => void;
+  /** What the fake watcher was given for `onRemove` — the card being pulled. */
+  readonly remove: () => void;
   /** Rewrites the Steam game's `.acf` — the way Steam reports a download starting or finishing. */
   readonly setSteamState: (state: SteamAcfState) => Promise<void>;
 }
 
 type SteamAcfState = 'installed' | 'downloading';
 
-type Mode = 'normal' | 'install' | 'prefix-cleanup' | 'steam';
+type Mode = 'normal' | 'install' | 'copy' | 'prefix-cleanup' | 'steam';
 
 /**
  * `launch`: launchGame throws. `start`: the game never appears (waitForStart false). `installer`:
@@ -144,6 +148,8 @@ interface HarnessOptions {
   readonly extraGames?: readonly { readonly id: string; readonly lastPlayedAt: string }[];
   /** What the Steam game's `.acf` says at startup (steam mode only; installed by default). */
   readonly steamState?: SteamAcfState;
+  /** Where the copy-mode game comes from (`pc` by default): a `card` one is stopped when the card goes. */
+  readonly copySource?: 'card' | 'pc';
 }
 
 const STEAM_APPID = 480;
@@ -175,10 +181,13 @@ async function harness(opts: HarnessOptions): Promise<Harness> {
   if (opts.mode === 'prefix-cleanup' && opts.sweepDir === undefined) {
     await fs.mkdir(installDir, { recursive: true });
   }
+  if (opts.mode === 'copy') await fs.writeFile(path.join(gameDir, 'game.exe'), '');
   const steamRoot =
     opts.mode === 'steam' ? await fakeSteamRoot(tmp, STEAM_APPID, opts.steamState ?? 'installed') : null;
   const executablePath =
-    opts.mode === 'install' ? path.join(installDir, 'game.exe') : path.join(gameDir, 'game.exe');
+    opts.mode === 'install' || opts.mode === 'copy'
+      ? path.join(installDir, 'game.exe')
+      : path.join(gameDir, 'game.exe');
   const baseRaw = {
     schemaVersion: 1,
     id: 'g1',
@@ -195,7 +204,7 @@ async function harness(opts: HarnessOptions): Promise<Harness> {
       ...(opts.mode === 'steam' ? { steam: { appid: STEAM_APPID } } : { executable: 'game.exe' }),
     },
     root: gameDir,
-    source: 'pc',
+    source: opts.mode === 'copy' ? (opts.copySource ?? 'pc') : 'pc',
     executablePath: opts.mode === 'steam' ? '' : executablePath,
     cwd: path.dirname(executablePath),
     ...(opts.mode === 'steam' ? { steam: { appid: STEAM_APPID } } : {}),
@@ -204,6 +213,19 @@ async function harness(opts: HarnessOptions): Promise<Harness> {
           install: {
             type: 'custom' as const,
             installerPath: path.join(gameDir, 'setup.exe'),
+            runAsAdmin: false,
+            args: [],
+            winetricks: [],
+            dir: installDir,
+            installerDir: installDir,
+          },
+        }
+      : {}),
+    ...(opts.mode === 'copy'
+      ? {
+          install: {
+            type: 'copy' as const,
+            installerPath: gameDir,
             runAsAdmin: false,
             args: [],
             winetricks: [],
@@ -254,6 +276,8 @@ async function harness(opts: HarnessOptions): Promise<Harness> {
     failAt: FailPoint | null;
     release: (() => void) | null;
     insert: (root: string) => void;
+    remove: () => void;
+    copyHold: Promise<void>;
   } = {
     failStats: false,
     exitRequested: false,
@@ -261,6 +285,8 @@ async function harness(opts: HarnessOptions): Promise<Harness> {
     failAt: null,
     release: null,
     insert: () => undefined,
+    remove: () => undefined,
+    copyHold: Promise.resolve(),
   };
   const failing = (point: FailPoint): boolean => {
     if (h.failAt !== point) return false;
@@ -296,6 +322,7 @@ async function harness(opts: HarnessOptions): Promise<Harness> {
     showAndFocus: () => journal.push('window:showAndFocus'),
     hide: () => journal.push('window:hide'),
     isShown: () => true,
+    isFocused: () => false,
   };
   const store: ControllerStore = {
     getPending: () => Promise.resolve(null),
@@ -340,7 +367,9 @@ async function harness(opts: HarnessOptions): Promise<Harness> {
     onInsert: (handler) => {
       h.insert = handler;
     },
-    onRemove: () => undefined,
+    onRemove: (handler) => {
+      h.remove = () => handler('');
+    },
     onError: () => undefined,
     stop: () => undefined,
   };
@@ -381,7 +410,7 @@ async function harness(opts: HarnessOptions): Promise<Harness> {
         }
         return proc;
       },
-      prepareInstallDir: () => Promise.resolve(),
+      prepareInstallDir: () => h.copyHold,
       launchUninstaller: () => {
         journal.push('uninstaller:launch');
         return failing('uninstaller') ? Promise.reject(new Error('uninstaller boom')) : Promise.resolve(proc);
@@ -470,6 +499,14 @@ async function harness(opts: HarnessOptions): Promise<Harness> {
       localGames = localGames.filter((game) => game.raw.id !== id);
     },
     activities,
+    holdCopies: () => {
+      let release: () => void = () => undefined;
+      h.copyHold = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      return () => release();
+    },
+    remove: () => h.remove(),
     setSteamState: async (next) => {
       if (steamRoot !== null) await writeSteamAcf(steamRoot, STEAM_APPID, next);
     },
@@ -714,96 +751,187 @@ describe('GameController sequences', () => {
       return built;
     }
 
-    it('success: uninstalling → ready, a game-uninstalled notification, then the window', async () => {
+    const flippedToInstall = (built: Harness): boolean => {
+      const state = built.state.get();
+      return state.kind === 'ready' && state.game.requiresInstall;
+    };
+
+    it('success: a background job, a game-uninstalled notification, no session state and no window', async () => {
       h = await installed();
+      const built = h;
       fire(IPC.actionUninstall);
-      await settled(h.journal, 'window:showAndFocus');
-      expect(h.journal).toEqual([
-        'state:uninstalling',
-        'state:ready',
+      await waitFor(() => flippedToInstall(built), 'the game to flip back to Install');
+      expect(built.journal).toEqual([
+        'activity:g1:uninstalling',
         'notify:game-uninstalled',
-        'window:showAndFocus',
-      ]);
-      expect(h.state.get()).toMatchObject({ kind: 'ready', game: { requiresInstall: true } });
-    });
-
-    it('error in the body: failSequence returns to ready with Uninstall still offered', async () => {
-      h = await installed();
-      h.failStats = true;
-      fire(IPC.actionUninstall);
-      await settled(h.journal, 'send:error');
-      expect(h.journal).toEqual([
-        'state:uninstalling',
+        'activity:g1:clear',
         'state:ready',
-        'window:showAndFocus',
-        'send:error',
       ]);
-      expect(h.state.get()).toMatchObject({ kind: 'ready', game: { canUninstall: true } });
     });
 
-    it("with an uninstaller: it runs first and is released by the finally, then the sweep", async () => {
+    it('a sweep that keeps failing is reported as a failed uninstall, and Uninstall stays offered', async () => {
+      h = await installed(unremovable(os.tmpdir()));
+      const built = h;
+      fire(IPC.actionUninstall);
+      await reached(built.journal, 'activity:g1:clear');
+      expect(built.journal.filter((entry) => !entry.startsWith('state:'))).toEqual([
+        'activity:g1:uninstalling',
+        'notify:game-uninstall-failed',
+        'activity:g1:clear',
+      ]);
+      expect(built.state.get()).toMatchObject({ kind: 'ready', game: { canUninstall: true } });
+    });
+
+    it('with an uninstaller: it runs first and is released by the job, then the sweep', async () => {
       h = await installed(undefined, true);
+      const built = h;
       fire(IPC.actionUninstall);
-      await reached(h.journal, 'uninstaller:launch');
-      h.exit();
-      await settled(h.journal, 'proc:dispose');
-      expect(h.journal).toEqual([
-        'state:uninstalling',
+      await reached(built.journal, 'uninstaller:launch');
+      built.exit();
+      await waitFor(() => flippedToInstall(built), 'the game to flip back to Install');
+      expect(built.journal).toEqual([
+        'activity:g1:uninstalling',
         'uninstaller:launch',
-        'state:ready',
         'notify:game-uninstalled',
-        'window:showAndFocus',
         'proc:dispose',
+        'activity:g1:clear',
+        'state:ready',
       ]);
-      expect(h.state.get()).toMatchObject({ kind: 'ready', game: { requiresInstall: true } });
     });
 
     it('an uninstaller that fails to start is non-fatal: the sweep still runs and the game is gone', async () => {
       h = await installed(undefined, true);
+      const built = h;
       h.failAt = 'uninstaller';
       fire(IPC.actionUninstall);
-      await settled(h.journal, 'window:showAndFocus');
-      expect(h.journal).toEqual([
-        'state:uninstalling',
-        'uninstaller:launch',
-        'state:ready',
-        'notify:game-uninstalled',
-        'window:showAndFocus',
-      ]);
-      expect(h.state.get()).toMatchObject({ kind: 'ready', game: { requiresInstall: true } });
+      await waitFor(() => flippedToInstall(built), 'the game to flip back to Install');
+      expect(built.journal).toContain('notify:game-uninstalled');
     });
 
-    it('card swap while the uninstaller runs: the abort is rethrown past the non-fatal catch, nothing is set, the insert replays', async () => {
+    it('a card swap does not stop an uninstall: it targets the PC and finishes on its own', async () => {
       h = await installed(undefined, true);
-      // The logger mirrors to the console: the catch that swallows an uninstaller failure warns, and the
-      // abort must not be reported as one (the sweep's own abort check would otherwise hide the difference).
-      const warned = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const built = h;
       fire(IPC.actionUninstall);
-      await reached(h.journal, 'uninstaller:launch');
-      h.insert(swapRoot);
-      await settled(h.journal, 'window:hide');
-      expect(h.journal).toEqual([
-        'state:uninstalling',
-        'uninstaller:launch',
-        'proc:dispose',
-        'state:error',
-        'window:hide',
-      ]);
-      const lines = warned.mock.calls.map((call) => String(call[0]));
-      warned.mockRestore();
-      expect(lines.filter((line) => line.includes('[uninstall] uninstaller failed'))).toEqual([]);
-      await expect(fs.stat(path.join(h.tmp, 'installed', 'game.exe'))).resolves.toBeDefined();
+      await reached(built.journal, 'uninstaller:launch');
+      built.insert(swapRoot);
+      await reached(built.journal, 'state:error');
+      built.exit();
+      await reached(built.journal, 'activity:g1:clear');
+      expect(built.journal).toContain('notify:game-uninstalled');
+      await expect(fs.stat(path.join(built.tmp, 'installed', 'game.exe'))).rejects.toThrow();
     });
 
-    it('card swap during the directory sweep: the retry loop sees the signal, nothing is set, the insert replays', async () => {
+    it('shutdown during the directory sweep stops the job silently', async () => {
       h = await installed(unremovable(os.tmpdir()));
+      const built = h;
       fire(IPC.actionUninstall);
-      await reached(h.journal, 'state:uninstalling');
-      expect(h.journal).toEqual(['state:uninstalling']);
-      h.insert(swapRoot);
-      // The sweep backs off 300 ms between attempts and only then reads the signal.
-      await settled(h.journal, 'window:hide');
-      expect(h.journal).toEqual(['state:uninstalling', 'state:error', 'window:hide']);
+      await reached(built.journal, 'activity:g1:uninstalling');
+      built.controller.shutdown();
+      await reached(built.journal, 'activity:g1:clear');
+      expect(built.journal.filter((entry) => !entry.startsWith('state:'))).toEqual([
+        'activity:g1:uninstalling',
+        'activity:g1:clear',
+      ]);
+    });
+  });
+
+  describe('copy install', () => {
+    const otherSelected = (built: Harness): boolean => {
+      const state = built.state.get();
+      return state.kind === 'ready' && state.game.id === 'other';
+    };
+
+    async function selectThenLaunch(built: Harness, id: string): Promise<void> {
+      built.journal.length = 0;
+      fire(IPC.actionSelect, id);
+      await reached(built.journal, 'state:ready');
+      await new Promise<void>((resolve) => setTimeout(resolve, 30));
+      fire(IPC.actionLaunch);
+    }
+
+    it('runs as a background job: an activity, a notification, no session state and no window', async () => {
+      h = await harness({ mode: 'copy' });
+      const built = h;
+      fire(IPC.actionLaunch);
+      await waitFor(() => {
+        const state = built.state.get();
+        return state.kind === 'ready' && !state.game.requiresInstall;
+      }, 'the game to flip to Play');
+      expect(built.journal).toEqual([
+        'activity:g1:installing',
+        'notify:game-installed',
+        'activity:g1:clear',
+        'state:ready',
+      ]);
+      await expect(fs.stat(path.join(built.tmp, 'installed', 'game.exe'))).resolves.toBeDefined();
+    });
+
+    it('another game launches and runs a full session while the copy is in flight, untouched by its end', async () => {
+      h = await harness({
+        mode: 'copy',
+        extraGames: [{ id: 'other', lastPlayedAt: '2026-10-01T00:00:00.000Z' }],
+      });
+      const built = h;
+      const release = built.holdCopies();
+      await selectThenLaunch(built, 'g1');
+      await reached(built.journal, 'activity:g1:installing');
+      await selectThenLaunch(built, 'other');
+      await reached(built.journal, 'state:running');
+      release();
+      await reached(built.journal, 'activity:g1:clear');
+      await new Promise<void>((resolve) => setTimeout(resolve, 50));
+      expect(built.journal).toEqual([
+        'state:ready',
+        'state:syncing-in',
+        'state:launching',
+        'state:running',
+        'notify:game-installed',
+        'activity:g1:clear',
+      ]);
+      expect(built.state.get()).toMatchObject({ kind: 'running', game: { id: 'other' } });
+      built.exit();
+      await settled(built.journal, 'proc:dispose');
+      expect(built.journal).not.toContain('state:installing');
+      expect(otherSelected(built)).toBe(true);
+    });
+
+    it('pulling the card during a busy session still stops the card copy', async () => {
+      h = await harness({
+        mode: 'copy',
+        copySource: 'card',
+        extraGames: [{ id: 'other', lastPlayedAt: '2026-10-01T00:00:00.000Z' }],
+      });
+      const built = h;
+      const release = built.holdCopies();
+      await selectThenLaunch(built, 'g1');
+      await reached(built.journal, 'activity:g1:installing');
+      await selectThenLaunch(built, 'other');
+      await reached(built.journal, 'state:running');
+      built.remove();
+      release();
+      await reached(built.journal, 'activity:g1:clear');
+      expect(built.journal).toContain('notify:game-install-failed');
+      expect(built.state.get()).toMatchObject({ kind: 'running', game: { id: 'other' } });
+      await expect(fs.stat(path.join(built.tmp, 'installed', 'game.exe'))).rejects.toThrow();
+      built.exit();
+      await settled(built.journal, 'proc:dispose');
+    });
+
+    it('a reload that drops the game stops its copy', async () => {
+      h = await harness({
+        mode: 'copy',
+        extraGames: [{ id: 'other', lastPlayedAt: '2026-09-01T00:00:00.000Z' }],
+      });
+      const built = h;
+      const release = built.holdCopies();
+      await selectThenLaunch(built, 'g1');
+      await reached(built.journal, 'activity:g1:installing');
+      built.removeLocalGame('g1');
+      await built.controller.reloadPcLibrary();
+      release();
+      await reached(built.journal, 'activity:g1:clear');
+      expect(built.journal).toContain('notify:game-install-failed');
+      await expect(fs.stat(path.join(built.tmp, 'installed', 'game.exe'))).rejects.toThrow();
     });
   });
 
@@ -1005,37 +1133,41 @@ describe('GameController sequences', () => {
   });
 
   describe('prefix cleanup', () => {
-    it('success: uninstalling → ready with Uninstall gone, then the window', async () => {
+    it('success: a background job, Uninstall gone afterwards, no notification and no window', async () => {
       h = await harness({ mode: 'prefix-cleanup' });
-      expect(h.state.get()).toMatchObject({ kind: 'ready', game: { prefixCleanupOnly: true } });
+      const built = h;
+      expect(built.state.get()).toMatchObject({ kind: 'ready', game: { prefixCleanupOnly: true } });
       fire(IPC.actionUninstall);
-      await settled(h.journal, 'window:showAndFocus');
-      expect(h.journal).toEqual(['state:uninstalling', 'state:ready', 'window:showAndFocus']);
-      // The prefix is gone, so the rebuilt info no longer offers Uninstall.
-      expect(h.state.get()).toMatchObject({ kind: 'ready', game: { canUninstall: false } });
+      await waitFor(() => {
+        const state = built.state.get();
+        return state.kind === 'ready' && !state.game.canUninstall;
+      }, 'Uninstall to disappear');
+      expect(built.journal).toEqual(['activity:g1:uninstalling', 'activity:g1:clear', 'state:ready']);
     });
 
-    it('error in the body: failSequence returns to ready and reports the cause', async () => {
-      h = await harness({ mode: 'prefix-cleanup' });
-      h.failStats = true;
+    it('a prefix that cannot be removed is reported as a failed uninstall', async () => {
+      h = await harness({ mode: 'prefix-cleanup', sweepDir: unremovable(os.tmpdir()) });
+      const built = h;
       fire(IPC.actionUninstall);
-      await settled(h.journal, 'send:error');
-      expect(h.journal).toEqual([
-        'state:uninstalling',
-        'state:ready',
-        'window:showAndFocus',
-        'send:error',
+      await reached(built.journal, 'activity:g1:clear');
+      expect(built.journal.filter((entry) => !entry.startsWith('state:'))).toEqual([
+        'activity:g1:uninstalling',
+        'notify:game-uninstall-failed',
+        'activity:g1:clear',
       ]);
     });
 
-    it('card swap during the sweep: the retry loop sees the signal, nothing is set, the insert replays', async () => {
+    it('shutdown during the sweep stops the job silently', async () => {
       h = await harness({ mode: 'prefix-cleanup', sweepDir: unremovable(os.tmpdir()) });
+      const built = h;
       fire(IPC.actionUninstall);
-      await reached(h.journal, 'state:uninstalling');
-      expect(h.journal).toEqual(['state:uninstalling']);
-      h.insert(swapRoot);
-      await settled(h.journal, 'window:hide');
-      expect(h.journal).toEqual(['state:uninstalling', 'state:error', 'window:hide']);
+      await reached(built.journal, 'activity:g1:uninstalling');
+      built.controller.shutdown();
+      await reached(built.journal, 'activity:g1:clear');
+      expect(built.journal.filter((entry) => !entry.startsWith('state:'))).toEqual([
+        'activity:g1:uninstalling',
+        'activity:g1:clear',
+      ]);
     });
   });
 });

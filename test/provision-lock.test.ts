@@ -2,7 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { createProvisionLock } from '../src/main/platform/provision-lock';
 
 /** A promise the test settles by hand. */
-function deferred(): { readonly promise: Promise<void>; resolve(): void; reject(error: Error): void } {
+function deferred(): {
+  readonly promise: Promise<void>;
+  resolve(): void;
+  reject(error: Error): void;
+} {
   let resolve: () => void = () => undefined;
   let reject: (error: Error) => void = () => undefined;
   const promise = new Promise<void>((res, rej) => {

@@ -34,10 +34,12 @@ const BROWSE: BrowseInfo = {
 describe('activityStatus', () => {
   it('names every Steam activity, with the paused percent when Steam gave one', () => {
     expect(activityStatus({ kind: 'steam-installing', paused: false }, t)).toBe('Installing...');
-    expect(activityStatus({ kind: 'steam-installing', paused: true }, t)).toBe('Installing paused...');
-    expect(activityStatus({ kind: 'steam-installing', paused: true, pausedProgress: 0.426 }, t)).toBe(
-      'Installing paused on 43%...',
+    expect(activityStatus({ kind: 'steam-installing', paused: true }, t)).toBe(
+      'Installing paused...',
     );
+    expect(
+      activityStatus({ kind: 'steam-installing', paused: true, pausedProgress: 0.426 }, t),
+    ).toBe('Installing paused on 43%...');
     expect(activityStatus({ kind: 'steam-updating', paused: false }, t)).toBe('Updating...');
     expect(activityStatus({ kind: 'steam-updating', paused: true, pausedProgress: 0.5 }, t)).toBe(
       'Updating paused...',
@@ -47,10 +49,16 @@ describe('activityStatus', () => {
 
   it('a finished pre-load says so instead of a paused percent', () => {
     expect(
-      activityStatus({ kind: 'steam-installing', paused: true, pausedProgress: 1, preloaded: true }, t),
+      activityStatus(
+        { kind: 'steam-installing', paused: true, pausedProgress: 1, preloaded: true },
+        t,
+      ),
     ).toBe('Pre-load complete');
     expect(
-      activityStatus({ kind: 'steam-installing', paused: true, pausedProgress: 1, preloaded: true }, createTranslator('ru')),
+      activityStatus(
+        { kind: 'steam-installing', paused: true, pausedProgress: 1, preloaded: true },
+        createTranslator('ru'),
+      ),
     ).toBe('Предзагрузка завершена');
   });
 
@@ -61,12 +69,17 @@ describe('activityStatus', () => {
 
 describe('activityBusyKind', () => {
   it('shows the gear for an activity and falls back to the session otherwise', () => {
-    expect(activityBusyKind({ kind: 'steam-uninstalling' }, { kind: 'ready', game: GAME })).toBe('system');
-    expect(activityBusyKind(undefined, { kind: 'ready', game: GAME })).toBe('none');
-    expect(activityBusyKind(undefined, { kind: 'launching', game: GAME })).toBe('game');
-    expect(activityBusyKind({ kind: 'steam-installing', paused: false }, { kind: 'running', game: GAME, since: 0 })).toBe(
+    expect(activityBusyKind({ kind: 'steam-uninstalling' }, { kind: 'ready', game: GAME })).toBe(
       'system',
     );
+    expect(activityBusyKind(undefined, { kind: 'ready', game: GAME })).toBe('none');
+    expect(activityBusyKind(undefined, { kind: 'launching', game: GAME })).toBe('game');
+    expect(
+      activityBusyKind(
+        { kind: 'steam-installing', paused: false },
+        { kind: 'running', game: GAME, since: 0 },
+      ),
+    ).toBe('system');
   });
 });
 
@@ -75,7 +88,9 @@ describe('screenActivityOf', () => {
     const activities = { other: { kind: 'steam-uninstalling' } } as const;
     expect(screenActivityOf(BROWSE, activities)).toBeUndefined();
     expect(screenActivityOf(null, activities)).toBeUndefined();
-    expect(screenActivityOf(BROWSE, { g: { kind: 'steam-uninstalling' } })).toEqual({ kind: 'steam-uninstalling' });
+    expect(screenActivityOf(BROWSE, { g: { kind: 'steam-uninstalling' } })).toEqual({
+      kind: 'steam-uninstalling',
+    });
   });
 });
 
@@ -94,7 +109,11 @@ describe('busyIds', () => {
       a: { kind: 'steam-installing', paused: false },
       b: { kind: 'steam-updating', paused: false },
     } as const;
-    expect([...busyIds({ kind: 'running', game: GAME, since: 0 }, activities)].sort()).toEqual(['a', 'b', 'g']);
+    expect([...busyIds({ kind: 'running', game: GAME, since: 0 }, activities)].sort()).toEqual([
+      'a',
+      'b',
+      'g',
+    ]);
     expect([...busyIds({ kind: 'ready', game: GAME }, activities)].sort()).toEqual(['a', 'b']);
     expect(busyIds({ kind: 'idle' }, {}).size).toBe(0);
   });

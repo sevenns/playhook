@@ -136,7 +136,11 @@ describe('SteamActivityWatch transitions', () => {
     expect(fixture.registry.get('a')).toEqual({ kind: 'steam-updating', paused: false });
     await fixture.acf(A.appid, 'paused', 0.25);
     await fixture.watch.scanNow();
-    expect(fixture.registry.get('a')).toEqual({ kind: 'steam-updating', paused: true, pausedProgress: 0.25 });
+    expect(fixture.registry.get('a')).toEqual({
+      kind: 'steam-updating',
+      paused: true,
+      pausedProgress: 0.25,
+    });
     await fixture.acf(A.appid, 'installed');
     await fixture.watch.scanNow();
     expect(fixture.registry.has('a')).toBe(false);
@@ -148,7 +152,11 @@ describe('SteamActivityWatch transitions', () => {
     await fixture.watch.scanNow();
     await fixture.acf(A.appid, 'paused', 0.4);
     await fixture.watch.scanNow();
-    expect(fixture.registry.get('a')).toEqual({ kind: 'steam-installing', paused: true, pausedProgress: 0.4 });
+    expect(fixture.registry.get('a')).toEqual({
+      kind: 'steam-installing',
+      paused: true,
+      pausedProgress: 0.4,
+    });
     expect(fixture.events).toEqual(['changed:a']);
   });
 
@@ -176,10 +184,15 @@ describe('SteamActivityWatch transitions', () => {
     await fixture.acf(B.appid, 'installed');
     await fixture.watch.scanNow();
     expect(fixture.registry.snapshot()).toEqual({ a: { kind: 'steam-installing', paused: false } });
-    expect(fixture.events.filter((event) => event.startsWith('installed:'))).toEqual(['installed:b']);
+    expect(fixture.events.filter((event) => event.startsWith('installed:'))).toEqual([
+      'installed:b',
+    ]);
     await fixture.acf(A.appid, 'installed');
     await fixture.watch.scanNow();
-    expect(fixture.events.filter((event) => event.startsWith('installed:'))).toEqual(['installed:b', 'installed:a']);
+    expect(fixture.events.filter((event) => event.startsWith('installed:'))).toEqual([
+      'installed:b',
+      'installed:a',
+    ]);
   });
 });
 
@@ -216,7 +229,11 @@ describe('SteamActivityWatch pre-loads', () => {
   it('the same result before every byte is in stays an ordinary paused download', async () => {
     await writeAcf(A.appid, preloadAcf(A.appid, 1000));
     await fixture.watch.scanNow();
-    expect(fixture.registry.get('a')).toEqual({ kind: 'steam-installing', paused: true, pausedProgress: 1 });
+    expect(fixture.registry.get('a')).toEqual({
+      kind: 'steam-installing',
+      paused: true,
+      pausedProgress: 1,
+    });
   });
 
   it('the release turns the pre-load into an install, with its notification', async () => {

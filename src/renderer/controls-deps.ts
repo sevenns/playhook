@@ -22,6 +22,8 @@ export interface ControlsApi {
   /** Play / the install confirm's Yes — main decides install vs launch from `requiresInstall`. */
   requestLaunch(): void;
   requestUninstall(): void;
+  /** "Cancel installation": stops the queued or running install of game `id`. */
+  cancelJob(id: string): void;
   requestKill(): void;
   /** Drops a history game's record — the id is captured when the confirm opens (see openConfirm). */
   forgetGame(id: string): void;

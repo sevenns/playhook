@@ -87,10 +87,10 @@ export interface GameMoveDeps {
    */
   readonly resolveManifest: (id: string) => ResolvedManifest | null;
   /**
-   * Whether ANY game is currently running/installing/uninstalling (GameController.isBusy) — moveToCard's
+   * Whether game `id` is the session's or carries an activity (GameController.isBusy) — moveToCard's
    * own re-check of the guard the "Move to card…" menu item already applies in the renderer.
    */
-  readonly isBusy: () => boolean;
+  readonly isBusy: (id: string) => boolean;
   /** Drops a game's sync-state baseline (PcStore.removeSyncState) — moveToCard clears the "pc" slot once
    * a game leaves the library: the local backup ↔ save-folder pairing it described is gone. */
   readonly pcStore: Pick<PcStore, 'removeSyncState'>;
@@ -137,7 +137,7 @@ export class GameMoveTransaction {
     ) {
       return { moved: false, message: t('errors.mediaChanged') };
     }
-    if (this.deps.isBusy()) {
+    if (this.deps.isBusy(request.fromId)) {
       return { moved: false, message: t('gameConfig.moveGameBusy') };
     }
     // A move must not rename: everything this PC remembers about the game is keyed by id (stats, the

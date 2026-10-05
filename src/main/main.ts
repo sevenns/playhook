@@ -325,11 +325,12 @@ async function bootstrap(): Promise<void> {
     // `|| running` holds the blocker even if a game minimized our window into exclusive-fullscreen
     // (windowVisible would be false there), which is the whole point of covering the running state.
     const running = state.get().kind === 'running';
-    keepAwake.setActive(preventScreensaverEnabled && (windowVisible || running));
+    keepAwake.setActive(preventScreensaverEnabled && (windowVisible || running || controller.jobs.anyActive()));
   };
   // Recompute on every state change so entering/leaving `running` toggles the blocker (the window-visibility
   // and setting sources push their own recompute). A second subscriber alongside the controller's replicator.
   state.subscribe(() => recomputeKeepAwake());
+  activities.subscribe(() => recomputeKeepAwake());
 
   // Update service. isBusy covers ALL in-flight states (not just a running game), so a manual install
   // can't tear down a save-sync / game install. beforeInstall drops the windows' close-guards
@@ -337,10 +338,7 @@ async function bootstrap(): Promise<void> {
   const updater = new UpdaterService({
     settings,
     notifications,
-    isBusy: () => {
-      const kind = state.get().kind;
-      return kind !== 'idle' && kind !== 'ready' && kind !== 'error';
-    },
+    isBusy: () => controller.isBusy() || controller.jobs.anyActive(),
     beforeInstall: () => {
       quitting = true;
       window.allowClose();
@@ -410,7 +408,7 @@ async function bootstrap(): Promise<void> {
     reloadManifest: (root) => controller.reloadManifest(root),
     notify: (input) => notifications.notify(input),
     resolveManifest: (id) => controller.findManifest(id),
-    isBusy: () => controller.isBusy(),
+    isBusy: (id) => controller.isBusy(id),
     pcStore: store,
     savePathResolver: platform.savePathResolver,
   });

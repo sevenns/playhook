@@ -490,6 +490,8 @@ export function createPopups(deps: PopupsDeps): Popups {
 
   // Confirm view — install/uninstall (from Details) or a power action (from Power). Yes runs the action
   // and closes the whole stack; No/back returns to where it came from.
+  let confirmBrowseId: string | null = null;
+
   function openConfirm(mode: ConfirmMode): void {
     const copy = describeConfirm(
       mode,
@@ -515,10 +517,19 @@ export function createPopups(deps: PopupsDeps): Popups {
     if (copy.path !== undefined) confirmPath.textContent = copy.path;
     if (copy.note !== undefined) deleteNote.textContent = copy.note;
     if (copy.forgetId !== undefined) forgetId = copy.forgetId;
+    confirmBrowseId = deps.getBrowse()?.id ?? null;
     confirmMode = mode;
     setView('confirm');
     focusStackBottom(); // default focus: No (safe default)
     deps.onFocusChanged();
+  }
+
+  /** "Cancel installation" from Details: stops the install of the game on screen, by its id. */
+  function cancelScreenInstall(): void {
+    const id = deps.getBrowse()?.id;
+    audio.play('button');
+    closePopup();
+    if (id !== undefined) deps.api.cancelJob(id);
   }
 
   /**
@@ -722,7 +733,9 @@ export function createPopups(deps: PopupsDeps): Popups {
 
   // Dispatch a stack button (shared by gamepad A and mouse click). Each opener/back plays its own sound.
   function triggerStackButton(btn: HTMLButtonElement): void {
-    if (btn === menuInstallToggle) {
+    if (btn === menuInstallToggle && menuInstallToggle.dataset['action'] === 'cancel') {
+      cancelScreenInstall();
+    } else if (btn === menuInstallToggle) {
       audio.play('button');
       openConfirm(menuInstallToggle.dataset['action'] === 'install' ? 'install' : 'uninstall');
     } else if (btn === menuKill) {
@@ -957,7 +970,9 @@ export function createPopups(deps: PopupsDeps): Popups {
       if (
         popupView === 'confirm' &&
         (confirmMode === 'install' || confirmMode === 'uninstall') &&
-        screenGame() === undefined
+        (screenGame() === undefined ||
+          deps.screenActivity() !== undefined ||
+          (deps.getBrowse()?.id ?? null) !== confirmBrowseId)
       ) {
         closePopup();
       }

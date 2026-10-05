@@ -37,5 +37,8 @@ export function sameActivity(a: GameActivity | undefined, b: GameActivity | unde
   const left = fieldsOf(a);
   const right = fieldsOf(b);
   const keys = Object.keys(left);
-  return keys.length === Object.keys(right).length && keys.every((key) => Object.is(left[key], right[key]));
+  return (
+    keys.length === Object.keys(right).length &&
+    keys.every((key) => Object.is(left[key], right[key]))
+  );
 }

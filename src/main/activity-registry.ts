@@ -40,7 +40,9 @@ export class ActivityRegistry {
   /** Frees `id`; a game that carries no activity changes nothing and announces nothing. */
   clear(id: string): void {
     if (this.activities[id] === undefined) return;
-    this.activities = Object.fromEntries(Object.entries(this.activities).filter(([key]) => key !== id));
+    this.activities = Object.fromEntries(
+      Object.entries(this.activities).filter(([key]) => key !== id),
+    );
     this.emit();
   }
 

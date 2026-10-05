@@ -36,6 +36,7 @@ function fakeControlsApi(): ControlsApi {
   return {
     requestLaunch: vi.fn(),
     requestUninstall: vi.fn(),
+    cancelJob: vi.fn(),
     requestKill: vi.fn(),
     forgetGame: vi.fn(),
     openSteamDownloads: vi.fn(),
@@ -403,3 +404,40 @@ describe('controls Force close', () => {
     expect(killHidden()).toBe(true);
   });
 });
+
+describe('controls background installs', () => {
+  const COPY_GAME: GameInfo = { ...LOCAL_GAME, id: 'copy', title: 'Copy', requiresInstall: true, installVia: 'copy' };
+  const toggle = (): HTMLButtonElement => req<HTMLButtonElement>('menu-install-toggle');
+
+  it('offers Cancel installation for an install of the game on screen, and cancels it by id', () => {
+    harness.screen = 'detail';
+    harness.browse = browsing(COPY_GAME);
+    harness.state = { kind: 'ready', game: COPY_GAME };
+    harness.activities = { copy: { kind: 'queued' } };
+    req('more-button').click();
+
+    expect(toggle().classList.contains('is-hidden')).toBe(false);
+    expect(toggle().textContent).toBe('Cancel installation');
+
+    toggle().click();
+
+    expect(api.cancelJob).toHaveBeenCalledWith('copy');
+  });
+
+  it('closes an open install question once the game on screen starts installing', () => {
+    harness.screen = 'detail';
+    harness.browse = browsing(COPY_GAME);
+    harness.state = { kind: 'ready', game: COPY_GAME };
+    req('more-button').click();
+    toggle().click();
+
+    expect(popup().dataset['mode']).toBe('install');
+    expect(popup().classList.contains('is-open')).toBe(true);
+
+    harness.activities = { copy: { kind: 'installing' } };
+    controls.refresh();
+
+    expect(popup().classList.contains('is-open')).toBe(false);
+  });
+});
+

@@ -58,7 +58,7 @@ export interface ProcessControl {
 // unit test can stand in a fake per seam (see test/game-controller.test.ts) — the classes themselves reach
 // for electron and the disk.
 export type ControllerState = Pick<StateManager, 'get' | 'set' | 'subscribe'>;
-export type ControllerWindow = Pick<GameWindow, 'send' | 'showAndFocus' | 'hide' | 'isShown'>;
+export type ControllerWindow = Pick<GameWindow, 'send' | 'showAndFocus' | 'hide' | 'isShown' | 'isFocused'>;
 export type ControllerStore = Pick<
   PcStore,
   | 'getPending'

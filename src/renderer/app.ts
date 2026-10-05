@@ -224,12 +224,8 @@ const gameSettingsScreen = createGameSettingsScreen({
   // declared below, and no message can arrive before the user has opened this screen.
   notify: (text) => toast.show(text),
   showError: (text) => controls.showError(text),
-  // Editing while the game runs is legal; DELETING it is not — the launcher would be left holding a
-  // manifest the file no longer has.
   isBusy: (id) =>
-    currentState.kind === 'running' ||
-    currentState.kind === 'installing' ||
-    currentState.kind === 'uninstalling' ||
+    (phaseOf(currentState) === 'busy' && gameOf(currentState)?.id === id) ||
     currentActivities[id] !== undefined,
 });
 
@@ -273,6 +269,7 @@ const controls = createControls({
   api: {
     requestLaunch: () => window.api.requestLaunch(),
     requestUninstall: () => window.api.requestUninstall(),
+    cancelJob: (id) => window.api.cancelJob(id),
     requestKill: () => window.api.requestKill(),
     forgetGame: (id) => window.api.forgetGame(id),
     openSteamDownloads: () => window.api.openSteamDownloads(),
@@ -592,14 +589,18 @@ function applyStatus(): void {
 /** The status line for what is ON SCREEN — empty while looking at a game the state isn't about. */
 function statusText(): string {
   const activity = screenActivityOf(currentBrowse, currentActivities);
-  if (activity !== undefined) return activityStatus(activity, translator);
+  if (activity !== undefined) return withChatter(activityStatus(activity, translator), activity.kind);
   const subject = gameOf(currentState)?.id;
   // Nothing on screen is a state of its own now — a launcher card — and the state's status belongs to a
   // game, so it says nothing there: "Installing…" under "Settings" would be a lie, and the line's mere
   // presence shifts the title (see [data-status] in styles.css).
   if (currentBrowse === null || (subject !== undefined && subject !== currentBrowse.id)) return '';
-  const base = statusOf(currentState, translator);
-  const suffix = chatter.suffixFor(currentState);
+  return withChatter(statusOf(currentState, translator), currentState.kind);
+}
+
+/** The status line plus the current funny suffix, when one is running for `kind`. */
+function withChatter(base: string, kind: string): string {
+  const suffix = chatter.suffixFor(kind);
   return suffix !== null ? `${base} ${translator(suffix)}` : base;
 }
 
@@ -695,7 +696,7 @@ function render(state: AppState): void {
   carousel.setBusyGames(busy);
   libraryScreen.setBusyGames(busy);
 
-  chatter.sync(state);
+  chatter.sync(screenActivity?.kind ?? state.kind);
   applyStatus();
 
   // Force-close popups off the ready screen, then re-apply the focus highlight (see controls.refresh).
