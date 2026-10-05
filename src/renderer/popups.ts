@@ -14,10 +14,13 @@ import type {
   GameInfo,
 } from '../shared/types.js';
 import type { GameActivity } from '../shared/activity.js';
+import { quitQuestion, type QuitAction } from '../shared/quit.js';
+import { createDeferredQuestions } from './deferred-questions.js';
 import type { Locale, MessageKey, Translator } from '../shared/i18n/index.js';
 import type { AudioController } from './audio.js';
 import {
   describeConfirm,
+  quitModeAction,
   runConfirmedAction,
   type ConfirmMode,
   type ConfirmReturnTo,
@@ -75,6 +78,8 @@ export interface PopupsDeps {
   screenIsActionable(): boolean;
   /** The activity of the game on screen, or undefined when it is free. */
   screenActivity(): GameActivity | undefined;
+  /** How many background installs / uninstalls are queued or running. */
+  getJobCount(): number;
   /** Opens a game's detail screen (a notification about a game leads there). Owned by app.ts. */
   openGameDetail(id: string): void;
   /** The popup finished closing. The toast shares this corner and holds its queue while it is up. */
@@ -94,6 +99,8 @@ export interface Popups extends NavSurface {
   confirmGameSettings(kind: GameSettingsQuestion, options?: { readonly title?: string }): void;
   /** main found the same game on the card and on this PC: asks what should happen to it (queued while busy). */
   askGameCollision(collision: GameCollision): void;
+  /** main asks before `action` while jobs run (tray Quit): queued behind a question, error or work popup. */
+  askQuit(action: QuitAction): void;
   /** Work in progress: a message and a Stop. `closeBusy` takes it away when the work answers. */
   showBusy(message: string, onStop: () => void): void;
   closeBusy(): void;
@@ -190,7 +197,21 @@ export function createPopups(deps: PopupsDeps): Popups {
   let forgetId: string | null = null;
   /** The collision the open question is about, and the one waiting for the popup to free up. */
   let askedCollision: GameCollision | null = null;
-  let queuedCollision: GameCollision | null = null;
+  const deferred = createDeferredQuestions({
+    popupView: () => popupView,
+    isScreenAsking: () => deps.gameSettings.isOpen() || deps.settings.isOpen(),
+    openCollision: (collision) => {
+      askedCollision = collision;
+      openConfirm('game-collision');
+    },
+    openQuit: (action) => {
+      openConfirm(action === 'quit' ? 'quit-with-jobs' : action);
+      if (popupView === 'confirm') confirmReturnTo = 'none';
+      return popupView === 'confirm';
+    },
+    replyQuit: (reply) => deps.api.quitConfirmReply(reply),
+    fadeMs: POPUP_FADE_MS,
+  });
 
   // ── Popup machine ────────────────────────────────────────────────────────────
   // One #popup element; opening = add .is-open + set data-view; switching views keeps .is-open (so the
@@ -251,21 +272,7 @@ export function createPopups(deps: PopupsDeps): Popups {
     freezeMenuDuringFade();
     applyStackFocus(); // clear the stack highlight (stackActive becomes false)
     deps.onFocusChanged(); // restore the main bar highlight
-    flushQueuedCollision();
-  }
-
-  /** Raises a collision question that arrived while the column was busy, once it is free again. */
-  function flushQueuedCollision(): void {
-    const waiting = queuedCollision;
-    if (waiting === null || popupView !== 'none') return;
-    if (deps.gameSettings.isOpen() || deps.settings.isOpen()) return;
-    queuedCollision = null;
-    askedCollision = waiting;
-    // After the fade, or the question would open into a column still fading the previous one out.
-    window.setTimeout(() => {
-      if (popupView !== 'none' || askedCollision === null) return;
-      openConfirm('game-collision');
-    }, POPUP_FADE_MS);
+    deferred.columnClosed();
   }
 
   // Details menu (from More): game stats on top + Shutdown / Install|Uninstall / Close stack. Works on
@@ -501,6 +508,7 @@ export function createPopups(deps: PopupsDeps): Popups {
         collision: askedCollision,
         deletesLocalGame: () => deps.gameSettings.deletesLocalGame(),
         title: confirmTitle,
+        jobCount: deps.getJobCount(),
       },
       t(),
     );
@@ -579,7 +587,7 @@ export function createPopups(deps: PopupsDeps): Popups {
       case 'confirm':
         // Neither 'settings' nor 'game-settings' is a popup view: that screen is already open
         // underneath, so the popup just goes and the screen has the focus again.
-        if (confirmReturnTo === 'settings' || confirmReturnTo === 'game-settings') {
+        if (confirmReturnTo === 'settings' || confirmReturnTo === 'game-settings' || confirmReturnTo === 'none') {
           closePopup();
           break;
         }
@@ -791,6 +799,11 @@ export function createPopups(deps: PopupsDeps): Popups {
       // The full quit. No confirm either: it is as recoverable as relaunching from the Steam library —
       // and in Game Mode this is the only way out, so a confirm would sit between the user and the exit
       // every single time.
+      if (deps.getJobCount() > 0) {
+        audio.play('button');
+        openConfirm('quit-with-jobs');
+        return;
+      }
       closePopup();
       deps.api.requestQuit();
     } else if (btn === confirmYes) {
@@ -858,6 +871,7 @@ export function createPopups(deps: PopupsDeps): Popups {
       return;
     }
     const mode = confirmMode;
+    if (quitModeAction(mode) !== null) deferred.quitAnswered();
     closePopup();
     runConfirmedAction(mode, {
       api: deps.api,
@@ -935,16 +949,8 @@ export function createPopups(deps: PopupsDeps): Popups {
                     : 'discard-game-settings',
       );
     },
-    askGameCollision: (collision) => {
-      // One at a time, and never over something the user is in the middle of: a confirm, the Customize
-      // screen's own question, the power menu. It is picked up the moment the surface clears.
-      if (popupView !== 'none' || deps.gameSettings.isOpen() || deps.settings.isOpen()) {
-        queuedCollision = collision;
-        return;
-      }
-      askedCollision = collision;
-      openConfirm('game-collision');
-    },
+    askQuit: (action) => deferred.askQuit(action),
+    askGameCollision: (collision) => deferred.askCollision(collision),
     showBusy: openBusy,
     closeBusy: () => {
       if (popupView !== 'busy') return;
@@ -976,6 +982,8 @@ export function createPopups(deps: PopupsDeps): Popups {
       ) {
         closePopup();
       }
+      const quitAction = quitModeAction(confirmMode);
+      if (popupView === 'confirm' && quitAction !== null) confirmMessage.textContent = quitQuestion(t(), quitAction, deps.getJobCount());
       menuItems.applyPowerItems(gameMode);
       applyStackFocus();
     },

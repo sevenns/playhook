@@ -108,6 +108,7 @@ export const en = {
   'launcher.confirm.shutdown': 'Shut down the PC?',
   'launcher.confirm.reboot': 'Reboot the PC?',
   'launcher.confirm.sleep': 'Put the PC to sleep?',
+  'launcher.confirm.quit': 'Quit Playhook?',
   'launcher.installPathNote':
     'Since not all installers support silent mode, during installation you need to specify the following path:',
   // The copy variant of the note: no installer runs, so neither the silent-mode caveat nor the

@@ -15,6 +15,8 @@ import { PcLibraryStore } from './pc-library';
 import { DriveWatcher } from './drive-watcher';
 import { GameController } from './game-controller';
 import { ActivityRegistry } from './activity-registry';
+import { QuitGate, quitGraceMs, withGrace } from './quit-gate';
+import { quitQuestion } from '../shared/quit';
 import {
   waitForExit,
   waitForStart,
@@ -148,8 +150,11 @@ function openGamesFolder(): void {
   void shell.openPath(dir);
 }
 
-function quit(): void {
+/** The managed exit: waits a bounded grace for the running jobs to clean up, then leaves. */
+async function quit(): Promise<void> {
   quitting = true;
+  const jobs = controllerRef?.jobs;
+  if (jobs?.anyActive() === true) await withGrace(jobs.abortAll('shutdown'), quitGraceMs());
   controllerRef?.shutdown();
   globalGamepadRef?.stop();
   keepAwakeRef?.dispose();
@@ -309,6 +314,26 @@ async function bootstrap(): Promise<void> {
   });
   controllerRef = controller;
   controller.init();
+
+  const quitGate = new QuitGate({
+    activeJobs: () => controller.jobs.activeCount(),
+    showAndFocus: () => window.showAndFocus(),
+    askInWindow: (action) => window.send(IPC.quitConfirm, action),
+    askNatively: async (action, jobs) => {
+      const t = getTranslator();
+      const { response } = await dialog.showMessageBox({
+        type: 'question',
+        buttons: [t('common.no'), t('common.yes')],
+        defaultId: 0,
+        cancelId: 0,
+        message: quitQuestion(t, action, jobs),
+      });
+      return response === 1;
+    },
+  });
+  ipcMain.on(IPC.quitConfirmReply, (_event, reply: unknown) => {
+    if (reply === 'shown' || reply === 'dismissed') quitGate.reply(reply);
+  });
 
   // Keep the display awake while the launcher owns the session. Single recompute point over two flags
   // (the setting + whether the window is on screen) plus the running AppState — main is single-threaded,
@@ -547,7 +572,7 @@ async function bootstrap(): Promise<void> {
     onToggleSteamShortcut: () => {
       void (steamShortcut.isRegistered() ? steamShortcut.remove() : steamShortcut.add());
     },
-    onQuit: () => quit(),
+    onQuit: () => quitGate.request('quit', false, () => void quit()),
   };
   // SteamOS Game Mode has no system tray (gamescope). Skip it there — the window is always shown and Steam
   // manages the app as a non-Steam game. Desktop Mode (KDE) and Windows keep the tray (refreshTrayMenu
@@ -576,16 +601,22 @@ async function bootstrap(): Promise<void> {
   // the bootstrap quit() (drops the window close-guards), sleep suspends in place.
   const power = createPowerService({
     backend: platform.powerBackend,
-    quit: () => quit(),
+    quit: () => void quit(),
     showError: (message) => window.send(IPC.errorShow, message),
     getTranslator,
   });
-  ipcMain.on(IPC.actionShutdown, () => void power.perform('shutdown'));
-  ipcMain.on(IPC.actionReboot, () => void power.perform('reboot'));
+  ipcMain.on(IPC.actionShutdown, (_event, confirmed: unknown) =>
+    quitGate.request('shutdown', confirmed === true, () => void power.perform('shutdown')),
+  );
+  ipcMain.on(IPC.actionReboot, (_event, confirmed: unknown) =>
+    quitGate.request('reboot', confirmed === true, () => void power.perform('reboot')),
+  );
   ipcMain.on(IPC.actionSleep, () => void power.perform('sleep'));
   // Game Mode "Close Playhook": full quit via the same bootstrap path as the tray Quit (drops the window
   // close-guards, disposes services). Only ever sent from the Game Mode power menu — Desktop keeps hiding.
-  ipcMain.on(IPC.actionQuit, () => quit());
+  ipcMain.on(IPC.actionQuit, (_event, confirmed: unknown) =>
+    quitGate.request('quit', confirmed === true, () => void quit()),
+  );
 
   // Applies a language change everywhere: re-resolve the locale, rebuild the tray menu, re-title the
   // window and push the effective locale to the launcher.

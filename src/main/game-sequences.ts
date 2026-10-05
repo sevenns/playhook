@@ -16,6 +16,7 @@ import type { ResolvedManifest } from './manifest-types';
 import { type Translator } from '../shared/i18n/index';
 import { type ControllerDeps } from './controller-deps';
 import { LaunchAbortedError } from './launch-errors';
+import { installMarkerOf } from './game-jobs';
 import { openSteamUri } from './steam-uri';
 import { type GameProcess, type Platform, type ProcessMonitor } from './platform';
 import { normalizeImageNames } from './image-names';
@@ -673,6 +674,7 @@ export class GameSequences {
       // Pre-clean: a partial install left by a previous failed attempt could carry a stale <exe> →
       // a bogus "Play". We're (re)installing anyway, so a clean directory is safe.
       await fse.remove(install.dir);
+      await fse.outputFile(installMarkerOf(install.dir), '');
 
       if (install.type !== 'copy') {
         // Silent by default; a user who enabled "disable silent installer mode" gets the visible wizard
@@ -710,6 +712,7 @@ export class GameSequences {
       // Installed: rebuild GameInfo so requiresInstall recomputes to false (the executable now exists),
       // flipping the button back to "Play". The next press launches normally from the install dir.
       const currentStats = await stats.read(manifest.raw.id);
+      await fse.remove(installMarkerOf(install.dir));
       const installedInfo = await this.host.buildGameInfo(manifest, currentStats);
       log.info(`[install] completed id=${manifest.raw.id} dir="${install.dir}"`);
       this.host.enterReady(installedInfo);

@@ -5,6 +5,7 @@
 import type { Locale } from './i18n/index';
 import type { ArtworkQuality } from './artwork-filter';
 import type { ActivityMap, GameJobFailure } from './activity';
+import type { QuitAction, QuitConfirmReply } from './quit';
 
 // ── Card format: the few facts both sides must agree on ───────────────────────────────────────
 
@@ -483,6 +484,10 @@ export const IPC = {
   /** renderer → main: quit the whole app. In Game Mode (gamescope) the power menu's primary item becomes
    * "Close Playhook" (there is no tray to minimize into), which sends this instead of actionHide. */
   actionQuit: 'action:quit',
+  /** main → renderer: background jobs are running — ask before this QuitAction (tray Quit, a raced Quit). */
+  quitConfirm: 'quit:confirm',
+  /** renderer → main: the quit question was shown (or queued), or closed without a Yes (QuitConfirmReply). */
+  quitConfirmReply: 'quit:confirm-reply',
   /** renderer → main (invoke): whether this is a SteamOS Game Mode (gamescope) session. Seeded once at
    * startup so the renderer can adapt the UI (e.g. "Minimize" → "Close Playhook"). */
   gameModeRequest: 'app:game-mode-request',
@@ -1189,15 +1194,17 @@ export interface RendererApi {
   cancelJob(id: string): void;
   requestHide(): void;
   /** Quit the whole app (Game Mode's "Close Playhook" — no tray to minimize into). */
-  requestQuit(): void;
+  requestQuit(confirmed?: boolean): void;
+  onQuitConfirm(callback: (action: QuitAction) => void): void;
+  quitConfirmReply(reply: QuitConfirmReply): void;
   /** Whether this is a SteamOS Game Mode (gamescope) session, seeded once at startup. */
   requestGameMode(): Promise<boolean>;
   /** Open Steam's Downloads page so the user can pause/resume a Steam download from Steam itself. */
   openSteamDownloads(): void;
   /** Power off the PC (after the in-launcher confirm). */
-  requestShutdown(): void;
+  requestShutdown(confirmed?: boolean): void;
   /** Restart the PC (after the in-launcher confirm). */
-  requestReboot(): void;
+  requestReboot(confirmed?: boolean): void;
   /** Put the PC to sleep (after the in-launcher confirm). */
   requestSleep(): void;
   /** Force-close the running game (after the in-launcher confirm). */

@@ -17,6 +17,8 @@ const DEFAULT_MAX_PARALLEL_COPY_INSTALLS = 2;
 
 const PARTIAL_SUFFIX = '.partial';
 
+const INSTALL_MARKER = '.playhook-installing';
+
 export type GameJobKind = 'install' | 'uninstall' | 'prefix-cleanup';
 
 /** Why a job was stopped before it finished; `user` and `shutdown` are never reported as a failure. */
@@ -84,6 +86,11 @@ export function partialDirOf(installDir: string): string {
   return `${installDir}${PARTIAL_SUFFIX}`;
 }
 
+/** The file an installer run leaves in its install dir until it finished: there, the game is not installed. */
+export function installMarkerOf(installDir: string): string {
+  return path.join(installDir, INSTALL_MARKER);
+}
+
 function throwIfAborted(job: Job): void {
   if (job.abort.signal.aborted) throw new LaunchAbortedError();
 }
@@ -143,6 +150,25 @@ export class GameJobs {
   abortWhere(predicate: (job: GameJob) => boolean, reason: JobAbortReason): void {
     for (const job of [...this.jobs.values()]) {
       if (predicate(job)) this.stop(job, reason);
+    }
+  }
+
+  /**
+   * Removes the staging dirs a copy left behind when the launcher was killed mid-way (a quit through the
+   * tray or the menu waits for the cleanup; a crash or an OS logout does not). Skips games with a job.
+   */
+  async sweepPartials(manifests: readonly ResolvedManifest[]): Promise<void> {
+    for (const manifest of manifests) {
+      const install = manifest.install;
+      if (install?.type !== 'copy' || this.jobs.has(manifest.raw.id)) continue;
+      const partial = partialDirOf(install.dir);
+      if (!(await fse.pathExists(partial))) continue;
+      log.info(`[jobs] removing an orphaned ${PARTIAL_SUFFIX} of id=${manifest.raw.id}`);
+      await fse
+        .remove(partial)
+        .catch((cause: unknown) =>
+          log.warn(`[jobs] could not remove "${partial}":`, describe(cause)),
+        );
     }
   }
 

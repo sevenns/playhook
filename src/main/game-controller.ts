@@ -39,7 +39,7 @@ import { BrowsePresenter } from './browse-presenter';
 import { GameSequences } from './game-sequences';
 import { SaveSyncFlow } from './save-sync-flow';
 import { SteamActivityWatch, type SteamWatchEntry } from './steam-activity-watch';
-import { GameJobs } from './game-jobs';
+import { GameJobs, installMarkerOf } from './game-jobs';
 import { describe } from './util';
 import { log } from './logger';
 
@@ -548,6 +548,7 @@ export class GameController {
     const keepSelection =
       !opts.focus && manifests.some((manifest) => manifest.raw.id === this.selectedId);
     this.cardGames = manifests;
+    void this.jobs.sweepPartials(manifests);
     if (!keepSelection) this.selectedId = manifests[0]?.raw.id ?? null;
     this.warnShadowedLocalGames();
     this.sequences.unlock();
@@ -641,6 +642,7 @@ export class GameController {
     const env: ManifestEnv = { documents: app.getPath('documents'), t: this.t };
     const read = await this.deps.pcLibrary.read(env, this.deps.platform.resolveInstallDir);
     this.pcGames = [...read.manifests];
+    void this.jobs.sweepPartials(read.manifests);
     log.info(`[pc-library] ${read.manifests.length} local game(s) ids=[${read.manifests.map((m) => m.raw.id).join(',')}]`);
     this.warnShadowedLocalGames();
     // A local game that is gone takes its collision answer with it: there is nothing left to collide,
@@ -1155,7 +1157,8 @@ export class GameController {
       installVia = 'steam';
     } else if (manifest.install !== undefined) {
       // Card-install mode: installed ⇔ the resolved executable exists; that also enables Uninstall.
-      const installed = await fse.pathExists(manifest.executablePath);
+      const installed =
+        (await fse.pathExists(manifest.executablePath)) && !(await fse.pathExists(installMarkerOf(manifest.install.dir)));
       requiresInstall = !installed;
       canUninstall = installed;
       // `copy` shares this branch but not its install-confirm copy: no installer runs, so the silent-mode

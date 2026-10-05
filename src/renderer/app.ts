@@ -25,7 +25,7 @@ import { createCardArtCache } from './card-art.js';
 import { createLibraryScreen } from './library-screen.js';
 import { createToast } from './toast.js';
 import { formatDate, formatNotification, formatPlaytime } from './format.js';
-import { activityBusyKind, activityStatus, busyIds, gameOf, phaseOf, screenActivityOf, statusOf } from './state-view.js';
+import { activityBusyKind, activityStatus, busyIds, gameOf, jobCountOf, phaseOf, screenActivityOf, statusOf } from './state-view.js';
 import { req } from './dom.js';
 
 const app = req('app');
@@ -273,11 +273,12 @@ const controls = createControls({
     requestKill: () => window.api.requestKill(),
     forgetGame: (id) => window.api.forgetGame(id),
     openSteamDownloads: () => window.api.openSteamDownloads(),
-    requestShutdown: () => window.api.requestShutdown(),
-    requestReboot: () => window.api.requestReboot(),
+    requestShutdown: (confirmed) => window.api.requestShutdown(confirmed),
+    requestReboot: (confirmed) => window.api.requestReboot(confirmed),
     requestSleep: () => window.api.requestSleep(),
     requestHide: () => window.api.requestHide(),
-    requestQuit: () => window.api.requestQuit(),
+    requestQuit: (confirmed) => window.api.requestQuit(confirmed),
+    quitConfirmReply: (reply) => window.api.quitConfirmReply(reply),
     resolveGameCollision: (answer) => window.api.resolveGameCollision(answer),
     markNotificationsRead: () => window.api.markNotificationsRead(),
     dismissNotification: (id) => window.api.dismissNotification(id),
@@ -293,6 +294,7 @@ const controls = createControls({
   isBooting: () => !boot.isRevealed(),
   getBrowse: () => currentBrowse,
   getScreenActivity: () => screenActivityOf(currentBrowse, currentActivities),
+  getJobCount: () => jobCountOf(currentActivities),
   audio,
   getTranslator,
   settings: settingsScreen,
@@ -754,6 +756,7 @@ void window.api.requestActivities().then((activities) => {
   render(currentState);
 });
 
+window.api.onQuitConfirm((action) => controls.askQuit(action));
 window.api.onStateUpdate(render);
 void window.api.requestState().then((state) => {
   render(state);

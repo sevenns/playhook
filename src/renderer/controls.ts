@@ -18,6 +18,7 @@ import type { SystemCardId } from './system-cards.js';
 import { gameOf, opensSteamDownloads, phaseOf } from './state-view.js';
 import { pressFlash, req } from './dom.js';
 import type { GameCollision } from '../shared/types.js';
+import type { QuitAction } from '../shared/quit.js';
 import type { ControlsDeps } from './controls-deps.js';
 
 export interface Controls {
@@ -60,6 +61,8 @@ export interface Controls {
    * card it is about is already loaded.
    */
   askGameCollision(collision: GameCollision): void;
+  /** main asks before a quit / shutdown / reboot while background jobs run (tray Quit, a raced Quit). */
+  askQuit(action: QuitAction): void;
   /** Per-render refresh: force-close the popup off the ready screen (or while steam-busy), then re-apply focus. */
   refresh(): void;
   /** Opens the error popup with the given message (a failed launch/action from main). */
@@ -197,23 +200,11 @@ export function createControls(deps: ControlsDeps): Controls {
   let wasActive = false;
   // The popup column (popups.ts): every view of #popup, its vertical stack and what its buttons do.
   const popups = createPopups({
-    api: deps.api,
-    audio,
-    getState: () => deps.getState(),
-    getBrowse: () => deps.getBrowse(),
-    getTranslator: () => deps.getTranslator(),
-    getLocale: () => deps.getLocale(),
-    getNotifications: () => deps.getNotifications(),
-    carousel: deps.carousel,
-    settings: deps.settings,
-    gameSettings: deps.gameSettings,
-    library: deps.library,
+    ...deps,
     hover,
     screenGame,
     screenIsActionable,
     screenActivity: () => deps.getScreenActivity(),
-    openGameDetail: (id) => deps.openGameDetail(id),
-    onPopupClosed: () => deps.onPopupClosed(),
     onFocusChanged: () => applyFocus(),
   });
 
@@ -744,6 +735,7 @@ export function createControls(deps: ControlsDeps): Controls {
     confirmResetSettings: () => popups.confirmResetSettings(),
     confirmGameSettings: (kind, options) => popups.confirmGameSettings(kind, options),
     askGameCollision: (collision) => popups.askGameCollision(collision),
+    askQuit: (action) => popups.askQuit(action),
     showBusy: (message, onStop) => popups.showBusy(message, onStop),
     closeBusy: () => popups.closeBusy(),
     openSystemCard: (id) => popups.openSystemCard(id),

@@ -9,6 +9,7 @@ import type {
   GameCollisionAnswer,
 } from '../shared/types.js';
 import type { GameActivity } from '../shared/activity.js';
+import type { QuitConfirmReply } from '../shared/quit.js';
 import type { Locale, MessageKey, Translator } from '../shared/i18n/index.js';
 import type { AudioController } from './audio.js';
 import type { MoveResult } from './carousel.js';
@@ -29,13 +30,16 @@ export interface ControlsApi {
   forgetGame(id: string): void;
   /** The gear on a Steam download: opens Steam's own Downloads page, the only pause/resume there is. */
   openSteamDownloads(): void;
-  requestShutdown(): void;
-  requestReboot(): void;
+  /** `confirmed`: the user already said yes to it, with the running jobs named in the question. */
+  requestShutdown(confirmed?: boolean): void;
+  requestReboot(confirmed?: boolean): void;
   requestSleep(): void;
   /** "Minimize Playhook" — hide to the tray. */
   requestHide(): void;
-  /** "Close Playhook" — the full quit. */
-  requestQuit(): void;
+  /** "Close Playhook" — the full quit; `confirmed` as for requestShutdown. */
+  requestQuit(confirmed?: boolean): void;
+  /** Tells main its quit question is up (or queued), or was closed without a Yes. */
+  quitConfirmReply(reply: QuitConfirmReply): void;
   /** The answer to a card-vs-PC collision question; fails when the card is no longer the one asked about. */
   resolveGameCollision(answer: GameCollisionAnswer): Promise<ConfigSaveResult>;
   /** Opening the inbox IS reading it. */
@@ -58,6 +62,8 @@ export interface ControlsDeps {
   getBrowse(): BrowseInfo | null;
   /** The activity of the game on screen (a Steam download, a removal), or undefined when it is free. */
   getScreenActivity(): GameActivity | undefined;
+  /** How many background installs / uninstalls are queued or running — a quit asks first while any are. */
+  getJobCount(): number;
   /** The shared audio controller (UI sounds). */
   audio: AudioController;
   /** The current translator (read live so menu/confirm copy follows the language). */

@@ -739,6 +739,34 @@ describe('GameController sequences', () => {
     });
   });
 
+  describe('install marker', () => {
+    it('an installer run that never finished leaves the game on Install even with its executable there', async () => {
+      h = await harness({ mode: 'install' });
+      const built = h;
+      await fs.mkdir(path.join(built.tmp, 'installed'), { recursive: true });
+      await fs.writeFile(path.join(built.tmp, 'installed', 'game.exe'), '');
+      await fs.writeFile(path.join(built.tmp, 'installed', '.playhook-installing'), '');
+      await built.controller.reloadPcLibrary();
+      expect(built.state.get()).toMatchObject({ kind: 'ready', game: { requiresInstall: true } });
+      await fs.rm(path.join(built.tmp, 'installed', '.playhook-installing'));
+      await built.controller.reloadPcLibrary();
+      expect(built.state.get()).toMatchObject({ kind: 'ready', game: { requiresInstall: false } });
+    });
+
+    it('a finished installer run takes its marker away', async () => {
+      h = await harness({ mode: 'install' });
+      h.installerWritesExe = true;
+      fire(IPC.actionLaunch);
+      await reached(h.journal, 'state:installing');
+      const marker = path.join(h.tmp, 'installed', '.playhook-installing');
+      await waitFor(() => fsSync.existsSync(marker), 'the install marker');
+      h.exit();
+      await settled(h.journal, 'proc:dispose');
+      expect(fsSync.existsSync(path.join(h.tmp, 'installed', '.playhook-installing'))).toBe(false);
+      expect(h.state.get()).toMatchObject({ kind: 'ready', game: { requiresInstall: false } });
+    });
+  });
+
   describe('uninstall', () => {
     async function installed(sweepDir?: string, uninstaller = false): Promise<Harness> {
       const built = await harness({ mode: 'install', sweepDir, uninstaller });
@@ -915,6 +943,16 @@ describe('GameController sequences', () => {
       await expect(fs.stat(path.join(built.tmp, 'installed', 'game.exe'))).rejects.toThrow();
       built.exit();
       await settled(built.journal, 'proc:dispose');
+    });
+
+    it('a staging dir left by a killed launcher is swept when the library is read', async () => {
+      h = await harness({ mode: 'copy' });
+      const built = h;
+      const partial = path.join(built.tmp, 'installed.partial');
+      await fs.mkdir(partial, { recursive: true });
+      await fs.writeFile(path.join(partial, 'game.exe'), '');
+      await built.controller.reloadPcLibrary();
+      await waitFor(() => !fsSync.existsSync(partial), 'the orphaned staging dir to go');
     });
 
     it('a reload that drops the game stops its copy', async () => {

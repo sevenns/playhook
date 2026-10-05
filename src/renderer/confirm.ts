@@ -5,6 +5,7 @@ import type { AudioController } from './audio.js';
 import type { ControlsApi, GameSettingsNav, SettingsNav } from './controls-deps.js';
 import type { BrowseInfo, GameCollision, GameInfo } from '../shared/types.js';
 import type { Translator } from '../shared/i18n/index.js';
+import { quitQuestion, type QuitAction } from '../shared/quit.js';
 
 // Which action the confirm view is asking about (only meaningful while the popup shows 'confirm').
 export type ConfirmMode =
@@ -32,11 +33,13 @@ export type ConfirmMode =
   | 'replace-game-title'
   // The same game turned up on the card AND on this PC. Both answers are answers — "No" means "leave
   // them as they are", not "never mind" — and both are remembered (see GameCollision).
-  | 'game-collision';
+  | 'game-collision'
+  // Quit with background installs / uninstalls running: they would be cancelled, so it is asked first.
+  | 'quit-with-jobs';
 
 /** Where B/Esc/veil returns FROM the confirm view: install/uninstall come from Details, the power
  *  actions come from Power; a screen's question returns to that screen, which is still open underneath. */
-export type ConfirmReturnTo = 'details' | 'power' | 'settings' | 'game-settings';
+export type ConfirmReturnTo = 'details' | 'power' | 'settings' | 'game-settings' | 'none';
 
 /** What the confirm view shows for one question. Fields left undefined leave the DOM as it was. */
 export interface ConfirmCopy {
@@ -65,6 +68,8 @@ export interface ConfirmContext {
   deletesLocalGame(): boolean;
   /** The game name the "replace the title?" question quotes. */
   readonly title: string;
+  /** How many background installs / uninstalls a quit, shutdown or reboot would cancel. */
+  readonly jobCount: number;
 }
 
 /**
@@ -195,13 +200,15 @@ export function describeConfirm(
     return { returnTo: 'details', message: t('launcher.confirm.kill'), installVia: null };
   }
   // Power action: a single-question confirm, no path note (data-mode ≠ 'install' hides it).
-  const key =
-    mode === 'shutdown'
-      ? 'launcher.confirm.shutdown'
-      : mode === 'reboot'
-        ? 'launcher.confirm.reboot'
-        : 'launcher.confirm.sleep';
-  return { returnTo: 'power', message: t(key), installVia: null };
+  if (mode === 'sleep') return { returnTo: 'power', message: t('launcher.confirm.sleep'), installVia: null };
+  const action = mode === 'quit-with-jobs' ? 'quit' : mode;
+  return { returnTo: 'power', message: quitQuestion(t, action, ctx.jobCount), installVia: null };
+}
+
+/** The QuitAction a quit / shutdown / reboot question is about, or null for any other question. */
+export function quitModeAction(mode: ConfirmMode): QuitAction | null {
+  if (mode === 'quit-with-jobs') return 'quit';
+  return mode === 'shutdown' || mode === 'reboot' ? mode : null;
 }
 
 export interface ConfirmActionDeps {
@@ -245,11 +252,15 @@ export function runConfirmedAction(
     }
     case 'shutdown':
       audio.play('button');
-      deps.api.requestShutdown();
+      deps.api.requestShutdown(true);
       break;
     case 'reboot':
       audio.play('button');
-      deps.api.requestReboot();
+      deps.api.requestReboot(true);
+      break;
+    case 'quit-with-jobs':
+      audio.play('button');
+      deps.api.requestQuit(true);
       break;
     case 'sleep':
       audio.play('button');

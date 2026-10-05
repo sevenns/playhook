@@ -85,6 +85,7 @@ export const ru: Record<MessageKey, string> = {
   'launcher.confirm.forget':
     'Убрать «{title}» из библиотеки? Сейвы и статистика останутся — вставьте карту, и игра вернётся.',
   'launcher.confirm.sleep': 'Перевести компьютер в спящий режим?',
+  'launcher.confirm.quit': 'Выйти из Playhook?',
   'launcher.installPathNote':
     'Не все установщики поддерживают тихий режим, поэтому при установке нужно указать следующий путь:',
   'launcher.copyNote':

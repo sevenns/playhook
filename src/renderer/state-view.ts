@@ -134,6 +134,11 @@ export function cancellableInstall(activity: GameActivity | undefined): boolean 
   return activity?.kind === 'queued' || activity?.kind === 'installing' || activity?.kind === 'configuringProton';
 }
 
+/** How many background installs / uninstalls are queued or running (Steam's own activities aside). */
+export function jobCountOf(activities: ActivityMap): number {
+  return Object.values(activities).filter((activity) => !activity.kind.startsWith('steam-')).length;
+}
+
 /** Whether two id sets hold the same ids. */
 export function sameIds(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
   return a.size === b.size && [...a].every((id) => b.has(id));
