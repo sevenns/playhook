@@ -380,3 +380,26 @@ describe('controls Play with per-game activities', () => {
     expect(api.openSteamDownloads).not.toHaveBeenCalled();
   });
 });
+
+describe('controls Force close', () => {
+  const OTHER_GAME: GameInfo = { ...LOCAL_GAME, id: 'other', title: 'Other' };
+  const killHidden = (): boolean => req('menu-kill').classList.contains('is-hidden');
+
+  it('is offered on the detail screen of the running game', () => {
+    harness.screen = 'detail';
+    harness.browse = browsing(LOCAL_GAME);
+    harness.state = { kind: 'running', game: LOCAL_GAME, since: 0 };
+    req('more-button').click();
+
+    expect(killHidden()).toBe(false);
+  });
+
+  it("is not offered on another game's detail screen while one runs", () => {
+    harness.screen = 'detail';
+    harness.browse = browsing(OTHER_GAME);
+    harness.state = { kind: 'running', game: LOCAL_GAME, since: 0 };
+    req('more-button').click();
+
+    expect(killHidden()).toBe(true);
+  });
+});

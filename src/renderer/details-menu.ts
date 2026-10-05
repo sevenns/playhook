@@ -87,7 +87,8 @@ export function createDetailsMenu(deps: DetailsMenuDeps): DetailsMenu {
     // Shown only while a game is running AND a force-close isn't already in flight (during killing the
     // status reads "Force closing…" and the button would be a no-op — main guards a repeat anyway).
     const s = state();
-    const running = onGameScreen() && s.kind === 'running' && s.killing !== true;
+    const running =
+      onGameScreen() && s.kind === 'running' && s.killing !== true && deps.getBrowse()?.id === s.game.id;
     menuKill.classList.toggle('is-hidden', !running);
     if (running) menuKill.textContent = t()('launcher.menu.forceClose');
   }
