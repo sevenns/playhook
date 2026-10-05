@@ -183,6 +183,52 @@ describe('SteamActivityWatch transitions', () => {
   });
 });
 
+describe('SteamActivityWatch pre-loads', () => {
+  const preloadAcf = (appid: number, downloaded: number): string =>
+    [
+      '"AppState"',
+      '{',
+      `\t"appid"\t\t"${appid}"`,
+      '\t"StateFlags"\t\t"1026"',
+      '\t"buildid"\t\t"0"',
+      '\t"UpdateResult"\t\t"25"',
+      '\t"BytesToDownload"\t\t"86248618160"',
+      `\t"BytesDownloaded"\t\t"${downloaded}"`,
+      '\t"BytesToStage"\t\t"128606066"',
+      '\t"BytesStaged"\t\t"128606066"',
+      '}',
+      '',
+    ].join('\n');
+  const writeAcf = (appid: number, text: string): Promise<void> =>
+    fs.writeFile(path.join(root, 'steamapps', `appmanifest_${appid}.acf`), text);
+
+  it('a finished pre-load of an unreleased game (UpdateResult 25, every byte in) is marked as one', async () => {
+    await writeAcf(A.appid, preloadAcf(A.appid, 86248618160));
+    await fixture.watch.scanNow();
+    expect(fixture.registry.get('a')).toEqual({
+      kind: 'steam-installing',
+      paused: true,
+      pausedProgress: 1,
+      preloaded: true,
+    });
+  });
+
+  it('the same result before every byte is in stays an ordinary paused download', async () => {
+    await writeAcf(A.appid, preloadAcf(A.appid, 1000));
+    await fixture.watch.scanNow();
+    expect(fixture.registry.get('a')).toEqual({ kind: 'steam-installing', paused: true, pausedProgress: 1 });
+  });
+
+  it('the release turns the pre-load into an install, with its notification', async () => {
+    await writeAcf(A.appid, preloadAcf(A.appid, 86248618160));
+    await fixture.watch.scanNow();
+    await fixture.acf(A.appid, 'installed');
+    await fixture.watch.scanNow();
+    expect(fixture.registry.has('a')).toBe(false);
+    expect(fixture.events).toEqual(['changed:a', 'changed:a', 'installed:a']);
+  });
+});
+
 describe('SteamActivityWatch uninstall requests', () => {
   it('shows uninstalling while the game is still installed, then notifies once it is gone', async () => {
     await fixture.acf(A.appid, 'installed');

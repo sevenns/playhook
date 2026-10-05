@@ -20,6 +20,8 @@ import { log } from './logger';
 /** StateFlags bit set by Steam once an app is fully installed (not merely downloading/updating). */
 const STATE_FULLY_INSTALLED = 4;
 
+const UPDATE_RESULT_NOT_RELEASED = 25;
+
 /**
  * Where a Steam app stands locally, derived from its `.acf`:
  * - `installed`   — fully installed (StateFlags bit 4), ready to launch.
@@ -31,7 +33,12 @@ const STATE_FULLY_INSTALLED = 4;
  */
 export type SteamInstallStatus =
   | { readonly state: 'installed' }
-  | { readonly state: 'downloading'; readonly paused: boolean; readonly progress: number | null }
+  | {
+      readonly state: 'downloading';
+      readonly paused: boolean;
+      readonly progress: number | null;
+      readonly preloaded: boolean;
+    }
   | { readonly state: 'absent' };
 
 /**
@@ -89,6 +96,7 @@ type AcfState = {
   readonly paused: boolean;
   /** Snapshot completion fraction 0..1 (staged ?? downloaded), or null if not computable. */
   readonly progress: number | null;
+  readonly preloaded: boolean;
 };
 
 /** num/den clamped to 0..1, or null when not computable. */
@@ -112,10 +120,12 @@ async function readAcfState(acfPath: string): Promise<AcfState | null> {
     fraction(readAcfNumber(content, 'BytesDownloaded'), readAcfNumber(content, 'BytesToDownload'));
   // EResult: 0 (none/in-progress) and 1 (OK) are "active/fine"; >=2 means the download isn't moving.
   const updateResult = readAcfNumber(content, 'UpdateResult') ?? 0;
+  const downloaded = fraction(readAcfNumber(content, 'BytesDownloaded'), readAcfNumber(content, 'BytesToDownload'));
   return {
     fullyInstalled: (flags & STATE_FULLY_INSTALLED) === STATE_FULLY_INSTALLED,
     paused: updateResult >= 2,
     progress,
+    preloaded: updateResult === UPDATE_RESULT_NOT_RELEASED && downloaded === 1,
   };
 }
 
@@ -136,6 +146,7 @@ async function statusInLibraries(appid: number, libs: readonly string[]): Promis
       state: 'downloading',
       paused: acf.paused,
       progress: acf.paused ? acf.progress : null,
+      preloaded: acf.preloaded,
     };
   }
   return downloading ?? { state: 'absent' };

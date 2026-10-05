@@ -125,6 +125,7 @@ export const ru: Record<MessageKey, string> = {
   'launcher.state.installingPausedPercent': 'Установка приостановлена на {percent}%...',
   'launcher.state.updating': 'Обновление...',
   'launcher.state.updatingPaused': 'Обновление приостановлено...',
+  'launcher.state.preloaded': 'Предзагрузка завершена',
 
   // ── Display formatters ───────────────────────────────────────────────────────
   'format.never': 'никогда',

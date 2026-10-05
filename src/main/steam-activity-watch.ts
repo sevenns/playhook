@@ -55,14 +55,19 @@ export function steamPollIntervalMs(env: NodeJS.ProcessEnv = process.env): numbe
   return Number.isInteger(parsed) && parsed > 0 ? parsed : DEFAULT_STEAM_POLL_MS;
 }
 
-/** The activity a download shows: an install or an update, with the snapshot percent while it is paused. */
+/**
+ * The activity a download shows: an install or an update, with the snapshot percent while it is paused,
+ * and an install marked as a finished pre-load while the game waits for its release.
+ */
 function downloadActivity(
   kind: 'steam-installing' | 'steam-updating',
   status: Extract<SteamInstallStatus, { state: 'downloading' }>,
 ): GameActivity {
-  return status.paused && status.progress !== null
-    ? { kind, paused: true, pausedProgress: status.progress }
-    : { kind, paused: status.paused };
+  const base: GameActivity =
+    status.paused && status.progress !== null
+      ? { kind, paused: true, pausedProgress: status.progress }
+      : { kind, paused: status.paused };
+  return base.kind === 'steam-installing' && status.preloaded ? { ...base, preloaded: true } : base;
 }
 
 /** Whether the activity is one this watch owns (it never touches a launcher job's activity). */

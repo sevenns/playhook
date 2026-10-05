@@ -100,6 +100,7 @@ export function activityStatus(activity: GameActivity, t: Translator): string {
     case 'steam-updating':
       return t(activity.paused ? 'launcher.state.updatingPaused' : 'launcher.state.updating');
     case 'steam-installing':
+      if (activity.preloaded === true) return t('launcher.state.preloaded');
       if (!activity.paused) return t('launcher.state.installing');
       return activity.pausedProgress === undefined
         ? t('launcher.state.installingPaused')

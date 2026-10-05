@@ -45,6 +45,15 @@ describe('activityStatus', () => {
     expect(activityStatus({ kind: 'steam-uninstalling' }, t)).toBe('Uninstalling...');
   });
 
+  it('a finished pre-load says so instead of a paused percent', () => {
+    expect(
+      activityStatus({ kind: 'steam-installing', paused: true, pausedProgress: 1, preloaded: true }, t),
+    ).toBe('Pre-load complete');
+    expect(
+      activityStatus({ kind: 'steam-installing', paused: true, pausedProgress: 1, preloaded: true }, createTranslator('ru')),
+    ).toBe('Предзагрузка завершена');
+  });
+
   it('a ready game says nothing about Steam on its own any more', () => {
     expect(statusOf({ kind: 'ready', game: GAME }, t)).toBe('');
   });

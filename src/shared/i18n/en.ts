@@ -152,6 +152,7 @@ export const en = {
   'launcher.state.installingPausedPercent': 'Installing paused on {percent}%...',
   'launcher.state.updating': 'Updating...',
   'launcher.state.updatingPaused': 'Updating paused...',
+  'launcher.state.preloaded': 'Pre-load complete',
 
   // ── Display formatters (format.ts) ──────────────────────────────────────────
   'format.never': 'never',

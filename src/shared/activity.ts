@@ -7,7 +7,12 @@ export type GameActivity =
   | { readonly kind: 'installing' }
   | { readonly kind: 'configuringProton' }
   | { readonly kind: 'uninstalling' }
-  | { readonly kind: 'steam-installing'; readonly paused: boolean; readonly pausedProgress?: number }
+  | {
+      readonly kind: 'steam-installing';
+      readonly paused: boolean;
+      readonly pausedProgress?: number;
+      readonly preloaded?: true;
+    }
   | { readonly kind: 'steam-updating'; readonly paused: boolean; readonly pausedProgress?: number }
   | { readonly kind: 'steam-uninstalling' };
 
