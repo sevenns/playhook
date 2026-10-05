@@ -125,6 +125,7 @@ export function createDarwinGameLauncher(deps: DarwinGameLauncherDeps): GameProc
     // null so an install-mode card is already rejected at manifest-read. These stay total and explicit.
     launchInstaller: () => refuseInstall(),
     prepareInstallDir: () => refuseInstall(),
+    needsProvisioning: () => Promise.resolve(false),
     launchUninstaller: () => refuseInstall(),
     resolveUninstaller: () => Promise.resolve(null),
     // Never reached (install mode never resolves on darwin); returns the same dir win32 would, so the

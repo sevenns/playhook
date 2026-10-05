@@ -359,6 +359,10 @@ export function createLinuxGameLauncher(deps: LinuxGameLauncherDeps): GameProces
     // copied files are about to be written INTO (launchGame only provisions when the card lists top-level
     // winetricks, and never applies the install baseline). Do it here, before the copy — same order and
     // same environment as the installer path: prefix first, game files second.
+    async needsProvisioning(install): Promise<boolean> {
+      const prefix = prefixForInstall(install.dir);
+      return pendingWinetricks(install.winetricks, await readDoneVerbs(prefix)).length > 0;
+    },
     async prepareInstallDir(install, onProvisioning): Promise<void> {
       const { prefix } = await preparePrefixForInstall(deps, install, onProvisioning);
       log.info(`[install] prefix ready for copy prefix="${prefix}" dir="${install.dir}"`);

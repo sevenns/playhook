@@ -1,19 +1,28 @@
 import path from 'node:path';
 import fse from 'fs-extra';
 import { ipcMain } from 'electron';
-import { IPC, type ManifestSource } from '../shared/types';
+import { IPC, type AppState, type ManifestSource } from '../shared/types';
 import { type GameActivity } from '../shared/activity';
 import { type Translator } from '../shared/i18n/index';
-import type { ResolvedCopyInstall, ResolvedInstall, ResolvedManifest } from './manifest-types';
+import type {
+  ResolvedCopyInstall,
+  ResolvedInstall,
+  ResolvedInstallerRun,
+  ResolvedManifest,
+} from './manifest-types';
 import { type ControllerDeps } from './controller-deps';
 import { type GameProcess } from './platform';
 import { findCaseInsensitiveName } from './manifest';
 import { LaunchAbortedError } from './launch-errors';
 import { removeWithRetry } from './remove-with-retry';
-import { describe } from './util';
+import { delay, describe } from './util';
 import { log } from './logger';
 
 const DEFAULT_MAX_PARALLEL_COPY_INSTALLS = 2;
+
+const DEFAULT_MAX_PARALLEL_INSTALLERS = 1;
+
+const INSTALL_POLL_INTERVAL_MS = 1000;
 
 const PARTIAL_SUFFIX = '.partial';
 
@@ -24,6 +33,61 @@ export type GameJobKind = 'install' | 'uninstall' | 'prefix-cleanup';
 /** Why a job was stopped before it finished; `user` and `shutdown` are never reported as a failure. */
 export type JobAbortReason = 'user' | 'card-removed' | 'shutdown' | 'game-gone';
 
+/** Which queue a job waits in: copies and installer runs have limits of their own, removals none. */
+export type JobLane = 'copy' | 'installer' | 'uninstall' | 'prefix-cleanup';
+
+/** What the session is doing, as far as starting a job goes. */
+export type SessionPhase = 'free' | 'active' | 'running';
+
+/** What is known about an install before it starts; undefined until it has been looked up. */
+export interface JobFacts {
+  /** The installer shows its wizard (silent installs are switched off in Settings). */
+  readonly interactive?: boolean;
+  /** Preparing the install's prefix would run winetricks. */
+  readonly provisions?: boolean;
+}
+
+export interface StartContext {
+  readonly session: SessionPhase;
+  readonly gamescope: boolean;
+  /** The install runs elevated (Windows: a UAC prompt and a blocking ShellExecuteEx). */
+  readonly elevated: boolean;
+  readonly runningInLane: number;
+  readonly laneLimit: number;
+}
+
+/** Start now, wait in the queue, or look the facts up first and then decide. */
+export type StartVerdict = 'start' | 'wait' | 'learn';
+
+/**
+ * Whether a queued job may start. Installer runs: at most `laneLimit` at once (MSI's global mutex fails a
+ * second one with 1618, repacks eat the machine), never an interactive or elevated one during a session
+ * (a wizard or a UAC prompt over the game), and under gamescope none at all while a game runs — the game has
+ * the only surface there, and even a silent installer opens windows. A copy waits under gamescope only when
+ * its prefix still needs winetricks, for the same reason. Removals always start.
+ */
+export function startVerdict(lane: JobLane, facts: JobFacts, ctx: StartContext): StartVerdict {
+  if (lane === 'uninstall' || lane === 'prefix-cleanup') return 'start';
+  if (ctx.runningInLane >= ctx.laneLimit) return 'wait';
+  const gameUnderGamescope = ctx.gamescope && ctx.session === 'running';
+  if (lane === 'copy') {
+    if (!gameUnderGamescope) return 'start';
+    if (facts.provisions === undefined) return 'learn';
+    return facts.provisions ? 'wait' : 'start';
+  }
+  if (gameUnderGamescope) return 'wait';
+  if (ctx.session === 'free') return 'start';
+  if (ctx.elevated) return 'wait';
+  if (facts.interactive === undefined) return 'learn';
+  return facts.interactive ? 'wait' : 'start';
+}
+
+/** The session phase of an AppState: settled, busy around a game, or with the game itself running. */
+export function sessionPhaseOf(kind: AppState['kind']): SessionPhase {
+  if (kind === 'idle' || kind === 'ready' || kind === 'error') return 'free';
+  return kind === 'running' ? 'running' : 'active';
+}
+
 /** What a caller may know about a job: whose it is, what it does, and where the game comes from. */
 export interface GameJob {
   readonly id: string;
@@ -32,7 +96,11 @@ export interface GameJob {
 }
 
 interface Job extends GameJob {
+  readonly lane: JobLane;
+  readonly install: ResolvedInstall | null;
   readonly title: string;
+  facts: JobFacts;
+  learning: boolean;
   readonly abort: AbortController;
   readonly body: (job: Job) => Promise<void>;
   readonly done: Promise<void>;
@@ -54,12 +122,15 @@ export interface GameJobsHost {
 
 export type GameJobsDeps = Pick<
   ControllerDeps,
-  'activities' | 'notifications' | 'getTranslator'
+  'activities' | 'notifications' | 'getTranslator' | 'settings' | 'isGamescope'
 > & {
+  readonly state: Pick<ControllerDeps['state'], 'get' | 'subscribe'>;
   readonly platform: {
     readonly gameLauncher: Pick<
       ControllerDeps['platform']['gameLauncher'],
       | 'prepareInstallDir'
+      | 'needsProvisioning'
+      | 'launchInstaller'
       | 'resolveUninstaller'
       | 'launchUninstaller'
       | 'uninstallDir'
@@ -70,6 +141,8 @@ export type GameJobsDeps = Pick<
   readonly host: GameJobsHost;
   /** How many copy installs run at once; the rest wait as `queued`. */
   readonly maxParallelCopies?: number;
+  /** How many installer runs go at once; the rest wait as `queued`. */
+  readonly maxParallelInstallers?: number;
 };
 
 /** A failure the job reports with its own message rather than the cause's. */
@@ -79,6 +152,12 @@ class JobFailure extends Error {}
 export function maxParallelCopyInstalls(env: NodeJS.ProcessEnv = process.env): number {
   const parsed = Number.parseInt(env['PLAYHOOK_MAX_PARALLEL_COPY_INSTALLS'] ?? '', 10);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : DEFAULT_MAX_PARALLEL_COPY_INSTALLS;
+}
+
+/** The installer-run limit: PLAYHOOK_MAX_PARALLEL_INSTALLERS when it is a positive integer, otherwise 1. */
+export function maxParallelInstallers(env: NodeJS.ProcessEnv = process.env): number {
+  const parsed = Number.parseInt(env['PLAYHOOK_MAX_PARALLEL_INSTALLERS'] ?? '', 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : DEFAULT_MAX_PARALLEL_INSTALLERS;
 }
 
 /** Where a copy install stages its files until they are complete: a sibling of the install dir. */
@@ -103,39 +182,56 @@ function throwIfAborted(job: Job): void {
 export class GameJobs {
   private readonly jobs = new Map<string, Job>();
   private readonly maxParallelCopies: number;
+  private readonly maxParallelInstallers: number;
 
   constructor(private readonly deps: GameJobsDeps) {
     this.maxParallelCopies = deps.maxParallelCopies ?? maxParallelCopyInstalls();
+    this.maxParallelInstallers = deps.maxParallelInstallers ?? maxParallelInstallers();
   }
 
   private get t(): Translator {
     return this.deps.getTranslator();
   }
 
-  /** Registers the renderer's Cancel for a queued or running install. */
+  /**
+   * Registers the renderer's Cancel for a queued or running install, and re-checks the queue on every
+   * session change: what waits for the game to end starts once the state settles.
+   */
   init(): void {
     ipcMain.on(IPC.actionCancelJob, (_event, id: unknown) => {
       if (typeof id === 'string') this.cancel(id);
     });
+    this.deps.state.subscribe(() => this.pump());
   }
 
-  /** Starts (or queues) a copy install. False when the game is busy already or is not a copy install. */
+  /** Starts (or queues) an install: a copy or an installer run. False when the game is busy already. */
   startInstall(manifest: ResolvedManifest): boolean {
     const install = manifest.install;
-    if (install?.type !== 'copy') return false;
-    return this.enqueue(manifest, 'install', (job) => this.runCopy(job, manifest, install));
+    if (install === undefined) return false;
+    if (install.type === 'copy') {
+      return this.enqueue(manifest, 'install', 'copy', install, (job) =>
+        this.runCopy(job, manifest, install),
+      );
+    }
+    return this.enqueue(manifest, 'install', 'installer', install, (job) =>
+      this.runInstaller(job, manifest, install),
+    );
   }
 
   /** Starts removing an installed game from the PC. False when the game is busy already. */
   startUninstall(manifest: ResolvedManifest): boolean {
     const install = manifest.install;
     if (install === undefined) return false;
-    return this.enqueue(manifest, 'uninstall', (job) => this.runUninstall(job, install));
+    return this.enqueue(manifest, 'uninstall', 'uninstall', install, (job) =>
+      this.runUninstall(job, install),
+    );
   }
 
   /** Starts clearing a plain game's Wine prefix. False when the game is busy already. */
   startPrefixCleanup(manifest: ResolvedManifest): boolean {
-    return this.enqueue(manifest, 'prefix-cleanup', (job) => this.runPrefixCleanup(job));
+    return this.enqueue(manifest, 'prefix-cleanup', 'prefix-cleanup', null, (job) =>
+      this.runPrefixCleanup(job),
+    );
   }
 
   /** The user's Cancel: stops a queued or running install of `id`. False when there is none. */
@@ -201,6 +297,8 @@ export class GameJobs {
   private enqueue(
     manifest: ResolvedManifest,
     kind: GameJobKind,
+    lane: JobLane,
+    install: ResolvedInstall | null,
     body: (job: Job) => Promise<void>,
   ): boolean {
     const id = manifest.raw.id;
@@ -219,6 +317,10 @@ export class GameJobs {
     const job: Job = {
       id,
       kind,
+      lane,
+      install,
+      facts: {},
+      learning: false,
       source: manifest.source,
       title: manifest.raw.title,
       abort: new AbortController(),
@@ -230,17 +332,48 @@ export class GameJobs {
       running: false,
     };
     this.jobs.set(id, job);
-    if (kind === 'install' && this.runningCopies() >= this.maxParallelCopies) {
+    this.pump();
+    if (!job.running) {
       this.deps.activities.set(id, { kind: 'queued' });
-      log.info(`[jobs] queued install id=${id}`);
-      return true;
+      log.info(`[jobs] queued ${lane} id=${id}`);
     }
-    this.launch(job);
     return true;
   }
 
-  private runningCopies(): number {
-    return [...this.jobs.values()].filter((job) => job.kind === 'install' && job.running).length;
+  private runningIn(lane: JobLane): number {
+    return [...this.jobs.values()].filter((job) => job.lane === lane && job.running).length;
+  }
+
+  private verdict(job: Job): StartVerdict {
+    return startVerdict(job.lane, job.facts, {
+      session: sessionPhaseOf(this.deps.state.get().kind),
+      gamescope: this.deps.isGamescope,
+      elevated: job.install?.runAsAdmin === true,
+      runningInLane: this.runningIn(job.lane),
+      laneLimit: job.lane === 'copy' ? this.maxParallelCopies : this.maxParallelInstallers,
+    });
+  }
+
+  /** Looks up what a queued install's start depends on, then re-checks the queue. */
+  private async learn(job: Job): Promise<void> {
+    if (job.learning || job.install === null) return;
+    job.learning = true;
+    try {
+      const [settings, provisions] = await Promise.all([
+        this.deps.settings.read(),
+        this.deps.platform.gameLauncher.needsProvisioning(job.install),
+      ]);
+      job.facts = { interactive: settings.disableSilentInstall, provisions };
+    } catch (cause) {
+      log.warn(
+        `[jobs] could not look up how id=${job.id} installs — treating it as interactive:`,
+        describe(cause),
+      );
+      job.facts = { interactive: true, provisions: true };
+    } finally {
+      job.learning = false;
+      this.pump();
+    }
   }
 
   private launch(job: Job): void {
@@ -268,9 +401,11 @@ export class GameJobs {
   }
 
   private pump(): void {
-    for (const job of this.jobs.values()) {
-      if (this.runningCopies() >= this.maxParallelCopies) return;
-      if (job.kind === 'install' && !job.running) this.launch(job);
+    for (const job of [...this.jobs.values()]) {
+      if (job.running || job.abortReason !== null) continue;
+      const verdict = this.verdict(job);
+      if (verdict === 'start') this.launch(job);
+      else if (verdict === 'learn') void this.learn(job);
     }
   }
 
@@ -339,7 +474,7 @@ export class GameJobs {
       case null:
         if (cause instanceof LaunchAbortedError) return null;
         if (cause instanceof JobFailure) return cause.message;
-        return job.kind === 'install'
+        return job.lane === 'copy'
           ? this.t('errors.copyGameFailed', { cause: describe(cause) })
           : describe(cause);
     }
@@ -395,6 +530,55 @@ export class GameJobs {
       log.info(`[install] copied id=${job.id} from="${install.installerPath}" to="${install.dir}"`);
     } finally {
       await this.dropPartial(job, install);
+    }
+  }
+
+  /**
+   * Runs a card installer into the install dir: a marker first (a launcher killed mid-run must not leave a
+   * playable-looking game behind), the installer, then a grace poll for the executable — some wrappers fork a
+   * child and exit early. A stopped or failed run sweeps the install dir.
+   */
+  private async runInstaller(
+    job: Job,
+    manifest: ResolvedManifest,
+    install: ResolvedInstallerRun,
+  ): Promise<void> {
+    try {
+      await fse.remove(install.dir);
+      await fse.outputFile(installMarkerOf(install.dir), '');
+      const silent = !(await this.deps.settings.read()).disableSilentInstall;
+      try {
+        job.proc = await this.deps.platform.gameLauncher.launchInstaller(
+          install,
+          silent,
+          (active) => this.setActivity(job, { kind: active ? 'configuringProton' : 'installing' }),
+        );
+      } catch (cause) {
+        throwIfAborted(job);
+        throw new JobFailure(this.t('errors.startInstaller', { cause: describe(cause) }));
+      }
+      await this.deps.processControl.waitForExit(job.proc, job.abort.signal);
+      if (!(await this.pollForExecutable(job, manifest))) {
+        throw new JobFailure(this.t('errors.installIncomplete'));
+      }
+      await fse.remove(installMarkerOf(install.dir));
+      log.info(`[install] completed id=${job.id} dir="${install.dir}"`);
+    } catch (cause) {
+      await removeWithRetry(install.dir).catch((error: unknown) =>
+        log.warn(`[jobs] the install dir of id=${job.id} could not be swept:`, describe(error)),
+      );
+      throw cause;
+    }
+  }
+
+  /** Waits up to launchTimeoutSec for the executable to appear; throws once the job is stopped. */
+  private async pollForExecutable(job: Job, manifest: ResolvedManifest): Promise<boolean> {
+    const deadline = Date.now() + manifest.raw.launchTimeoutSec * 1000;
+    for (;;) {
+      throwIfAborted(job);
+      if (await fse.pathExists(manifest.executablePath)) return true;
+      if (Date.now() >= deadline) return false;
+      await delay(INSTALL_POLL_INTERVAL_MS);
     }
   }
 

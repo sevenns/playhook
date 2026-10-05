@@ -1053,10 +1053,8 @@ export class GameController {
     }
     // Card-install mode + not yet installed → run the installer; otherwise it's an ordinary launch
     // (this includes a fully-installed game, whose executable now exists → requiresInstall=false).
-    if (manifest.install?.type === 'copy' && snapshot.game.requiresInstall) {
+    if (manifest.install !== undefined && snapshot.game.requiresInstall) {
       this.jobs.startInstall(manifest);
-    } else if (manifest.install !== undefined && snapshot.game.requiresInstall) {
-      void this.sequences.runInstallSequence(manifest, snapshot.game);
     } else {
       void this.sequences.runLaunchSequence(manifest, snapshot.game);
     }

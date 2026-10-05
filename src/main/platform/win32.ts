@@ -135,6 +135,7 @@ function createGameLauncher(monitor: ProcessMonitor): GameProcessLauncher {
     // No Wine prefix on Windows: the install dir needs no preparation beyond the controller's own
     // pre-clean, and `copy` can write into it straight away.
     prepareInstallDir: () => Promise.resolve(),
+    needsProvisioning: () => Promise.resolve(false),
     launchUninstaller: (target) => launchUninstaller(target, monitor),
     // The game's own uninstaller first (FS search in the install dir → registry fallback): it must clean
     // the shared system before the install dir is removed.

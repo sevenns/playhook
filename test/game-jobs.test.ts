@@ -6,9 +6,15 @@ import { ActivityRegistry } from '../src/main/activity-registry';
 import {
   GameJobs,
   maxParallelCopyInstalls,
+  maxParallelInstallers,
   partialDirOf,
+  startVerdict,
   type GameJobsHost,
+  type StartContext,
 } from '../src/main/game-jobs';
+import { StateManager } from '../src/main/state';
+import { LaunchAbortedError } from '../src/main/launch-errors';
+import { DEFAULT_SETTINGS } from '../src/main/app-settings';
 import { createTranslator } from '../src/shared/i18n/index';
 import type { ResolvedManifest } from '../src/main/manifest-types';
 import type { GameProcess } from '../src/main/platform/types';
@@ -49,33 +55,59 @@ let tmp: string;
 interface Fixture {
   readonly jobs: GameJobs;
   readonly registry: ActivityRegistry;
+  readonly state: StateManager;
   readonly journal: string[];
   readonly gates: Map<string, Gate>;
+  /** Installer runs that have not exited yet, by game id: open() makes the installer exit. */
+  readonly installers: Map<string, Gate>;
+  /** Games whose installer writes the executable before it exits. */
+  readonly writesExe: Set<string>;
+  /** Games whose prefix still needs winetricks. */
+  readonly provisions: Set<string>;
   focused: boolean;
   session: string | null;
+  interactive: boolean;
 }
 
 let fixture: Fixture;
 
-function build(maxParallelCopies = 2): Fixture {
+interface BuildOptions {
+  readonly maxParallelCopies?: number;
+  readonly gamescope?: boolean;
+}
+
+function build(options: BuildOptions = {}): Fixture {
   const registry = new ActivityRegistry();
+  const state = new StateManager();
   const journal: string[] = [];
   const gates = new Map<string, Gate>();
-  const state = { focused: false, session: null as string | null };
+  const installers = new Map<string, Gate>();
+  const writesExe = new Set<string>();
+  const provisions = new Set<string>();
+  const flags = { focused: false, session: null as string | null, interactive: false };
   const host: GameJobsHost = {
-    sessionGameId: () => state.session,
+    sessionGameId: () => flags.session,
     onGameChanged: (id) => journal.push(`changed:${id}`),
-    isWindowFocused: () => state.focused,
+    isWindowFocused: () => flags.focused,
     sendError: (message) => journal.push(`error:${message}`),
   };
-  const proc: GameProcess = {
+  const procOf = (id: string): GameProcess => ({
     pid: 1,
     isAlive: () => Promise.resolve(true),
-    kill: () => Promise.resolve(),
+    kill: () => {
+      journal.push(`kill:${id}`);
+      return Promise.resolve();
+    },
     dispose: () => journal.push('proc:dispose'),
-  };
+  });
+  const procIds = new WeakMap<GameProcess, string>();
   const jobs = new GameJobs({
     activities: registry,
+    state,
+    settings: {
+      read: () => Promise.resolve({ ...DEFAULT_SETTINGS, disableSilentInstall: flags.interactive }),
+    },
+    isGamescope: options.gamescope ?? false,
     platform: {
       gameLauncher: {
         prepareInstallDir: (install) => {
@@ -83,13 +115,36 @@ function build(maxParallelCopies = 2): Fixture {
           journal.push(`prepare:${id}`);
           return gates.get(id)?.promise ?? Promise.resolve();
         },
+        needsProvisioning: (install) => Promise.resolve(provisions.has(path.basename(install.dir))),
+        launchInstaller: async (install) => {
+          const id = path.basename(install.dir);
+          journal.push(`installer:${id}`);
+          installers.set(id, gate());
+          const proc = procOf(id);
+          procIds.set(proc, id);
+          return proc;
+        },
         resolveUninstaller: () => Promise.resolve(null),
-        launchUninstaller: () => Promise.resolve(proc),
+        launchUninstaller: () => Promise.resolve(procOf('uninstaller')),
         uninstallDir: (install) => install.dir,
         prefixCleanupDir: (id) => Promise.resolve(path.join(tmp, 'prefixes', id)),
       },
     },
-    processControl: { waitForExit: () => Promise.resolve() },
+    processControl: {
+      waitForExit: async (proc, signal) => {
+        const id = procIds.get(proc);
+        const exit = id === undefined ? undefined : installers.get(id);
+        if (id === undefined || exit === undefined) return;
+        await new Promise<void>((resolve, reject) => {
+          signal?.addEventListener('abort', () => reject(new LaunchAbortedError()), { once: true });
+          void exit.promise.then(resolve);
+        });
+        if (writesExe.has(id)) {
+          await fs.mkdir(path.join(tmp, 'installed', id), { recursive: true });
+          await fs.writeFile(path.join(tmp, 'installed', id, 'game.exe'), 'exe');
+        }
+      },
+    },
     notifications: {
       notify: (input) => {
         journal.push(`notify:${input.kind}${'reason' in input ? `:${input.reason}` : ''}`);
@@ -97,24 +152,54 @@ function build(maxParallelCopies = 2): Fixture {
     },
     getTranslator: () => createTranslator('en'),
     host,
-    maxParallelCopies,
+    maxParallelCopies: options.maxParallelCopies ?? 2,
   });
+  jobs.init();
   return {
     jobs,
     registry,
+    state,
     journal,
     gates,
+    installers,
+    writesExe,
+    provisions,
     get focused() {
-      return state.focused;
+      return flags.focused;
     },
     set focused(value: boolean) {
-      state.focused = value;
+      flags.focused = value;
     },
     get session() {
-      return state.session;
+      return flags.session;
     },
     set session(value: string | null) {
-      state.session = value;
+      flags.session = value;
+    },
+    get interactive() {
+      return flags.interactive;
+    },
+    set interactive(value: boolean) {
+      flags.interactive = value;
+    },
+  };
+}
+
+/** A card game installed by running `source/<id>/setup.exe` into `installed/<id>`. */
+async function installerGame(id: string, runAsAdmin = false): Promise<ResolvedManifest> {
+  const copy = await copyGame(id);
+  const dir = path.join(tmp, 'installed', id);
+  return {
+    ...copy,
+    raw: { ...copy.raw, launchTimeoutSec: 1 },
+    install: {
+      type: 'nsis',
+      installerPath: path.join(tmp, 'source', id, 'setup.exe'),
+      runAsAdmin,
+      args: [],
+      winetricks: [],
+      dir,
+      installerDir: dir,
     },
   };
 }
@@ -349,5 +434,205 @@ describe('maxParallelCopyInstalls', () => {
     expect(maxParallelCopyInstalls({})).toBe(2);
     expect(maxParallelCopyInstalls({ PLAYHOOK_MAX_PARALLEL_COPY_INSTALLS: '3' })).toBe(3);
     expect(maxParallelCopyInstalls({ PLAYHOOK_MAX_PARALLEL_COPY_INSTALLS: '0' })).toBe(2);
+  });
+});
+
+const SESSION_GAME = {
+  id: 'session',
+  title: 'Session',
+  lastPlayedAt: null,
+  totalPlaySeconds: 0,
+  launchCount: 0,
+  requiresInstall: false,
+  canUninstall: false,
+} as const;
+
+const installed = (id: string): string => path.join(tmp, 'installed', id);
+
+describe('GameJobs installer runs', () => {
+  it('runs the installer in the background and finishes once the executable is there, marker gone', async () => {
+    const a = await installerGame('a');
+    fixture.writesExe.add('a');
+    expect(fixture.jobs.startInstall(a)).toBe(true);
+    await waitFor(() => fixture.installers.has('a'), 'the installer to start');
+    expect(fixture.registry.get('a')).toEqual({ kind: 'installing' });
+    expect(await exists(path.join(installed('a'), '.playhook-installing'))).toBe(true);
+    fixture.installers.get('a')?.open();
+    await waitFor(() => !fixture.jobs.has('a'), 'the install to finish');
+    expect(fixture.journal).toContain('notify:game-installed');
+    expect(await exists(installedExe('a'))).toBe(true);
+    expect(await exists(path.join(installed('a'), '.playhook-installing'))).toBe(false);
+  });
+
+  it('an installer that exits without the executable fails after the grace poll and sweeps the dir', async () => {
+    const a = await installerGame('a');
+    fixture.jobs.startInstall(a);
+    await waitFor(() => fixture.installers.has('a'), 'the installer to start');
+    fixture.installers.get('a')?.open();
+    await waitFor(() => !fixture.jobs.has('a'), 'the install to give up');
+    expect(fixture.journal).toContain(
+      'notify:game-install-failed:installation did not complete (the game executable did not appear)',
+    );
+    expect(await exists(installed('a'))).toBe(false);
+  });
+
+  it('a second installer waits for the first under the default limit of one', async () => {
+    const a = await installerGame('a');
+    const b = await installerGame('b');
+    fixture.writesExe.add('a');
+    fixture.writesExe.add('b');
+    fixture.jobs.startInstall(a);
+    fixture.jobs.startInstall(b);
+    await waitFor(() => fixture.installers.has('a'), 'the first installer');
+    expect(fixture.registry.get('b')).toEqual({ kind: 'queued' });
+    expect(fixture.journal).not.toContain('installer:b');
+    fixture.installers.get('a')?.open();
+    await waitFor(
+      () => fixture.installers.has('b'),
+      'the second installer to start after the first',
+    );
+    fixture.installers.get('b')?.open();
+    await waitFor(() => !fixture.jobs.anyActive(), 'both installs to finish');
+  });
+
+  it('an interactive installer waits for the session to end, then starts on its own', async () => {
+    const a = await installerGame('a');
+    fixture.interactive = true;
+    fixture.writesExe.add('a');
+    fixture.state.set({ kind: 'running', game: SESSION_GAME, since: 0 });
+    fixture.jobs.startInstall(a);
+    await new Promise<void>((resolve) => setTimeout(resolve, 30));
+    expect(fixture.registry.get('a')).toEqual({ kind: 'queued' });
+    expect(fixture.journal).not.toContain('installer:a');
+    fixture.state.set({ kind: 'syncing-out', game: SESSION_GAME });
+    await new Promise<void>((resolve) => setTimeout(resolve, 30));
+    expect(fixture.journal).not.toContain('installer:a');
+    fixture.state.set({ kind: 'ready', game: SESSION_GAME });
+    await waitFor(
+      () => fixture.installers.has('a'),
+      'the installer to start once the session ended',
+    );
+    fixture.installers.get('a')?.open();
+  });
+
+  it('an elevated installer waits for the session even when silent', async () => {
+    const a = await installerGame('a', true);
+    fixture.state.set({ kind: 'launching', game: SESSION_GAME });
+    fixture.jobs.startInstall(a);
+    await new Promise<void>((resolve) => setTimeout(resolve, 30));
+    expect(fixture.journal).not.toContain('installer:a');
+    fixture.state.set({ kind: 'ready', game: SESSION_GAME });
+    await waitFor(() => fixture.installers.has('a'), 'the elevated installer after the session');
+    fixture.installers.get('a')?.open();
+  });
+
+  it('a silent installer starts during a session away from gamescope', async () => {
+    const a = await installerGame('a');
+    fixture.state.set({ kind: 'running', game: SESSION_GAME, since: 0 });
+    fixture.jobs.startInstall(a);
+    await waitFor(
+      () => fixture.installers.has('a'),
+      'the silent installer to start during the session',
+    );
+    fixture.installers.get('a')?.open();
+  });
+
+  it('cancelling a running installer kills it and sweeps the install dir', async () => {
+    const a = await installerGame('a');
+    fixture.jobs.startInstall(a);
+    await waitFor(() => fixture.installers.has('a'), 'the installer to start');
+    fixture.jobs.cancel('a');
+    await waitFor(() => !fixture.jobs.has('a'), 'the cancelled install to unwind');
+    expect(fixture.journal).toContain('kill:a');
+    expect(await exists(installed('a'))).toBe(false);
+    expect(fixture.journal.filter((entry) => entry.startsWith('notify:'))).toEqual([]);
+  });
+});
+
+describe('GameJobs under gamescope', () => {
+  beforeEach(() => {
+    fixture = build({ gamescope: true });
+    fixture.state.set({ kind: 'running', game: SESSION_GAME, since: 0 });
+  });
+
+  it('holds every installer while a game runs, even a silent one', async () => {
+    const a = await installerGame('a');
+    fixture.jobs.startInstall(a);
+    await new Promise<void>((resolve) => setTimeout(resolve, 30));
+    expect(fixture.journal).not.toContain('installer:a');
+    fixture.state.set({ kind: 'ready', game: SESSION_GAME });
+    await waitFor(() => fixture.installers.has('a'), 'the installer once the game is over');
+    fixture.installers.get('a')?.open();
+  });
+
+  it('holds a copy whose prefix still needs winetricks, and lets one that does not through', async () => {
+    const a = await copyGame('a');
+    const b = await copyGame('b');
+    fixture.provisions.add('a');
+    fixture.jobs.startInstall(a);
+    fixture.jobs.startInstall(b);
+    await waitFor(() => !fixture.jobs.has('b'), 'the copy without winetricks to finish');
+    expect(fixture.journal).not.toContain('prepare:a');
+    fixture.state.set({ kind: 'ready', game: SESSION_GAME });
+    await waitFor(() => !fixture.jobs.has('a'), 'the held copy once the game is over');
+  });
+});
+
+describe('startVerdict', () => {
+  const ctx = (patch: Partial<StartContext> = {}): StartContext => ({
+    session: 'free',
+    gamescope: false,
+    elevated: false,
+    runningInLane: 0,
+    laneLimit: 1,
+    ...patch,
+  });
+
+  it('removals always start', () => {
+    expect(startVerdict('uninstall', {}, ctx({ session: 'running', gamescope: true }))).toBe(
+      'start',
+    );
+    expect(startVerdict('prefix-cleanup', {}, ctx({ runningInLane: 5 }))).toBe('start');
+  });
+
+  it('a full lane waits', () => {
+    expect(startVerdict('copy', {}, ctx({ runningInLane: 1 }))).toBe('wait');
+    expect(startVerdict('installer', {}, ctx({ runningInLane: 1 }))).toBe('wait');
+  });
+
+  it('an installer asks whether it is interactive only when a session is up', () => {
+    expect(startVerdict('installer', {}, ctx())).toBe('start');
+    expect(startVerdict('installer', {}, ctx({ session: 'active' }))).toBe('learn');
+    expect(startVerdict('installer', { interactive: true }, ctx({ session: 'active' }))).toBe(
+      'wait',
+    );
+    expect(startVerdict('installer', { interactive: false }, ctx({ session: 'running' }))).toBe(
+      'start',
+    );
+    expect(
+      startVerdict('installer', { interactive: false }, ctx({ session: 'active', elevated: true })),
+    ).toBe('wait');
+  });
+
+  it('under gamescope a running game holds every installer and a copy that provisions', () => {
+    const gamescope = ctx({ session: 'running', gamescope: true });
+    expect(startVerdict('installer', { interactive: false }, gamescope)).toBe('wait');
+    expect(startVerdict('copy', {}, gamescope)).toBe('learn');
+    expect(startVerdict('copy', { provisions: true }, gamescope)).toBe('wait');
+    expect(startVerdict('copy', { provisions: false }, gamescope)).toBe('start');
+    expect(
+      startVerdict(
+        'installer',
+        { interactive: false },
+        ctx({ session: 'active', gamescope: true }),
+      ),
+    ).toBe('start');
+  });
+});
+
+describe('maxParallelInstallers', () => {
+  it('reads PLAYHOOK_MAX_PARALLEL_INSTALLERS and falls back to one', () => {
+    expect(maxParallelInstallers({})).toBe(1);
+    expect(maxParallelInstallers({ PLAYHOOK_MAX_PARALLEL_INSTALLERS: '2' })).toBe(2);
   });
 });

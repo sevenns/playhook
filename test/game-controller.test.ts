@@ -411,6 +411,7 @@ async function harness(opts: HarnessOptions): Promise<Harness> {
         return proc;
       },
       prepareInstallDir: () => h.copyHold,
+      needsProvisioning: () => Promise.resolve(false),
       launchUninstaller: () => {
         journal.push('uninstaller:launch');
         return failing('uninstaller') ? Promise.reject(new Error('uninstaller boom')) : Promise.resolve(proc);
@@ -668,74 +669,72 @@ describe('GameController sequences', () => {
   });
 
   describe('install', () => {
-    it('success: installing → ready, a game-installed notification, then the window', async () => {
+    const flippedToPlay = (built: Harness): boolean => {
+      const state = built.state.get();
+      return state.kind === 'ready' && !state.game.requiresInstall;
+    };
+
+    it('success: a background job, a game-installed notification, no session state and no window', async () => {
       h = await harness({ mode: 'install' });
-      h.installerWritesExe = true;
+      const built = h;
+      built.installerWritesExe = true;
       fire(IPC.actionLaunch);
-      await reached(h.journal, 'state:installing');
-      expect(h.journal).toEqual(['state:installing']);
-      h.exit();
-      await settled(h.journal, 'proc:dispose');
-      expect(h.journal).toEqual([
-        'state:installing',
-        'state:ready',
+      await reached(built.journal, 'activity:g1:installing');
+      built.exit();
+      await waitFor(() => flippedToPlay(built), 'the game to flip to Play');
+      expect(built.journal).toEqual([
+        'activity:g1:installing',
         'notify:game-installed',
-        'window:showAndFocus',
         'proc:dispose',
-      ]);
-    });
-
-    it('error in the body: failSequence keeps the game on Install and reports the cause', async () => {
-      h = await harness({ mode: 'install' });
-      h.installerWritesExe = true;
-      fire(IPC.actionLaunch);
-      await reached(h.journal, 'state:installing');
-      h.failStats = true;
-      h.exit();
-      await settled(h.journal, 'proc:dispose');
-      expect(h.journal).toEqual([
-        'state:installing',
+        'activity:g1:clear',
         'state:ready',
-        'window:showAndFocus',
-        'send:error',
-        'proc:dispose',
       ]);
-      expect(h.state.get()).toMatchObject({ kind: 'ready', game: { requiresInstall: true } });
     });
 
-    it('the installer cannot start: failSequence from inside the body, still on Install', async () => {
+    it('the installer cannot start: a failed-install notification, still on Install', async () => {
       h = await harness({ mode: 'install' });
-      h.failAt = 'installer';
+      const built = h;
+      built.failAt = 'installer';
       fire(IPC.actionLaunch);
-      await settled(h.journal, 'send:error');
-      expect(h.journal).toEqual(['state:installing', 'state:ready', 'window:showAndFocus', 'send:error']);
-      expect(h.state.get()).toMatchObject({ kind: 'ready', game: { requiresInstall: true } });
+      await reached(built.journal, 'activity:g1:clear');
+      expect(built.journal.filter((entry) => entry !== 'state:ready')).toEqual([
+        'activity:g1:installing',
+        'notify:game-install-failed',
+        'activity:g1:clear',
+      ]);
+      expect(built.state.get()).toMatchObject({ kind: 'ready', game: { requiresInstall: true } });
     });
 
     it('the installer exits without the executable: installIncomplete after the grace poll, still on Install', async () => {
       h = await harness({ mode: 'install' });
+      const built = h;
       fire(IPC.actionLaunch);
-      await reached(h.journal, 'state:installing');
-      h.exit();
+      await reached(built.journal, 'activity:g1:installing');
+      built.exit();
       // launchTimeoutSec is 1: the poll for the executable gives up after a second.
-      await settled(h.journal, 'proc:dispose');
-      expect(h.journal).toEqual([
-        'state:installing',
-        'state:ready',
-        'window:showAndFocus',
-        'send:error',
+      await reached(built.journal, 'activity:g1:clear');
+      expect(built.journal.filter((entry) => entry !== 'state:ready')).toEqual([
+        'activity:g1:installing',
+        'notify:game-install-failed',
         'proc:dispose',
+        'activity:g1:clear',
       ]);
-      expect(h.state.get()).toMatchObject({ kind: 'ready', game: { requiresInstall: true } });
+      expect(built.state.get()).toMatchObject({ kind: 'ready', game: { requiresInstall: true } });
     });
 
-    it('card swap mid-install: unwinds without touching the state, then replays the insert', async () => {
+    it('shutdown mid-install stops the job silently and releases the installer', async () => {
       h = await harness({ mode: 'install' });
+      const built = h;
       fire(IPC.actionLaunch);
-      await reached(h.journal, 'state:installing');
-      h.insert(swapRoot);
-      await settled(h.journal, 'window:hide');
-      expect(h.journal).toEqual(['state:installing', 'proc:dispose', 'state:error', 'window:hide']);
+      await reached(built.journal, 'activity:g1:installing');
+      await waitFor(() => fsSync.existsSync(path.join(built.tmp, 'installed', '.playhook-installing')), 'the installer run');
+      built.controller.shutdown();
+      await reached(built.journal, 'activity:g1:clear');
+      expect(built.journal.filter((entry) => entry !== 'state:ready')).toEqual([
+        'activity:g1:installing',
+        'proc:dispose',
+        'activity:g1:clear',
+      ]);
     });
   });
 
@@ -755,15 +754,17 @@ describe('GameController sequences', () => {
 
     it('a finished installer run takes its marker away', async () => {
       h = await harness({ mode: 'install' });
-      h.installerWritesExe = true;
+      const built = h;
+      built.installerWritesExe = true;
       fire(IPC.actionLaunch);
-      await reached(h.journal, 'state:installing');
-      const marker = path.join(h.tmp, 'installed', '.playhook-installing');
+      const marker = path.join(built.tmp, 'installed', '.playhook-installing');
       await waitFor(() => fsSync.existsSync(marker), 'the install marker');
-      h.exit();
-      await settled(h.journal, 'proc:dispose');
-      expect(fsSync.existsSync(path.join(h.tmp, 'installed', '.playhook-installing'))).toBe(false);
-      expect(h.state.get()).toMatchObject({ kind: 'ready', game: { requiresInstall: false } });
+      built.exit();
+      await waitFor(() => {
+        const state = built.state.get();
+        return state.kind === 'ready' && !state.game.requiresInstall;
+      }, 'the game to flip to Play');
+      expect(fsSync.existsSync(marker)).toBe(false);
     });
   });
 
@@ -1119,13 +1120,8 @@ describe('GameController sequences', () => {
       await reached(built.journal, 'notify:game-installed');
       await pause(100);
 
-      expect(built.journal).toEqual([
-        'state:syncing-in',
-        'state:launching',
-        'state:running',
-        'activity:g1:clear',
-        'notify:game-installed',
-      ]);
+      const afterRunning = built.journal.slice(built.journal.indexOf('state:running') + 1);
+      expect(afterRunning).toEqual(['activity:g1:clear', 'notify:game-installed']);
       expect(built.state.get()).toMatchObject({ kind: 'running', game: { id: 'other' } });
       built.exit();
       await settled(built.journal, 'proc:dispose');

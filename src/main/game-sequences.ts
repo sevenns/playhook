@@ -10,13 +10,11 @@
 // `failSequence` for anything else, and a finally that releases the owned process, clears the flags and
 // replays a card that was swapped in mid-flight. Launch alone adds to the finally (the lock and the
 // running-game fields) through `onFinally`.
-import fse from 'fs-extra';
 import { type AppState, type GameInfo, type Stats } from '../shared/types';
 import type { ResolvedManifest } from './manifest-types';
 import { type Translator } from '../shared/i18n/index';
 import { type ControllerDeps } from './controller-deps';
 import { LaunchAbortedError } from './launch-errors';
-import { installMarkerOf } from './game-jobs';
 import { openSteamUri } from './steam-uri';
 import { type GameProcess, type Platform, type ProcessMonitor } from './platform';
 import { normalizeImageNames } from './image-names';
@@ -24,9 +22,6 @@ import { type SteamActivityWatch } from './steam-activity-watch';
 import { type SaveSyncFlow } from './save-sync-flow';
 import { describe, delay } from './util';
 import { log } from './logger';
-
-// Grace-poll cadence after the installer exits, waiting for the game executable to appear.
-const INSTALL_POLL_INTERVAL_MS = 1000;
 
 // Force-close verification: after issuing the kills, a `taskkill /F` (or TerminateProcess) returns
 // BEFORE the process actually leaves tasklist — a killed process in teardown still shows for a beat, and
@@ -658,93 +653,6 @@ export class GameSequences {
         this.runningProc = null;
       },
     );
-  }
-
-  /**
-   * Runs the installer for an install-mode game that isn't installed yet (mirrors runLaunchSequence's
-   * infrastructure: launchInFlight/abort, the LaunchAbortedError guard, the pendingRoot replay).
-   * Pre-cleans the install dir, runs the installer silently, then grace-polls for the executable —
-   * on success the button becomes "Play"; otherwise we stay on "Install" and surface the reason.
-   */
-  async runInstallSequence(manifest: ResolvedManifest, info: GameInfo): Promise<void> {
-    const install = manifest.install;
-    if (install === undefined) return; // defensive: onLaunchRequested only calls this in install mode
-    const { window, stats } = this.deps;
-    await this.runSequence('install', 'installing', info, async (abort, owned) => {
-      // Pre-clean: a partial install left by a previous failed attempt could carry a stale <exe> →
-      // a bogus "Play". We're (re)installing anyway, so a clean directory is safe.
-      await fse.remove(install.dir);
-      await fse.outputFile(installMarkerOf(install.dir), '');
-
-      if (install.type !== 'copy') {
-        // Silent by default; a user who enabled "disable silent installer mode" gets the visible wizard
-        // (needed for repacks that skip a crack/patch step under silent — `skipifsilent`).
-        const silent = !(await this.deps.settings.read()).disableSilentInstall;
-        let proc: GameProcess;
-        try {
-          proc = await this.launcher.launchInstaller(install, silent, (active) =>
-            this.setProvisioning(active, info),
-          );
-        } catch (cause) {
-          this.failSequence(
-            'install',
-            info,
-            this.t('errors.startInstaller', { cause: describe(cause) }),
-          );
-          return;
-        }
-        owned.proc = proc;
-
-        // Wait for the installer to exit, then grace-poll for the executable: some installers (often
-        // custom wrappers) fork a child and exit early, so <exe> may appear shortly AFTER waitForExit.
-        await this.deps.processControl.waitForExit(proc, abort.signal);
-        const installed = await this.pollForExecutable(
-          manifest.executablePath,
-          manifest.raw.launchTimeoutSec,
-          abort.signal,
-        );
-        if (!installed) {
-          this.failSequence('install', info, this.t('errors.installIncomplete'));
-          return;
-        }
-      }
-
-      // Installed: rebuild GameInfo so requiresInstall recomputes to false (the executable now exists),
-      // flipping the button back to "Play". The next press launches normally from the install dir.
-      const currentStats = await stats.read(manifest.raw.id);
-      await fse.remove(installMarkerOf(install.dir));
-      const installedInfo = await this.host.buildGameInfo(manifest, currentStats);
-      log.info(`[install] completed id=${manifest.raw.id} dir="${install.dir}"`);
-      this.host.enterReady(installedInfo);
-      // The "install finished" cue belongs to the notification now (its own `notify` sound). It used to
-      // be a bare "play" sound pushed straight to the renderer from here — two sounds would now land on
-      // the same moment, and that one also chirped from a hidden window while a game was running.
-      this.deps.notifications.notify({
-        kind: 'game-installed',
-        gameId: manifest.raw.id,
-        gameTitle: installedInfo.title,
-      });
-      window.showAndFocus();
-    });
-  }
-
-  /**
-   * Polls for the game executable to appear within `timeoutSec` (grace window after the installer
-   * exits). Throws LaunchAbortedError if aborted, so a mid-install card swap unwinds WITHOUT
-   * setting state over the new card — never returns false on abort.
-   */
-  private async pollForExecutable(
-    executablePath: string,
-    timeoutSec: number,
-    signal: AbortSignal,
-  ): Promise<boolean> {
-    const deadline = Date.now() + timeoutSec * 1000;
-    for (;;) {
-      if (signal.aborted) throw new LaunchAbortedError();
-      if (await fse.pathExists(executablePath)) return true;
-      if (Date.now() >= deadline) return false;
-      await delay(INSTALL_POLL_INTERVAL_MS);
-    }
   }
 
   /** Replays a card insertion deferred during an in-flight launch/install. No-op if none pending. */
