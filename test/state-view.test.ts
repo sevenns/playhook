@@ -114,16 +114,32 @@ describe('sameIds', () => {
 describe('screenActions', () => {
   const OTHER: GameInfo = { ...GAME, id: 'other', title: 'Other' };
   const UNINSTALLED: GameInfo = { ...GAME, requiresInstall: true };
-  const browsing = (game: GameInfo): BrowseInfo => ({ ...BROWSE, id: game.id, title: game.title, game });
+  const browsing = (game: GameInfo): BrowseInfo => ({
+    ...BROWSE,
+    id: game.id,
+    title: game.title,
+    game,
+  });
   const running = { kind: 'running', game: OTHER, since: 0 } as const;
 
   it('an installed free game: Play launches, Uninstall as offered', () => {
-    const actions = screenActions({ kind: 'ready', game: GAME }, browsing({ ...GAME, canUninstall: true }), undefined);
-    expect(actions).toMatchObject({ canPlay: true, canUninstall: true, canInstall: false, playView: 'play' });
+    const actions = screenActions(
+      { kind: 'ready', game: GAME },
+      browsing({ ...GAME, canUninstall: true }),
+      undefined,
+    );
+    expect(actions).toMatchObject({
+      canPlay: true,
+      canUninstall: true,
+      canInstall: false,
+      playView: 'play',
+    });
   });
 
-  it('an uninstalled game: Play hidden, Install offered — also while another game runs', () => {
-    expect(screenActions({ kind: 'ready', game: UNINSTALLED }, browsing(UNINSTALLED), undefined)).toMatchObject({
+  it('an uninstalled game: Play hidden, Install offered - also while another game runs', () => {
+    expect(
+      screenActions({ kind: 'ready', game: UNINSTALLED }, browsing(UNINSTALLED), undefined),
+    ).toMatchObject({
       canInstall: true,
       canPlay: false,
       playView: 'hidden',
@@ -136,7 +152,9 @@ describe('screenActions', () => {
   });
 
   it('an installed game while another one runs: Play shows but never starts it, Uninstall still offered', () => {
-    expect(screenActions(running, browsing({ ...GAME, canUninstall: true }), undefined)).toMatchObject({
+    expect(
+      screenActions(running, browsing({ ...GAME, canUninstall: true }), undefined),
+    ).toMatchObject({
       canPlay: false,
       canUninstall: true,
       playView: 'play',
@@ -157,7 +175,9 @@ describe('screenActions', () => {
       canForceClose: false,
       playView: 'spinner',
     });
-    expect(screenActions({ kind: 'launching', game: OTHER }, browsing(OTHER), undefined).playView).toBe('spinner');
+    expect(
+      screenActions({ kind: 'launching', game: OTHER }, browsing(OTHER), undefined).playView,
+    ).toBe('spinner');
   });
 
   it("the game's own activity wins: the gear, Cancel for an install, Play only for Steam's downloads", () => {
@@ -166,17 +186,26 @@ describe('screenActions', () => {
       canCancel: true,
       canPlay: false,
     });
-    expect(screenActions(running, browsing(GAME), { kind: 'queued', reason: 'session', removal: true })).toMatchObject({
+    expect(
+      screenActions(running, browsing(GAME), { kind: 'queued', reason: 'session', removal: true }),
+    ).toMatchObject({
       canCancel: false,
     });
-    expect(screenActions({ kind: 'ready', game: GAME }, browsing(GAME), { kind: 'steam-installing', paused: false })).toMatchObject({
+    expect(
+      screenActions({ kind: 'ready', game: GAME }, browsing(GAME), {
+        kind: 'steam-installing',
+        paused: false,
+      }),
+    ).toMatchObject({
       canPlay: true,
       playView: 'gear',
     });
   });
 
   it('a history game or nothing on screen offers nothing', () => {
-    expect(screenActions({ kind: 'ready', game: GAME }, { ...BROWSE, active: false }, undefined)).toMatchObject({
+    expect(
+      screenActions({ kind: 'ready', game: GAME }, { ...BROWSE, active: false }, undefined),
+    ).toMatchObject({
       game: undefined,
       playView: 'hidden',
     });
@@ -191,7 +220,9 @@ describe('screenActions', () => {
 describe('queued statuses', () => {
   it('names what a queued job waits for', () => {
     expect(activityStatus({ kind: 'queued' }, t)).toBe('Waiting to install...');
-    expect(activityStatus({ kind: 'queued', reason: 'session' }, t)).toBe('Will install after you quit the game');
+    expect(activityStatus({ kind: 'queued', reason: 'session' }, t)).toBe(
+      'Will install after you quit the game',
+    );
     expect(activityStatus({ kind: 'queued', reason: 'session', removal: true }, t)).toBe(
       'Will uninstall after you quit the game',
     );

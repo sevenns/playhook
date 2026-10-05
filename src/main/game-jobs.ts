@@ -64,7 +64,7 @@ export type StartVerdict = 'start' | 'wait' | 'wait-session' | 'learn';
 /**
  * Whether a queued job may start. Installer runs: at most `laneLimit` at once (MSI's global mutex fails a
  * second one with 1618, repacks eat the machine), never an interactive or elevated one during a session
- * (a wizard or a UAC prompt over the game), and under gamescope none at all while a game runs — the game has
+ * (a wizard or a UAC prompt over the game), and under gamescope none at all while a game runs - the game has
  * the only surface there, and even a silent installer opens windows. A copy waits under gamescope only when
  * its prefix still needs winetricks, for the same reason. A removal that runs the game's own uninstaller
  * follows the installer rules for the session (a window or a UAC prompt of its own); other removals start.
@@ -380,7 +380,7 @@ export class GameJobs {
       job.facts = { interactive: settings.disableSilentInstall, provisions };
     } catch (cause) {
       log.warn(
-        `[jobs] could not look up how id=${job.id} runs — treating it as interactive:`,
+        `[jobs] could not look up how id=${job.id} runs - treating it as interactive:`,
         describe(cause),
       );
       job.facts = { interactive: true, provisions: true, uninstaller: true };
@@ -557,7 +557,7 @@ export class GameJobs {
 
   /**
    * Runs a card installer into the install dir: a marker first (a launcher killed mid-run must not leave a
-   * playable-looking game behind), the installer, then a grace poll for the executable — some wrappers fork a
+   * playable-looking game behind), the installer, then a grace poll for the executable - some wrappers fork a
    * child and exit early. A stopped or failed run sweeps the install dir.
    */
   private async runInstaller(
@@ -613,7 +613,7 @@ export class GameJobs {
   }
 
   /**
-   * Removes an installed game: its own uninstaller first (never for `copy` — a copied directory's
+   * Removes an installed game: its own uninstaller first (never for `copy` - a copied directory's
    * uninstaller belongs to an install made on another machine), then a sweep of the uninstall dir.
    */
   private async runUninstall(job: Job, install: ResolvedInstall): Promise<void> {

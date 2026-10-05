@@ -41,7 +41,7 @@ describe('resolveActionTarget', () => {
     expect(resolveActionTarget(input({ ...busy, action: 'uninstall' }))).toBe('uninstall-only');
   });
 
-  it('refuses a busy target, a game whose card is gone, and anything during a reload — in any session', () => {
+  it('refuses a busy target, a game whose card is gone, and anything during a reload - in any session', () => {
     for (const session of [{}, { sessionBusy: true, sessionGameId: 'c' }]) {
       expect(resolveActionTarget(input({ ...session, hasActivity: true }))).toBe('refuse');
       expect(resolveActionTarget(input({ ...session, sourceAvailable: false }))).toBe('refuse');

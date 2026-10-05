@@ -130,7 +130,12 @@ function build(options: BuildOptions = {}): Fixture {
         resolveUninstaller: (install) =>
           Promise.resolve(
             uninstallers.has(path.basename(install.dir))
-              ? { file: path.join(install.dir, 'unins000.exe'), args: [], cwd: install.dir, runAsAdmin: false }
+              ? {
+                  file: path.join(install.dir, 'unins000.exe'),
+                  args: [],
+                  cwd: install.dir,
+                  runAsAdmin: false,
+                }
               : null,
           ),
         launchUninstaller: () => Promise.resolve(procOf('uninstaller')),

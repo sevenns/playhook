@@ -191,7 +191,7 @@ export interface GameSettingsScreenDeps {
    * title with X?" is about a candidate the popup has never heard of.
    */
   onConfirmRequested(kind: GameSettingsConfirm, options?: { readonly title?: string }): void;
-  /** Whether game `id` is the session's game or carries an activity — Delete, Move and Save stand down. */
+  /** Whether game `id` is the session's game or carries an activity - Delete, Move and Save stand down. */
   isBusy(id: string): boolean;
   /** A game was added AND applied: the launcher's library has it now, so the carousel goes to it. */
   onAdded(id: string): void;

@@ -36,7 +36,7 @@ export interface ControlsApi {
   requestSleep(): void;
   /** "Minimize Playhook" — hide to the tray. */
   requestHide(): void;
-  /** "Close Playhook" — the full quit; `confirmed` as for requestShutdown. */
+  /** "Close Playhook" - the full quit; `confirmed` as for requestShutdown. */
   requestQuit(confirmed?: boolean): void;
   /** Tells main its quit question is up (or queued), or was closed without a Yes. */
   quitConfirmReply(reply: QuitConfirmReply): void;
@@ -62,7 +62,7 @@ export interface ControlsDeps {
   getBrowse(): BrowseInfo | null;
   /** The activity of the game on screen (a Steam download, a removal), or undefined when it is free. */
   getScreenActivity(): GameActivity | undefined;
-  /** How many background installs / uninstalls are queued or running — a quit asks first while any are. */
+  /** How many background installs / uninstalls are queued or running - a quit asks first while any are. */
   getJobCount(): number;
   /** The shared audio controller (UI sounds). */
   audio: AudioController;

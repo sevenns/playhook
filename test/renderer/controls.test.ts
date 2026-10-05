@@ -471,7 +471,7 @@ describe('controls quit with background jobs', () => {
     expect(api.requestQuit).toHaveBeenCalledWith();
   });
 
-  it("main's question opens on its own, says it is shown, and its No just closes — no Power menu", () => {
+  it("main's question opens on its own, says it is shown, and its No just closes - no Power menu", () => {
     harness.activities = { a: { kind: 'installing' } };
     controls.askQuit('quit');
 
@@ -533,7 +533,7 @@ describe('controls while another game runs', () => {
     harness.state = { kind: 'running', game: SESSION, since: 0 };
   });
 
-  it("an installed game's Play is out of the ring and refuses — it never starts a second game", () => {
+  it("an installed game's Play is out of the ring and refuses - it never starts a second game", () => {
     harness.screen = 'detail';
     harness.browse = browsing(LOCAL_GAME);
     controls.refresh();

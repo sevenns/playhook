@@ -119,9 +119,9 @@ interface Harness {
   readonly activities: ActivityRegistry;
   /** Holds every copy install at its prepare step until the returned release is called. */
   readonly holdCopies: () => () => void;
-  /** What the fake watcher was given for `onRemove` — the card being pulled. */
+  /** What the fake watcher was given for `onRemove` - the card being pulled. */
   readonly remove: () => void;
-  /** Rewrites the Steam game's `.acf` — the way Steam reports a download starting or finishing. */
+  /** Rewrites the Steam game's `.acf` - the way Steam reports a download starting or finishing. */
   readonly setSteamState: (state: SteamAcfState) => Promise<void>;
 }
 
@@ -167,7 +167,7 @@ async function writeSteamAcf(root: string, appid: number, state: SteamAcfState):
   );
 }
 
-/** A Steam root whose one library reports `appid` in `state` — enough for steamInstallStatus. */
+/** A Steam root whose one library reports `appid` in `state` - enough for steamInstallStatus. */
 async function fakeSteamRoot(tmp: string, appid: number, state: SteamAcfState): Promise<string> {
   const root = path.join(tmp, 'steam');
   await fs.mkdir(path.join(root, 'steamapps'), { recursive: true });

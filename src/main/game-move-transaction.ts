@@ -87,7 +87,7 @@ export interface GameMoveDeps {
    */
   readonly resolveManifest: (id: string) => ResolvedManifest | null;
   /**
-   * Whether game `id` is the session's or carries an activity (GameController.isBusy) — moveToCard's
+   * Whether game `id` is the session's or carries an activity (GameController.isBusy) - moveToCard's
    * own re-check of the guard the "Move to card…" menu item already applies in the renderer.
    */
   readonly isBusy: (id: string) => boolean;

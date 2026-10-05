@@ -131,8 +131,8 @@ async function readAcfState(acfPath: string): Promise<AcfState | 'missing' | 'un
 
 /**
  * Where `appid` stands across the given Steam library roots: the `appmanifest_<appid>.acf` walk shared by
- * the single lookup and the batch one below. Null when the only `.acf` found could not be parsed — most
- * likely caught halfway through Steam rewriting it — so the state is unknown rather than "absent".
+ * the single lookup and the batch one below. Null when the only `.acf` found could not be parsed - most
+ * likely caught halfway through Steam rewriting it - so the state is unknown rather than "absent".
  */
 async function statusInLibraries(appid: number, libs: readonly string[]): Promise<SteamInstallStatus | null> {
   let downloading: SteamInstallStatus | null = null;

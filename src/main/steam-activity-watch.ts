@@ -227,7 +227,7 @@ export class SteamActivityWatch {
         return true;
       }
       log.info(
-        `[steam-uninstall] appid=${game.appid} still installed after timeout — assuming cancel`,
+        `[steam-uninstall] appid=${game.appid} still installed after timeout - assuming cancel`,
       );
       this.uninstallRequests.delete(game.appid);
       this.clearSteamActivity(game.id);

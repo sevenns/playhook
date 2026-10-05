@@ -94,7 +94,7 @@ export class QuitGate {
 
   private async askNatively(pending: PendingQuit): Promise<void> {
     pending.timer = null;
-    log.warn('[quit] the launcher window did not confirm the question — asking natively');
+    log.warn('[quit] the launcher window did not confirm the question - asking natively');
     const go = await this.deps.askNatively(pending.action, this.deps.activeJobs());
     if (this.pending !== pending) return;
     this.pending = null;

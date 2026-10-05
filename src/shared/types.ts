@@ -222,7 +222,7 @@ export interface GameInfo {
 
 /**
  * The game session's state machine (discriminated union): at most one game is launched, played and synced
- * at a time. Installs, removals and Steam's downloads are not part of it — they are per-game activities
+ * at a time. Installs, removals and Steam's downloads are not part of it - they are per-game activities
  * (shared/activity.ts, pushed on activity:update) and run side by side with the session.
  */
 export type AppState =
@@ -486,7 +486,7 @@ export const IPC = {
   /** renderer → main: quit the whole app. In Game Mode (gamescope) the power menu's primary item becomes
    * "Close Playhook" (there is no tray to minimize into), which sends this instead of actionHide. */
   actionQuit: 'action:quit',
-  /** main → renderer: background jobs are running — ask before this QuitAction (tray Quit, a raced Quit). */
+  /** main → renderer: background jobs are running - ask before this QuitAction (tray Quit, a raced Quit). */
   quitConfirm: 'quit:confirm',
   /** renderer → main: the quit question was shown (or queued), or closed without a Yes (QuitConfirmReply). */
   quitConfirmReply: 'quit:confirm-reply',

@@ -220,7 +220,7 @@ export interface ConfirmActionDeps {
   takeForgetId(): string | null;
   /** The collision question's "yes". */
   mergeCollision(): void;
-  /** The game an install / uninstall question was opened for — fixed then, never re-read on Yes. */
+  /** The game an install / uninstall question was opened for - fixed then, never re-read on Yes. */
   readonly targetId: string | null;
 }
 

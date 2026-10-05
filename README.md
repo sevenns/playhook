@@ -446,8 +446,9 @@ How it works:
 - While the game isn't installed there is **no Play button**: **Install** lives in the **More (⋯)**
   menu. Pressing it asks for confirmation (the popup also shows the destination path, handy if the
   installer isn't fully silent), then runs the installer **silently** and shows an **"Installing..."**
-  indicator. When the executable appears **Play** comes back, and from then on the game launches
-  **from the install location on the PC**.
+  indicator. The install runs in the background (see
+  [Background installs and removals](#background-installs-and-removals)). When the executable appears
+  **Play** comes back, and from then on the game launches **from the install location on the PC**.
 - **`type: "copy"` — "move game to PC" without an installer.** `installer` points at the game's own
   directory on the card and Playhook simply **copies its contents** into the install dir (`executable`
   is relative to that copy; a leading `<source>/` is stripped, so both spellings work). Nothing is
@@ -568,8 +569,13 @@ for a normal game.
 - **Not installed → no Play button; "Install" sits in the More (⋯) menu.** Pressing it confirms ("Open
   Steam to install this game?") and opens `steam://install/<appid>` — Steam shows its own install dialog.
   Playhook does **not** block on a wizard: it stays on the screen, shows a non-blocking
-  **"Installing…"** indicator, and a background poll (~5s) brings **Play** back once Steam reports the
-  game fully installed. The window stays usable meanwhile — a Steam download can run for hours.
+  **"Installing…"** indicator, and a background poll of every Steam game (~5s) brings **Play** back once
+  Steam reports the game fully installed. The window stays usable meanwhile - a Steam download can run for
+  hours, several at once, each shown on its own game (see
+  [Background installs and removals](#background-installs-and-removals)).
+- **Updates and pre-loads:** Steam updating an installed game reads **"Updating…"** and ends without an
+  "installed" notification; a pre-load of a game that is not released yet reads **"Pre-load complete"**.
+  A game Steam updates right before you launch it shows "Launching…", not "Updating…".
 - **Pause:** if you pause the download in Steam, the indicator becomes **"Installing paused on N%…"**
   (the percent is only available while paused — see limitations). While a download is in progress the
   **activity button (the spinning gear) opens Steam's Downloads page** so you can pause/resume there —
@@ -585,6 +591,50 @@ for a normal game.
 If Steam isn't installed on the PC, Install/Play report **"Steam is not installed"** instead of opening
 a URI. Steam's install and uninstall dialogs **cannot be made silent** — there is no `steam://` flag to
 suppress them (just one confirmation; the rest of the flow is automatic).
+
+### Background installs and removals
+
+Installing and uninstalling never take the launcher over: every game carries its own **activity**, and
+any number of games can be busy at once while the others stay playable.
+
+- **Per game, side by side.** Copy installs, card installers, uninstalls, prefix cleanups and Steam
+  downloads each belong to one game. Its card pulses in the carousel and the Library, and its detail
+  screen shows its own status: "Installing...", "Waiting to install...", "Updating...",
+  "Pre-load complete" and so on. The status shows from the moment Playhook starts, without opening the game.
+- **While a game is running** you can bring Playhook up (Start+Back on Windows, the tray or window
+  switching in desktop Linux, Steam's window switcher in Game Mode) and install, cancel or uninstall
+  **other** games. A second game is never launched on top of the first: its Play stays visible but
+  inactive. A Steam install opens Steam's own dialog, which may appear over the game (not yet checked in
+  Game Mode).
+- **Queues.** At most two copy installs and **one installer** run at once (parallel installers are not
+  safe on Windows: MSI's global lock fails a second one, and repacks eat the machine); the rest show
+  "Waiting to install...". An interactive installer (silent mode off), an elevated one (`runAsAdmin`) and a
+  removal that runs the game's own uninstaller elevated wait until you quit the game you are playing
+  ("Will install after you quit the game"), so no wizard or UAC prompt pops up over it. Under gamescope
+  (Game Mode) no installer and no winetricks prefix setup starts while a game runs at all - the game has
+  the only window there.
+- **Cancel:** More (⋯) → **Cancel installation** stops a queued or running install of the game on screen.
+  A stopped copy leaves nothing behind: the files are staged in `<install dir>.partial` and moved into place
+  only once complete.
+- **Notifications instead of a popping window.** A finished install or removal no longer raises the
+  launcher; it is reported in the notifications (a failure too, with its reason - the error popup shows
+  only while the launcher has focus).
+- **Quitting with work in progress** - Quit, Shutdown or Reboot, from the launcher or the tray - asks
+  first; confirming cancels the running jobs and cleans up after them. If the launcher window does not
+  answer, a native dialog asks instead. A launcher killed outright (crash, logout) sweeps leftover staging
+  folders on the next start, and an interrupted installer run never leaves a game that looks installed.
+- **Pulling the card** stops the installs that read from it (reported in the notifications); removals
+  target the PC and finish.
+
+Tuning (environment variables, read at start):
+
+| Variable | Default | What it sets |
+|---|---|---|
+| `PLAYHOOK_STEAM_POLL_MS` | `5000` | How often Steam's `.acf` state of every Steam game is polled |
+| `PLAYHOOK_MAX_PARALLEL_COPY_INSTALLS` | `2` | Copy installs running at once (reading a card while a game runs from it competes for it) |
+| `PLAYHOOK_MAX_PARALLEL_INSTALLERS` | `1` | Installer runs at once - more is at your own risk on Windows |
+| `PLAYHOOK_QUIT_CONFIRM_ACK_MS` | `2000` | How long the launcher window has to show the quit question before the native dialog takes over |
+| `PLAYHOOK_QUIT_GRACE_MS` | `3000` | How long a quit waits for running jobs to clean up |
 
 ### Statistics: one card, many PCs
 
@@ -698,6 +748,9 @@ These are ignored on Windows, so a dual-platform card can carry them safely:
   yanked into Playhook on every entry would be obnoxious. Launch it from the library in that case.
   An ordinary USB stick or a card without `game.json` never triggers it. The whole behaviour can be
   turned off in **Settings → General**.
+- **Installing beside a running game:** switch to Playhook with Steam's window switcher, start installs or
+  removals of other games, and switch back. Installers and winetricks prefix setups wait until you quit
+  the game (gamescope gives the game the only window); a copy whose prefix is already set up runs at once.
 - **No autostart in Game Mode** — the app lives as a non-Steam game, started by Steam (or by the service
   above). In Desktop Mode it writes a `~/.config/autostart/playhook.desktop` entry instead.
 

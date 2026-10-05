@@ -267,7 +267,7 @@ export class GameController {
     return manifest !== null && this.sourceAvailable(manifest);
   }
 
-  /** Every Steam game whose source is available right now — what the Steam activity watch polls. */
+  /** Every Steam game whose source is available right now - what the Steam activity watch polls. */
   private steamGames(): readonly SteamWatchEntry[] {
     return this.games.flatMap((manifest) =>
       manifest.steam !== undefined && this.sourceAvailable(manifest)
@@ -811,7 +811,7 @@ export class GameController {
 
   /**
    * Without `id`: whether the session is busy (a game launching / running / installing / uninstalling).
-   * With `id`: whether that game is the session's or carries an activity of its own — main's server-side
+   * With `id`: whether that game is the session's or carries an activity of its own - main's server-side
    * mirror of the renderer's own isBusy (app.ts), which gates Delete on the Customize screen and Move to
    * card (GameMoveTransaction.moveToCard): a move started while the game is mid-launch would race the
    * launcher's own manifest handling.

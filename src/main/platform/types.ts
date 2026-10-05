@@ -151,7 +151,7 @@ export interface GameProcessLauncher {
     onProvisioning?: (active: boolean) => void,
   ): Promise<void>;
   /**
-   * Whether preparing `install`'s environment would run winetricks — linux: verbs still missing in the
+   * Whether preparing `install`'s environment would run winetricks - linux: verbs still missing in the
    * install's prefix; win32 / darwin: never. Background jobs use it to hold such a step back while a game
    * runs under gamescope, where any window it opens would steal the game's only surface.
    */
