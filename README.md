@@ -92,11 +92,11 @@ launcher — see [Settings and Customize](#settings-and-customize).
 ## How it works
 
 1. Playhook starts hidden in the tray. With no game card inserted, there is no window (unless you
-   enable *Always show the no-card screen* in Settings).
+   enable *Keep the launcher open without a card* in Settings).
 2. Insert a card with a valid `game.json` and a window appears: the hero art as the background and a
    bottom bar with the **Play** button on the left, the game title in the middle and the **More** (⋯)
-   button on the right (state `ready`). If the manifest has no `heroImage`, a bundled wallpaper — or
-   your own, set in Settings — is used.
+   button on the right (state `ready`). If the manifest has no `heroImage`, a bundled wallpaper is
+   used.
 3. With more than one game to show, the launcher opens on the **history carousel** instead: a row of
    game cards you flip through with **left/right**. The games on the inserted card come first (each
    marked with a dot — those you can launch right now), followed by the games you have played on this
@@ -266,19 +266,21 @@ the Steam Deck they work in **Game Mode** as well as on the desktop.
 
 ### Settings
 
-- **Updates** — automatic mode (*download and install* / *download, install manually* / *off*), the
-  **pre-release (beta)** channel, and a manual *Check for updates* with the current version.
-- **Appearance** — theme (system / light / dark), **language** (system / English / Russian), and a
-  custom **background for the empty screen** (any image; *Reset* restores the bundled wallpaper).
+- **Updates** — the current version and a *Check for updates* button, the automatic mode (*download
+  and install* / *download, install manually* / *off*) and the **pre-release (beta)** channel. On macOS,
+  where the app cannot update itself, only the status line is shown.
+- **Language** — the interface language (system / English / Russian).
 - **General** — the gamepad summon hotkey, *keep the screen awake while the launcher is open*,
-  *always show the no-card screen* (instead of hiding to the tray), *disable silent installer mode*
-  (see [Install mode](#install-mode-heavy-games-on-slow-media)), and, on the Steam Deck, the Game Mode
-  auto-launch on card insertion.
+  *keep the launcher open without a card* (instead of hiding to the tray), *disable silent installer
+  mode* (see [Install mode](#install-mode-heavy-games-on-slow-media)), and, on the Steam Deck, the Game
+  Mode auto-launch on card insertion.
+- **Game metadata** — an optional **SteamGridDB API key**: with it, *Find online* also offers covers and
+  backgrounds from SteamGridDB (see [Credits](#credits)).
 - **Audio** — the **navigation sound set** and the **background ambience** shipped with the app, a
   volume slider for each, and an *only global ambience* switch that makes the app's ambience win over
   whatever the card carries in `backgroundMusic`. The navigation sounds always come from the chosen set:
   a card cannot supply its own.
-- **Advanced** — *Open logs*, *Open games folder* (the install-mode directory), *Reset to defaults*.
+- **Reset to defaults** and **Close** at the bottom. The logs folder is opened from the tray menu.
 
 Settings live in `settings.json` next to the rest of the app state (`%APPDATA%\playhook\` on Windows,
 `~/.config/playhook/` on Linux, `~/Library/Application Support/playhook/` on macOS); a missing or
@@ -444,8 +446,9 @@ How it works:
 - While the game isn't installed there is **no Play button**: **Install** lives in the **More (⋯)**
   menu. Pressing it asks for confirmation (the popup also shows the destination path, handy if the
   installer isn't fully silent), then runs the installer **silently** and shows an **"Installing..."**
-  indicator. When the executable appears **Play** comes back, and from then on the game launches
-  **from the install location on the PC**.
+  indicator. The install runs in the background (see
+  [Background installs and removals](#background-installs-and-removals)). When the executable appears
+  **Play** comes back, and from then on the game launches **from the install location on the PC**.
 - **`type: "copy"` — "move game to PC" without an installer.** `installer` points at the game's own
   directory on the card and Playhook simply **copies its contents** into the install dir (`executable`
   is relative to that copy; a leading `<source>/` is stripped, so both spellings work). Nothing is
@@ -566,8 +569,13 @@ for a normal game.
 - **Not installed → no Play button; "Install" sits in the More (⋯) menu.** Pressing it confirms ("Open
   Steam to install this game?") and opens `steam://install/<appid>` — Steam shows its own install dialog.
   Playhook does **not** block on a wizard: it stays on the screen, shows a non-blocking
-  **"Installing…"** indicator, and a background poll (~5s) brings **Play** back once Steam reports the
-  game fully installed. The window stays usable meanwhile — a Steam download can run for hours.
+  **"Installing…"** indicator, and a background poll of every Steam game (~5s) brings **Play** back once
+  Steam reports the game fully installed. The window stays usable meanwhile - a Steam download can run for
+  hours, several at once, each shown on its own game (see
+  [Background installs and removals](#background-installs-and-removals)).
+- **Updates and pre-loads:** Steam updating an installed game reads **"Updating…"** and ends without an
+  "installed" notification; a pre-load of a game that is not released yet reads **"Pre-load complete"**.
+  A game Steam updates right before you launch it shows "Launching…", not "Updating…".
 - **Pause:** if you pause the download in Steam, the indicator becomes **"Installing paused on N%…"**
   (the percent is only available while paused — see limitations). While a download is in progress the
   **activity button (the spinning gear) opens Steam's Downloads page** so you can pause/resume there —
@@ -583,6 +591,50 @@ for a normal game.
 If Steam isn't installed on the PC, Install/Play report **"Steam is not installed"** instead of opening
 a URI. Steam's install and uninstall dialogs **cannot be made silent** — there is no `steam://` flag to
 suppress them (just one confirmation; the rest of the flow is automatic).
+
+### Background installs and removals
+
+Installing and uninstalling never take the launcher over: every game carries its own **activity**, and
+any number of games can be busy at once while the others stay playable.
+
+- **Per game, side by side.** Copy installs, card installers, uninstalls, prefix cleanups and Steam
+  downloads each belong to one game. Its card pulses in the carousel and the Library, and its detail
+  screen shows its own status: "Installing...", "Waiting to install...", "Updating...",
+  "Pre-load complete" and so on. The status shows from the moment Playhook starts, without opening the game.
+- **While a game is running** you can bring Playhook up (Start+Back on Windows, the tray or window
+  switching in desktop Linux, Steam's window switcher in Game Mode) and install, cancel or uninstall
+  **other** games. A second game is never launched on top of the first: its Play stays visible but
+  inactive. A Steam install opens Steam's own dialog, which may appear over the game (not yet checked in
+  Game Mode).
+- **Queues.** At most two copy installs and **one installer** run at once (parallel installers are not
+  safe on Windows: MSI's global lock fails a second one, and repacks eat the machine); the rest show
+  "Waiting to install...". An interactive installer (silent mode off), an elevated one (`runAsAdmin`) and a
+  removal that runs the game's own uninstaller elevated wait until you quit the game you are playing
+  ("Will install after you quit the game"), so no wizard or UAC prompt pops up over it. Under gamescope
+  (Game Mode) no installer and no winetricks prefix setup starts while a game runs at all - the game has
+  the only window there.
+- **Cancel:** More (⋯) → **Cancel installation** stops a queued or running install of the game on screen.
+  A stopped copy leaves nothing behind: the files are staged in `<install dir>.partial` and moved into place
+  only once complete.
+- **Notifications instead of a popping window.** A finished install or removal no longer raises the
+  launcher; it is reported in the notifications (a failure too, with its reason - the error popup shows
+  only while the launcher has focus).
+- **Quitting with work in progress** - Quit, Shutdown or Reboot, from the launcher or the tray - asks
+  first; confirming cancels the running jobs and cleans up after them. If the launcher window does not
+  answer, a native dialog asks instead. A launcher killed outright (crash, logout) sweeps leftover staging
+  folders on the next start, and an interrupted installer run never leaves a game that looks installed.
+- **Pulling the card** stops the installs that read from it (reported in the notifications); removals
+  target the PC and finish.
+
+Tuning (environment variables, read at start):
+
+| Variable | Default | What it sets |
+|---|---|---|
+| `PLAYHOOK_STEAM_POLL_MS` | `5000` | How often Steam's `.acf` state of every Steam game is polled |
+| `PLAYHOOK_MAX_PARALLEL_COPY_INSTALLS` | `2` | Copy installs running at once (reading a card while a game runs from it competes for it) |
+| `PLAYHOOK_MAX_PARALLEL_INSTALLERS` | `1` | Installer runs at once - more is at your own risk on Windows |
+| `PLAYHOOK_QUIT_CONFIRM_ACK_MS` | `2000` | How long the launcher window has to show the quit question before the native dialog takes over |
+| `PLAYHOOK_QUIT_GRACE_MS` | `3000` | How long a quit waits for running jobs to clean up |
 
 ### Statistics: one card, many PCs
 
@@ -696,6 +748,9 @@ These are ignored on Windows, so a dual-platform card can carry them safely:
   yanked into Playhook on every entry would be obnoxious. Launch it from the library in that case.
   An ordinary USB stick or a card without `game.json` never triggers it. The whole behaviour can be
   turned off in **Settings → General**.
+- **Installing beside a running game:** switch to Playhook with Steam's window switcher, start installs or
+  removals of other games, and switch back. Installers and winetricks prefix setups wait until you quit
+  the game (gamescope gives the game the only window); a copy whose prefix is already set up runs at once.
 - **No autostart in Game Mode** — the app lives as a non-Steam game, started by Steam (or by the service
   above). In Desktop Mode it writes a `~/.config/autostart/playhook.desktop` entry instead.
 
@@ -878,7 +933,9 @@ Release flow:
 
 That is the default; **Settings → Updates** lets the user pick *download and install automatically*,
 *download automatically, install manually*, or *off (check manually)*, opt into the **pre-release
-(beta)** channel, and run a check by hand.
+(beta)** channel, and run a check by hand. *Restart & install* on a downloaded update runs the
+NSIS installer **silently** (no wizard window) and relaunches Playhook when it is done; the first
+install still shows the regular wizard.
 
 Notes:
 
@@ -897,7 +954,7 @@ On **Windows** and **macOS** the app registers itself via
 Login Items*).
 
 - It always starts hidden in the tray (no flag needed): the window appears only when a valid game
-  card is detected — unless *Always show the no-card screen* is enabled in Settings.
+  card is detected — unless *Keep the launcher open without a card* is enabled in Settings.
 - Guaranteed for the **NSIS installation**; for **portable** it is best-effort (the path to the
   exe may change).
 - To disable: *Settings → Apps → Startup* in Windows.
@@ -916,7 +973,7 @@ exists while you are in Game Mode; **Remove from Steam** deletes it.
 The main process writes a timestamped log, split **per calendar day** into
 `%APPDATA%\playhook\logs\main-YYYY-MM-DD.log` (`~/.config/playhook/logs/` on Linux,
 `~/Library/Application Support/playhook/logs/` on macOS); files older than
-**14 days** are pruned on startup. Open the folder from **Settings → Advanced → Open logs**.
+**14 days** are pruned on startup. Open the folder from the tray menu (**Open logs**).
 
 It records card insertions, manifest validation, the stats reconcile / card-copy result, and
 launch/exit — useful when a save or stats copy to the card silently fails.
@@ -977,14 +1034,29 @@ launch/exit — useful when a save or stats copy to the card silently fails.
 ```
 src/
   main/        # all work with the FS/processes/disks (Electron main)
+    metadata/  # "Find online": the MetadataProvider seam and one module per source (Steam, GOG, ...)
     platform/  # everything OS-specific (win32 / linux + Proton, umu / darwin)
   preload/     # the typed contextBridge bridge
   renderer/    # UI + gamepad/keyboard input (launcher, settings, customize — no Node)
-  shared/      # shared contract of types/IPC channels + the i18n dictionaries
+  shared/      # shared contract of types/IPC channels
+    i18n/      # the en / ru dictionaries and plural rules
 test/          # vitest suites (plain Node, no electron)
+  renderer/    # DOM tests of the screens, run under happy-dom against the real index.html
+  stubs/       # the inert `electron` stub the node suites are aliased to
+scripts/       # build-time helpers, plain ESM (see below)
 ```
 
-npm scripts: `typecheck`, `lint`, `test`, `format`, `build`, `start`, `rebuild`, `build:umu`, `dist`.
+npm scripts: `typecheck`, `lint`, `test`, `format`, `format:check`, `build` (= `build:renderer`,
+`build:app`, `build:main`, `build:assets`), `build:umu`, `start`, `rebuild`, `dist`; `postinstall` runs
+`electron-builder install-app-deps`.
+
+`scripts/*.mjs`:
+
+- `copy-assets.mjs` — copies html/css/fonts/audio into `dist/` after tsc and writes `dist/audio/index.json`.
+- `audio-index.mjs` — the pure, unit-tested helpers `copy-assets.mjs` uses to list sound sets and ambience.
+- `fetch-umu.mjs` — downloads the pinned umu-launcher zipapp into `resources/umu/` for the Linux build.
+- `after-pack.mjs` — electron-builder `afterPack` hook (Linux): wraps the executable so Game Mode gets `--no-sandbox`.
+
 Contributor conventions (layers, error handling, adding an IPC channel, the daemon's electron-free
 import graph) live in [`CLAUDE.md`](CLAUDE.md).
 
@@ -994,7 +1066,8 @@ import graph) live in [`CLAUDE.md`](CLAUDE.md).
 
 PRs welcome. The codebase is **strict TypeScript** (no `any`, no non-null `!`, explicit return types,
 functional style). Please run `npm run typecheck`, `npm run lint` and `npm test` before opening a PR —
-CI runs all three, on Windows, Linux **and** macOS.
+CI runs all three on every PR, on Windows, Linux **and** macOS. Prettier (`npm run format`) is there for
+new files, not a gate: the existing hand-aligned sources are intentionally left as they are.
 
 ---
 
@@ -1025,8 +1098,8 @@ CI runs all three, on Windows, Linux **and** macOS.
   client (the card is just a pointer by `appid`). For a **non-Steam** wrapper/launcher `.exe`, point it at
   the exe and use [`watchProcesses`](#rules-and-security-the-card-is-untrusted-input) so exit detection
   works.
-- **Is there a Russian UI?** Yes — *Settings → Appearance* has English and Russian (plus a light/dark/system
-  theme), and by default the app follows the system language.
+- **Is there a Russian UI?** Yes — *Settings → Language* has English and Russian, and by default the app
+  follows the system language.
 
 ---
 

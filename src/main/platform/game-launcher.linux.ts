@@ -1,17 +1,16 @@
-// Linux GameProcessLauncher: run the card's Windows .exe through umu-launcher / Proton (Р1/Р2). The
+// Linux GameProcessLauncher: run the card's Windows .exe through umu-launcher / Proton. The
 // bundled umu-run zipapp is invoked as `python3 <umu-run> <exe> <args…>` in the game's own Wine prefix.
 // umu-run stays alive for the whole session, so the launched CHILD is the completion signal (its exit
-// event) — no /proc snapshots needed for the plain exe path (Р3); watchProcesses games still track via the
-// ProcessMonitor. Install/uninstall run the same way (Р7): the installer/uninstaller .exe is launched
+// event) — no /proc snapshots needed for the plain exe path; watchProcesses games still track via the
+// ProcessMonitor. Install/uninstall run the same way: the installer/uninstaller .exe is launched
 // through umu-run in the game's OWN Wine prefix, so what it writes to `C:\playhook\games\<id>` lands in
 // that prefix's `drive_c` — exactly where the game later launches from.
 import path from 'node:path';
 import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import fse from 'fs-extra';
-import type { GameProcessLauncher, ProcessMonitor } from './types';
-import type { ResolvedInstall } from '../../shared/types';
-import type { GameProcess } from '../game-launcher';
+import type { GameProcess, GameProcessLauncher, ProcessMonitor } from './types';
+import type { ResolvedInstall } from '../manifest-types';
 import {
   prefixDir,
   prefixForInstall,
@@ -23,6 +22,7 @@ import {
 } from './umu';
 import { buildInstallerArgs } from '../launch-args';
 import { log } from '../logger';
+import { createProvisionLock } from './provision-lock';
 
 const execFileAsync = promisify(execFile);
 
@@ -46,7 +46,7 @@ export interface LinuxGameLauncherDeps {
 function protonLogDir(userData: string): string | undefined {
   const flag = process.env['PLAYHOOK_PROTON_LOG'];
   if (flag === undefined || flag === '' || flag === '0') return undefined;
-  return path.join(userData, 'proton-logs');
+  return path.posix.join(userData, 'proton-logs');
 }
 
 /** Ensures the Proton-log dir exists (Proton won't create PROTON_LOG_DIR itself). No-op when off. */
@@ -64,7 +64,7 @@ async function collectProtonLog(logDir: string): Promise<void> {
     const names = (await fse.readdir(logDir)).filter((name) => name.endsWith('.log'));
     let newest: { readonly path: string; readonly mtimeMs: number } | null = null;
     for (const name of names) {
-      const full = path.join(logDir, name);
+      const full = path.posix.join(logDir, name);
       const stat = await fse.stat(full);
       if (newest === null || stat.mtimeMs > newest.mtimeMs) newest = { path: full, mtimeMs: stat.mtimeMs };
     }
@@ -79,7 +79,7 @@ async function collectProtonLog(logDir: string): Promise<void> {
 let python3Available = false;
 
 /**
- * Verifies a system python3 is present (the umu zipapp needs it — Р1). SteamOS ships it; on desktop
+ * Verifies a system python3 is present (the umu zipapp needs it). SteamOS ships it; on desktop
  * distros it is almost always there. Throws a clear, user-facing error otherwise so the controller can
  * surface it instead of a cryptic spawn failure.
  */
@@ -163,12 +163,14 @@ function spawnUmuProcess(
   });
 }
 
-// ── Prefix dependency provisioning (Р7b) ─────────────────────────────────────
+// ── Prefix dependency provisioning ───────────────────────────────────────────
 // Before an installer runs, its Wine prefix gets a baseline set of runtimes (mfc42/gdiplus/vcrun/…) plus
 // any card-specific extras, via `umu-run winetricks`. A skinned Inno installer (isskin.dll) fails to load
 // on a bare prefix without these; games in the same prefix benefit too. Idempotent: the applied verbs are
 // recorded in a per-prefix sentinel so re-installs skip the (slow) step; the winetricks DOWNLOADS are
 // globally cached by winetricks, so a new prefix re-applies without re-downloading.
+
+const provisionLock = createProvisionLock();
 
 /** Per-prefix marker file listing the winetricks verbs already provisioned (newline-separated). */
 const WINETRICKS_SENTINEL = '.playhook-winetricks';
@@ -176,7 +178,7 @@ const WINETRICKS_SENTINEL = '.playhook-winetricks';
 /** Reads the verbs already provisioned in `prefix` (empty if the sentinel is missing/unreadable). */
 async function readDoneVerbs(prefix: string): Promise<string[]> {
   try {
-    const text = await fse.readFile(path.join(prefix, WINETRICKS_SENTINEL), 'utf8');
+    const text = await fse.readFile(path.posix.join(prefix, WINETRICKS_SENTINEL), 'utf8');
     return text.split('\n').map((line) => line.trim()).filter((line) => line.length > 0);
   } catch {
     return []; // missing sentinel = nothing provisioned yet (normal first install)
@@ -225,13 +227,28 @@ function runWinetricks(
 }
 
 /**
- * Ensures the baseline + card-`extra` winetricks verbs are provisioned in `prefix` (Р7b). Idempotent via
+ * Ensures the baseline + card-`extra` winetricks verbs are provisioned in `prefix`. Idempotent via
  * the per-prefix sentinel; a no-op when everything is already applied. Best-effort: a winetricks failure
  * is logged and provisioning does NOT record success (so the next attempt retries), but the install is
  * allowed to proceed regardless (chosen behaviour — the installer surfaces its own error if deps are
- * truly missing). Needs network the first time (like the GE-Proton download), same as game launch in Э4.
+ * truly missing). Needs network the first time (like the GE-Proton download), same as a game launch.
  */
 async function ensurePrefixDeps(
+  umuRunPath: string,
+  prefix: string,
+  extra: readonly string[],
+  logDir: string | undefined,
+  onProvisioning?: (active: boolean) => void,
+): Promise<void> {
+  if (pendingWinetricks(extra, await readDoneVerbs(prefix)).length === 0) return;
+  await provisionLock.run(() => provisionPrefix(umuRunPath, prefix, extra, logDir, onProvisioning));
+}
+
+/**
+ * The body of ensurePrefixDeps, run under the provision lock: re-reads what is already applied (an earlier
+ * holder of the lock may have provisioned this very prefix) and runs winetricks for the rest.
+ */
+async function provisionPrefix(
   umuRunPath: string,
   prefix: string,
   extra: readonly string[],
@@ -241,7 +258,7 @@ async function ensurePrefixDeps(
   const done = await readDoneVerbs(prefix);
   const pending = pendingWinetricks(extra, done);
   if (pending.length === 0) return; // nothing to do → no "Configuring Proton" status
-  // Signal the provisioning window ONLY when winetricks actually runs (Р7g). `finally` guarantees the
+  // Signal the provisioning window ONLY when winetricks actually runs. `finally` guarantees the
   // status is torn down even if the run throws, so the launch screen never gets stuck on it.
   onProvisioning?.(true);
   try {
@@ -254,7 +271,7 @@ async function ensurePrefixDeps(
     // Persist the union of previously-done and newly-applied verbs so re-installs skip this step.
     const union = [...new Set([...done, ...pending])];
     try {
-      await fse.writeFile(path.join(prefix, WINETRICKS_SENTINEL), `${union.join('\n')}\n`);
+      await fse.writeFile(path.posix.join(prefix, WINETRICKS_SENTINEL), `${union.join('\n')}\n`);
     } catch (cause) {
       // Non-fatal: without the sentinel the next install re-runs winetricks (idempotent, just slower).
       log.warn(`[install] failed to write winetricks sentinel: ${cause instanceof Error ? cause.message : String(cause)}`);
@@ -266,7 +283,7 @@ async function ensurePrefixDeps(
 
 /**
  * Brings the Wine prefix that backs an install dir into a ready state: created, Proton-initialized and
- * provisioned with the baseline runtimes plus the card's `install.winetricks` (Р7b). Shared by
+ * provisioned with the baseline runtimes plus the card's `install.winetricks`. Shared by
  * launchInstaller (which needs it before the installer .exe runs) and prepareInstallDir (which needs it
  * before `copy` writes the game's files in) — the two must init the prefix the SAME way, so a copied game
  * lands in the same environment an installed one would.
@@ -283,7 +300,7 @@ async function preparePrefixForInstall(
   await fse.ensureDir(prefix);
   const logDir = protonLogDir(deps.userData);
   await ensureLogDir(logDir);
-  // Р7b: provision the runtimes the installer/game need (baseline + card extras). Also initializes the
+  // Provision the runtimes the installer/game need (baseline + card extras). Also initializes the
   // prefix (the first `umu-run` here does the Proton upgrade).
   await ensurePrefixDeps(deps.umuRunPath, prefix, install.winetricks, logDir, onProvisioning);
   return { prefix, logDir };
@@ -294,7 +311,7 @@ export function createLinuxGameLauncher(deps: LinuxGameLauncherDeps): GameProces
   return {
     async launchGame(manifest, onProvisioning): Promise<GameProcess> {
       if (manifest.raw.runAsAdmin) {
-        // Р6: there is no elevation under Proton — everything runs as the user. Ignore rather than reject,
+        // There is no elevation under Proton — everything runs as the user. Ignore rather than reject,
         // so a legitimate two-platform card (runAsAdmin for Windows) still launches on Linux.
         log.warn(`[launch] runAsAdmin ignored on Linux (no elevation under Proton) id=${manifest.raw.id}`);
       }
@@ -303,12 +320,12 @@ export function createLinuxGameLauncher(deps: LinuxGameLauncherDeps): GameProces
       await fse.ensureDir(prefix);
       const logDir = protonLogDir(deps.userData);
       await ensureLogDir(logDir);
-      // Р7b: provision the game's own winetricks verbs (baseline + card `winetricks`) before launch — only
+      // Provision the game's own winetricks verbs (baseline + card `winetricks`) before launch — only
       // when the card lists any, so an ordinary game with no verbs launches unchanged (no extra step).
       if (manifest.raw.winetricks.length > 0) {
         await ensurePrefixDeps(deps.umuRunPath, prefix, manifest.raw.winetricks, logDir, onProvisioning);
       }
-      // Р7i: a card-specified umu GAMEID (Steam appid / UMU_ID) → umu applies that game's protonfix; absent
+      // A card-specified umu GAMEID (Steam appid / UMU_ID) → umu applies that game's protonfix; absent
       // → `umu-default`. Only for the game launch (the installer/winetricks steps stay generic).
       const gameId = manifest.raw.umuGameId ?? UMU_GAMEID;
       const env = buildUmuEnv(process.env, { prefix, proton: DEFAULT_PROTON, protonLogDir: logDir, gameId });
@@ -318,10 +335,10 @@ export function createLinuxGameLauncher(deps: LinuxGameLauncherDeps): GameProces
       );
       return spawnUmuProcess(args, manifest.cwd, env, deps.monitor);
     },
-    // Install mode (Р7): run the card's installer .exe through umu-run in the game's Wine prefix, feeding
+    // Install mode: run the card's installer .exe through umu-run in the game's Wine prefix, feeding
     // it the app-controlled dir via the family's silent dir-key (unquoted on linux — see buildInstallerArgs).
     // cwd is the installer's own folder on the card (host path); the install dir may not exist yet (the
-    // installer creates it, and the controller pre-cleaned it). runAsAdmin is ignored (no elevation — Р6).
+    // installer creates it, and the controller pre-cleaned it). runAsAdmin is ignored (no elevation).
     async launchInstaller(install, silent, onProvisioning): Promise<GameProcess> {
       if (install.runAsAdmin) {
         log.warn('[install] runAsAdmin ignored on Linux (no elevation under Proton)');
@@ -332,7 +349,7 @@ export function createLinuxGameLauncher(deps: LinuxGameLauncherDeps): GameProces
       // on linux — umu surfaces the Wine window whenever the installer isn't running silently).
       const installerArgs = buildInstallerArgs(install.type, install.installerDir, install.args, false, silent);
       const args = buildUmuArgs(deps.umuRunPath, install.installerPath, installerArgs);
-      const cwd = path.dirname(install.installerPath);
+      const cwd = path.posix.dirname(install.installerPath);
       log.info(
         `[install] umu-run installer silent=${silent} prefix="${prefix}" installer="${install.installerPath}" dir="${install.installerDir}"`,
       );
@@ -342,11 +359,15 @@ export function createLinuxGameLauncher(deps: LinuxGameLauncherDeps): GameProces
     // copied files are about to be written INTO (launchGame only provisions when the card lists top-level
     // winetricks, and never applies the install baseline). Do it here, before the copy — same order and
     // same environment as the installer path: prefix first, game files second.
+    async needsProvisioning(install): Promise<boolean> {
+      const prefix = prefixForInstall(install.dir);
+      return pendingWinetricks(install.winetricks, await readDoneVerbs(prefix)).length > 0;
+    },
     async prepareInstallDir(install, onProvisioning): Promise<void> {
       const { prefix } = await preparePrefixForInstall(deps, install, onProvisioning);
       log.info(`[install] prefix ready for copy prefix="${prefix}" dir="${install.dir}"`);
     },
-    // Uninstall (Р7): the target (uninstaller .exe found in the install dir + silent flags) is resolved by
+    // Uninstall: the target (uninstaller .exe found in the install dir + silent flags) is resolved by
     // the controller; there is no registry fallback on linux. Run it through umu-run in the same prefix.
     async launchUninstaller(target): Promise<GameProcess> {
       if (target.runAsAdmin) {
@@ -363,7 +384,11 @@ export function createLinuxGameLauncher(deps: LinuxGameLauncherDeps): GameProces
       log.info(`[uninstall] umu-run uninstaller prefix="${prefix}" file="${target.file}"`);
       return spawnUmuProcess(args, target.cwd, env, deps.monitor);
     },
-    // Р7f: uninstall removes the WHOLE per-game prefix (it contains the install dir + the game's runtimes),
+    // Uninstall removes the WHOLE per-game prefix (see uninstallDir), so running the game's own in-prefix
+    // uninstaller first is pointless: its registry/shortcut cleanup lives in the prefix about to be
+    // deleted. Skip it — win32 still runs it (no prefix; it must clean the shared system).
+    resolveUninstaller: () => Promise.resolve(null),
+    // Uninstall removes the WHOLE per-game prefix (it contains the install dir + the game's runtimes),
     // reclaiming the full disk footprint — not just the game files under drive_c/playhook/games/<id>.
     uninstallDir: (install) => prefixForInstall(install.dir),
     // A normal executable game creates its prefix on first launch; offer to clear it once it exists. Same

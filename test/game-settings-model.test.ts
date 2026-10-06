@@ -23,6 +23,7 @@ import {
   type GameRowId,
   type GameSettingsEnv,
   type GameSettingsModel,
+  withField,
 } from '../src/renderer/game-settings-model';
 
 const baseEnv: GameSettingsEnv = {
@@ -102,9 +103,7 @@ describe('draftModeFor', () => {
   });
 
   it('leaves the mode alone once any of the four launch blocks is filled in (install / copyToPc)', () => {
-    expect(
-      draftModeFor({ ...emptyFormModel(), copyToPc: true }, 'pc'),
-    ).toBe('executable');
+    expect(draftModeFor({ ...emptyFormModel(), copyToPc: true }, 'pc')).toBe('executable');
   });
 });
 
@@ -164,9 +163,7 @@ describe('field visibility per launch mode', () => {
   });
 
   it('drops the id-changed warning along with the row during a move', () => {
-    const built = ids(
-      model({ id: 'renamed' }, { source: 'pc', move: true, loadedId: 'hades' }),
-    );
+    const built = ids(model({ id: 'renamed' }, { source: 'pc', move: true, loadedId: 'hades' }));
     expect(built).not.toContain('note.idChanged');
   });
 
@@ -540,7 +537,7 @@ describe('carryFormAcrossSources / hasSourceBoundValues', () => {
   });
 });
 
-// Moving a REAL local game onto a card (Р2.2) — unlike carryFormAcrossSources (a half-filled ADD form
+// Moving a REAL local game onto a card — unlike carryFormAcrossSources (a half-filled ADD form
 // with nothing of the old root's to keep), this carries actual game data across, including art/music,
 // whose paths become the deterministic destination names (see asset-move-names.ts).
 describe('carryFormToCard', () => {
@@ -586,7 +583,17 @@ describe('carryFormToCard', () => {
 
   it('drops pc.executable, saveOnCard and any install/copyToPc', () => {
     const moved = carryFormToCard(
-      pcGame({ copyToPc: true, copyInstall: { installer: 'x', type: 'copy', runAsAdmin: false, args: [], winetricks: [], rest: {} } }),
+      pcGame({
+        copyToPc: true,
+        copyInstall: {
+          installer: 'x',
+          type: 'copy',
+          runAsAdmin: false,
+          args: [],
+          winetricks: [],
+          rest: {},
+        },
+      }),
     );
     expect(moved.pc.executable).toBe('');
     expect(moved.saveOnCard).toBe('');
@@ -599,9 +606,7 @@ describe('carryFormToCard', () => {
     expect(carryFormToCard(pcGame({ pcSavePath: '%APPDATA%/Hades' })).pcSavePath).toBe(
       '%APPDATA%/Hades',
     );
-    expect(
-      carryFormToCard(pcGame({ pcSavePath: 'C:\\Games\\Hades\\Saves' })).pcSavePath,
-    ).toBe('');
+    expect(carryFormToCard(pcGame({ pcSavePath: 'C:\\Games\\Hades\\Saves' })).pcSavePath).toBe('');
   });
 
   it('launchMode: steam survives, pc/none become executable', () => {
@@ -614,9 +619,7 @@ describe('carryFormToCard', () => {
   });
 
   it('leaves art/music empty when the source game has none', () => {
-    const moved = carryFormToCard(
-      pcGame({ heroImage: [], gridImage: '', backgroundMusic: '' }),
-    );
+    const moved = carryFormToCard(pcGame({ heroImage: [], gridImage: '', backgroundMusic: '' }));
     expect(moved.heroImage).toEqual([]);
     expect(moved.gridImage).toBe('');
     expect(moved.backgroundMusic).toBe('');
@@ -707,5 +710,23 @@ describe('the history mode (a game whose card is not in)', () => {
     const ids = rowsOf({ ...baseEnv, historyMode: true }).map((row) => row.id);
     expect(ids).toContain('executable');
     expect(ids).toContain('saveOnCard');
+  });
+});
+
+describe('withField: the title and the id', () => {
+  it('lets the id follow the title only while a game is being added', () => {
+    const blank = { ...emptyFormModel(), title: '', id: '' };
+    expect(withField(blank, 'title', 'Hades II', true).id).toBe('hades-ii');
+    expect(withField(blank, 'title', 'Hades II').id).toBe('');
+  });
+
+  it('stops following once the id was taken over by hand', () => {
+    const own = { ...emptyFormModel(), title: 'Hades', id: 'my-hades' };
+    expect(withField(own, 'title', 'Hades II', true).id).toBe('my-hades');
+  });
+
+  it("never moves an existing game's id under a rename", () => {
+    const existing = { ...emptyFormModel(), title: 'Hades', id: 'hades' };
+    expect(withField(existing, 'title', 'Hades II').id).toBe('hades');
   });
 });

@@ -36,8 +36,7 @@ export function createTranslator(locale: Locale): Translator {
   const rules = new Intl.PluralRules(locale === 'ru' ? 'ru-RU' : 'en');
 
   const t = ((key: MessageKey, params?: TranslateParams): string => {
-    // `noUncheckedIndexedAccess`: ru[key] is `string | undefined` (Partial) → fall back to en[key].
-    const template = (locale === 'ru' ? ru[key] : undefined) ?? en[key];
+    const template = locale === 'ru' ? ru[key] : en[key];
     return interpolate(template, params);
   }) as Translator;
 

@@ -13,15 +13,30 @@ import { StatsService } from './stats';
 import { LibraryStore } from './library-store';
 import { PcLibraryStore } from './pc-library';
 import { DriveWatcher } from './drive-watcher';
-import { GameController } from './ipc';
+import { GameController } from './game-controller';
+import { ActivityRegistry } from './activity-registry';
+import { QuitGate, quitGraceMs, withGrace } from './quit-gate';
+import { quitQuestion } from '../shared/quit';
+import {
+  waitForExit,
+  waitForStart,
+  waitForSteamExit,
+  waitForSteamStart,
+  waitForWatchedExit,
+  waitForWatchedStart,
+} from './game-launcher';
+import { focusGameWindow } from './window-finder';
 import { GlobalGamepad } from './gamepad-global';
 import { createTray, buildTrayMenu, type TrayCallbacks, type TraySteamState } from './tray';
 import { createSteamShortcutService } from './steam-shortcut';
 import { installDaemonUnit, removeDaemonUnit } from './daemon-unit';
 import { UpdaterService } from './updater';
+import { SettingsService } from './settings-service';
 import { NotificationsService } from './notifications';
 import { NotificationsStore } from './notifications-store';
 import { GameConfigService } from './game-config';
+import { FilePickerService } from './file-picker-service';
+import { GameMoveTransaction } from './game-move-transaction';
 import { HttpClient } from './metadata/http';
 import { MetadataService } from './metadata/service';
 import { SteamProvider } from './metadata/steam';
@@ -84,7 +99,7 @@ function configureAutoLaunch(): void {
 }
 
 /**
- * Linux autostart (Р11). Electron's app.setLoginItemSettings is macOS/Windows-only, so we write an XDG
+ * Linux autostart. Electron's app.setLoginItemSettings is macOS/Windows-only, so we write an XDG
  * autostart entry by hand. Only meaningful for the packaged AppImage (Exec points at $APPIMAGE) and only
  * in Desktop Mode — in Game Mode the app runs as a non-Steam game with no autostart mechanism, so we skip
  * it there. Best-effort: any failure is logged, never fatal.
@@ -135,8 +150,11 @@ function openGamesFolder(): void {
   void shell.openPath(dir);
 }
 
-function quit(): void {
+/** The managed exit: waits a bounded grace for the running jobs to clean up, then leaves. */
+async function quit(): Promise<void> {
   quitting = true;
+  const jobs = controllerRef?.jobs;
+  if (jobs?.anyActive() === true) await withGrace(jobs.abortAll('shutdown'), quitGraceMs());
   controllerRef?.shutdown();
   globalGamepadRef?.stop();
   keepAwakeRef?.dispose();
@@ -180,8 +198,7 @@ async function bootstrap(): Promise<void> {
     app.getPath('userData'),
     (next) => {
       steamGridDbKey = next.steamGridDbApiKey;
-      const bw = windowRef?.browserWindow ?? null;
-      if (bw !== null && !bw.isDestroyed()) bw.webContents.send(IPC.settingsUpdate, next);
+      windowRef?.send(IPC.settingsUpdate, next);
     },
     // A settings write that fails leaves the user looking at a toggle that flipped back (or a language
     // that did not change) with no explanation — every setter logs its own cause, this says it on screen.
@@ -217,10 +234,7 @@ async function bootstrap(): Promise<void> {
         gameRunning: state.get().kind === 'running',
       };
     },
-    push: (channel, payload) => {
-      const bw = windowRef?.browserWindow ?? null;
-      if (bw !== null && !bw.isDestroyed()) bw.webContents.send(channel, payload);
-    },
+    push: (channel, payload) => windowRef?.send(channel, payload),
   });
   notificationsRef = notifications; // the settings store reports a failed write through it (see above)
   await notifications.init();
@@ -262,7 +276,7 @@ async function bootstrap(): Promise<void> {
     getTranslator,
   });
 
-  // Game Mode only (Р10), as a safety net: the gamescope session normally mounts an inserted card itself,
+  // Game Mode only, as a safety net: the gamescope session normally mounts an inserted card itself,
   // but one that arrives unmounted is invisible to the scan (it has no path to look under). Sweeping it
   // into /run/media keeps hot-swap working in that case. Windows and the KDE desktop session mount on
   // their own → no sweep wired there.
@@ -272,8 +286,11 @@ async function bootstrap(): Promise<void> {
   );
 
   windowRef = window;
+  const activities = new ActivityRegistry();
+  activities.init((channel, payload) => window.send(channel, payload));
   const controller = new GameController({
     state,
+    activities,
     window,
     store,
     stats,
@@ -283,11 +300,40 @@ async function bootstrap(): Promise<void> {
     settings,
     notifications,
     platform,
+    processControl: {
+      waitForStart,
+      waitForExit,
+      waitForWatchedStart,
+      waitForWatchedExit,
+      waitForSteamStart,
+      waitForSteamExit,
+      focusGameWindow,
+    },
     isGamescope: gameModeSession,
     getTranslator,
   });
   controllerRef = controller;
   controller.init();
+
+  const quitGate = new QuitGate({
+    activeJobs: () => controller.jobs.activeCount(),
+    showAndFocus: () => window.showAndFocus(),
+    askInWindow: (action) => window.send(IPC.quitConfirm, action),
+    askNatively: async (action, jobs) => {
+      const t = getTranslator();
+      const { response } = await dialog.showMessageBox({
+        type: 'question',
+        buttons: [t('common.no'), t('common.yes')],
+        defaultId: 0,
+        cancelId: 0,
+        message: quitQuestion(t, action, jobs),
+      });
+      return response === 1;
+    },
+  });
+  ipcMain.on(IPC.quitConfirmReply, (_event, reply: unknown) => {
+    if (reply === 'shown' || reply === 'dismissed') quitGate.reply(reply);
+  });
 
   // Keep the display awake while the launcher owns the session. Single recompute point over two flags
   // (the setting + whether the window is on screen) plus the running AppState — main is single-threaded,
@@ -304,11 +350,12 @@ async function bootstrap(): Promise<void> {
     // `|| running` holds the blocker even if a game minimized our window into exclusive-fullscreen
     // (windowVisible would be false there), which is the whole point of covering the running state.
     const running = state.get().kind === 'running';
-    keepAwake.setActive(preventScreensaverEnabled && (windowVisible || running));
+    keepAwake.setActive(preventScreensaverEnabled && (windowVisible || running || controller.jobs.anyActive()));
   };
   // Recompute on every state change so entering/leaving `running` toggles the blocker (the window-visibility
   // and setting sources push their own recompute). A second subscriber alongside the controller's replicator.
   state.subscribe(() => recomputeKeepAwake());
+  activities.subscribe(() => recomputeKeepAwake());
 
   // Update service. isBusy covers ALL in-flight states (not just a running game), so a manual install
   // can't tear down a save-sync / game install. beforeInstall drops the windows' close-guards
@@ -316,14 +363,23 @@ async function bootstrap(): Promise<void> {
   const updater = new UpdaterService({
     settings,
     notifications,
-    isBusy: () => {
-      const kind = state.get().kind;
-      return kind !== 'idle' && kind !== 'ready' && kind !== 'error';
-    },
+    isBusy: () => controller.isBusy() || controller.jobs.anyActive(),
     beforeInstall: () => {
       quitting = true;
       window.allowClose();
     },
+    getTranslator,
+  });
+
+  // The Settings screen's backend: persists every settings:* write and hands each live side effect to
+  // the service that owns it (below). The two update-related settings reach electron-updater through
+  // the updater's guarded setters, so the updater no longer owns any settings channel itself.
+  const settingsService = new SettingsService({
+    settings,
+    appVersion: () => app.getVersion(),
+    isSteamAvailable: () => steamShortcut.isAvailable(),
+    onAutoUpdateModeChanged: (mode) => updater.applyAutoUpdateMode(mode),
+    onPrereleaseChanged: (on) => updater.setAllowPrerelease(on),
     onSummonHotkeyChanged: (enabled) => {
       summonHotkeyEnabled = enabled;
     },
@@ -335,18 +391,13 @@ async function bootstrap(): Promise<void> {
     // Game Mode auto-launch toggle (Steam Deck): installs or tears down the watcher unit. Turning it off
     // stops a separate process, so the memory is actually returned — that is the point of the option.
     onSteamAutoLaunchChanged: (enabled) => steamShortcut.applyAutoLaunch(enabled),
-    isSteamAvailable: () => steamShortcut.isAvailable(),
-    onVolumesChanged: (volumes) => {
-      const bw = window.browserWindow;
-      if (bw !== null && !bw.isDestroyed()) bw.webContents.send(IPC.volumeUpdate, volumes);
-    },
+    onVolumesChanged: (volumes) => window.send(IPC.volumeUpdate, volumes),
     // The sound-set / ambience / only-global changes are re-read + re-pushed by the controller (it owns the
     // AssetReader and the game window) — the Settings screen only persisted the new value.
     onSoundSetChanged: () => void controller.refreshAudio(),
     onAudioScopeChanged: () => void controller.refreshAudio(),
     onAmbientChanged: (track) => void controller.setAmbientTrack(track),
     onLanguageChanged: (mode) => applyLanguage(mode),
-    getTranslator,
   });
 
   // Backend of the launcher's Customize screen. getActiveRoot / reloadManifest / findGameSource come
@@ -357,19 +408,36 @@ async function bootstrap(): Promise<void> {
     pcLibrary,
     reloadPcLibrary: () => controller.reloadPcLibrary(),
     getTranslator,
-    toManifestPcSavePath: (absolute) => platform.savePathResolver.toManifestPcSavePath(absolute),
     findGameSource: (id) => controller.findGameSource(id),
     notify: (input) => notifications.notify(input),
-    resolveManifest: (id) => controller.findManifest(id),
     findPcManifest: (id) => controller.findPcManifest(id),
-    isBusy: () => controller.isBusy(),
     library,
     isCardLoading: () => controller.isCardLoading(),
     refreshLibrary: () => controller.refreshLibraryRow(),
+  });
+  gameConfig.init();
+  // The in-launcher file browser and the move-to-card transaction, both built on the root guard and the
+  // game.json reads/writes GameConfigService exposes (see the two modules' headers).
+  const filePicker = new FilePickerService({
+    config: gameConfig,
+    getActiveRoot: () => watcher.getActiveRoot(),
+    pcLibrary,
+    getTranslator,
+    toManifestPcSavePath: (absolute) => platform.savePathResolver.toManifestPcSavePath(absolute),
+  });
+  filePicker.init();
+  const gameMove = new GameMoveTransaction({
+    config: gameConfig,
+    getTranslator,
+    getActiveRoot: () => watcher.getActiveRoot(),
+    reloadManifest: (root) => controller.reloadManifest(root),
+    notify: (input) => notifications.notify(input),
+    resolveManifest: (id) => controller.findManifest(id),
+    isBusy: (id) => controller.isBusy(id),
     pcStore: store,
     savePathResolver: platform.savePathResolver,
   });
-  gameConfig.init();
+  gameMove.init();
   // Both ways round: the service is built FROM the controller, and the controller's collision answer
   // (a game on the card and on this PC at once) is carried out BY the service.
   controller.setCollisionResolver(gameConfig);
@@ -427,7 +495,7 @@ async function bootstrap(): Promise<void> {
       recomputeKeepAwake();
     },
     // Game Mode: no tray to hide into, and Steam closes a non-Steam game by closing its window → let the
-    // close through and quit on window-all-closed (Р8, point 5). Desktop/Windows keep the hide-to-tray guard.
+    // close through and quit on window-all-closed. Desktop/Windows keep the hide-to-tray guard.
     { hideToTrayOnClose: !gameModeSession },
   );
   // The update status is pushed to the launcher, which is where the Settings screen lives now. Attached
@@ -504,7 +572,7 @@ async function bootstrap(): Promise<void> {
     onToggleSteamShortcut: () => {
       void (steamShortcut.isRegistered() ? steamShortcut.remove() : steamShortcut.add());
     },
-    onQuit: () => quit(),
+    onQuit: () => quitGate.request('quit', false, () => void quit()),
   };
   // SteamOS Game Mode has no system tray (gamescope). Skip it there — the window is always shown and Steam
   // manages the app as a non-Steam game. Desktop Mode (KDE) and Windows keep the tray (refreshTrayMenu
@@ -524,7 +592,7 @@ async function bootstrap(): Promise<void> {
   }
 
   // UI-locale wiring. The launcher seeds via an invoke (effective Locale) and receives live pushes; the
-  // set-language SEND lives in UpdaterService (with the other settings:* writes). No did-finish-load hook
+  // set-language SEND lives in SettingsService (with the other settings:* writes). No did-finish-load hook
   // — the invoke-seed covers startup instead.
   ipcMain.handle(IPC.languageRequest, (): Locale => localeService.current());
 
@@ -533,30 +601,31 @@ async function bootstrap(): Promise<void> {
   // the bootstrap quit() (drops the window close-guards), sleep suspends in place.
   const power = createPowerService({
     backend: platform.powerBackend,
-    quit: () => quit(),
-    showError: (message) => {
-      const bw = window.browserWindow;
-      if (bw !== null && !bw.isDestroyed()) bw.webContents.send(IPC.errorShow, message);
-    },
+    quit: () => void quit(),
+    showError: (message) => window.send(IPC.errorShow, message),
     getTranslator,
   });
-  ipcMain.on(IPC.actionShutdown, () => void power.perform('shutdown'));
-  ipcMain.on(IPC.actionReboot, () => void power.perform('reboot'));
+  ipcMain.on(IPC.actionShutdown, (_event, confirmed: unknown) =>
+    quitGate.request('shutdown', confirmed === true, () => void power.perform('shutdown')),
+  );
+  ipcMain.on(IPC.actionReboot, (_event, confirmed: unknown) =>
+    quitGate.request('reboot', confirmed === true, () => void power.perform('reboot')),
+  );
   ipcMain.on(IPC.actionSleep, () => void power.perform('sleep'));
   // Game Mode "Close Playhook": full quit via the same bootstrap path as the tray Quit (drops the window
   // close-guards, disposes services). Only ever sent from the Game Mode power menu — Desktop keeps hiding.
-  ipcMain.on(IPC.actionQuit, () => quit());
+  ipcMain.on(IPC.actionQuit, (_event, confirmed: unknown) =>
+    quitGate.request('quit', confirmed === true, () => void quit()),
+  );
 
   // Applies a language change everywhere: re-resolve the locale, rebuild the tray menu, re-title the
   // window and push the effective locale to the launcher.
-  // Called from the settings set-language handler and from resetSettings (both via UpdaterService deps).
+  // Called from the settings set-language handler and from resetSettings (both via SettingsService deps).
   function applyLanguage(mode: typeof initialSettings.language): void {
     localeService.setMode(mode);
     const locale = localeService.current();
     refreshTrayMenu();
-    const gameBw = window.browserWindow;
-    if (gameBw !== null && !gameBw.isDestroyed())
-      gameBw.webContents.send(IPC.languageUpdate, locale);
+    window.send(IPC.languageUpdate, locale);
   }
 
   // Global Start+Back hotkey: re-summon the launcher when it's hidden (e.g. minimized to the tray
@@ -565,15 +634,16 @@ async function bootstrap(): Promise<void> {
   const globalGamepad = new GlobalGamepad();
   globalGamepadRef = globalGamepad;
   globalGamepad.onChord(() => {
-    if (!summonHotkeyEnabled) return; // toggled off in the settings window
+    if (!summonHotkeyEnabled) return; // toggled off on the Settings screen
     window.showAndFocus(true);
   });
   globalGamepad.start();
 
   watcher.start();
   configureAutoLaunch();
-  // Registers all update:* / settings:* / app:version IPC synchronously, then (packaged only) wires
-  // autoUpdater + the periodic timer per the persisted auto-update mode.
+  // Registers the settings:* / app:version IPC, then the update:* IPC; the updater then (packaged only)
+  // wires autoUpdater + the periodic timer per the persisted auto-update mode.
+  settingsService.init();
   updater.init().catch((cause: unknown) => log.error('[updater] init failed:', cause));
 }
 
@@ -597,7 +667,7 @@ if (!gotSingleInstanceLock) {
 
   // A background app doesn't quit when the window is closed/hidden — it lives in the tray. Exception:
   // SteamOS Game Mode has no tray and the window's close isn't guarded, so a real close means the user
-  // ended the (non-Steam) game → quit (Р8, point 5).
+  // ended the (non-Steam) game → quit.
   app.on('window-all-closed', () => {
     if (quitting || gameModeSession) app.quit();
   });

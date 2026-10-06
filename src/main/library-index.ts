@@ -58,7 +58,7 @@ export interface LibraryIndex {
 export const EMPTY_LIBRARY_INDEX: LibraryIndex = { schemaVersion: 1, entries: [] };
 
 /** Result of an upsert: the new index plus whether an entry for this id already existed under a
- * DIFFERENT TITLE — a card-id collision between two cards, which the store logs (Р3). */
+ * DIFFERENT TITLE — a card-id collision between two cards, which the store logs. */
 export interface UpsertResult {
   readonly index: LibraryIndex;
   readonly replacedForeign: boolean;

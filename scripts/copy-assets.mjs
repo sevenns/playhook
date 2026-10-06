@@ -40,7 +40,7 @@ for (const name of icons) {
 await cp(resolve(root, 'audio'), resolve(outDist, 'audio'), { recursive: true });
 
 // Enumerate the sound sets + ambience tracks HERE (real FS, where readdir/withFileTypes always works) and
-// write dist/audio/index.json, so the settings window reads one file instead of a readdir over the asar —
+// write dist/audio/index.json, so the Settings screen reads one file instead of a readdir over the asar —
 // which has no precedent in this codebase. .DS_Store and incomplete/non-audio entries are filtered out.
 const uiDir = resolve(root, 'audio/ui');
 const ambienceDir = resolve(root, 'audio/ambience');

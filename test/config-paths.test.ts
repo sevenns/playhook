@@ -1,6 +1,6 @@
 // The path rules the in-launcher file picker leans on. They used to be the native dialog's job (its
 // filters decided what could be picked at all), so they were never expressible as a test; now that a
-// renderer names the path, they are the gate — see the plan, Р5.1/Р5.2.
+// renderer names the path, they are the gate.
 //
 // The paths here are HOST paths (a card root is `E:\` on Windows and `/run/media/deck/…` on the Deck), so
 // expectations are built with `path.join` from the platform root rather than written as posix literals —
@@ -62,7 +62,7 @@ describe('checkPickedType', () => {
     expect(checkPickedType('/x/hero.png', 'image', file, images)).toBeNull();
   });
 
-  it('refuses a private key offered as a hero image (the attack Р5.1 names)', () => {
+  it('refuses a private key offered as a hero image', () => {
     expect(checkPickedType('/home/deck/.ssh/id_rsa', 'image', file, images)).toBe('wrong-type');
   });
 

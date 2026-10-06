@@ -13,6 +13,18 @@ export const enPlural = {
   // The single summary plate shown instead of a queue of them: after a game exits, or when the user
   // comes back to a launcher that has been collecting notifications while they were away.
   'notifications.unread': { one: '{n} unread notification', other: '{n} unread notifications' },
+  'launcher.confirm.quitWithJobs': {
+    one: '{n} operation is in progress and will be cancelled. Quit anyway?',
+    other: '{n} operations are in progress and will be cancelled. Quit anyway?',
+  },
+  'launcher.confirm.shutdownWithJobs': {
+    one: '{n} operation is in progress and will be cancelled. Shut down the PC anyway?',
+    other: '{n} operations are in progress and will be cancelled. Shut down the PC anyway?',
+  },
+  'launcher.confirm.rebootWithJobs': {
+    one: '{n} operation is in progress and will be cancelled. Reboot the PC anyway?',
+    other: '{n} operations are in progress and will be cancelled. Reboot the PC anyway?',
+  },
 } as const satisfies Record<string, PluralForms>;
 
 /** Every plural key — the compile-time contract the Russian plural mirror indexes against. */

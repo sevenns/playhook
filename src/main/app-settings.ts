@@ -15,13 +15,10 @@ const settingsObject = z.object({
   // `autoUpdate` mid-write) still validates instead of failing the WHOLE parse → a full reset to defaults.
   // The value mirrors DEFAULT_SETTINGS. schemaVersion stays strict on purpose (see the note above the class).
   autoUpdate: z.enum(['download', 'download-install', 'off']).default('download-install'),
-  // Kept in the schema so an older settings.json that still carries a chosen theme parses (and so the
-  // key survives a round trip), but the value is NORMALIZED to 'system' on read: the Settings screen has
-  // no theme selector any more, and no window left that reads one: the launcher paints itself from the
-  // card's own palette.
-  theme: z.enum(['system', 'light', 'dark']).default('system'),
-  // Language mirrors theme: `.default('system')` so an older settings.json without the field stays valid
-  // (no schemaVersion bump / migration needed).
+  // `.default('system')` so an older settings.json without the field stays valid (no schemaVersion bump /
+  // migration needed). A `theme` key an older file still carries is dropped by z.object's default strip:
+  // the Settings screen has no theme selector any more, and no window left that reads one — the launcher
+  // paints itself from the card's own palette.
   language: z.enum(['system', 'en', 'ru']).default('system'),
   allowPrerelease: z.boolean().default(false),
   summonHotkeyEnabled: z.boolean().default(true),
@@ -62,7 +59,7 @@ const settingsObject = z.object({
   // The user's SteamGridDB key. `.default('')` migrates an older settings.json without the field (no
   // schemaVersion bump); an empty string is the normal state — the metadata feature just runs Steam-only.
   steamGridDbApiKey: z.string().default(''),
-});
+}) satisfies z.ZodType<AppSettings>;
 
 /**
  * `alwaysShowEmptyScreen` was renamed to `keepOpenWithoutCard` when the screen it was named after went
@@ -90,7 +87,6 @@ const settingsSchema = z.preprocess((raw) => {
 export const DEFAULT_SETTINGS: AppSettings = {
   schemaVersion: 1,
   autoUpdate: 'download-install',
-  theme: 'system',
   language: 'system',
   allowPrerelease: false,
   summonHotkeyEnabled: true,
@@ -113,6 +109,10 @@ export class AppSettingsStore {
   // firing a burst of patch()) can't interleave read-modify-write and lose updates, and never race on the
   // shared `${settingsPath}.tmp` file. Reads stay OFF the queue (a queued op reads directly — see enqueue).
   private tail: Promise<void> = Promise.resolve();
+  // The last parse, keyed by the file's mtime and size: settings are read from a dozen places per browse,
+  // and a corrupt file would otherwise be re-parsed — and re-warned about — on every one of them. The
+  // stamp changes on any write, ours or the user's, so a stale snapshot is never served.
+  private cached: { readonly stamp: string; readonly value: AppSettings } | null = null;
 
   /**
    * @param baseDir where settings.json lives (the GUI passes app.getPath('userData')).
@@ -150,11 +150,24 @@ export class AppSettingsStore {
 
   /**
    * Reads settings; returns the default when the file is missing or corrupted (a warn is logged on
-   * corruption). `theme` is normalized to 'system' regardless of what the file holds — see the schema.
+   * corruption).
    */
   async read(): Promise<AppSettings> {
-    const parsed = await readJsonValidated(this.settingsPath, settingsSchema, DEFAULT_SETTINGS);
-    return { ...parsed, theme: 'system' };
+    const stamp = await this.stamp();
+    if (stamp !== null && this.cached?.stamp === stamp) return this.cached.value;
+    const value = await readJsonValidated(this.settingsPath, settingsSchema, DEFAULT_SETTINGS);
+    this.cached = stamp === null ? null : { stamp, value };
+    return value;
+  }
+
+  /** `mtime:size` of settings.json, or null when it cannot be stat'ed (missing, or a racing write). */
+  private async stamp(): Promise<string | null> {
+    try {
+      const stat = await fse.stat(this.settingsPath);
+      return `${stat.mtimeMs}:${stat.size}`;
+    } catch {
+      return null;
+    }
   }
 
   /** The actual atomic write — called ONLY from inside a queued op, so it never enqueues (would deadlock). */
@@ -168,6 +181,7 @@ export class AppSettingsStore {
       this.onWriteFailed?.(cause);
       throw cause;
     }
+    this.cached = null;
     this.onChange?.(next);
   }
 

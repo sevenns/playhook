@@ -1,7 +1,7 @@
-// Pure helpers for launching Windows games through umu-launcher / Proton on Linux (Р1/Р2). No electron,
+// Pure helpers for launching Windows games through umu-launcher / Proton on Linux. No electron,
 // no child_process — just the path/env/argv construction — so they are unit-tested directly. The bundled
 // umu-run is a python zipapp; we invoke it as `python3 <umu-run> <exe> <args…>` (no reliance on the
-// executable bit surviving packaging — Р11) with the WINEPREFIX/GAMEID/PROTONPATH env umu expects.
+// executable bit surviving packaging) with the WINEPREFIX/GAMEID/PROTONPATH env umu expects.
 import path from 'node:path';
 
 /** Default PROTONPATH: umu downloads and caches the latest GE-Proton into Steam's compatibilitytools.d. */
@@ -11,7 +11,7 @@ export const DEFAULT_PROTON = 'GE-Proton' as const;
 export const UMU_GAMEID = 'umu-default' as const;
 
 /**
- * The per-game Wine prefix directory: `<userData>/prefixes/<id>` (Р2). `id` is already validated as
+ * The per-game Wine prefix directory: `<userData>/prefixes/<id>`. `id` is already validated as
  * `[A-Za-z0-9._-]` (no separators, not `.`/`..`), so it is a safe single path segment.
  */
 export function prefixDir(userData: string, id: string): string {
@@ -24,12 +24,12 @@ export function prefixDir(userData: string, id: string): string {
 const INSTALL_HOST_SUBPATH = ['drive_c', 'playhook', 'games'] as const;
 
 /**
- * The app-controlled install directory for an install-mode game, in BOTH views (Р7):
+ * The app-controlled install directory for an install-mode game, in BOTH views:
  * - `hostDir` — the real path inside the game's Wine prefix (`<pfx>/drive_c/playhook/games/<id>`),
  *   where the installed files physically land (all fs ops + the resolved executable);
  * - `installerDir` — the SAME place as the installer sees it under Wine (`C:\playhook\games\<id>`),
  *   fed to the silent dir-arg. The path has no spaces by construction (`id` ∈ `[A-Za-z0-9._-]`), so the
- *   Linux dir-arg can be passed unquoted (Р7).
+ *   Linux dir-arg can be passed unquoted.
  */
 export function installDirs(
   userData: string,
@@ -41,7 +41,7 @@ export function installDirs(
 }
 
 /**
- * Baseline winetricks verbs provisioned into every install-mode prefix before the installer runs (Р7b).
+ * Baseline winetricks verbs provisioned into every install-mode prefix before the installer runs.
  * These runtimes are what skinned Inno installers (isskin.dll) and many games need under a bare Proton
  * prefix; installing them proactively makes install mode work out of the box. Card-specific extras
  * (`install.winetricks`) are appended on top.
@@ -95,7 +95,7 @@ export function buildUmuEnv(
     readonly prefix: string;
     readonly proton: string;
     readonly protonLogDir?: string;
-    /** umu GAMEID — a Steam appid or custom UMU_ID for the game's protonfix (Р7i). Defaults to `umu-default`. */
+    /** umu GAMEID — a Steam appid or custom UMU_ID for the game's protonfix. Defaults to `umu-default`. */
     readonly gameId?: string;
   },
 ): NodeJS.ProcessEnv {
@@ -114,7 +114,7 @@ export function buildUmuEnv(
   }
   // The Electron AppImage injects LD_LIBRARY_PATH / LD_PRELOAD pointing at its OWN bundled libraries. A
   // spawned system binary (python3 → umu → Proton) that inherits them loads mismatched libs and dies
-  // instantly (§5.1). Strip them so umu-run runs against the clean system libraries. umu/Proton set up
+  // instantly. Strip them so umu-run runs against the clean system libraries. umu/Proton set up
   // their own library environment from scratch, so nothing of ours needs to survive here.
   for (const key of ENV_STRIP_KEYS) delete env[key];
   return env;

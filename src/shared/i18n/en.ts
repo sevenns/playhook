@@ -1,14 +1,13 @@
-// English dictionary — the SOURCE OF TRUTH for every user-facing string in the app (main + renderers).
-// Keys are flat with a dotted namespace per window/module: common.*, tray.*, menu.*, window.*,
-// launcher.*, format.*, settings.*, gameConfig.*, gameSettings.*, errors.*, drive.*, manifest.*.
-// `ru.ts` mirrors these
-// as a Partial (fill in gradually); the translator falls back to this file for any missing key.
+// English dictionary — the SOURCE OF TRUTH for every user-facing string in the app (main + renderer).
+// Keys are flat with a dotted namespace per module: common.*, tray.*, menu.*, launcher.*, format.*,
+// settings.*, gameConfig.*, gameSettings.*, errors.*, drive.*, manifest.*. `ru.ts` mirrors these as the
+// FULL record of the same keys — a missing translation is a type error, not a fallback to English.
 //
 // `{name}` tokens are interpolation placeholders filled at call time (see createTranslator). A literal
 // brace that is NOT a placeholder (e.g. the `{dir}` token inside a manifest message) is left untouched
 // because those messages are translated WITHOUT params — see translateIssueMessage.
 export const en = {
-  // ── Common (shared across windows) ──────────────────────────────────────────
+  // ── Common (shared by every screen) ─────────────────────────────────────────
   // The two answers used by EVERY confirmation dialog. Any confirm,
   // present or future, must ask a yes/no question and use these — never a context-specific verb like
   // "Discard"/"Replace", which is easy to confuse with the neighbouring "Cancel".
@@ -24,6 +23,8 @@ export const en = {
   'tray.steamAdd': 'Add to Steam',
   'tray.steamRemove': 'Remove from Steam',
   'tray.steamBusy': 'Working…',
+  'tray.openLogs': 'Open logs',
+  'tray.openGames': 'Open games folder',
 
   // ── Steam shortcut (steam-shortcut.ts, shown as message boxes) ─────────────
   'steam.addedTitle': 'Added to Steam',
@@ -37,12 +38,9 @@ export const en = {
     'Steam already has a shortcut pointing at Playhook ({names}). Remove it in Steam first, then try again — it was added by hand, so Playhook will not delete it for you.',
 
   // ── Native context menus (window.ts) ───────────────────────────────────────
-  'menu.cut': 'Cut',
   'menu.copy': 'Copy',
-  'menu.paste': 'Paste',
-  'menu.selectAll': 'Select All',
 
-  // ── Window titles ──────────────────────────────────────────────────────────
+  // ── Screen titles (index.html data-i18n) ───────────────────────────────────
   'window.settings': 'Settings',
 
   // ── Game launcher renderer (index.html + app.ts/state-view.ts/controls.ts/hero.ts) ──
@@ -60,9 +58,7 @@ export const en = {
   'launcher.menu.close': 'Close',
   'launcher.menu.install': 'Install',
   'launcher.menu.uninstall': 'Uninstall',
-  // Details entry that opens the Power submenu — named "System" so it doesn't duplicate the submenu's
-  // own "Shutdown" action.
-  'launcher.menu.system': 'System',
+  'launcher.menu.cancelInstall': 'Cancel installation',
   'launcher.menu.shutdown': 'Shutdown',
   'launcher.menu.reboot': 'Reboot',
   'launcher.menu.sleep': 'Sleep',
@@ -72,11 +68,9 @@ export const en = {
   'launcher.menu.forceClose': 'Force close',
   'launcher.menu.goBack': 'Go back',
   'launcher.menu.forget': 'Remove from library',
-  'launcher.menu.notifications': 'Notifications',
   // Details menu entry that opens the Customize screen with no game behind it — the one way to CREATE a
   // game from inside the launcher.
   'launcher.menu.addGame': 'Add game',
-  'launcher.menu.settings': 'Settings',
   // The launcher's own cards at the tail of the carousel (system-cards.ts). The first two name themselves
   // in the bar's title line while they are selected, exactly as a game does; the third shows no caption at
   // all in the mockup, so its key is only ever read as the card's aria-label.
@@ -114,6 +108,7 @@ export const en = {
   'launcher.confirm.shutdown': 'Shut down the PC?',
   'launcher.confirm.reboot': 'Reboot the PC?',
   'launcher.confirm.sleep': 'Put the PC to sleep?',
+  'launcher.confirm.quit': 'Quit Playhook?',
   'launcher.installPathNote':
     'Since not all installers support silent mode, during installation you need to specify the following path:',
   // The copy variant of the note: no installer runs, so neither the silent-mode caveat nor the
@@ -157,6 +152,12 @@ export const en = {
   'launcher.state.syncingOut': 'Saving progress...',
   'launcher.state.installingPaused': 'Installing paused...',
   'launcher.state.installingPausedPercent': 'Installing paused on {percent}%...',
+  'launcher.state.queued': 'Waiting to install...',
+  'launcher.state.queuedUntilGameExit': 'Will install after you quit the game',
+  'launcher.state.queuedRemovalUntilGameExit': 'Will uninstall after you quit the game',
+  'launcher.state.updating': 'Updating...',
+  'launcher.state.updatingPaused': 'Updating paused...',
+  'launcher.state.preloaded': 'Pre-load complete',
 
   // ── Display formatters (format.ts) ──────────────────────────────────────────
   'format.never': 'never',
@@ -185,7 +186,6 @@ export const en = {
   'settings.languageSystem': 'Match system',
   'settings.sectionGeneral': 'General',
   'settings.summonHotkey': 'Show the launcher with a gamepad shortcut',
-  // The launcher screen states the chord in one line (the settings window splits it around a <b>).
   'settings.summonHint': 'Hold Menu + View on your gamepad to bring the launcher to the front.',
   'settings.preventScreensaver': 'Keep the screen awake while the launcher is open',
   'settings.keepOpenWithoutCard': 'Keep the launcher open without a card',
@@ -208,8 +208,6 @@ export const en = {
   'settings.onlyGlobalAmbientHint':
     "When on, only the global ambience plays — a game's own background music is ignored.",
   'settings.ambientVolume': 'Ambience volume',
-  'settings.openLogs': 'Open logs',
-  'settings.openGames': 'Open games folder',
   'settings.reset': 'Reset to defaults',
   'settings.confirmReset': 'Reset all settings to defaults?',
   // Update-status line + primary button (settings-screen.ts render()).
@@ -219,6 +217,7 @@ export const en = {
   'settings.status.available': 'Update available: {version}',
   'settings.status.downloading': 'Downloading... {percent}%',
   'settings.status.downloaded': 'Update {version} is ready to install.',
+  'settings.status.installing': 'Installing update {version}... Playhook will restart in a moment.',
   'settings.status.unsupported': 'Updates are available only in the installed build.',
   // macOS: not a temporary state like the dev one above — the mac build cannot ever self-update
   // (Squirrel.Mac requires a code-signed bundle), so this says what to do instead.
@@ -229,6 +228,7 @@ export const en = {
   'settings.action.updateTo': 'Update to {version}',
   'settings.action.downloading': 'Downloading...',
   'settings.action.restartInstall': 'Restart & install',
+  'settings.action.installing': 'Installing...',
   'settings.action.retry': 'Retry',
 
   // ── Customize screen: the launcher's own per-game editor (gameConfig:* channels) ──
@@ -252,7 +252,7 @@ export const en = {
   'gameConfig.pickNeedsFile': 'Pick a file for this field.',
   'gameConfig.pickWrongType': 'That file type does not fit this field.',
   'gameConfig.listFailed': 'This folder could not be opened.',
-  // Move to card (Р2.5) — GameConfigService.moveToCard.
+  // Move to card — GameMoveTransaction.moveToCard.
   'gameConfig.moveGameBusy': 'Wait for the current install or launch to finish, then try again.',
   'gameConfig.moveIdTaken': 'This card already has a game with the same id.',
   'gameConfig.moveIdChanged':
@@ -271,6 +271,8 @@ export const en = {
   'notifications.updateReady': 'Update {version} is ready — it will be installed on restart',
   'notifications.gameInstalled': '{title} is installed',
   'notifications.gameUninstalled': '{title} has been removed',
+  'notifications.gameInstallFailed': '{title} could not be installed: {reason}',
+  'notifications.gameUninstallFailed': '{title} could not be removed: {reason}',
   'notifications.gameAddedDeferred':
     '{title} was written to the card. It shows up once that card is the active one.',
   'notifications.gameMovedDeferred':
@@ -431,7 +433,7 @@ export const en = {
   'gameSettings.confirmDeleteSavesNote':
     'The game files stay where they are, and so do its save backups. Unsaved changes on this screen are discarded.',
 
-  // ── User-facing errors from main (ipc.ts / game-config.ts / updater.ts) ─────
+  // ── User-facing errors from main (game-controller / game-sequences / game-config / updater) ──
   // The wrapper is translated; the technical cause ({cause}) is inserted as-is (system messages, nested
   // exceptions and the like stay in their original form).
   // ── Online metadata (main/metadata/*) ─────────────────────────────────────
@@ -474,6 +476,8 @@ export const en = {
   'metadata.downloading': 'Downloading the track',
   'metadata.noSources': 'No metadata source is available right now.',
   'metadata.staleSelection': 'That choice is no longer available. Search again.',
+  'metadata.steamGridDbKeyRejected':
+    'SteamGridDB rejected the API key. Check it under Settings → Game metadata.',
   'metadata.downloadFailed': 'Could not download the file.',
   'metadata.unsupportedFile': 'The downloaded file is not a supported image or audio file.',
   'metadata.writeFailed': 'Could not save the downloaded file.',
@@ -482,7 +486,6 @@ export const en = {
   'errors.finishBeforeApply': 'Finish what’s running before applying the config',
   'errors.reloadInProgress': 'a reload is already in progress',
   'errors.steamNotInstalled': 'Steam is not installed',
-  'errors.steamBusyOther': 'Another game is being downloaded or removed in Steam. Wait for it to finish.',
   'errors.steamOpenInstall': 'failed to open Steam install: {cause}',
   'errors.steamOpenDownloads': 'failed to open Steam downloads: {cause}',
   'errors.steamOpenUninstall': 'failed to open Steam uninstall: {cause}',
@@ -492,6 +495,8 @@ export const en = {
   'errors.startInstaller': 'failed to start the installer: {cause}',
   'errors.installIncomplete': 'installation did not complete (the game executable did not appear)',
   'errors.copyGameFailed': 'failed to copy the game to the PC: {cause}',
+  'errors.jobCardRemoved': 'the card was removed before it finished',
+  'errors.jobGameGone': 'the game is no longer in the library',
   'errors.copyExeNotFound':
     'the game was copied, but the executable is not there: {path} — check that the game directory points at the game’s own root',
   'errors.copyExeNotFoundCase':
@@ -545,6 +550,7 @@ export const en = {
   'manifest.runAsAdminWithSteam': 'runAsAdmin is not allowed in steam mode',
   'manifest.watchProcessesRequired': 'watchProcesses is required in steam mode',
   'manifest.executableRequired': 'executable is required',
+  'manifest.fieldRequired': '{field} is required',
   // PC mode (a game on this machine's own disk — see PcManifest).
   'manifest.pcWithSteam': 'pc is not allowed together with steam',
   'manifest.pcWithInstall': 'pc is not allowed together with install',

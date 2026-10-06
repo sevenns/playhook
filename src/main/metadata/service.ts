@@ -33,7 +33,7 @@ import {
   type MusicAlbum,
   type MusicTrack,
 } from '../../shared/types';
-import { type Translator } from '../../shared/i18n/index';
+import { translateIssueMessage, type Translator } from '../../shared/i18n/index';
 import { AUDIO_EXTENSIONS, IMAGE_EXTENSIONS } from '../asset-reader';
 import { resolveInside } from '../manifest';
 import { type PcLibraryStore } from '../pc-library';
@@ -425,7 +425,14 @@ export class MetadataService {
           { page: next, minSize: QUALITY_FLOOR[pool.filter.quality] },
           signal,
         );
-        return answer === undefined ? [] : [answer.then((result) => ({ id: provider.id, result }))];
+        return answer === undefined
+          ? []
+          : [
+              answer.then((result) => ({
+                id: provider.id,
+                result: this.noted(provider.id, result),
+              })),
+            ];
       });
       return Promise.all(asked);
     });
@@ -703,10 +710,26 @@ export class MetadataService {
     ) => Promise<MetadataResult<T>> | undefined,
   ): Promise<readonly MetadataResult<T>[]> {
     return this.run(async (signal) => {
-      const asked = this.deps.providers.map((provider) => ask(provider, signal));
-      const answers = await Promise.all(asked.filter((answer) => answer !== undefined));
-      return answers;
+      const asked = this.deps.providers.flatMap((provider) => {
+        const answer = ask(provider, signal);
+        return answer === undefined
+          ? []
+          : [answer.then((result) => this.noted(provider.id, result))];
+      });
+      return Promise.all(asked);
     });
+  }
+
+  /**
+   * A refused answer leaves a breadcrumb and comes back localized. The other sources usually cover for
+   * the failed one, so the user never sees it — which is exactly why the log must: a rejected
+   * SteamGridDB key, say, would otherwise look like a source with nothing to offer.
+   */
+  private noted<T>(id: MetadataProviderId, result: MetadataResult<T>): MetadataResult<T> {
+    if (result.ok) return result;
+    const message = translateIssueMessage(result.message, this.deps.getTranslator());
+    log.warn(`[metadata] ${id}: ${message}`);
+    return { ok: false, message };
   }
 
   /** Runs one piece of work under a fresh AbortController that `metadata:cancel` can reach. */

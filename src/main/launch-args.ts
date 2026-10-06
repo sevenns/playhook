@@ -3,7 +3,7 @@
 // native FFI addon into any importer — impossible to unit-test in plain Node. These helpers are
 // pure string logic (quoting rules, installer flag families) with no koffi/electron dependency, so
 // they live here and can be covered directly. game-launcher.ts re-exports them for its own use.
-import { type InstallerRunType } from '../shared/types';
+import type { InstallerRunType } from './manifest-types';
 
 /**
  * Quotes a single argument for ShellExecuteEx's raw lpParameters command line, following the
@@ -43,7 +43,7 @@ export function buildParameters(args: readonly string[]): string {
  * - `nsis`  → `/S` … `/D=<dir>` — `/D=` MUST be last and always UNQUOTED (NSIS reads everything after
  *   it, to end of line, as the path — even with spaces), on both platforms.
  * - `inno`  → `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR=<dir>` … — Inno's `/DIR=` quoting is the
- *   ONLY platform-varying piece (Р7): see `quoteDir`.
+ *   ONLY platform-varying piece: see `quoteDir`.
  * - `custom`→ the card author's own args, with `{dir}` substituted; they own the quoting/flags.
  * Extra `customArgs` for nsis/inno are appended (after the silent flags, before the trailing `/D=` for nsis).
  *

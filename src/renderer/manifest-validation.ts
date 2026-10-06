@@ -1,0 +1,128 @@
+// The Customize screen's validation: asks main to judge the WHOLE file after a change, debounced, then
+// splits the verdict in two — the problems inside OUR slot (mapped onto rows by field path) and the ones
+// in the other games (a summary line each). The split is why the issue paths matter: the validator
+// reports a multi-game file's paths as `games.<i>.<field>`.
+import type { ConfigValidationResult, ManifestSource } from '../shared/types.js';
+import type { Translator } from '../shared/i18n/index.js';
+import { isRawSlot, type GameFormState } from './configure-form-model.js';
+
+/** How long the screen waits after a change before asking main to validate the text. */
+const VALIDATE_DEBOUNCE_MS = 400;
+
+/** How one issue is remembered in a baseline set — path and wording together, as main compares them. */
+export function issueKey(path: string, message: string): string {
+  return `${path}\u0000${message}`;
+}
+
+/** "Hades (game 3): install.args — expected array" — the other game is named when we can name it. */
+export function describeOtherIssue(
+  slots: readonly GameFormState[],
+  index: number,
+  field: string,
+  message: string,
+  t: Translator,
+): string {
+  const slot = slots[index];
+  const title =
+    slot !== undefined && !isRawSlot(slot) && slot.model.title !== ''
+      ? slot.model.title
+      : t('gameSettings.otherGameUnnamed');
+  return t('gameSettings.otherGameIssue', {
+    game: title,
+    number: index + 1,
+    field: field === '' ? '—' : field,
+    message,
+  });
+}
+
+export interface ValidationVerdict {
+  /** Our slot's problems, by field path — what the rows show. */
+  readonly own: ReadonlyMap<string, string>;
+  /** The other games' problems, one line each. */
+  readonly others: readonly string[];
+}
+
+/** Splits main's verdict on a whole file into ours (slot `index` of `slots`) and everybody else's. */
+export function splitIssues(
+  result: ConfigValidationResult,
+  index: number,
+  slots: readonly GameFormState[],
+  t: Translator,
+): ValidationVerdict {
+  const own = new Map<string, string>();
+  const others: string[] = [];
+  if (!result.ok) {
+    for (const issue of result.issues) {
+      const scoped = /^games\.(\d+)\.(.*)$/.exec(issue.path);
+      if (scoped === null) {
+        // An unscoped path belongs to the single-game shape — which is ours by definition.
+        own.set(issue.path, issue.message);
+        continue;
+      }
+      const idx = Number(scoped[1]);
+      const field = scoped[2] ?? '';
+      if (idx === index) own.set(field, issue.message);
+      else others.push(describeOtherIssue(slots, idx, field, issue.message, t));
+    }
+  }
+  return { own, others };
+}
+
+export interface ValidationRequest {
+  readonly root: string;
+  readonly text: string;
+  /** Names the dialect when there is no root to imply one (a game from the history). */
+  readonly source?: ManifestSource;
+  /** Which slot of `slots` is ours. */
+  readonly index: number;
+  readonly slots: readonly GameFormState[];
+}
+
+export interface ManifestValidatorDeps {
+  validate(root: string, text: string, source?: ManifestSource): Promise<ConfigValidationResult>;
+  getTranslator(): Translator;
+  /** The debounce landed: the screen assembles the request and runs it. */
+  onDue(): void;
+}
+
+export interface ManifestValidator {
+  /** Arms (or re-arms) the debounce. */
+  schedule(): void;
+  /** Drops a pending debounce (the screen is closing). */
+  cancel(): void;
+  /**
+   * Asks main and splits the answer — or null when a newer request was made meanwhile, so a late answer
+   * never overwrites the verdict on text that has already changed.
+   */
+  run(request: ValidationRequest): Promise<ValidationVerdict | null>;
+}
+
+export function createManifestValidator(deps: ManifestValidatorDeps): ManifestValidator {
+  let timer = 0;
+  /** Guards a late answer from a validation whose text is already stale. */
+  let token = 0;
+
+  function cancel(): void {
+    if (timer !== 0) {
+      window.clearTimeout(timer);
+      timer = 0;
+    }
+  }
+
+  return {
+    schedule: () => {
+      cancel();
+      timer = window.setTimeout(() => {
+        timer = 0;
+        deps.onDue();
+      }, VALIDATE_DEBOUNCE_MS);
+    },
+    cancel,
+    run: async (request) => {
+      const mine = ++token;
+      const result = await deps.validate(request.root, request.text, request.source);
+      if (mine !== token) return null; // a newer edit already asked
+      return splitIssues(result, request.index, request.slots, deps.getTranslator());
+    },
+  };
+}

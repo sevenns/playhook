@@ -1,9 +1,9 @@
-// Linux (SteamOS / Proton) implementations of the platform services. Built up stage by stage per the
-// SteamOS port plan; in the foundation stage (Э0) these replicate the pre-port graceful degradation on
-// non-Windows (null Steam path, no visible processes, no power actions) so createPlatform is complete and
-// behaviour on the untouched paths is unchanged. Each service is filled in by its own stage:
-//   ProcessMonitor → Э2 (/proc scan)   SteamLocator → Э3 (known paths)   GameProcessLauncher → Э4 (umu-run)
-//   SavePathResolver → Э5/Э6 (Wine prefix / compatdata)   PowerBackend → Э7 (systemctl / logind)
+// Linux (SteamOS / Proton) implementations of the platform services. Built up service by service: the
+// foundation replicated the pre-port graceful degradation on non-Windows (null Steam path, no visible
+// processes, no power actions) so createPlatform was complete and behaviour on the untouched paths
+// unchanged, and each service was then filled in on its own:
+//   ProcessMonitor → /proc scan   SteamLocator → known paths   GameProcessLauncher → umu-run
+//   SavePathResolver → Wine prefix / compatdata   PowerBackend → systemctl / logind
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import type {
@@ -21,9 +21,9 @@ import { installDirs } from './umu';
 
 const execFileAsync = promisify(execFile);
 
-// ── PowerBackend — Э7 (systemctl poweroff/reboot/suspend via logind). ──
+// ── PowerBackend — systemctl poweroff/reboot/suspend via logind. ──
 // SteamOS runs logind, which lets the active session's user issue poweroff/reboot/suspend without root
-// (the standard polkit policy for a logged-in seat — Р9). No `--no-wall`/root needed; `systemctl` is on
+// (the standard polkit policy for a logged-in seat). No `--no-wall`/root needed; `systemctl` is on
 // PATH. Rejects propagate to PowerService, which surfaces the error copy and does NOT quit.
 function createPowerBackend(): PowerBackend {
   return {
@@ -55,10 +55,10 @@ export function createLinuxPlatform(deps: PlatformDeps): Platform {
     }),
     savePathResolver: createLinuxSavePathResolver({ userData: deps.userData, steamLocator }),
     powerBackend: createPowerBackend(),
-    // Game Mode automount (Р10): the caller only sweeps in a gamescope session — the KDE desktop session
+    // Game Mode automount: the caller only sweeps in a gamescope session — the KDE desktop session
     // mounts on its own, so wiring it there would be redundant work.
     removableMounter: createLinuxRemovableMounter(),
-    // Install mode is always supported on linux — the prefix is created on demand (Р7). Both views come
+    // Install mode is always supported on linux — the prefix is created on demand. Both views come
     // from umu.installDirs (host path inside the prefix + the `C:\playhook\games\<id>` installer view).
     resolveInstallDir: (id) => installDirs(deps.userData, id),
   };

@@ -7,7 +7,7 @@
 // They cannot answer the wider one: "is the user ON the mouse right now?" A hand resting on a trackpad
 // clears six pixels without meaning anything by it.
 //
-// So the mouse is ASLEEP by default and the whole UI ignores it (see controls.ts, where sleep swallows
+// So the mouse is ASLEEP by default and the whole UI ignores it (see idle.ts, where sleep swallows
 // every pointer gesture and every key/pad step puts it back to sleep). Waking it takes a deliberate
 // shove: this meter adds up the distance travelled and only reports a wake once the total crosses
 // WAKE_TRAVEL_PX. Distance TRAVELLED, not distance from the start — shaking the mouse in place is as

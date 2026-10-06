@@ -301,6 +301,54 @@ describe('settings sliders', () => {
     expect(valueOf('Navigation sounds volume')).toBe('50%');
   });
 
+  it('writes the last step of a fast burst once the burst ends', () => {
+    vi.useFakeTimers();
+    try {
+      openWith({ sfxVolume: 0.5 });
+      enterSection('Audio');
+      focusRow('Navigation sounds volume');
+      raf.advance(200);
+
+      // Four steps 100 ms apart: faster than the persist throttle (150 ms), the way a held arrow repeats.
+      screen.navRight();
+      for (let i = 0; i < 3; i += 1) {
+        raf.advance(100);
+        vi.advanceTimersByTime(100);
+        screen.navRight();
+      }
+
+      expect(valueOf('Navigation sounds volume')).toBe('70%');
+      expect(api.setSfxVolume).not.toHaveBeenCalledWith(0.7);
+
+      vi.advanceTimersByTime(200);
+
+      expect(api.setSfxVolume).toHaveBeenLastCalledWith(0.7);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('writes a held-back step when the screen closes', () => {
+    vi.useFakeTimers();
+    try {
+      openWith({ sfxVolume: 0.5 });
+      enterSection('Audio');
+      focusRow('Navigation sounds volume');
+      raf.advance(200);
+
+      screen.navRight();
+      raf.advance(50);
+      screen.navRight();
+      expect(api.setSfxVolume).not.toHaveBeenCalledWith(0.6);
+
+      screen.close();
+
+      expect(api.setSfxVolume).toHaveBeenLastCalledWith(0.6);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('stops at the ends with the dead-end sound', () => {
     openWith({ sfxVolume: 1 });
     enterSection('Audio');

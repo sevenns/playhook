@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createFilePicker } from '../../src/renderer/file-picker';
 import { req } from '../../src/renderer/dom';
 import { createTranslator } from '../../src/shared/i18n/index';
-import type { FilePickerSurface } from '../../src/renderer/game-settings-screen';
+import type { FilePickerSurface } from '../../src/renderer/nav-surface';
 import type { ConfigPickKind, ConfigPickResult } from '../../src/shared/types';
 import { hoverOver, loadFixture } from './helpers/fixture';
 import {

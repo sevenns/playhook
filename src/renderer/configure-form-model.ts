@@ -1,5 +1,5 @@
 // Pure (DOM-free, electron-free) bridge between the Configure form and game.json TEXT — the single source
-// of truth stays the manifest text (see plan R2), so the form only ever converts to/from a string that the
+// of truth stays the manifest text, so the form only ever converts to/from a string that the
 // existing config:save pipeline writes verbatim. Testable in vitest.
 //
 // Two escape hatches keep the round-trip lossless and honest:
@@ -64,7 +64,7 @@ export interface InstallModel {
   readonly type: InstallType;
   readonly runAsAdmin: boolean;
   readonly args: readonly string[];
-  /** Extra winetricks verbs provisioned into the prefix before the installer runs (Linux; Р7b). */
+  /** Extra winetricks verbs provisioned into the prefix before the installer runs (Linux). */
   readonly winetricks: readonly string[];
   readonly rest: Readonly<Record<string, unknown>>;
 }
@@ -83,7 +83,7 @@ export interface PcModel {
 
 /**
  * All form fields, including the sections hidden by the current launch mode (they live here until
- * serialization, so switching modes and back restores what was typed — see plan R5). Numbers are kept as
+ * serialization, so switching modes and back restores what was typed). Numbers are kept as
  * TEXT (`launchTimeoutSec`, `steam.appid`) because the Fluent text-input value is a string; serialization
  * parses them.
  */
@@ -103,9 +103,9 @@ export interface ManifestFormModel {
   readonly launchTimeoutSec: string;
   readonly killTimeoutSec: string;
   readonly backgroundMusic: string;
-  /** Extra winetricks verbs provisioned into the prefix before the GAME launches (Linux; Р7b). */
+  /** Extra winetricks verbs provisioned into the prefix before the GAME launches (Linux). */
   readonly winetricks: readonly string[];
-  /** umu GAMEID for launch — a Steam appid or custom UMU_ID (Linux; Р7i). '' = default `umu-default`. */
+  /** umu GAMEID for launch — a Steam appid or custom UMU_ID (Linux). '' = default `umu-default`. */
   readonly umuGameId: string;
   /** The `install` block for INSTALLER mode (types nsis/inno/custom). Never holds `copy`. */
   readonly install: InstallModel;
@@ -136,7 +136,7 @@ export type ParseFormResult =
       /** Known top-level keys with an invalid value type, kept raw and written back verbatim. */
       readonly corrupt: Readonly<Record<string, unknown>>;
       /** The source carried blocks for more than one launch mode (steam + install/executable) — the form
-       * activates one and a banner warns that saving drops the others (plan R5). */
+       * activates one and a banner warns that saving drops the others. */
       readonly mixed: boolean;
     }
   | { readonly ok: false; readonly message: string };
@@ -195,7 +195,7 @@ function emptyPc(): PcModel {
 
 /**
  * A pristine, all-empty form model — used for a blank drive and the empty baseline of the template-replace
- * confirm (plan R8). The mode is a PARAMETER because a blank PC library must start in `pc` mode: it is the
+ * confirm. The mode is a PARAMETER because a blank PC library must start in `pc` mode: it is the
  * only mode valid there, so defaulting to `executable` would hand the user a form whose every save is
  * rejected.
  */
@@ -294,7 +294,7 @@ function parseSteam(source: Record<string, unknown>): SteamModel | null {
 
 /**
  * Parses manifest TEXT into a form model. ok:false only for a syntax error or a non-object top-level (the
- * form cannot represent those — the caller keeps the JSON tab, plan R4). A syntactically valid but
+ * form cannot represent those — the caller keeps the JSON tab). A syntactically valid but
  * schema-invalid manifest still parses: wrong-typed known fields go to `corrupt` and are written back
  * verbatim so the server validator still reports them.
  */
@@ -424,7 +424,7 @@ function valueToFormResult(parsed: unknown): ParseFormResult {
     else corrupt['pc'] = value;
   }
 
-  // Launch mode: pc > steam > install > executable (plan R5). Presence (not validity) decides — a corrupt
+  // Launch mode: pc > steam > install > executable. Presence (not validity) decides — a corrupt
   // block still selects its mode, and its raw value is re-emitted from `corrupt` so the error shows.
   // `install` with `type: 'copy'` is the exception: it is Executable mode with the checkbox on, so it
   // must NOT be shown as an Installer (the user never chose that mode).
@@ -584,11 +584,11 @@ function buildManifestObject(
     // Executable checkbox a `type: 'copy'` one (its `installer` being the game directory to copy).
     if (model.launchMode === 'installer') out.install = buildInstall(model.install);
     else if (model.copyToPc) out.install = buildInstall(model.copyInstall);
-    // Game-launch prefix provisioning (Linux; Р7b) — applies to our own prefix (executable/installer
+    // Game-launch prefix provisioning (Linux) — applies to our own prefix (executable/installer
     // modes), not steam (which runs in Steam's compatdata).
     const winetricks = nonEmpty(model.winetricks);
     if (winetricks.length > 0) out.winetricks = winetricks;
-    // umu GAMEID for the launch (Linux; Р7i) — same scope: our own umu-run, not steam://.
+    // umu GAMEID for the launch (Linux) — same scope: our own umu-run, not steam://.
     if (model.umuGameId !== '') out.umuGameId = model.umuGameId;
   }
 
@@ -639,7 +639,7 @@ export interface FormGameSlot {
  * may carry several games, `readManifests` SKIPS the ones that do not resolve, and the rest stay
  * perfectly playable — so the user edits game B while game A sits in the same file, unrepresentable. With
  * only `FormGameSlot` to serialize from, saving B would have to drop A. Preserving it verbatim is not a
- * nicety; it is the difference between editing a game and destroying its neighbour (see the plan, Р2).
+ * nicety; it is the difference between editing a game and destroying its neighbour.
  */
 export interface RawGameSlot {
   readonly raw: unknown;
@@ -734,7 +734,7 @@ export function slotsWithNewGame(text: string | null, launchMode: LaunchMode): N
 
 /**
  * Serializes a LIST of game form states back to manifest TEXT: exactly one game → a single object (legacy
- * shape, maximal backwards compatibility), more than one → an array (see the plan, decision 2).
+ * shape, maximal backwards compatibility), more than one → an array.
  *
  * An EMPTY list serializes to `[]` — the PC library's "there are no local games any more", which main
  * turns into deleting game.json. A card never reaches this (its last game cannot be removed).

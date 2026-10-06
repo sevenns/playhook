@@ -14,7 +14,7 @@
 // LB/RB) are the faster path for someone who knows them.
 import type { Translator } from '../shared/i18n/index.js';
 import { type AudioController } from './audio.js';
-import { req } from './dom.js';
+import { pressFlash, req } from './dom.js';
 import { createEntrance } from './entrance.js';
 import { createHoverGuard } from './hover-guard.js';
 import { clampIndex, wrapIndex } from './index-math.js';
@@ -30,9 +30,8 @@ import {
   splitAtCaret,
   type TextState,
 } from './osk-text.js';
-import type { TextEntrySurface } from './game-settings-screen.js';
+import type { TextEntrySurface } from './nav-surface.js';
 
-const PRESS_MS = 130;
 /** The most a single paste may bring in. A manifest field is a title or a path — never a document. */
 const PASTE_MAX_CHARS = 512;
 
@@ -268,11 +267,6 @@ export function createOsk(deps: OskDeps): TextEntrySurface {
     if (next === text) return;
     text = next;
     paintValue();
-  }
-
-  function pressFlash(el: HTMLElement): void {
-    el.classList.add('is-pressed');
-    window.setTimeout(() => el.classList.remove('is-pressed'), PRESS_MS);
   }
 
   /** Types text AT the caret. What each mode will accept lives in osk-text.ts, with its reasoning. */
@@ -555,7 +549,7 @@ export function createOsk(deps: OskDeps): TextEntrySurface {
 
   /**
    * The physical keyboard writes straight through, which is the whole point of having one. It is a
-   * CAPTURE listener that stops the event dead: controls.ts also listens on the window and would read
+   * CAPTURE listener that stops the event dead: keyboard.ts also listens on the window and would read
    * `a` as "move left" and Space as "activate", turning every typed letter into a navigation step.
    */
   window.addEventListener(

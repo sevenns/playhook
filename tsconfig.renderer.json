@@ -24,6 +24,6 @@
   //
   // What this config still does is emit `src/shared` (build:main then overwrites dist/shared as CJS — a
   // runtime dictionary import from a tsc-emitted app.js would break otherwise). Everything here is
-  // type-checked by the root tsconfig.json's `npm run typecheck` (audit N5).
+  // type-checked by the root tsconfig.json's `npm run typecheck`.
   "exclude": ["src/renderer/**"]
 }

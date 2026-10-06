@@ -6,7 +6,7 @@
 // `gameMusic ?? ambient` and CROSSFADES between sources (so inserting/removing a card, or switching the
 // ambience, glides instead of cutting). Music/ambience share one volume; UI sounds have their own.
 // Playback is gated by app.ts (visible && !running) via setMusicPlaying.
-import type { SfxName, SfxSet } from '../shared/types';
+import type { SfxName, SfxSet } from '../shared/types.js';
 import { shouldPlayLimit } from './sfx-limit.js';
 
 // Fallback volumes until the persisted ones arrive from main (music historically played at 0.5).

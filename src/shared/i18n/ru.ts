@@ -1,11 +1,12 @@
-// Russian dictionary. The `Partial` type guarantees every key here is a real MessageKey (a typo fails
-// tsc); any key left absent falls back to the English value (see createTranslator). JSON field names
+// Russian dictionary. Typed as the FULL record: every key here is a real MessageKey (a typo fails tsc)
+// AND every MessageKey has to be here (a forgotten translation fails tsc too, rather than quietly showing
+// English on screen — which is what `Partial` used to allow). JSON field names
 // (executable, pcSavePath, saveOnCard, install.args, watchProcesses, {dir}, game.json, id…) and brand
 // names (Steam) stay as latin identifiers; `{name}` placeholders are preserved verbatim.
 import type { MessageKey } from './en';
 
-export const ru: Partial<Record<MessageKey, string>> = {
-  // ── Common (shared across windows) ───────────────────────────────────────────
+export const ru: Record<MessageKey, string> = {
+  // ── Common (shared by every screen) ──────────────────────────────────────────
   'common.yes': 'Да',
   'common.no': 'Нет',
   'common.stop': 'Прервать',
@@ -16,6 +17,8 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'tray.steamAdd': 'Добавить в Steam',
   'tray.steamRemove': 'Убрать из Steam',
   'tray.steamBusy': 'Выполняется…',
+  'tray.openLogs': 'Открыть логи',
+  'tray.openGames': 'Открыть папку игр',
 
   // ── Ярлык Steam ──────────────────────────────────────────────────────────────
   'steam.addedTitle': 'Добавлено в Steam',
@@ -28,12 +31,9 @@ export const ru: Partial<Record<MessageKey, string>> = {
     'В Steam уже есть ярлык, указывающий на Playhook ({names}). Сначала уберите его в Steam, потом повторите — он добавлен вручную, поэтому Playhook не удаляет его сам.',
 
   // ── Native context menus ─────────────────────────────────────────────────────
-  'menu.cut': 'Вырезать',
   'menu.copy': 'Копировать',
-  'menu.paste': 'Вставить',
-  'menu.selectAll': 'Выделить всё',
 
-  // ── Window titles ────────────────────────────────────────────────────────────
+  // ── Screen titles ────────────────────────────────────────────────────────────
   'window.settings': 'Настройки',
 
   // ── Game launcher ────────────────────────────────────────────────────────────
@@ -47,7 +47,7 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'launcher.menu.close': 'Закрыть',
   'launcher.menu.install': 'Установить',
   'launcher.menu.uninstall': 'Удалить',
-  'launcher.menu.system': 'Система',
+  'launcher.menu.cancelInstall': 'Отменить установку',
   'launcher.menu.shutdown': 'Выключить',
   'launcher.menu.reboot': 'Перезагрузить',
   'launcher.menu.sleep': 'Спящий режим',
@@ -56,9 +56,7 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'launcher.menu.forceClose': 'Закрыть принудительно',
   'launcher.menu.goBack': 'Вернуться назад',
   'launcher.menu.forget': 'Убрать из библиотеки',
-  'launcher.menu.notifications': 'Уведомления',
   'launcher.menu.addGame': 'Добавить игру',
-  'launcher.menu.settings': 'Настройки',
   'launcher.card.library': 'Библиотека',
   'launcher.card.notifications': 'Уведомления',
   'launcher.card.settings': 'Настройки',
@@ -87,6 +85,7 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'launcher.confirm.forget':
     'Убрать «{title}» из библиотеки? Сейвы и статистика останутся — вставьте карту, и игра вернётся.',
   'launcher.confirm.sleep': 'Перевести компьютер в спящий режим?',
+  'launcher.confirm.quit': 'Выйти из Playhook?',
   'launcher.installPathNote':
     'Не все установщики поддерживают тихий режим, поэтому при установке нужно указать следующий путь:',
   'launcher.copyNote':
@@ -126,6 +125,12 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'launcher.state.syncingOut': 'Сохранение прогресса...',
   'launcher.state.installingPaused': 'Установка приостановлена...',
   'launcher.state.installingPausedPercent': 'Установка приостановлена на {percent}%...',
+  'launcher.state.queued': 'Ожидает установки...',
+  'launcher.state.queuedUntilGameExit': 'Установится после выхода из игры',
+  'launcher.state.queuedRemovalUntilGameExit': 'Удалится после выхода из игры',
+  'launcher.state.updating': 'Обновление...',
+  'launcher.state.updatingPaused': 'Обновление приостановлено...',
+  'launcher.state.preloaded': 'Предзагрузка завершена',
 
   // ── Display formatters ───────────────────────────────────────────────────────
   'format.never': 'никогда',
@@ -171,8 +176,6 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'settings.onlyGlobalAmbientHint':
     'Если включено, играет только общий эмбиент — собственная фоновая музыка игры не воспроизводится.',
   'settings.ambientVolume': 'Громкость эмбиента',
-  'settings.openLogs': 'Открыть логи',
-  'settings.openGames': 'Открыть папку игр',
   'settings.reset': 'Сбросить настройки',
   'settings.confirmReset': 'Сбросить все настройки к значениям по умолчанию?',
   'settings.status.idle': 'Проверьте обновления, чтобы узнать о новой версии.',
@@ -181,6 +184,7 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'settings.status.available': 'Доступно обновление: {version}',
   'settings.status.downloading': 'Загрузка... {percent}%',
   'settings.status.downloaded': 'Обновление {version} готово к установке.',
+  'settings.status.installing': 'Установка обновления {version}... Playhook сейчас перезапустится.',
   'settings.status.unsupported': 'Обновления доступны только в установленной сборке.',
   'settings.status.unsupportedPlatform':
     'На macOS Playhook не обновляется сам - скачайте новый .dmg со страницы Releases и замените приложение. Игры, статистика и сейвы сохранятся.',
@@ -189,6 +193,7 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'settings.action.updateTo': 'Обновить до {version}',
   'settings.action.downloading': 'Загрузка...',
   'settings.action.restartInstall': 'Перезапустить и установить',
+  'settings.action.installing': 'Установка...',
   'settings.action.retry': 'Повторить',
 
   // ── Customize screen: the launcher's own per-game editor (gameConfig:* channels) ──
@@ -224,6 +229,8 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'notifications.updateReady': 'Обновление {version} готово - установится при перезапуске',
   'notifications.gameInstalled': '{title} установлена',
   'notifications.gameUninstalled': '{title} удалена',
+  'notifications.gameInstallFailed': 'Не удалось установить {title}: {reason}',
+  'notifications.gameUninstallFailed': 'Не удалось удалить {title}: {reason}',
   'notifications.gameAddedDeferred':
     '{title} записана на карту. Появится, когда эта карта станет активной.',
   'notifications.gameMovedDeferred':
@@ -422,6 +429,8 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'metadata.downloading': 'Скачивание трека',
   'metadata.noSources': 'Сейчас нет доступных источников метаданных.',
   'metadata.staleSelection': 'Этот вариант больше недоступен. Выполните поиск заново.',
+  'metadata.steamGridDbKeyRejected':
+    'SteamGridDB отклонил API-ключ. Проверьте его в Настройки → Метаданные игр.',
   'metadata.downloadFailed': 'Не удалось скачать файл.',
   'metadata.unsupportedFile': 'Скачанный файл не является поддерживаемым изображением или аудио.',
   'metadata.writeFailed': 'Не удалось сохранить скачанный файл.',
@@ -430,8 +439,6 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'errors.finishBeforeApply': 'Завершите текущие операции перед применением конфигурации',
   'errors.reloadInProgress': 'перезагрузка уже выполняется',
   'errors.steamNotInstalled': 'Steam не установлен',
-  'errors.steamBusyOther':
-    'В Steam сейчас качается или удаляется другая игра. Дождитесь завершения.',
   'errors.steamOpenInstall': 'не удалось открыть установку в Steam: {cause}',
   'errors.steamOpenDownloads': 'не удалось открыть загрузки Steam: {cause}',
   'errors.steamOpenUninstall': 'не удалось открыть удаление в Steam: {cause}',
@@ -440,6 +447,8 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'errors.gameDidNotStart': 'игра не запустилась (истекло время ожидания процесса)',
   'errors.startInstaller': 'не удалось запустить установщик: {cause}',
   'errors.installIncomplete': 'установка не завершена (исполняемый файл игры не появился)',
+  'errors.jobCardRemoved': 'карту вынули до завершения',
+  'errors.jobGameGone': 'игры больше нет в библиотеке',
   'errors.copyGameFailed': 'не удалось скопировать игру на ПК: {cause}',
   'errors.copyExeNotFound':
     'игра скопирована, но исполняемого файла на месте нет: {path} - проверьте, что директория игры указывает на её собственный корень',
@@ -489,6 +498,7 @@ export const ru: Partial<Record<MessageKey, string>> = {
   'manifest.runAsAdminWithSteam': 'runAsAdmin недопустим в режиме steam',
   'manifest.watchProcessesRequired': 'watchProcesses обязателен в режиме steam',
   'manifest.executableRequired': 'executable обязателен',
+  'manifest.fieldRequired': 'поле {field} обязательно',
   'manifest.pcWithSteam': 'pc нельзя указывать вместе со steam',
   'manifest.pcWithInstall': 'pc нельзя указывать вместе с install',
   'manifest.pcWithExecutable': 'executable недопустим в режиме pc (используйте pc.executable)',

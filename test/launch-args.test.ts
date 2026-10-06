@@ -68,7 +68,7 @@ describe('buildInstallerArgs', () => {
     ]);
   });
 
-  it('inno linux silent (quoteDir=false): silent flags with an UNQUOTED /DIR= (Р7 — argv passthrough)', () => {
+  it('inno linux silent (quoteDir=false): silent flags with an UNQUOTED /DIR= (argv passthrough)', () => {
     expect(buildInstallerArgs('inno', 'C:\\playhook\\games\\my-game', [], false, true)).toEqual([
       '/VERYSILENT',
       '/SUPPRESSMSGBOXES',

@@ -1,10 +1,7 @@
 import { vi } from 'vitest';
 import type { AudioController } from '../../../src/renderer/audio';
-import type {
-  FilePickerSurface,
-  GameSettingsScreenApi,
-  TextEntrySurface,
-} from '../../../src/renderer/game-settings-screen';
+import type { GameSettingsScreenApi } from '../../../src/renderer/game-settings-screen';
+import type { FilePickerSurface, TextEntrySurface } from '../../../src/renderer/nav-surface';
 import type { FilePickerApi } from '../../../src/renderer/file-picker';
 import type { OnlinePickerSurface } from '../../../src/renderer/online-picker';
 import type { SettingsScreenApi } from '../../../src/renderer/settings-screen';

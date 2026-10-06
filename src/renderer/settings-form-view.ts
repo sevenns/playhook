@@ -4,23 +4,23 @@
 //
 // Two jobs, and the second is the load-bearing one: rows are also PATCHED in place (patchRow) when a new
 // AppSettings snapshot arrives. Rebuilding the list on every settings:update would flash the screen and
-// restart every transition mid-flight — see the plan's §3.6. A full rebuild is only for a change in the
+// restart every transition mid-flight. A full rebuild is only for a change in the
 // row COMPOSITION (steamAvailable arriving).
 //
 // Everything but the Updates row is drawn by row-view-core, which the Customize screen shares: this
 // module is now the Settings-specific half (the status line, its progress bar and its primary button).
-import type { SettingsModel, SettingsRow } from './settings-form-model';
-import type { Translator } from '../shared/i18n/index';
-import type { UpdateStatus } from '../shared/types';
+import type { SettingsModel, SettingsRow } from './settings-form-model.js';
+import type { Translator } from '../shared/i18n/index.js';
+import type { UpdateStatus } from '../shared/types.js';
 import {
   buildCoreRow,
   div,
   patchCoreRow,
   relocalizeCoreRow,
   type CoreRendered,
-} from './row-view-core';
+} from './row-view-core.js';
 
-export { optionLabel, optionLabelNode, applySliderPercent } from './row-view-core';
+export { optionLabel, optionLabelNode, applySliderPercent } from './row-view-core.js';
 
 /** One rendered row: the model row it came from plus the nodes the controller updates. */
 export interface RenderedRow {
@@ -58,6 +58,8 @@ export function updateStatusText(status: UpdateStatus, t: Translator): string {
       return t('settings.status.downloading', { percent: status.percent });
     case 'downloaded':
       return t('settings.status.downloaded', { version: status.version });
+    case 'installing':
+      return t('settings.status.installing', { version: status.version });
     case 'error':
       // Already localized in main (or a passthrough technical cause) — render as-is.
       return status.message;
@@ -94,6 +96,8 @@ export function updateAction(status: UpdateStatus, t: Translator): UpdateAction 
       return { label: t('settings.action.downloading'), kind: null };
     case 'downloaded':
       return { label: t('settings.action.restartInstall'), kind: 'install' };
+    case 'installing':
+      return { label: t('settings.action.installing'), kind: null };
     case 'error':
       return { label: t('settings.action.retry'), kind: 'check' };
     case 'unsupported':

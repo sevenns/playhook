@@ -12,15 +12,17 @@ import path from 'node:path';
 import fse from 'fs-extra';
 import { z } from 'zod';
 import {
-  MANIFEST_FILENAME,
   MAX_HERO_IMAGES,
-  type GameManifest,
   type ManifestSource,
   type ManifestValidationIssue,
   type ConfigValidationResult,
-  type ResolvedManifest,
 } from '../shared/types';
-import { translateIssueMessage, type Translator } from '../shared/i18n/index';
+import { MANIFEST_FILENAME, type GameManifest, type ResolvedManifest } from './manifest-types';
+import { type Translator } from '../shared/i18n/index';
+import { formatZodError, issueMessage } from './manifest-issues';
+import { type InstallDirResolver } from './platform/types';
+import { isEnoent } from './json-store';
+import { describe } from './util';
 import { log } from './logger';
 
 // Install-mode block (optional). When present, the card holds an installer and `executable` is
@@ -40,7 +42,7 @@ const installSchema = z
     // For `custom`: the full argv with exactly one {dir} token. For nsis/inno: optional extra flags.
     // Forbidden for `copy` (no process is started).
     args: z.array(z.string()).default([]),
-    // Linux-only (Р7b): extra winetricks verbs/settings provisioned into the game's Wine prefix BEFORE the
+    // Linux-only: extra winetricks verbs/settings provisioned into the game's Wine prefix BEFORE the
     // installer runs, on top of the app's baseline set. Lets a card cover runtimes its installer needs
     // (e.g. a skinned Inno installer needing mfc42/gdiplus) or a setting like `vd=1920x1080`. Ignored on
     // Windows. Strictly validated (`=` allowed for `key=value` settings; shell-less execFile — defense in depth).
@@ -53,7 +55,7 @@ const installSchema = z
   // surface beyond the read-only tasklist we use today. The app builds nsis/inno args itself, so
   // elevated is fine there.
   // Custom messages are stored as dictionary KEYS (translated later at the issue-mapping points via
-  // translateIssueMessage — see formatZodError / validateManifestText). The schema is module-private, so
+  // translateIssueMessage — see manifest-issues.ts / validateManifestText). The schema is module-private, so
   // it is never rebuilt per locale.
   .refine((v) => !(v.type === 'custom' && v.runAsAdmin), {
     message: 'manifest.installRunAsAdminCustom',
@@ -126,7 +128,7 @@ const manifestSchema = z
     // guard against accidental generic names. `.min(1)` rejects an empty array (defense in depth vs the
     // `?.length` branch in ipc). Names are compared case-insensitively (lower-cased) at match time.
     //
-    // The `.exe` suffix is OPTIONAL rather than required (Д5): a native macOS binary is not called
+    // The `.exe` suffix is OPTIONAL rather than required: a native macOS binary is not called
     // `*.exe`, and steam mode REQUIRES watchProcesses, so demanding the suffix would make steam mode
     // impossible on macOS. The convention that goes with it: a CROSS-PLATFORM card stores `*.exe` names
     // (that is what Windows and Proton both run, and the darwin matcher normalizes the suffix away, so
@@ -178,7 +180,7 @@ const manifestSchema = z
       .optional()
       .catch(undefined),
     platforms: z.array(z.enum(['windows', 'mac', 'linux'])).optional().catch(undefined),
-    // Linux-only (Р7b): extra winetricks verbs/settings provisioned into the game's Wine prefix BEFORE the
+    // Linux-only: extra winetricks verbs/settings provisioned into the game's Wine prefix BEFORE the
     // game launches, on top of the app's baseline set — a runtime a game needs on a bare Proton prefix
     // (e.g. `d3dx9`) OR a winetricks SETTING like `vd=1920x1080` (virtual desktop — fixes old games that
     // crash on a fullscreen display-mode change). Ignored on Windows. Strictly validated (`=` allowed for
@@ -186,7 +188,7 @@ const manifestSchema = z
     winetricks: z
       .array(z.string().regex(/^[A-Za-z0-9_.=-]+$/, 'manifest.winetricksName'))
       .default([]),
-    // Linux-only (Р7i): the umu `GAMEID` used when LAUNCHING the game — a Steam appid (e.g. `814380`) or a
+    // Linux-only: the umu `GAMEID` used when LAUNCHING the game — a Steam appid (e.g. `814380`) or a
     // custom UMU_ID (e.g. `umu-nfsu2`), so umu applies that game's protonfix instead of the generic
     // `umu-default`. Absent → `umu-default` (current behaviour). Ignored on Windows.
     umuGameId: z.string().regex(/^[A-Za-z0-9_-]+$/, 'manifest.umuGameIdName').optional(),
@@ -319,7 +321,7 @@ const ENV_PREFIXES = ['APPDATA', 'LOCALAPPDATA', 'USERPROFILE'] as const;
 export function resolveInside(root: string, relative: string): string | null {
   // Card-relative manifest paths are authored on Windows and may use `\` (e.g. `"bin\\game.exe"`). On
   // Linux `\` is NOT a separator, so `path.resolve` would treat the whole thing as one filename with
-  // literal backslashes → "not found" and the card falls apart (Р12). Normalize `\`→`/` on BOTH platforms
+  // literal backslashes → "not found" and the card falls apart. Normalize `\`→`/` on BOTH platforms
   // (Windows `path.resolve` already accepts both, so its behaviour is unchanged) before resolving.
   const normalized = relative.replaceAll('\\', '/');
   if (path.isAbsolute(normalized)) return null;
@@ -336,7 +338,7 @@ export function resolveInside(root: string, relative: string): string | null {
  * `executable` must be relative to that directory. But a card author (or the Configure form on manual
  * entry, unlike its Browse picker which already trims) often gives it card-root-relative — INCLUDING the
  * source dir, e.g. source `game`, executable `game/game.exe`. Strip a leading `<source>/` so both spellings
- * resolve to the same copied file. Separators are normalized first (Р12: a Windows card uses `\`). No-op
+ * resolve to the same copied file. Separators are normalized first (a Windows card uses `\`). No-op
  * when the executable isn't under the source (already relative to it, or an unrelated path). Exported for
  * unit tests.
  */
@@ -349,7 +351,7 @@ export function stripCopySourcePrefix(executable: string, source: string): strin
 }
 
 /**
- * One-level case-insensitive lookup for a diagnostic hint when a card-relative file isn't found (Р12).
+ * One-level case-insensitive lookup for a diagnostic hint when a card-relative file isn't found.
  * On a case-sensitive FS (ext4/Linux) a Windows-authored `"Game.EXE"` won't match the on-disk `game.exe`
  * → the existence check fails. This scans the parent directory for an entry that differs from the wanted
  * name only in case and returns it, so the error can say "found game.exe, fix the case". Platform-agnostic
@@ -448,15 +450,6 @@ export function absoluteToPcSavePath(absolute: string, env: ManifestEnv): string
   return null;
 }
 
-function formatZodError(error: z.ZodError, t: Translator): string {
-  const first = error.issues[0];
-  if (first === undefined) return t('manifest.invalid');
-  const joined = first.path.join('.');
-  const where = joined.length > 0 ? joined : '(root)';
-  // A schema refine stores a MessageKey; a structural zod message is already localized via z.config.
-  return `${where}: ${translateIssueMessage(first.message, t)}`;
-}
-
 type InstallResolveResult =
   | {
       readonly ok: true;
@@ -467,29 +460,9 @@ type InstallResolveResult =
   | { readonly ok: false; readonly message: string };
 
 /**
- * The app-controlled install directory in BOTH views (Р7). On win32 they are identical
- * (`%LOCALAPPDATA%\playhook\games\<id>`); on linux they diverge:
- * - `hostDir` — the real filesystem path inside the game's Wine prefix
- *   (`<pfx>/drive_c/playhook/games/<id>`): every fs op and the resolved `executable` live under it;
- * - `installerDir` — the SAME location as the installer sees it under Wine (`C:\playhook\games\<id>`),
- *   fed to the silent dir-arg (`/DIR=` / `/D=`).
- */
-export interface InstallDir {
-  readonly hostDir: string;
-  readonly installerDir: string;
-}
-
-/**
- * Platform install-dir resolution, injected into readManifests (Р7): maps a game `id` to both views of
- * its app-controlled install dir, or null when install mode is unsupported on this platform/config
- * (win32 with `%LOCALAPPDATA%` unset). `id` is already validated as a safe single path segment.
- */
-export type InstallDirResolver = (id: string) => InstallDir | null;
-
-/**
  * Resolves the install-mode block: verifies the installer exists on the card, derives the
  * app-controlled install dir via the platform `resolveInstallDir` (win32 `%LOCALAPPDATA%\…`; linux the
- * game's Wine prefix — Р7), and resolves `executable` RELATIVE to its HOST view (traversal forbidden,
+ * game's Wine prefix), and resolves `executable` RELATIVE to its HOST view (traversal forbidden,
  * existence NOT checked — its absence is exactly the "not installed" state).
  */
 async function resolveInstall(
@@ -513,7 +486,7 @@ async function resolveInstall(
     return { ok: false, message: t('manifest.installerNotFound', { path: install.installer }) };
   }
 
-  // The install dir is platform-specific (Р7): win32 derives `%LOCALAPPDATA%\playhook\games\<id>`;
+  // The install dir is platform-specific: win32 derives `%LOCALAPPDATA%\playhook\games\<id>`;
   // linux places it inside the game's Wine prefix. null → install mode is unsupported here (e.g.
   // `%LOCALAPPDATA%` absent) and the card is rejected, exactly as the pre-port Windows-only check did.
   const dirs = resolveInstallDir(id);
@@ -559,20 +532,12 @@ export interface ManifestReadOptions {
 }
 
 /** True for an "the file isn't there" fs error — the one read failure that is a normal state, not damage. */
-function isNotFound(cause: unknown): boolean {
-  return (
-    typeof cause === 'object' &&
-    cause !== null &&
-    (cause as { code?: unknown }).code === 'ENOENT'
-  );
-}
-
 /**
  * Reads and fully validates ALL games on the card. `game.json` may hold a single object (legacy
  * single-game — behaves exactly as before) or a non-empty array of game objects (multi-game). Reads the
  * file once, normalizes to a list, and resolves each entry.
  *
- * Failure policy (see the plan): a STRUCTURAL problem (unreadable file, top-level not an object/array,
+ * Failure policy: a STRUCTURAL problem (unreadable file, top-level not an object/array,
  * empty array) is fatal. A single game that fails to resolve (e.g. a normal-mode executable missing on
  * disk) is SKIPPED with a breadcrumb so one broken entry doesn't kill a multi-game card; if NONE resolve,
  * the card is fatal with the first skip reason (so a single-game card keeps its precise message — BC).
@@ -595,7 +560,7 @@ export async function readManifests(
     // No PC library file yet is the normal first run — an empty library, not a failure. Every OTHER read
     // problem (unparsable JSON, EACCES) stays an error for both sources: silently swallowing corrupted
     // user data is exactly what the error-handling convention forbids.
-    if (source === 'pc' && isNotFound(cause)) return { ok: true, manifests: [] };
+    if (source === 'pc' && isEnoent(cause)) return { ok: true, manifests: [] };
     return {
       ok: false,
       message: t('errors.cannotReadManifest', { file: MANIFEST_FILENAME, cause: describe(cause) }),
@@ -657,7 +622,7 @@ async function resolveOne(
   const { t } = env;
   const parsed = manifestSchema.safeParse(rawParsed);
   if (!parsed.success) {
-    return { ok: false, message: formatZodError(parsed.error, t) };
+    return { ok: false, message: formatZodError(parsed.error, rawParsed, t) };
   }
   const raw: GameManifest = parsed.data;
 
@@ -718,7 +683,7 @@ async function resolveOne(
     steamResolved = { appid: raw.steam.appid };
   } else if (source === 'pc') {
     // Draft: no pc, no steam, and (per the checks above) no executable/install either — the game is
-    // visible in the PC library but has no configured way to launch it yet (Р1 — unconfigured launch).
+    // visible in the PC library but has no configured way to launch it yet.
     executablePath = '';
     cwd = '';
     unconfigured = true;
@@ -734,7 +699,7 @@ async function resolveOne(
     }
     if (!(await fse.pathExists(resolved))) {
       // On ext4 a wrong-case executable (Windows-authored `Game.EXE` vs on-disk `game.exe`) reads as
-      // missing — add a case-fix hint when exactly that is the case (Р12).
+      // missing — add a case-fix hint when exactly that is the case.
       const found = await findCaseInsensitiveName(resolved);
       if (found !== null) {
         return {
@@ -810,7 +775,7 @@ async function resolveOne(
 
   let pcSavePath: string | undefined;
   if (raw.pcSavePath !== undefined) {
-    // Deferred resolution (Р5/Э6): validate only the SYNTAX here (prefix allowlist + no traversal). The
+    // Deferred resolution: validate only the SYNTAX here (prefix allowlist + no traversal). The
     // physical folder is resolved per-game at sync time via the platform SavePathResolver — on Linux a
     // location inside the game's Wine prefix / Steam compatdata that may not exist until first launch,
     // which must NOT reject the card at read time. The stored value is the Windows-dictionary string.
@@ -936,7 +901,7 @@ function pushIfEscapes(
  * Beyond the traversal / pcSave / pairing checks that mirror readManifest, this enforces the multi-game
  * POLICY that every game must carry ≥1 heroImage. That is intentionally editor-only (it gates Save) and
  * NOT in the runtime readManifests path, which stays lenient (a hero-less legacy card still loads via the
- * wallpaper fallback) — see the plan, decision 3.
+ * wallpaper fallback).
  */
 function pushGameSemanticIssues(
   issues: ManifestValidationIssue[],
@@ -998,7 +963,7 @@ function pushGameSemanticIssues(
     // Multi-game policy: a hero image is required for every game (editor-only gate — see above).
     issues.push({ path: field('heroImage'), message: t('manifest.heroRequired') });
   }
-  // gridImage stays OPTIONAL (Р12): only its traversal is checked. The "without it the carousel card is
+  // gridImage stays OPTIONAL: only its traversal is checked. The "without it the carousel card is
   // cropped from hero" advice is a static hint under the field in Configure — an issue here would gate
   // Save and turn every existing card invalid, which is exactly what the optionality is for.
   if (raw.gridImage !== undefined) {
@@ -1030,6 +995,23 @@ function pushGameSemanticIssues(
  * semantic checks (zod's superRefine issues only appear after the base schema passes). The schema stays
  * module-private — only this pure function is exported, so there is a single source of truth.
  */
+/**
+ * The items of a manifest text as the file lists them: the single game object, or every element of the
+ * array form — the one top-level shape game.json takes. Null when the text is not JSON at all. The shape
+ * of each item is NOT checked here; that is the caller's business (validation, a lookup by id, a count).
+ * A UTF-8 BOM is dropped first: Notepad writes one, `JSON.parse` refuses it, and `fse.readJson` (which
+ * readManifests still uses) strips it silently — so a card that loads there must parse here too.
+ */
+export function parseManifestItems(text: string): readonly unknown[] | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text.startsWith('\uFEFF') ? text.slice(1) : text) as unknown;
+  } catch {
+    return null;
+  }
+  return Array.isArray(parsed) ? (parsed as readonly unknown[]) : [parsed];
+}
+
 export function validateManifestText(
   text: string,
   t: Translator,
@@ -1067,10 +1049,9 @@ export function validateManifestText(
     if (!result.success) {
       for (const issue of result.error.issues) {
         const joined = issue.path.join('.');
-        // A refine stores a MessageKey; a structural zod message is already localized via z.config.
         issues.push({
           path: joined.length > 0 ? `${prefix}${joined}` : rootPath,
-          message: translateIssueMessage(issue.message, t),
+          message: issueMessage(issue, item, t),
         });
       }
       return; // can't run semantic checks without parsed data
@@ -1117,9 +1098,4 @@ export function validateManifestText(
 export function manifestJsonSchema(): unknown {
   const objectSchema = z.toJSONSchema(manifestSchema, { unrepresentable: 'any', io: 'input' });
   return { oneOf: [objectSchema, { type: 'array', items: objectSchema, minItems: 1 }] };
-}
-
-function describe(cause: unknown): string {
-  if (cause instanceof Error) return cause.message;
-  return String(cause);
 }

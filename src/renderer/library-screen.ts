@@ -7,7 +7,7 @@
 // holds hundreds of covers rather than a dozen rows. That is why the maths of a step lives in
 // library-grid.ts, the artwork behind a bounded cache with a request queue in card-art.ts, and this
 // module only paints what the two decide.
-import type { LibraryEntry } from '../shared/types';
+import type { LibraryEntry } from '../shared/types.js';
 import type { MessageKey, Translator } from '../shared/i18n/index.js';
 import { type AudioController } from './audio.js';
 import { artKey, type CardArtCache } from './card-art.js';
@@ -26,6 +26,7 @@ import {
 import type { NavSurface } from './nav-surface.js';
 import { createScroller, pxUnit } from './screen-scroller.js';
 import { createSidebar, type SidebarEntry } from './screen-sidebar.js';
+import { sameIds } from './state-view.js';
 
 /**
  * How long the grid takes to scroll one row on a SINGLE press — the morph's own duration, so the glide
@@ -70,8 +71,8 @@ export interface LibraryScreen extends NavSurface {
   close(silent?: boolean): void;
   /** A new game list from main (a card went in or out) — the grid re-flows, the selection stays put. */
   setGames(games: readonly LibraryEntry[]): void;
-  /** The game AppState is busy with, so its dot pulses here as it does on the carousel. */
-  setBusyGame(id: string | null): void;
+  /** The busy games (an activity or the session), so their dots pulse here as they do on the carousel. */
+  setBusyGames(ids: ReadonlySet<string>): void;
   /** A direction is HELD: artwork loading waits it out, exactly as it does in the carousel. */
   setFlipping(flipping: boolean): void;
   /** The cover this screen already decoded, for the play button's morph (see carousel.primeArt). */
@@ -100,7 +101,7 @@ export function createLibraryScreen(deps: LibraryScreenDeps): LibraryScreen {
   let shown: readonly LibraryEntry[] = [];
   let index = 0;
   let cols = 1;
-  let busyId: string | null = null;
+  let busyIds: ReadonlySet<string> = new Set();
   let flipping = false;
   // A list arrived while the screen was away. The grid is NOT re-flowed then: it is still on screen,
   // fading out under the detail screen, and cards moving during that fade is what read as a twitch.
@@ -329,9 +330,9 @@ export function createLibraryScreen(deps: LibraryScreenDeps): LibraryScreen {
       node.classList.toggle('is-selected', active && at === index);
       node.classList.toggle(
         'shows-dot',
-        (game.active && game.unconfigured !== true) || game.id === busyId,
+        (game.active && game.unconfigured !== true) || busyIds.has(game.id),
       );
-      node.classList.toggle('is-busy', game.id === busyId);
+      node.classList.toggle('is-busy', busyIds.has(game.id));
     });
     placeJelly(instant);
     const selectedNode = active && current !== undefined ? nodeOf(current) : undefined;
@@ -749,9 +750,9 @@ export function createLibraryScreen(deps: LibraryScreenDeps): LibraryScreen {
       // …unless this list is the one carrying the game the screen was opened for.
       focusPending();
     },
-    setBusyGame: (id) => {
-      if (id === busyId) return;
-      busyId = id;
+    setBusyGames: (ids) => {
+      if (sameIds(ids, busyIds)) return;
+      busyIds = ids;
       if (open) applyLayout();
     },
     setFlipping: (next) => {

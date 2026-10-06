@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { libraryIndexPath, steamCandidateDirs } from '../src/main/platform/steam-locator.darwin';
 
 describe('darwin SteamLocator — candidate paths', () => {
-  it('probes the single macOS Steam root (Д8)', () => {
+  it('probes the single macOS Steam root', () => {
     expect(steamCandidateDirs('/Users/deck')).toEqual([
       '/Users/deck/Library/Application Support/Steam',
     ]);

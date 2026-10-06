@@ -1,10 +1,10 @@
 name: Build macOS
 
 # Build the macOS (Apple Silicon) distributable in the cloud, mirroring build-linux.yml. The runner is
-# macos-14 — an arm64 image — because the build is arm64-only (Д7): Intel Macs get no artifact, and a
+# macos-14 — an arm64 image — because the build is arm64-only: Intel Macs get no artifact, and a
 # universal build would additionally need a universal native `drivelist`.
 #
-# The dmg is NOT signed with a Developer ID and NOT notarized (Д6 — no Apple Developer account), so it
+# The dmg is NOT signed with a Developer ID and NOT notarized (no Apple Developer account), so it
 # does NOT self-update: the macOS build reports the updater as unsupported and the user re-downloads by
 # hand. See README (macOS section) for the Gatekeeper steps a first launch needs.
 #

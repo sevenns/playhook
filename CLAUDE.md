@@ -21,7 +21,9 @@ mandate to rewrite what already works.
 
 ## Layers (do not blur)
 
-- **main** owns all game logic (fs, registry, process control, FFI). **renderer** is stateless UI.
+- **main** owns all game logic (fs, registry, process control, FFI). **renderer** holds no domain state:
+  UI state (a manifest draft, a menu stack, the boot sequence) lives inside the screen factories, and
+  everything about games, cards and settings is pushed from main via the `on*` subscriptions.
 - They talk **only over IPC**. The renderer never touches fs/registry; main never touches the DOM.
 - Preload bridges are typed and sandboxed (`contextIsolation: true`, `sandbox: true`).
 - A **pure** function BOTH sides must compute identically (no fs/electron either way) lives in
@@ -29,6 +31,29 @@ mandate to rewrite what already works.
   `src/main/`: `tsconfig.renderer.json` does not include it and esbuild builds the renderer for the
   browser, so a `node:*` import there breaks the build, not just the convention. See
   `src/shared/asset-move-names.ts` (move-to-card asset names, computed identically in main and renderer).
+
+## Two state models: the session and per-game activities
+
+- **`AppState` is the game session only** (`idle | ready | configuringProton | syncing-in | launching |
+  running | syncing-out | error`): at most one game is launched, played and synced at a time. Its locks
+  live in `GameSequences` (`game-sequences.ts`).
+- **Everything that runs in the background is a per-game activity** (`shared/activity.ts`,
+  `ActivityMap` keyed by game id), held by `ActivityRegistry` (`activity-registry.ts`) and pushed in full
+  on `activity:update` (seeded by `activity:request`). Writers: `SteamActivityWatch`
+  (`steam-activity-watch.ts`, Steam downloads / updates / removals of every available Steam game) and
+  `GameJobs` (`game-jobs.ts`, copy installs, installer runs, uninstalls, prefix cleanups, with their own
+  queues and session rules in the pure `startVerdict`).
+- **A game never has both.** A game with an activity is not launched; the session's game gets no
+  activity (Steam updating it before launch must not hide "Launching...").
+- **Actions are addressed by game id** (`action:launch`, `action:uninstall`, `action:cancel-job`).
+  `GameActions` (`game-actions.ts`) resolves the target with the pure `resolveActionTarget`
+  (`action-target.ts`): with the session busy, another game may be installed or removed, never launched.
+- **The renderer judges the game on screen by itself**: `screenActions` in `state-view.ts` decides Play,
+  Install, Uninstall, Cancel and Force close from the session, the browse model and that game's activity.
+  `#app[data-phase]` stays global; `data-busy`, `data-activity` and `data-play-locked` describe the game
+  on screen.
+- **A managed exit goes through `QuitGate`** (`quit-gate.ts`): with jobs running, Quit / Shutdown / Reboot
+  ask first (`quit:confirm` / `quit:confirm-reply`, a native dialog when the window does not answer).
 
 ## Error-handling convention
 
@@ -48,11 +73,11 @@ Pick per situation, matching the existing patterns:
 
 ## Adding a new service
 
-Follow the **interface-DI** shape of `StatsService` / `UpdaterService` (dependencies passed via a
-typed `…Deps` interface), not the bare-primitive-constructor or free-function styles that predate it.
-Interface-DI is the most testable: it lets a unit test inject fakes without electron/fs. Bootstrap the
-service in `main.ts`; wire IPC through `GameController` (or the service's own `init()`, the way
-`GameConfigService` and `MetadataService` register their channels).
+Follow the **interface-DI** shape of `UpdaterService` / `NotificationsService` / `MetadataService`
+(dependencies passed via a typed `…Deps` interface), not the bare-primitive-constructor or free-function
+styles that predate it. Interface-DI is the most testable: it lets a unit test inject fakes without
+electron/fs. Bootstrap the service in `main.ts`; wire IPC through `GameController` (or the service's own
+`init()`, the way `GameConfigService` and `MetadataService` register their channels).
 
 ## Adding a new IPC channel
 
@@ -63,7 +88,10 @@ The channel literal lives in **one** source of truth and is bridged with compile
 3. Add the literal to `src/preload/preload.ts`'s `CHANNELS` map. It is `satisfies typeof IPC`, so a
    wrong value, a typo'd key AND a forgotten channel are all compile errors — there is one window and one
    preload, so the map has to be complete.
-4. Wire the handler in `ipc.ts` (main) and consume it in the renderer.
+4. Wire the handler in the owning service's `init()` (`settings-service.ts`, `game-config.ts`,
+   `file-picker-service.ts`, `metadata/service.ts`, … — `game-controller.ts` only for the card-session
+   channels) and consume it in the renderer. `test/ipc-channels.test.ts` also reads those `init()`s as
+   text and fails when a channel is registered twice: Electron refuses the second `handle` at runtime.
 
 The `test/ipc-channels.test.ts` suite guards the same invariant from the outside (it reads the preload
 sources as text) and would still catch it if a second window — and a second preload, back to
@@ -99,7 +127,8 @@ build does not self-update. **All OS-specific behaviour lives behind the `Platfo
 
 - Add the capability to an interface in `platform/types.ts` (the bundle is `ProcessMonitor`,
   `SteamLocator`, `SteamShortcuts`, `GameProcessLauncher`, `SavePathResolver`, `PowerBackend`,
-  `RemovableMounter`, `resolveInstallDir`).
+  `RemovableMounter`, `resolveInstallDir`). The file is types only and imports nothing from the
+  implementations — `GameProcess`, `PowerAction` and `InstallDirResolver` live there for that reason.
 - Implement it in **all three** of `platform/win32.ts`, `platform/linux.ts` and `platform/darwin.ts`
   (linux Proton helpers live in `platform/*.linux.ts` / `umu.ts`; the macOS ones in `platform/*.darwin.ts`).
   `createPlatform(process.platform)` selects the bundle once at bootstrap in an explicit three-way branch
@@ -133,14 +162,19 @@ build does not self-update. **All OS-specific behaviour lives behind the `Platfo
   it), a wrong separator does not fail loudly — it produces a wrong value.
   Quick check before pushing:
   `grep -rn "path\.\(join\|dirname\|basename\|resolve\)(" src/main/platform/*.{linux,darwin}.ts`
+  — and `test/platform-posix-paths.test.ts` is that grep with teeth (see "Mechanical guards").
 
 ## Tests
 
 - Runner: **vitest** (`npm test`). Tests live in `test/`, run in plain Node with **no electron**
-  (`test/stubs/electron.ts` is aliased for the `electron` import — see `vitest.config.ts`).
-- Testable = **pure / electron-free** modules. Modules that evaluate koffi FFI at import
-  (`game-launcher.ts`) are not importable in Node — extract pure logic into a util (as `launch-args.ts`
-  was) and test that.
+  (`test/stubs/electron.ts` is aliased for the `electron` import — see `vitest.config.ts`). `test/setup.ts`
+  points the file logger at a temp dir first, so a `log.warn` a test trips never lands in your real
+  launcher log (logger.ts would otherwise fall back to userData, as it does for the GUI).
+- Testable = **pure / electron-free** modules. The koffi-bound win32 modules (`game-launcher.ts`,
+  `registry.ts`, `window-finder.ts`) DO import under vitest on every OS — the prebuilt addon loads and the
+  DLLs bind lazily — but their FFI branches cannot be exercised without Windows, so test them through
+  the pure logic split out beside them (as `launch-args.ts` was) and hand the process waits in through
+  a seam (`ProcessControl` in `test/game-controller.test.ts`).
 - Prefer covering the risky, data-touching functions: manifest validation/anti-traversal, stats merge,
   save-sync retry, argument quoting.
 - **DOM tests of the renderer's screen controllers live in `test/renderer/**`** and run under
@@ -152,6 +186,9 @@ build does not self-update. **All OS-specific behaviour lives behind the `Platfo
   picker / online picker surfaces), and the translator is the real `createTranslator('en')`. Input is the
   `NavSurface` primitives called directly — no gamepad polling; the hover/veil branches are reachable
   through `hoverOver()` (they all sit behind the `mouse-asleep` class the fixture starts with).
+  **The `mouse-asleep` class on `<html>` is a contract**: `idle.ts` is its only writer, every surface's
+  hover branch reads it with `classList.contains`, and the fixture starts with it on — do not replace it
+  with a per-screen `isAsleep()` dep.
   Four rules that bite:
   - **The screens that fetch their own data open ASYNCHRONOUSLY** — `filePicker.open()` awaits `listDir`,
     `gameSettings.open(id)` awaits the manifest read, so assert after `await flushAsync()`. `SettingsScreen`
@@ -161,9 +198,14 @@ build does not self-update. **All OS-specific behaviour lives behind the `Platfo
   - **Load the fixture per test** (`beforeEach`), and create the controller after it: no controller removes
     its listeners, so a fixture shared across a file collects one live instance per test on the same nodes.
   - **`app.ts` stays out** — it touches `window.api` at module scope.
-  Covered so far: `screen-sidebar`, `osk`, `file-picker`, `settings-screen`, `game-settings-screen`. Still
-  uncovered and next in line for the same base: `controls.ts`, `online-picker.ts`, `library-screen.ts`,
-  `carousel.ts`. Anything needing real layout (`scrollHeight`, canvas) is still a manual check on the Deck.
+  Covered so far: `screen-sidebar`, `osk`, `file-picker`, `settings-screen`, `game-settings-screen`,
+  `controls` (its seams live in `controls-deps.ts`; input is a `keydown` on `window`, since the six
+  primitives are not on its public surface), `hero` (with `computePalette` mocked — the canvas decode is
+  the one thing happy-dom cannot do — so a test can decide WHEN a palette lands relative to a swap).
+  `online-picker` (its stateless nodes and captions live in `online-picker-view.ts`; the artwork api is
+  answered by hand, so a test decides when a page lands relative to a filter or section change). Still
+  uncovered and next in line for the same base: `library-screen.ts`, `carousel.ts`. Anything needing real layout (`scrollHeight`,
+  canvas) is still a manual check on the Deck.
   Upgrade note: `environmentMatchGlobs` is deprecated in vitest 3 and GONE in vitest 4 — an upgrade must
   move `test/renderer/**` to `test.projects` (or a per-file `@vitest-environment` docblock) or the suites
   will quietly run in Node again and fail on `document is not defined`.
@@ -174,7 +216,31 @@ build does not self-update. **All OS-specific behaviour lives behind the `Platfo
   "fix" such a failure by rewriting the expectation with `path.join`: that makes the test assert whatever
   the code does and stops testing anything at all.
 
-## Tooling (all run in CI before build)
+## Mechanical guards
+
+Rules that live only in this file get broken between releases, so the ones that matter are enforced by
+tests and lint, in the same source-as-text style as `test/daemon-imports.test.ts`:
+
+- **`path.posix` in the platform layer** — `test/platform-posix-paths.test.ts` reads every module under
+  `src/main/platform/` except `win32.ts` / `*.win32.ts` and fails on a bare `path.join` / `dirname` /
+  `basename` / `resolve` / `relative` / `normalize` / `isAbsolute` / `path.sep`.
+- **`process.platform` outside `platform/`** — ESLint `no-restricted-syntax` over `src/main/**`
+  (`eslint.config.mjs`), with an explicit allowlist and a reason per file (bootstrap / electron-UI glue,
+  electron-updater environment detection, the win32-only FFI modules' self-guards). It is an `error`: a
+  behavioural branch belongs on a `Platform` interface, implemented for all three OSes. A per-line
+  `eslint-disable` is not the way out: the repo has none.
+- **File and factory size ratchet** — `test/file-size-ratchet.test.ts` keeps a baseline of raw `wc -l`
+  per `src/**` file over 1000 lines and per screen factory (`createControls`, `createGameSettingsScreen`,
+  …). Nothing may grow past its entry; a file that shrank by more than 50 lines must have its entry
+  lowered; a file not in the map may not exceed 1000. When you grow one, split it instead.
+
+All three run on every PR and every push to `main` on Windows, Linux and macOS
+(`.github/workflows/check.yml`), so a rule violation no longer waits for the next release build to surface.
+
+## Tooling
+
+The first three run in CI on every PR and push to `main` (`check.yml`, followed by `npm run build`) and
+again before every release build. Prettier is deliberately NOT a gate.
 
 - `npm run typecheck` — strict `tsc`, no `any`. Covers `test/` as well as `src/`.
 - `npm run lint` — ESLint with type-aware rules (`no-non-null-assertion` — the "no `!`" rule, which
@@ -182,5 +248,6 @@ build does not self-update. **All OS-specific behaviour lives behind the `Platfo
   `strict-boolean-expressions`), over `src` and `test`. Tests switch off `require-await` and
   `unbound-method` (both only ever fire on test doubles) and allow a `_`-prefixed unused parameter.
 - `npm test` — vitest.
-- `npm run format` / `format:check` — Prettier (available for new code; the existing hand-aligned
-  files are intentionally not mass-reformatted).
+- `npm run format` / `format:check` — Prettier, available for new code and not run in CI: the existing
+  hand-aligned files are intentionally not mass-reformatted, so `format:check` is red on most of the repo
+  by design. Format the file you are adding; do not reformat the one you are touching.

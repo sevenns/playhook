@@ -1,7 +1,7 @@
 // The path decisions behind picking a file for a manifest field, as pure functions: what a field ACCEPTS,
 // what a picked path becomes in the manifest, and where its picker opens. Electron-free and fs-free (the
 // caller does the stat and passes what it found), so the rules that used to be enforced by an OS dialog
-// are unit-testable now that a renderer-driven picker enforces them instead — see the plan, Р5.1/Р5.2.
+// are unit-testable now that a renderer-driven picker enforces them instead.
 //
 // These are HOST paths (a card root is `E:\` on Windows and `/run/media/deck/…` on the Deck), so they are
 // built with the native `path`, not `path.posix`: the posix rule in CLAUDE.md is about paths that describe

@@ -1,5 +1,5 @@
 // The tempo of a HELD direction, shared by both input models: the gamepad polls its own buttons
-// (gamepad.ts) while the keyboard runs on timers (controls.ts), but the delay before the auto-move
+// (gamepad.ts) while the keyboard runs on timers (keyboard.ts), but the delay before the auto-move
 // starts, its cadence, and the rule for chaining one run into the next must feel identical on both.
 
 /** How long a direction must be HELD before the auto-move kicks in (a normal press stays one move). */

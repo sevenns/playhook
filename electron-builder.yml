@@ -18,7 +18,7 @@ files:
 
 # drivelist is a native module. electron-builder usually detects native code and
 # unpacks it from asar on its own, but we pin an explicit unpack so the .node binary is
-# available in the packaged build (verify on a real nsis/portable build — step 0/11 of the plan).
+# available in the packaged build (verify on a real nsis/portable build).
 asar: true
 asarUnpack:
   - "**/node_modules/drivelist/**"
@@ -39,7 +39,7 @@ nsis:
 # any distro, and electron-updater supports AppImage in-place updates (blockmap deltas). `icon.png` is the
 # 256×256 app icon (electron-builder may warn about size but it works). `category: Game` sets the .desktop
 # category. The native drivelist/koffi unpack above applies to Linux too (koffi is unused there but stays
-# a dependency of the win32 build). The umu-launcher zipapp is bundled via extraResources (added in Э4).
+# a dependency of the win32 build). The umu-launcher zipapp is bundled via extraResources.
 linux:
   icon: assets/icon.png
   category: Game
@@ -51,30 +51,30 @@ linux:
   artifactName: ${productName}.${ext}
   target:
     - AppImage
-  # Bundle the umu-launcher zipapp OUTSIDE asar (it is run as `python3 umu-run …` — Р1). Fetched into
+  # Bundle the umu-launcher zipapp OUTSIDE asar (it is run as `python3 umu-run …`). Fetched into
   # resources/umu by `npm run build:umu` (scripts/fetch-umu.mjs) before the Linux pack. Lands at
   # <resourcesPath>/umu/umu-run in the AppImage.
   extraResources:
     - from: resources/umu
       to: umu
 
-# macOS build (arm64 only — Д7: the runner and the developer machine are both Apple Silicon, and a
+# macOS build (arm64 only: the runner and the developer machine are both Apple Silicon, and a
 # universal build would additionally require a universal `drivelist`). The dmg is what a user downloads;
 # the zip is there because electron-updater's macOS channel expects one, and it is the easier artifact to
 # script around.
 #
-# NOT signed with a Developer ID and NOT notarized: there is no Apple Developer account (Д6). `identity: -`
+# NOT signed with a Developer ID and NOT notarized: there is no Apple Developer account. `identity: -`
 # asks for an AD-HOC signature, which is not the same as skipping signing: on Apple Silicon an app whose
 # signature is broken (which repacking a signed Electron binary does) refuses to launch at all, so the
 # ad-hoc one is what makes the build runnable once the user clears Gatekeeper. Without a Developer ID the
-# first launch still goes through System Settings → Privacy & Security → "Open Anyway" (Р3), and the app
+# first launch still goes through System Settings → Privacy & Security → "Open Anyway", and the app
 # does not auto-update (Squirrel.Mac requires a real signature — see updater.ts).
 #
 # `extendInfo` is NOT optional: the default Electron Info.plist declares neither key, and macOS silently
 # denies the capability when its usage string is missing — Apple Events would fail with -1743 in the
 # PACKAGED build only (in dev the responsible process is the terminal, which already has consent, so
-# leaving these out yields a false green). NSAppleEvents backs the power menu (Д4); NSRemovableVolumes
-# backs reading a card under /Volumes (Р7).
+# leaving these out yields a false green). NSAppleEvents backs the power menu; NSRemovableVolumes
+# backs reading a card under /Volumes.
 #
 # koffi stays in the mac bundle on purpose: `gamepad-global.ts` does a top-level `import koffi` on every
 # OS, so dropping it would break the app at startup. The `asarUnpack` above already covers it — do not
