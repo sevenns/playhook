@@ -56,6 +56,7 @@ import type {
 import type { IPC } from '../shared/types';
 import type { Locale } from '../shared/i18n/index';
 import type { ActivityMap } from '../shared/activity';
+import type { QuitAction, QuitConfirmReply } from '../shared/quit';
 
 const CHANNELS = {
   stateUpdate: 'state:update',
@@ -63,9 +64,12 @@ const CHANNELS = {
   activityUpdate: 'activity:update',
   activityRequest: 'activity:request',
   actionLaunch: 'action:launch',
+  actionCancelJob: 'action:cancel-job',
   actionUninstall: 'action:uninstall',
   actionHide: 'action:hide',
   actionQuit: 'action:quit',
+  quitConfirm: 'quit:confirm',
+  quitConfirmReply: 'quit:confirm-reply',
   gameModeRequest: 'app:game-mode-request',
   actionOpenSteamDownloads: 'action:open-steam-downloads',
   actionShutdown: 'action:shutdown',
@@ -181,17 +185,28 @@ const api: RendererApi = {
   requestActivities(): Promise<ActivityMap> {
     return ipcRenderer.invoke(CHANNELS.activityRequest) as Promise<ActivityMap>;
   },
-  requestLaunch(): void {
-    ipcRenderer.send(CHANNELS.actionLaunch);
+  requestLaunch(id?: string): void {
+    ipcRenderer.send(CHANNELS.actionLaunch, id);
   },
-  requestUninstall(): void {
-    ipcRenderer.send(CHANNELS.actionUninstall);
+  requestUninstall(id?: string): void {
+    ipcRenderer.send(CHANNELS.actionUninstall, id);
+  },
+  cancelJob(id: string): void {
+    ipcRenderer.send(CHANNELS.actionCancelJob, id);
   },
   requestHide(): void {
     ipcRenderer.send(CHANNELS.actionHide);
   },
-  requestQuit(): void {
-    ipcRenderer.send(CHANNELS.actionQuit);
+  requestQuit(confirmed?: boolean): void {
+    ipcRenderer.send(CHANNELS.actionQuit, confirmed === true);
+  },
+  onQuitConfirm(callback: (action: QuitAction) => void): void {
+    ipcRenderer.on(CHANNELS.quitConfirm, (_event: IpcRendererEvent, action: QuitAction) => {
+      callback(action);
+    });
+  },
+  quitConfirmReply(reply: QuitConfirmReply): void {
+    ipcRenderer.send(CHANNELS.quitConfirmReply, reply);
   },
   requestGameMode(): Promise<boolean> {
     return ipcRenderer.invoke(CHANNELS.gameModeRequest) as Promise<boolean>;
@@ -199,11 +214,11 @@ const api: RendererApi = {
   openSteamDownloads(): void {
     ipcRenderer.send(CHANNELS.actionOpenSteamDownloads);
   },
-  requestShutdown(): void {
-    ipcRenderer.send(CHANNELS.actionShutdown);
+  requestShutdown(confirmed?: boolean): void {
+    ipcRenderer.send(CHANNELS.actionShutdown, confirmed === true);
   },
-  requestReboot(): void {
-    ipcRenderer.send(CHANNELS.actionReboot);
+  requestReboot(confirmed?: boolean): void {
+    ipcRenderer.send(CHANNELS.actionReboot, confirmed === true);
   },
   requestSleep(): void {
     ipcRenderer.send(CHANNELS.actionSleep);

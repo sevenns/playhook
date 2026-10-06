@@ -15,8 +15,6 @@ export function phaseOf(state: AppState): Phase {
       return 'ready';
     case 'error':
       return 'error';
-    case 'installing':
-    case 'uninstalling':
     case 'configuringProton':
     case 'syncing-in':
     case 'launching':
@@ -30,10 +28,6 @@ export function statusOf(state: AppState, t: Translator): string {
   // Plain "..." instead of the "…" glyph: in M PLUS Rounded 1c (a CJK font) the ellipsis
   // glyph is centered vertically (Japanese convention), which looks misaligned in a Latin UI.
   switch (state.kind) {
-    case 'installing':
-      return t('launcher.state.installing');
-    case 'uninstalling':
-      return t('launcher.state.uninstalling');
     case 'configuringProton':
       // Base label; the renderer appends a rotating funny suffix after a minute.
       return t('launcher.protonConfig1');
@@ -67,8 +61,6 @@ export type BusyKind = 'none' | 'system' | 'game' | 'running';
 
 export function busyKindOf(state: AppState): BusyKind {
   switch (state.kind) {
-    case 'installing':
-    case 'uninstalling':
     case 'configuringProton':
       return 'system';
     case 'syncing-in':
@@ -89,7 +81,8 @@ export function busyKindOf(state: AppState): BusyKind {
 export function activityStatus(activity: GameActivity, t: Translator): string {
   switch (activity.kind) {
     case 'queued':
-      return '';
+      if (activity.reason !== 'session') return t('launcher.state.queued');
+      return t(activity.removal === true ? 'launcher.state.queuedRemovalUntilGameExit' : 'launcher.state.queuedUntilGameExit');
     case 'installing':
       return t('launcher.state.installing');
     case 'configuringProton':
@@ -108,9 +101,70 @@ export function activityStatus(activity: GameActivity, t: Translator): string {
   }
 }
 
-/** The Play button's busy visual for the game on screen: the gear for its activity, else the session's. */
-export function activityBusyKind(activity: GameActivity | undefined, state: AppState): BusyKind {
-  return activity === undefined ? busyKindOf(state) : 'system';
+/** What the Play button looks like for the game on screen. */
+export type PlayView = 'play' | 'resume' | 'gear' | 'spinner' | 'hidden';
+
+/** Everything the bar and the Details menu may offer for the game on screen, derived from that game alone. */
+export interface ScreenActions {
+  /** The game on screen when it can be acted on (not a history game), else undefined. */
+  readonly game: GameInfo | undefined;
+  readonly canPlay: boolean;
+  readonly canInstall: boolean;
+  readonly canUninstall: boolean;
+  readonly canCancel: boolean;
+  readonly canForceClose: boolean;
+  readonly playView: PlayView;
+}
+
+const NO_ACTIONS: ScreenActions = {
+  game: undefined,
+  canPlay: false,
+  canInstall: false,
+  canUninstall: false,
+  canCancel: false,
+  canForceClose: false,
+  playView: 'hidden',
+};
+
+/**
+ * What can be done with the game on screen. Its own activity wins (the gear; Play opens Steam's downloads
+ * for a download). The session's own game shows the session (return to it, or its busy visual). Any other
+ * game is judged by itself: while a session runs it may still be installed or removed, but Play only shows,
+ * it never starts a second game.
+ */
+export function screenActions(
+  state: AppState,
+  browse: BrowseInfo | null,
+  activity: GameActivity | undefined,
+): ScreenActions {
+  const sessionGame = gameOf(state);
+  const busy = phaseOf(state) === 'busy';
+  const game =
+    browse === null
+      ? sessionGame
+      : browse.active
+        ? (browse.game ?? (sessionGame?.id === browse.id ? sessionGame : undefined))
+        : undefined;
+  if (game === undefined) return NO_ACTIONS;
+  if (activity !== undefined) {
+    return { ...NO_ACTIONS, game, canPlay: opensSteamDownloads(activity), canCancel: cancellableInstall(activity), playView: 'gear' };
+  }
+  if (busy && sessionGame?.id === game.id) {
+    const kind = busyKindOf(state);
+    const running = state.kind === 'running' && state.killing !== true;
+    const playView = kind === 'running' ? 'resume' : kind === 'system' ? 'gear' : 'spinner';
+    return { ...NO_ACTIONS, game, canPlay: running, canForceClose: running, playView };
+  }
+  if (game.unavailable === true || game.unconfigured === true) return { ...NO_ACTIONS, game };
+  if (game.requiresInstall) return { ...NO_ACTIONS, game, canInstall: true };
+  return { ...NO_ACTIONS, game, canPlay: !busy, canUninstall: game.canUninstall, playView: 'play' };
+}
+
+/** The #app[data-busy] value a Play view stands for. */
+export function busyKindOfView(view: PlayView): BusyKind {
+  if (view === 'gear') return 'system';
+  if (view === 'spinner') return 'game';
+  return view === 'resume' ? 'running' : 'none';
 }
 
 /** The activity of the game on screen, or undefined when it is free or nothing is on screen. */
@@ -127,6 +181,17 @@ export function opensSteamDownloads(activity: GameActivity | undefined): boolean
 export function busyIds(state: AppState, activities: ActivityMap): ReadonlySet<string> {
   const session = phaseOf(state) === 'busy' ? gameOf(state)?.id : undefined;
   return new Set([...Object.keys(activities), ...(session === undefined ? [] : [session])]);
+}
+
+/** Whether the activity is an install the user can still cancel from the launcher. */
+export function cancellableInstall(activity: GameActivity | undefined): boolean {
+  if (activity?.kind === 'queued') return activity.removal !== true;
+  return activity?.kind === 'installing' || activity?.kind === 'configuringProton';
+}
+
+/** How many background installs / uninstalls are queued or running (Steam's own activities aside). */
+export function jobCountOf(activities: ActivityMap): number {
+  return Object.values(activities).filter((activity) => !activity.kind.startsWith('steam-')).length;
 }
 
 /** Whether two id sets hold the same ids. */

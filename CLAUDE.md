@@ -32,6 +32,29 @@ mandate to rewrite what already works.
   browser, so a `node:*` import there breaks the build, not just the convention. See
   `src/shared/asset-move-names.ts` (move-to-card asset names, computed identically in main and renderer).
 
+## Two state models: the session and per-game activities
+
+- **`AppState` is the game session only** (`idle | ready | configuringProton | syncing-in | launching |
+  running | syncing-out | error`): at most one game is launched, played and synced at a time. Its locks
+  live in `GameSequences` (`game-sequences.ts`).
+- **Everything that runs in the background is a per-game activity** (`shared/activity.ts`,
+  `ActivityMap` keyed by game id), held by `ActivityRegistry` (`activity-registry.ts`) and pushed in full
+  on `activity:update` (seeded by `activity:request`). Writers: `SteamActivityWatch`
+  (`steam-activity-watch.ts`, Steam downloads / updates / removals of every available Steam game) and
+  `GameJobs` (`game-jobs.ts`, copy installs, installer runs, uninstalls, prefix cleanups, with their own
+  queues and session rules in the pure `startVerdict`).
+- **A game never has both.** A game with an activity is not launched; the session's game gets no
+  activity (Steam updating it before launch must not hide "Launching...").
+- **Actions are addressed by game id** (`action:launch`, `action:uninstall`, `action:cancel-job`).
+  `GameActions` (`game-actions.ts`) resolves the target with the pure `resolveActionTarget`
+  (`action-target.ts`): with the session busy, another game may be installed or removed, never launched.
+- **The renderer judges the game on screen by itself**: `screenActions` in `state-view.ts` decides Play,
+  Install, Uninstall, Cancel and Force close from the session, the browse model and that game's activity.
+  `#app[data-phase]` stays global; `data-busy`, `data-activity` and `data-play-locked` describe the game
+  on screen.
+- **A managed exit goes through `QuitGate`** (`quit-gate.ts`): with jobs running, Quit / Shutdown / Reboot
+  ask first (`quit:confirm` / `quit:confirm-reply`, a native dialog when the window does not answer).
+
 ## Error-handling convention
 
 Pick per situation, matching the existing patterns:

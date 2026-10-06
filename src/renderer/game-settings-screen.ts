@@ -191,7 +191,7 @@ export interface GameSettingsScreenDeps {
    * title with X?" is about a candidate the popup has never heard of.
    */
   onConfirmRequested(kind: GameSettingsConfirm, options?: { readonly title?: string }): void;
-  /** Whether game `id` is running / installing / carries an activity — Delete is hidden then. */
+  /** Whether game `id` is the session's game or carries an activity - Delete, Move and Save stand down. */
   isBusy(id: string): boolean;
   /** A game was added AND applied: the launcher's library has it now, so the carousel goes to it. */
   onAdded(id: string): void;
@@ -575,7 +575,7 @@ export function createGameSettingsScreen(deps: GameSettingsScreenDeps): GameSett
     // A write of this screen's is in flight. Nothing here is idempotent — main's swap guard rejects the
     // second Save of the same signature AFTER the first has already landed, so the user is shown an error
     // for a save that worked — and Add/Move remove things the retry then cannot find.
-    if (writing) return false;
+    if (writing || deps.isBusy(gameId)) return false;
     const move = pendingMove;
     if (move !== null) {
       if (unreadable !== null) return false;

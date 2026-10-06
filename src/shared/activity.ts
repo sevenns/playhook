@@ -3,7 +3,7 @@
  * the single game session AppState describes. A game absent from the ActivityMap is free.
  */
 export type GameActivity =
-  | { readonly kind: 'queued' }
+  | { readonly kind: 'queued'; readonly reason?: 'session'; readonly removal?: true }
   | { readonly kind: 'installing' }
   | { readonly kind: 'configuringProton' }
   | { readonly kind: 'uninstalling' }
@@ -15,6 +15,13 @@ export type GameActivity =
     }
   | { readonly kind: 'steam-updating'; readonly paused: boolean; readonly pausedProgress?: number }
   | { readonly kind: 'steam-uninstalling' };
+
+/** What a failed install or uninstall notification names: the game, and why it failed. */
+export interface GameJobFailure {
+  readonly gameId: string;
+  readonly gameTitle: string;
+  readonly reason: string;
+}
 
 /** Every game's activity, keyed by game id. */
 export type ActivityMap = Readonly<Record<string, GameActivity>>;
@@ -30,5 +37,8 @@ export function sameActivity(a: GameActivity | undefined, b: GameActivity | unde
   const left = fieldsOf(a);
   const right = fieldsOf(b);
   const keys = Object.keys(left);
-  return keys.length === Object.keys(right).length && keys.every((key) => Object.is(left[key], right[key]));
+  return (
+    keys.length === Object.keys(right).length &&
+    keys.every((key) => Object.is(left[key], right[key]))
+  );
 }

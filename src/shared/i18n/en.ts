@@ -58,6 +58,7 @@ export const en = {
   'launcher.menu.close': 'Close',
   'launcher.menu.install': 'Install',
   'launcher.menu.uninstall': 'Uninstall',
+  'launcher.menu.cancelInstall': 'Cancel installation',
   'launcher.menu.shutdown': 'Shutdown',
   'launcher.menu.reboot': 'Reboot',
   'launcher.menu.sleep': 'Sleep',
@@ -107,6 +108,7 @@ export const en = {
   'launcher.confirm.shutdown': 'Shut down the PC?',
   'launcher.confirm.reboot': 'Reboot the PC?',
   'launcher.confirm.sleep': 'Put the PC to sleep?',
+  'launcher.confirm.quit': 'Quit Playhook?',
   'launcher.installPathNote':
     'Since not all installers support silent mode, during installation you need to specify the following path:',
   // The copy variant of the note: no installer runs, so neither the silent-mode caveat nor the
@@ -150,6 +152,9 @@ export const en = {
   'launcher.state.syncingOut': 'Saving progress...',
   'launcher.state.installingPaused': 'Installing paused...',
   'launcher.state.installingPausedPercent': 'Installing paused on {percent}%...',
+  'launcher.state.queued': 'Waiting to install...',
+  'launcher.state.queuedUntilGameExit': 'Will install after you quit the game',
+  'launcher.state.queuedRemovalUntilGameExit': 'Will uninstall after you quit the game',
   'launcher.state.updating': 'Updating...',
   'launcher.state.updatingPaused': 'Updating paused...',
   'launcher.state.preloaded': 'Pre-load complete',
@@ -266,6 +271,8 @@ export const en = {
   'notifications.updateReady': 'Update {version} is ready — it will be installed on restart',
   'notifications.gameInstalled': '{title} is installed',
   'notifications.gameUninstalled': '{title} has been removed',
+  'notifications.gameInstallFailed': '{title} could not be installed: {reason}',
+  'notifications.gameUninstallFailed': '{title} could not be removed: {reason}',
   'notifications.gameAddedDeferred':
     '{title} was written to the card. It shows up once that card is the active one.',
   'notifications.gameMovedDeferred':
@@ -488,6 +495,8 @@ export const en = {
   'errors.startInstaller': 'failed to start the installer: {cause}',
   'errors.installIncomplete': 'installation did not complete (the game executable did not appear)',
   'errors.copyGameFailed': 'failed to copy the game to the PC: {cause}',
+  'errors.jobCardRemoved': 'the card was removed before it finished',
+  'errors.jobGameGone': 'the game is no longer in the library',
   'errors.copyExeNotFound':
     'the game was copied, but the executable is not there: {path} — check that the game directory points at the game’s own root',
   'errors.copyExeNotFoundCase':

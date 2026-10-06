@@ -22,6 +22,7 @@ import {
 } from './umu';
 import { buildInstallerArgs } from '../launch-args';
 import { log } from '../logger';
+import { createProvisionLock } from './provision-lock';
 
 const execFileAsync = promisify(execFile);
 
@@ -169,6 +170,8 @@ function spawnUmuProcess(
 // recorded in a per-prefix sentinel so re-installs skip the (slow) step; the winetricks DOWNLOADS are
 // globally cached by winetricks, so a new prefix re-applies without re-downloading.
 
+const provisionLock = createProvisionLock();
+
 /** Per-prefix marker file listing the winetricks verbs already provisioned (newline-separated). */
 const WINETRICKS_SENTINEL = '.playhook-winetricks';
 
@@ -231,6 +234,21 @@ function runWinetricks(
  * truly missing). Needs network the first time (like the GE-Proton download), same as a game launch.
  */
 async function ensurePrefixDeps(
+  umuRunPath: string,
+  prefix: string,
+  extra: readonly string[],
+  logDir: string | undefined,
+  onProvisioning?: (active: boolean) => void,
+): Promise<void> {
+  if (pendingWinetricks(extra, await readDoneVerbs(prefix)).length === 0) return;
+  await provisionLock.run(() => provisionPrefix(umuRunPath, prefix, extra, logDir, onProvisioning));
+}
+
+/**
+ * The body of ensurePrefixDeps, run under the provision lock: re-reads what is already applied (an earlier
+ * holder of the lock may have provisioned this very prefix) and runs winetricks for the rest.
+ */
+async function provisionPrefix(
   umuRunPath: string,
   prefix: string,
   extra: readonly string[],
@@ -341,6 +359,10 @@ export function createLinuxGameLauncher(deps: LinuxGameLauncherDeps): GameProces
     // copied files are about to be written INTO (launchGame only provisions when the card lists top-level
     // winetricks, and never applies the install baseline). Do it here, before the copy — same order and
     // same environment as the installer path: prefix first, game files second.
+    async needsProvisioning(install): Promise<boolean> {
+      const prefix = prefixForInstall(install.dir);
+      return pendingWinetricks(install.winetricks, await readDoneVerbs(prefix)).length > 0;
+    },
     async prepareInstallDir(install, onProvisioning): Promise<void> {
       const { prefix } = await preparePrefixForInstall(deps, install, onProvisioning);
       log.info(`[install] prefix ready for copy prefix="${prefix}" dir="${install.dir}"`);

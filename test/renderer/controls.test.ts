@@ -5,7 +5,7 @@ import { req } from '../../src/renderer/dom';
 import { createTranslator } from '../../src/shared/i18n/index';
 import type { AppState, BrowseInfo, GameInfo } from '../../src/shared/types';
 import type { ActivityMap } from '../../src/shared/activity';
-import { screenActivityOf } from '../../src/renderer/state-view';
+import { jobCountOf, screenActivityOf } from '../../src/renderer/state-view';
 import { loadFixture } from './helpers/fixture';
 import { fakeAudio, fakeKeyboard, type FakeAudio } from './helpers/fakes';
 import { installRafHarness } from './helpers/raf';
@@ -36,6 +36,7 @@ function fakeControlsApi(): ControlsApi {
   return {
     requestLaunch: vi.fn(),
     requestUninstall: vi.fn(),
+    cancelJob: vi.fn(),
     requestKill: vi.fn(),
     forgetGame: vi.fn(),
     openSteamDownloads: vi.fn(),
@@ -44,6 +45,7 @@ function fakeControlsApi(): ControlsApi {
     requestSleep: vi.fn(),
     requestHide: vi.fn(),
     requestQuit: vi.fn(),
+    quitConfirmReply: vi.fn(),
     resolveGameCollision: vi.fn(() =>
       Promise.resolve({ saved: true, applied: 'applied' } as const),
     ),
@@ -123,6 +125,7 @@ beforeEach(() => {
     getState: () => own.state,
     getBrowse: () => own.browse,
     getScreenActivity: () => screenActivityOf(own.browse, own.activities),
+    getJobCount: () => jobCountOf(own.activities),
     audio,
     getTranslator: () => createTranslator('en'),
     getLocale: () => 'en',
@@ -401,5 +404,180 @@ describe('controls Force close', () => {
     req('more-button').click();
 
     expect(killHidden()).toBe(true);
+  });
+});
+
+describe('controls background installs', () => {
+  const COPY_GAME: GameInfo = { ...LOCAL_GAME, id: 'copy', title: 'Copy', requiresInstall: true, installVia: 'copy' };
+  const toggle = (): HTMLButtonElement => req<HTMLButtonElement>('menu-install-toggle');
+
+  it('offers Cancel installation for an install of the game on screen, and cancels it by id', () => {
+    harness.screen = 'detail';
+    harness.browse = browsing(COPY_GAME);
+    harness.state = { kind: 'ready', game: COPY_GAME };
+    harness.activities = { copy: { kind: 'queued' } };
+    req('more-button').click();
+
+    expect(toggle().classList.contains('is-hidden')).toBe(false);
+    expect(toggle().textContent).toBe('Cancel installation');
+
+    toggle().click();
+
+    expect(api.cancelJob).toHaveBeenCalledWith('copy');
+  });
+
+  it('closes an open install question once the game on screen starts installing', () => {
+    harness.screen = 'detail';
+    harness.browse = browsing(COPY_GAME);
+    harness.state = { kind: 'ready', game: COPY_GAME };
+    req('more-button').click();
+    toggle().click();
+
+    expect(popup().dataset['mode']).toBe('install');
+    expect(popup().classList.contains('is-open')).toBe(true);
+
+    harness.activities = { copy: { kind: 'installing' } };
+    controls.refresh();
+
+    expect(popup().classList.contains('is-open')).toBe(false);
+  });
+});
+
+
+describe('controls quit with background jobs', () => {
+  const view = (): string | undefined => popup().dataset['view'];
+  const message = (): string | null => req('confirm-message').textContent;
+
+  it('Quit from the Power menu asks first while jobs run, and its No goes back to Power', () => {
+    harness.activities = { a: { kind: 'installing' }, b: { kind: 'queued' } };
+    controls.openSystemCard('power');
+    req('power-quit').click();
+
+    expect(view()).toBe('confirm');
+    expect(message()).toBe('2 operations are in progress and will be cancelled. Quit anyway?');
+    expect(api.requestQuit).not.toHaveBeenCalled();
+
+    req('confirm-no').click();
+
+    expect(view()).toBe('power');
+  });
+
+  it('Quit from the Power menu leaves at once with nothing running', () => {
+    harness.activities = { a: { kind: 'steam-installing', paused: false } };
+    controls.openSystemCard('power');
+    req('power-quit').click();
+
+    expect(api.requestQuit).toHaveBeenCalledTimes(1);
+    expect(api.requestQuit).toHaveBeenCalledWith();
+  });
+
+  it("main's question opens on its own, says it is shown, and its No just closes - no Power menu", () => {
+    harness.activities = { a: { kind: 'installing' } };
+    controls.askQuit('quit');
+
+    expect(api.quitConfirmReply).toHaveBeenCalledWith('shown');
+    expect(view()).toBe('confirm');
+
+    req('confirm-no').click();
+
+    expect(popup().classList.contains('is-open')).toBe(false);
+    expect(api.quitConfirmReply).toHaveBeenLastCalledWith('dismissed');
+  });
+
+  it("main's question answered Yes quits confirmed and is not reported as dismissed", () => {
+    harness.activities = { a: { kind: 'installing' } };
+    controls.askQuit('quit');
+    req('confirm-yes').click();
+
+    expect(api.requestQuit).toHaveBeenCalledWith(true);
+    expect(api.quitConfirmReply).not.toHaveBeenCalledWith('dismissed');
+  });
+
+  it("main's question waits behind an open error and comes up once it is closed", () => {
+    harness.activities = { a: { kind: 'installing' } };
+    controls.showError('Something broke');
+    controls.askQuit('reboot');
+
+    expect(api.quitConfirmReply).toHaveBeenCalledWith('shown');
+    expect(view()).toBe('error');
+
+    req('error-close').click();
+    vi.advanceTimersByTime(POPUP_FADE_MS);
+
+    expect(view()).toBe('confirm');
+    expect(message()).toBe('1 operation is in progress and will be cancelled. Reboot the PC anyway?');
+  });
+
+  it('an open quit question follows the job count, and falls back to the plain question at zero', () => {
+    harness.activities = { a: { kind: 'installing' }, b: { kind: 'installing' } };
+    controls.askQuit('quit');
+    harness.activities = { a: { kind: 'installing' } };
+    controls.refresh();
+
+    expect(message()).toBe('1 operation is in progress and will be cancelled. Quit anyway?');
+
+    harness.activities = {};
+    controls.refresh();
+
+    expect(message()).toBe('Quit Playhook?');
+  });
+});
+
+describe('controls while another game runs', () => {
+  const SESSION: GameInfo = { ...LOCAL_GAME, id: 'session', title: 'Session' };
+  const UNINSTALLED: GameInfo = { ...LOCAL_GAME, id: 'later', title: 'Later', requiresInstall: true, installVia: 'copy' };
+  const focusedMain = (): string[] =>
+    ['play-button', 'more-button'].filter((id) => req(id).classList.contains('is-focused'));
+
+  beforeEach(() => {
+    harness.state = { kind: 'running', game: SESSION, since: 0 };
+  });
+
+  it("an installed game's Play is out of the ring and refuses - it never starts a second game", () => {
+    harness.screen = 'detail';
+    harness.browse = browsing(LOCAL_GAME);
+    controls.refresh();
+    press('ArrowRight');
+
+    expect(focusedMain()).toEqual(['more-button']);
+
+    req('play-button').click();
+
+    expect(api.requestLaunch).not.toHaveBeenCalled();
+    expect(audio.limits()).toBe(1);
+  });
+
+  it("the session game's Play returns to it, by its id", () => {
+    harness.screen = 'detail';
+    harness.browse = browsing(SESSION);
+    controls.refresh();
+    req('play-button').click();
+
+    expect(api.requestLaunch).toHaveBeenCalledWith('session');
+  });
+
+  it("an uninstalled game's Install question sends its own id, fixed when the question opened", () => {
+    harness.screen = 'detail';
+    harness.browse = browsing(UNINSTALLED);
+    req('more-button').click();
+    req('menu-install-toggle').click();
+
+    expect(popup().dataset['mode']).toBe('install');
+
+    req('confirm-yes').click();
+
+    expect(api.requestLaunch).toHaveBeenCalledWith('later');
+  });
+
+  it('closes the open question when main moves the screen onto another game, so its Yes cannot hit that one', () => {
+    harness.screen = 'detail';
+    harness.browse = browsing(UNINSTALLED);
+    req('more-button').click();
+    req('menu-install-toggle').click();
+    harness.browse = browsing(SESSION);
+    controls.refresh();
+
+    expect(popup().classList.contains('is-open')).toBe(false);
+    expect(api.requestLaunch).not.toHaveBeenCalled();
   });
 });

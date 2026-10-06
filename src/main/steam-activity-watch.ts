@@ -151,7 +151,8 @@ export class SteamActivityWatch {
       const stillListed = new Set(this.deps.listSteamGames().map((game) => game.id));
       for (const game of games) {
         if (!stillListed.has(game.id)) continue;
-        this.apply(game, statuses.get(game.appid) ?? { state: 'absent' });
+        const status = statuses.get(game.appid);
+        if (status !== undefined) this.apply(game, status);
       }
     } catch (cause) {
       log.warn('[steam-watch] tick failed:', describe(cause));
@@ -189,14 +190,20 @@ export class SteamActivityWatch {
     if (game.id === this.deps.sessionGameId()) return;
     if (this.applyUninstallRequest(game, status)) return;
     const before = this.tracked.get(game.id);
-    const updating = status.state === 'downloading' && (before?.state === 'installed' || before?.updating === true);
+    const updating =
+      status.state === 'downloading' &&
+      (before?.state === 'installed' || before?.updating === true);
     this.tracked.set(game.id, { state: status.state, updating });
     if (status.state === 'downloading') {
-      this.deps.registry.set(game.id, downloadActivity(updating ? 'steam-updating' : 'steam-installing', status));
+      this.deps.registry.set(
+        game.id,
+        downloadActivity(updating ? 'steam-updating' : 'steam-installing', status),
+      );
     } else {
       this.clearSteamActivity(game.id);
     }
-    const changed = before === undefined ? status.state === 'downloading' : before.state !== status.state;
+    const changed =
+      before === undefined ? status.state === 'downloading' : before.state !== status.state;
     if (!changed) return;
     log.info(`[steam-watch] appid=${game.appid} ${before?.state ?? 'unknown'} → ${status.state}`);
     this.deps.onGameChanged(game.id);
@@ -219,7 +226,9 @@ export class SteamActivityWatch {
         this.deps.registry.set(game.id, { kind: 'steam-uninstalling' });
         return true;
       }
-      log.info(`[steam-uninstall] appid=${game.appid} still installed after timeout — assuming cancel`);
+      log.info(
+        `[steam-uninstall] appid=${game.appid} still installed after timeout - assuming cancel`,
+      );
       this.uninstallRequests.delete(game.appid);
       this.clearSteamActivity(game.id);
       return false;

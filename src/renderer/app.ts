@@ -25,7 +25,7 @@ import { createCardArtCache } from './card-art.js';
 import { createLibraryScreen } from './library-screen.js';
 import { createToast } from './toast.js';
 import { formatDate, formatNotification, formatPlaytime } from './format.js';
-import { activityBusyKind, activityStatus, busyIds, gameOf, phaseOf, screenActivityOf, statusOf } from './state-view.js';
+import { activityStatus, busyIds, busyKindOfView, gameOf, jobCountOf, phaseOf, screenActions, screenActivityOf, statusOf } from './state-view.js';
 import { req } from './dom.js';
 
 const app = req('app');
@@ -224,12 +224,8 @@ const gameSettingsScreen = createGameSettingsScreen({
   // declared below, and no message can arrive before the user has opened this screen.
   notify: (text) => toast.show(text),
   showError: (text) => controls.showError(text),
-  // Editing while the game runs is legal; DELETING it is not — the launcher would be left holding a
-  // manifest the file no longer has.
   isBusy: (id) =>
-    currentState.kind === 'running' ||
-    currentState.kind === 'installing' ||
-    currentState.kind === 'uninstalling' ||
+    (phaseOf(currentState) === 'busy' && gameOf(currentState)?.id === id) ||
     currentActivities[id] !== undefined,
 });
 
@@ -271,16 +267,18 @@ const toast = createToast({
 
 const controls = createControls({
   api: {
-    requestLaunch: () => window.api.requestLaunch(),
-    requestUninstall: () => window.api.requestUninstall(),
+    requestLaunch: (id) => window.api.requestLaunch(id),
+    requestUninstall: (id) => window.api.requestUninstall(id),
+    cancelJob: (id) => window.api.cancelJob(id),
     requestKill: () => window.api.requestKill(),
     forgetGame: (id) => window.api.forgetGame(id),
     openSteamDownloads: () => window.api.openSteamDownloads(),
-    requestShutdown: () => window.api.requestShutdown(),
-    requestReboot: () => window.api.requestReboot(),
+    requestShutdown: (confirmed) => window.api.requestShutdown(confirmed),
+    requestReboot: (confirmed) => window.api.requestReboot(confirmed),
     requestSleep: () => window.api.requestSleep(),
     requestHide: () => window.api.requestHide(),
-    requestQuit: () => window.api.requestQuit(),
+    requestQuit: (confirmed) => window.api.requestQuit(confirmed),
+    quitConfirmReply: (reply) => window.api.quitConfirmReply(reply),
     resolveGameCollision: (answer) => window.api.resolveGameCollision(answer),
     markNotificationsRead: () => window.api.markNotificationsRead(),
     dismissNotification: (id) => window.api.dismissNotification(id),
@@ -296,6 +294,7 @@ const controls = createControls({
   isBooting: () => !boot.isRevealed(),
   getBrowse: () => currentBrowse,
   getScreenActivity: () => screenActivityOf(currentBrowse, currentActivities),
+  getJobCount: () => jobCountOf(currentActivities),
   audio,
   getTranslator,
   settings: settingsScreen,
@@ -592,14 +591,18 @@ function applyStatus(): void {
 /** The status line for what is ON SCREEN — empty while looking at a game the state isn't about. */
 function statusText(): string {
   const activity = screenActivityOf(currentBrowse, currentActivities);
-  if (activity !== undefined) return activityStatus(activity, translator);
+  if (activity !== undefined) return withChatter(activityStatus(activity, translator), activity.kind);
   const subject = gameOf(currentState)?.id;
   // Nothing on screen is a state of its own now — a launcher card — and the state's status belongs to a
   // game, so it says nothing there: "Installing…" under "Settings" would be a lie, and the line's mere
   // presence shifts the title (see [data-status] in styles.css).
   if (currentBrowse === null || (subject !== undefined && subject !== currentBrowse.id)) return '';
-  const base = statusOf(currentState, translator);
-  const suffix = chatter.suffixFor(currentState);
+  return withChatter(statusOf(currentState, translator), currentState.kind);
+}
+
+/** The status line plus the current funny suffix, when one is running for `kind`. */
+function withChatter(base: string, kind: string): string {
+  const suffix = chatter.suffixFor(kind);
   return suffix !== null ? `${base} ${translator(suffix)}` : base;
 }
 
@@ -660,7 +663,8 @@ function render(state: AppState): void {
   else delete app.dataset['activity'];
 
   // Play-button busy visual: gear (system activity) vs spinner (game phases). Absent when not busy.
-  const busyKind = activityBusyKind(screenActivity, state);
+  const actions = screenActions(state, browse, screenActivity);
+  const busyKind = busyKindOfView(actions.playView);
   if (busyKind !== 'none') app.dataset['busy'] = busyKind;
   else delete app.dataset['busy'];
 
@@ -675,13 +679,10 @@ function render(state: AppState): void {
   // (c) a LOCAL game whose executable is no longer on disk: it is active (it is in the library and keeps
   // its art and stats) but there is nothing to start, so it gets the same title + More layout, with the
   // status line saying why.
-  const hasPlay =
-    browse !== null &&
-    browse.active &&
-    browse.game?.unavailable !== true &&
-    browse.game?.unconfigured !== true &&
-    !(phase === 'ready' && browse.game?.requiresInstall === true && screenActivity === undefined);
+  const hasPlay = browse !== null && browse.active && actions.playView !== 'hidden';
   app.dataset['cardMorph'] = hasPlay ? 'on' : 'off';
+  if (actions.playView === 'play' && !actions.canPlay) app.dataset['playLocked'] = 'true';
+  else delete app.dataset['playLocked'];
 
   // Only on the detail screen: in the carousel Play is hidden anyway, and the attribute's `.title{left:0}`
   // half would fight the carousel's own title placement.
@@ -695,7 +696,7 @@ function render(state: AppState): void {
   carousel.setBusyGames(busy);
   libraryScreen.setBusyGames(busy);
 
-  chatter.sync(state);
+  chatter.sync(screenActivity?.kind ?? state.kind);
   applyStatus();
 
   // Force-close popups off the ready screen, then re-apply the focus highlight (see controls.refresh).
@@ -753,6 +754,7 @@ void window.api.requestActivities().then((activities) => {
   render(currentState);
 });
 
+window.api.onQuitConfirm((action) => controls.askQuit(action));
 window.api.onStateUpdate(render);
 void window.api.requestState().then((state) => {
   render(state);

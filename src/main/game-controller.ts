@@ -39,6 +39,8 @@ import { BrowsePresenter } from './browse-presenter';
 import { GameSequences } from './game-sequences';
 import { SaveSyncFlow } from './save-sync-flow';
 import { SteamActivityWatch, type SteamWatchEntry } from './steam-activity-watch';
+import { GameJobs, installMarkerOf } from './game-jobs';
+import { GameActions } from './game-actions';
 import { describe } from './util';
 import { log } from './logger';
 
@@ -108,8 +110,9 @@ export class GameController {
     readBrowseAssets: (id) => this.deps.library.readBrowseAssets(id),
     onlyGlobalAmbient: async () => (await this.deps.settings.read()).onlyGlobalAmbient,
   });
-  // Polls Steam's .acf state of every available Steam game and keeps each one's activity in the registry.
   private readonly steamWatch: SteamActivityWatch;
+  readonly jobs: GameJobs;
+  private readonly actions: GameActions;
   // The process lifecycle (launch / install / uninstall / prefix cleanup, force-close, the save sync
   // around a session) — see game-sequences.ts. Dispatched to from the renderer's actions below; it
   // reaches back through the SequenceHost seam for the card session's answers and transitions.
@@ -123,8 +126,7 @@ export class GameController {
       listSteamGames: () => this.steamGames(),
       registry: this.deps.activities,
       sessionGameId: () => this.sessionGameId(),
-      onGameChanged: (id) =>
-        void this.onGameChanged(id).catch((cause: unknown) => log.warn('[steam-watch] refresh failed:', describe(cause))),
+      onGameChanged: (id) => this.refreshGame(id),
       onInstallCompleted: (game) =>
         this.deps.notifications.notify({
           kind: 'game-installed',
@@ -138,6 +140,15 @@ export class GameController {
           gameTitle: game.title,
         }),
       steamLocator: () => this.deps.platform.steamLocator,
+    });
+    this.jobs = new GameJobs({
+      ...this.deps,
+      host: {
+        sessionGameId: () => this.sessionGameId(),
+        onGameChanged: (id) => this.refreshGame(id),
+        isWindowFocused: () => this.deps.window.isFocused(),
+        sendError: (message) => this.sendError(message),
+      },
     });
     this.saveSync = new SaveSyncFlow({
       store: this.deps.store,
@@ -170,6 +181,22 @@ export class GameController {
         rememberStats: (id, stats) => this.statsById.set(id, stats),
         sendError: (message) => this.sendError(message),
         onInsert: (root) => this.onInsert(root),
+      },
+    });
+    this.actions = new GameActions({
+      ...this.deps,
+      sequences: this.sequences,
+      jobs: this.jobs,
+      host: {
+        games: () => this.games,
+        current: () => this.current(),
+        sourceAvailable: (manifest) => this.sourceAvailable(manifest),
+        isReloading: () => this.reloadInFlight,
+        sessionGameId: () => this.sessionGameId(),
+        select: (id) => this.onSelectRequested(id),
+        buildGameInfo: async (manifest) =>
+          this.buildGameInfo(manifest, this.statsById.get(manifest.raw.id) ?? (await this.deps.stats.read(manifest.raw.id))),
+        sendError: (message) => this.sendError(message),
       },
     });
   }
@@ -240,7 +267,7 @@ export class GameController {
     return manifest !== null && this.sourceAvailable(manifest);
   }
 
-  /** Every Steam game whose source is available right now — what the Steam activity watch polls. */
+  /** Every Steam game whose source is available right now - what the Steam activity watch polls. */
   private steamGames(): readonly SteamWatchEntry[] {
     return this.games.flatMap((manifest) =>
       manifest.steam !== undefined && this.sourceAvailable(manifest)
@@ -318,6 +345,7 @@ export class GameController {
     watcher.onInsert((root) => void this.onInsert(root));
     watcher.onRemove(() => this.onRemove());
     watcher.onError((error) => log.error('[drive-watcher]', error));
+    this.jobs.init();
 
     ipcMain.handle(IPC.stateRequest, (): AppState => state.get());
     // Static for the process lifetime — seeds the renderer's Game Mode UI (e.g. "Close Playhook").
@@ -352,8 +380,8 @@ export class GameController {
       IPC.startupSoundRequest,
       (): Promise<string | null> => this.assets.readStartupSoundDataUrl(),
     );
-    ipcMain.on(IPC.actionLaunch, () => void this.onLaunchRequested());
-    ipcMain.on(IPC.actionUninstall, () => void this.onUninstallRequested());
+    ipcMain.on(IPC.actionLaunch, (_event, id: unknown) => void this.actions.launch(id));
+    ipcMain.on(IPC.actionUninstall, (_event, id: unknown) => void this.actions.uninstall(id));
     // Game Mode: hiding is meaningless (no tray, and on Linux no summon hotkey) — ignore the Hide button
     // so the only window can't vanish with no way back. Desktop/Windows hide to the tray as before.
     ipcMain.on(IPC.actionHide, () => {
@@ -402,6 +430,7 @@ export class GameController {
     this.presenter.dispose();
     this.sequences.abortInFlight();
     this.steamWatch.stop();
+    void this.jobs.abortAll('shutdown');
     this.deps.watcher.stop();
   }
 
@@ -424,8 +453,13 @@ export class GameController {
     }
   }
 
+  /** onGameChanged for the watch and the jobs, which fire and forget it. */
+  private refreshGame(id: string): void {
+    void this.onGameChanged(id).catch((cause: unknown) => log.warn(`[refresh] id=${id} failed:`, describe(cause)));
+  }
+
   /**
-   * Steam changed what can be done with game `id`: rebuilds its GameInfo and puts it wherever it is shown.
+   * Steam or a job changed what can be done with game `id`: rebuilds its GameInfo and puts it wherever it is shown.
    * Re-checked after the await: the state is only replaced while it is still `ready` on this very game
    * with nothing in flight, otherwise only the browse info of the game on screen is refreshed.
    */
@@ -532,6 +566,7 @@ export class GameController {
     const keepSelection =
       !opts.focus && manifests.some((manifest) => manifest.raw.id === this.selectedId);
     this.cardGames = manifests;
+    void this.jobs.sweepPartials(manifests);
     if (!keepSelection) this.selectedId = manifests[0]?.raw.id ?? null;
     this.warnShadowedLocalGames();
     this.sequences.unlock();
@@ -625,6 +660,7 @@ export class GameController {
     const env: ManifestEnv = { documents: app.getPath('documents'), t: this.t };
     const read = await this.deps.pcLibrary.read(env, this.deps.platform.resolveInstallDir);
     this.pcGames = [...read.manifests];
+    void this.jobs.sweepPartials(read.manifests);
     log.info(`[pc-library] ${read.manifests.length} local game(s) ids=[${read.manifests.map((m) => m.raw.id).join(',')}]`);
     this.warnShadowedLocalGames();
     // A local game that is gone takes its collision answer with it: there is nothing left to collide,
@@ -706,6 +742,7 @@ export class GameController {
         await this.browseToUnlessPinned(selected.raw.id);
       }
       await this.refreshBrowsedLocalGame();
+      this.jobs.abortGone(this.games.map((manifest) => manifest.raw.id));
       return { ok: true };
     } finally {
       this.reloadInFlight = false;
@@ -774,7 +811,7 @@ export class GameController {
 
   /**
    * Without `id`: whether the session is busy (a game launching / running / installing / uninstalling).
-   * With `id`: whether that game is the session's or carries an activity of its own — main's server-side
+   * With `id`: whether that game is the session's or carries an activity of its own - main's server-side
    * mirror of the renderer's own isBusy (app.ts), which gates Delete on the Customize screen and Move to
    * card (GameMoveTransaction.moveToCard): a move started while the game is mid-launch would race the
    * launcher's own manifest handling.
@@ -916,7 +953,9 @@ export class GameController {
     if (this.reloadInFlight) return { ok: false, message: this.t('errors.reloadInProgress') };
     this.reloadInFlight = true;
     try {
-      return await this.loadCard(root, { focus: false });
+      const result = await this.loadCard(root, { focus: false });
+      this.jobs.abortGone(this.games.map((manifest) => manifest.raw.id));
+      return result;
     } finally {
       this.reloadInFlight = false;
     }
@@ -925,6 +964,7 @@ export class GameController {
   // ── Reaction to card removal ─────────────────────────────────────────────
 
   private onRemove(): void {
+    this.jobs.abortWhere((job) => job.kind === 'install' && job.source === 'card', 'card-removed');
     this.cardPresent = false;
     const kind = this.deps.state.get().kind;
     // During play/sync, removal is expected: the flow continues, sync-out
@@ -932,15 +972,9 @@ export class GameController {
     if (
       kind === 'running' ||
       kind === 'launching' ||
-      kind === 'installing' ||
-      kind === 'uninstalling' ||
       kind === 'syncing-in' ||
       kind === 'syncing-out'
     ) {
-      // During install, removal is also expected: the installer reads from the card, so yanking
-      // it makes the install fail → <exe> won't appear → we stay on "Install"; next attempt pre-cleans.
-      // During uninstall it targets the PC, so it completes; runUninstallSequence then sees cardPresent
-      // = false and goes idle + hide on its own.
       return;
     }
     this.clearCard();
@@ -987,70 +1021,6 @@ export class GameController {
 
   // ── "Launch" action (the A button / click) ──────────────────────────────
 
-  private onLaunchRequested(): void {
-    const snapshot = this.deps.state.get();
-    // Play pressed while a game is running (the launcher was summoned over it via the tray): return to the
-    // game instead of launching. Checked BEFORE the ready-guard — launchInFlight is true during running,
-    // but we never reach its check. No-op if we don't have the image names yet.
-    if (snapshot.kind === 'running') {
-      this.resumeRunningGame();
-      return;
-    }
-    // Ignore input outside the ready state — this is the "ignore-gamepad" during play
-    // (harmless under any interpretation of the Gamepad API focus bug).
-    if (snapshot.kind !== 'ready' || this.sequences.inFlight || this.reloadInFlight) return;
-    const manifest = this.current();
-    if (manifest === null) return;
-    // A local game whose .exe is gone (deleted, or an external drive unplugged). The renderer already
-    // disables Play, but a gamepad press must not slip past it into a launch that can only fail.
-    if (snapshot.game.unavailable === true) {
-      log.info(`[launch] refused id=${manifest.raw.id}: "${manifest.executablePath}" is not on disk`);
-      this.sendError(this.t('launcher.state.gameFilesMissing'));
-      return;
-    }
-    // A local draft with no launch method chosen yet — same guard, different reason. The renderer already
-    // disables Play, but a gamepad press must not slip past it into runLaunchSequence.
-    if (snapshot.game.unconfigured === true) {
-      log.info(`[launch] refused id=${manifest.raw.id}: no launch method is configured`);
-      this.sendError(this.t('launcher.state.launchNotConfigured'));
-      return;
-    }
-    if (this.deps.activities.has(manifest.raw.id)) {
-      log.info(`[launch] refused id=${manifest.raw.id}: the game has an activity in flight`);
-      return;
-    }
-    // Steam mode: not yet installed → open steam://install (fire-and-forget); otherwise launch via
-    // steam://rungameid. Both inside runSteamInstall / runLaunchSequence's steam branch.
-    if (manifest.steam !== undefined) {
-      if (snapshot.game.requiresInstall) {
-        void this.sequences.runSteamInstall(manifest);
-      } else {
-        void this.sequences.runLaunchSequence(manifest, snapshot.game);
-      }
-      return;
-    }
-    // Card-install mode + not yet installed → run the installer; otherwise it's an ordinary launch
-    // (this includes a fully-installed game, whose executable now exists → requiresInstall=false).
-    if (manifest.install !== undefined && snapshot.game.requiresInstall) {
-      void this.sequences.runInstallSequence(manifest, snapshot.game);
-    } else {
-      void this.sequences.runLaunchSequence(manifest, snapshot.game);
-    }
-  }
-
-  /**
-   * Return-to-game: raise the running game's own window to the foreground (restoring it if it minimized
-   * when it lost focus). Best-effort — if the window isn't found (the game is already closing, a race with
-   * waitForExit) it's a silent no-op; the state machine will move to syncing-out → ready on its own.
-   */
-  private resumeRunningGame(): void {
-    const names = this.sequences.runningGameImageNames;
-    if (names === null) return;
-    if (!this.deps.processControl.focusGameWindow(names)) {
-      log.info('[resume] running game window not found — no-op (it may be closing)');
-    }
-  }
-
   /**
    * The carousel entered a game's detail screen (renderer sent action:select with the game id). Switches to
    * it: builds that game's hero/audio/GameInfo on demand (only the selected game ever gets heavy assets)
@@ -1075,29 +1045,6 @@ export class GameController {
     this.enterReady(await this.buildGameInfo(manifest, stats));
     // Keep what's on screen in step with the selection (the renderer reads the title/stats from here).
     await this.browseToUnlessPinned(manifest.raw.id);
-  }
-
-  /** "Uninstall" action (the user confirmed in the popup). Only for an installed install-mode game. */
-  private onUninstallRequested(): void {
-    const snapshot = this.deps.state.get();
-    if (snapshot.kind !== 'ready' || this.sequences.inFlight || this.reloadInFlight) return;
-    const manifest = this.current();
-    if (manifest === null) return;
-    if (!snapshot.game.canUninstall || this.deps.activities.has(manifest.raw.id)) return; // nothing installed to remove
-    // Steam: delegate removal to Steam (steam://uninstall) — fire-and-forget, the poller flips to Install.
-    if (manifest.steam !== undefined) {
-      void this.sequences.runSteamUninstall(manifest);
-      return;
-    }
-    if (manifest.install === undefined) {
-      // Normal executable game: the only "uninstall" is clearing its Wine prefix (Linux; the game stays on
-      // the card). canUninstall is set only when that prefix exists — see buildGameInfo / prefixCleanupOnly.
-      if (snapshot.game.prefixCleanupOnly === true) {
-        void this.sequences.runPrefixCleanupSequence(manifest, snapshot.game);
-      }
-      return;
-    }
-    void this.sequences.runUninstallSequence(manifest, snapshot.game);
   }
 
   /**
@@ -1135,7 +1082,8 @@ export class GameController {
       installVia = 'steam';
     } else if (manifest.install !== undefined) {
       // Card-install mode: installed ⇔ the resolved executable exists; that also enables Uninstall.
-      const installed = await fse.pathExists(manifest.executablePath);
+      const installed =
+        (await fse.pathExists(manifest.executablePath)) && !(await fse.pathExists(installMarkerOf(manifest.install.dir)));
       requiresInstall = !installed;
       canUninstall = installed;
       // `copy` shares this branch but not its install-confirm copy: no installer runs, so the silent-mode

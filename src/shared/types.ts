@@ -4,7 +4,8 @@
 // the file-name constants) lives next to its implementation under `src/main/` instead.
 import type { Locale } from './i18n/index';
 import type { ArtworkQuality } from './artwork-filter';
-import type { ActivityMap } from './activity';
+import type { ActivityMap, GameJobFailure } from './activity';
+import type { QuitAction, QuitConfirmReply } from './quit';
 import type { UpdateStatus } from './update-status';
 
 // ── Card format: the few facts both sides must agree on ───────────────────────────────────────
@@ -133,10 +134,10 @@ export interface GameLibrary {
  * What is currently ON SCREEN — the source of truth for the title, the stats, the background and the
  * music, whether that game is on the inserted card or only in the history.
  *
- * It exists BECAUSE AppState cannot answer that question: AppState is the state machine of ONE game's
- * process (idle/ready/installing/running…), so browsing game B while game A installs, or showing a
- * history game with no card in (`kind: 'idle'`), has no representation there. AppState stays the truth
- * for the PHASE and the STATUS text; BrowseInfo is the truth for what you are looking at.
+ * It exists BECAUSE AppState cannot answer that question: AppState is the state machine of the ONE game
+ * session (idle/ready/launching/running…), so browsing game B while game A runs, or showing a history game
+ * with no card in (`kind: 'idle'`), has no representation there. AppState is the truth for the session's
+ * phase, the ActivityMap for each game's installs and removals, and BrowseInfo for what you are looking at.
  */
 export interface BrowseInfo {
   readonly id: string;
@@ -220,16 +221,18 @@ export interface GameInfo {
   readonly unconfigured?: boolean;
 }
 
-/** The flow state machine (discriminated union). */
+/**
+ * The game session's state machine (discriminated union): at most one game is launched, played and synced
+ * at a time. Installs, removals and Steam's downloads are not part of it - they are per-game activities
+ * (shared/activity.ts, pushed on activity:update) and run side by side with the session.
+ */
 export type AppState =
   | { readonly kind: 'idle' }
   | { readonly kind: 'ready'; readonly game: GameInfo }
-  | { readonly kind: 'installing'; readonly game: GameInfo }
-  | { readonly kind: 'uninstalling'; readonly game: GameInfo }
   /**
-   * Linux-only: the game's Wine prefix is being provisioned (winetricks) before the installer/game
-   * runs. A transient screen shown WITHIN installing/launching; the renderer shows "Configuring Proton..."
-   * and appends a rotating funny suffix after a minute. Reverts to the prior state when done.
+   * Linux-only: the game's Wine prefix is being provisioned (winetricks) before the game runs. A transient
+   * screen shown WITHIN launching; the renderer shows "Configuring Proton..." and appends a rotating funny
+   * suffix after a minute. Reverts to the prior state when done. Installs provision as their own activity.
    */
   | { readonly kind: 'configuringProton'; readonly game: GameInfo }
   | { readonly kind: 'syncing-in'; readonly game: GameInfo }
@@ -383,6 +386,8 @@ export type AppNotification =
       readonly gameId: string;
       readonly gameTitle: string;
     })
+  | (NotificationBase & GameJobFailure & { readonly kind: 'game-install-failed' })
+  | (NotificationBase & GameJobFailure & { readonly kind: 'game-uninstall-failed' })
   /**
    * A game was added to a card that is NOT the active one, so it was written to disk and nothing else
    * happened: the launcher's library cannot show it until that card becomes active. There is no `gameId`
@@ -449,11 +454,17 @@ export const IPC = {
   actionLaunch: 'action:launch',
   /** renderer → main: the user confirmed "Uninstall" — remove the installed install-mode game. */
   actionUninstall: 'action:uninstall',
+  /** renderer → main: cancel the queued or running install of the game with the given id. */
+  actionCancelJob: 'action:cancel-job',
   /** renderer → main: hide the launcher window to the tray (the "Hide" button on the empty screen). */
   actionHide: 'action:hide',
   /** renderer → main: quit the whole app. In Game Mode (gamescope) the power menu's primary item becomes
    * "Close Playhook" (there is no tray to minimize into), which sends this instead of actionHide. */
   actionQuit: 'action:quit',
+  /** main → renderer: background jobs are running - ask before this QuitAction (tray Quit, a raced Quit). */
+  quitConfirm: 'quit:confirm',
+  /** renderer → main: the quit question was shown (or queued), or closed without a Yes (QuitConfirmReply). */
+  quitConfirmReply: 'quit:confirm-reply',
   /** renderer → main (invoke): whether this is a SteamOS Game Mode (gamescope) session. Seeded once at
    * startup so the renderer can adapt the UI (e.g. "Minimize" → "Close Playhook"). */
   gameModeRequest: 'app:game-mode-request',
@@ -1154,19 +1165,23 @@ export interface RendererApi {
   /** Every game's background activity, pushed in full on each change. */
   onActivityUpdate(callback: (activities: ActivityMap) => void): void;
   requestActivities(): Promise<ActivityMap>;
-  requestLaunch(): void;
-  requestUninstall(): void;
+  requestLaunch(id?: string): void;
+  requestUninstall(id?: string): void;
+  /** Cancel the queued or running install of game `id`. */
+  cancelJob(id: string): void;
   requestHide(): void;
   /** Quit the whole app (Game Mode's "Close Playhook" — no tray to minimize into). */
-  requestQuit(): void;
+  requestQuit(confirmed?: boolean): void;
+  onQuitConfirm(callback: (action: QuitAction) => void): void;
+  quitConfirmReply(reply: QuitConfirmReply): void;
   /** Whether this is a SteamOS Game Mode (gamescope) session, seeded once at startup. */
   requestGameMode(): Promise<boolean>;
   /** Open Steam's Downloads page so the user can pause/resume a Steam download from Steam itself. */
   openSteamDownloads(): void;
   /** Power off the PC (after the in-launcher confirm). */
-  requestShutdown(): void;
+  requestShutdown(confirmed?: boolean): void;
   /** Restart the PC (after the in-launcher confirm). */
-  requestReboot(): void;
+  requestReboot(confirmed?: boolean): void;
   /** Put the PC to sleep (after the in-launcher confirm). */
   requestSleep(): void;
   /** Force-close the running game (after the in-launcher confirm). */

@@ -47,6 +47,7 @@ export const ru: Record<MessageKey, string> = {
   'launcher.menu.close': 'Закрыть',
   'launcher.menu.install': 'Установить',
   'launcher.menu.uninstall': 'Удалить',
+  'launcher.menu.cancelInstall': 'Отменить установку',
   'launcher.menu.shutdown': 'Выключить',
   'launcher.menu.reboot': 'Перезагрузить',
   'launcher.menu.sleep': 'Спящий режим',
@@ -84,6 +85,7 @@ export const ru: Record<MessageKey, string> = {
   'launcher.confirm.forget':
     'Убрать «{title}» из библиотеки? Сейвы и статистика останутся — вставьте карту, и игра вернётся.',
   'launcher.confirm.sleep': 'Перевести компьютер в спящий режим?',
+  'launcher.confirm.quit': 'Выйти из Playhook?',
   'launcher.installPathNote':
     'Не все установщики поддерживают тихий режим, поэтому при установке нужно указать следующий путь:',
   'launcher.copyNote':
@@ -123,6 +125,9 @@ export const ru: Record<MessageKey, string> = {
   'launcher.state.syncingOut': 'Сохранение прогресса...',
   'launcher.state.installingPaused': 'Установка приостановлена...',
   'launcher.state.installingPausedPercent': 'Установка приостановлена на {percent}%...',
+  'launcher.state.queued': 'Ожидает установки...',
+  'launcher.state.queuedUntilGameExit': 'Установится после выхода из игры',
+  'launcher.state.queuedRemovalUntilGameExit': 'Удалится после выхода из игры',
   'launcher.state.updating': 'Обновление...',
   'launcher.state.updatingPaused': 'Обновление приостановлено...',
   'launcher.state.preloaded': 'Предзагрузка завершена',
@@ -224,6 +229,8 @@ export const ru: Record<MessageKey, string> = {
   'notifications.updateReady': 'Обновление {version} готово - установится при перезапуске',
   'notifications.gameInstalled': '{title} установлена',
   'notifications.gameUninstalled': '{title} удалена',
+  'notifications.gameInstallFailed': 'Не удалось установить {title}: {reason}',
+  'notifications.gameUninstallFailed': 'Не удалось удалить {title}: {reason}',
   'notifications.gameAddedDeferred':
     '{title} записана на карту. Появится, когда эта карта станет активной.',
   'notifications.gameMovedDeferred':
@@ -440,6 +447,8 @@ export const ru: Record<MessageKey, string> = {
   'errors.gameDidNotStart': 'игра не запустилась (истекло время ожидания процесса)',
   'errors.startInstaller': 'не удалось запустить установщик: {cause}',
   'errors.installIncomplete': 'установка не завершена (исполняемый файл игры не появился)',
+  'errors.jobCardRemoved': 'карту вынули до завершения',
+  'errors.jobGameGone': 'игры больше нет в библиотеке',
   'errors.copyGameFailed': 'не удалось скопировать игру на ПК: {cause}',
   'errors.copyExeNotFound':
     'игра скопирована, но исполняемого файла на месте нет: {path} - проверьте, что директория игры указывает на её собственный корень',
