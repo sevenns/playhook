@@ -184,6 +184,7 @@ export const ru: Record<MessageKey, string> = {
   'settings.status.available': 'Доступно обновление: {version}',
   'settings.status.downloading': 'Загрузка... {percent}%',
   'settings.status.downloaded': 'Обновление {version} готово к установке.',
+  'settings.status.installing': 'Установка обновления {version}... Playhook сейчас перезапустится.',
   'settings.status.unsupported': 'Обновления доступны только в установленной сборке.',
   'settings.status.unsupportedPlatform':
     'На macOS Playhook не обновляется сам - скачайте новый .dmg со страницы Releases и замените приложение. Игры, статистика и сейвы сохранятся.',
@@ -192,6 +193,7 @@ export const ru: Record<MessageKey, string> = {
   'settings.action.updateTo': 'Обновить до {version}',
   'settings.action.downloading': 'Загрузка...',
   'settings.action.restartInstall': 'Перезапустить и установить',
+  'settings.action.installing': 'Установка...',
   'settings.action.retry': 'Повторить',
 
   // ── Customize screen: the launcher's own per-game editor (gameConfig:* channels) ──

@@ -58,6 +58,8 @@ export function updateStatusText(status: UpdateStatus, t: Translator): string {
       return t('settings.status.downloading', { percent: status.percent });
     case 'downloaded':
       return t('settings.status.downloaded', { version: status.version });
+    case 'installing':
+      return t('settings.status.installing', { version: status.version });
     case 'error':
       // Already localized in main (or a passthrough technical cause) — render as-is.
       return status.message;
@@ -94,6 +96,8 @@ export function updateAction(status: UpdateStatus, t: Translator): UpdateAction 
       return { label: t('settings.action.downloading'), kind: null };
     case 'downloaded':
       return { label: t('settings.action.restartInstall'), kind: 'install' };
+    case 'installing':
+      return { label: t('settings.action.installing'), kind: null };
     case 'error':
       return { label: t('settings.action.retry'), kind: 'check' };
     case 'unsupported':

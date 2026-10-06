@@ -933,7 +933,9 @@ Release flow:
 
 That is the default; **Settings → Updates** lets the user pick *download and install automatically*,
 *download automatically, install manually*, or *off (check manually)*, opt into the **pre-release
-(beta)** channel, and run a check by hand.
+(beta)** channel, and run a check by hand. *Restart & install* on a downloaded update runs the
+NSIS installer **silently** (no wizard window) and relaunches Playhook when it is done; the first
+install still shows the regular wizard.
 
 Notes:
 
