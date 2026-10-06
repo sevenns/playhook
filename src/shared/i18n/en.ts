@@ -212,6 +212,7 @@ export const en = {
   'settings.status.available': 'Update available: {version}',
   'settings.status.downloading': 'Downloading... {percent}%',
   'settings.status.downloaded': 'Update {version} is ready to install.',
+  'settings.status.installing': 'Installing update {version}... Playhook will restart in a moment.',
   'settings.status.unsupported': 'Updates are available only in the installed build.',
   // macOS: not a temporary state like the dev one above — the mac build cannot ever self-update
   // (Squirrel.Mac requires a code-signed bundle), so this says what to do instead.
@@ -222,6 +223,7 @@ export const en = {
   'settings.action.updateTo': 'Update to {version}',
   'settings.action.downloading': 'Downloading...',
   'settings.action.restartInstall': 'Restart & install',
+  'settings.action.installing': 'Installing...',
   'settings.action.retry': 'Retry',
 
   // ── Customize screen: the launcher's own per-game editor (gameConfig:* channels) ──

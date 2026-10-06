@@ -38,3 +38,15 @@ describe('updateAction — nothing to press when self-update is impossible', () 
     expect(updateAction({ kind: 'idle' }, t)?.kind).toBe('check');
   });
 });
+
+describe('updateStatusText / updateAction — the silent install in flight', () => {
+  it('names the version being installed and warns about the restart', () => {
+    const text = updateStatusText({ kind: 'installing', version: '1.2.3' }, t);
+    expect(text).toContain('1.2.3');
+    expect(text.toLowerCase()).toContain('restart');
+  });
+
+  it('offers nothing to press while the installer runs', () => {
+    expect(updateAction({ kind: 'installing', version: '1.2.3' }, t)?.kind).toBeNull();
+  });
+});

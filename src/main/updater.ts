@@ -200,7 +200,11 @@ export class UpdaterService {
   //  • anything else (a failed check, idle, available) → "up to date" — the background auto-check /
   //    autoDownload will still pick up a real update later, so this is the least-surprising message.
   private handleError(): void {
-    if (this.status.kind === 'downloaded' || this.status.kind === 'unsupported') return;
+    if (this.status.kind === 'unsupported') return;
+    if (this.status.kind === 'downloaded') {
+      this.pushStatus();
+      return;
+    }
     if (this.status.kind === 'downloading') {
       this.setStatus(
         this.pendingVersion !== null
@@ -280,13 +284,15 @@ export class UpdaterService {
     // off mid-flight is the root cause of settings loss after an update. beforeInstall stays SYNCHRONOUS
     // right before quitAndInstall (nothing awaited between them) — its contract of dropping the window
     // close-guards with no yield in the way is preserved.
+    const { version } = this.status;
     await this.deps.settings.flush();
     // Same reason for the inbox: a notification written as the process goes down would come back
     // truncated, and the file is read on the very next start.
     await this.deps.notifications.flush();
     log.info('[updater] installing update — quitAndInstall');
+    this.pushTransient({ kind: 'installing', version });
     this.deps.beforeInstall(); // drop both windows' close-guards synchronously first
-    autoUpdater.quitAndInstall();
+    autoUpdater.quitAndInstall(true, true);
   }
 
   // ── Pushing status to the Settings screen ──────────────────────────────────
